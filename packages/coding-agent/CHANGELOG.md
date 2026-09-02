@@ -521,6 +521,7 @@
 - Rearming a muted monitor now reports how many filter-matching output lines were dropped while it was muted; the count resets on resume.
 - `bash_output` now reports when the peeked session is a muted monitor (`details.monitorMuted`, plus `mutedDropped` and a short note) so the muted state remains in the model's textual context; non-monitor sessions are unchanged.
 
+- `Provider is not configured:` is no longer a hard-error model fallback, so an auth miss on Claude SDK OAuth does not eject the turn onto another provider.
 ### New Features
 
 ### Breaking Changes

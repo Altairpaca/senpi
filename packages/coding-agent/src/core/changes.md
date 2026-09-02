@@ -40,6 +40,25 @@
 - `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionEvent` union, the `_setModel` guard block, and the `_cycleFavoriteModel` commit block.
 - `packages/coding-agent/src/core/session-manager.ts`: the `SessionEntry` union and the append helpers near `appendModelChange`.
 
+## 2026-09-02 - Do not hard-fallback a provider-not-configured auth miss
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_isHardErrorFallbackEligible` no longer treats `Provider is not configured:` as a model hard-error that ejects onto another provider.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: a configured fallback chain stays unused when the current model fails with that auth miss.
+
+### Why
+
+- Auth wiring failures were classified as hard-error and immediately switched `claude-sdk-oauth/claude-opus-5` onto a different provider (for example `opengateway/anthropic/claude-opus-5`) instead of staying on Claude SDK OAuth or its sibling accounts.
+
+### Why an extension could not handle it
+
+- Hard-error fallback eligibility is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` in `agent-session.ts`.
+
 ## Leaf token and typed errors for assistant edits (2026-09-10)
 
 ### What changed
