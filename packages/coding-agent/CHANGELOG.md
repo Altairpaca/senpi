@@ -542,6 +542,7 @@
 ### Fixed
 
 - Anthropic OAuth requests advertise `claude-cli/2.1.251` instead of the stale `2.1.75`, so Claude Fable 5.1 and Opus 5 no longer fail with `claude_code_version_too_old` (syncs upstream pi `96317e50`) ([oh-my-openagent#7650](https://github.com/code-yeongyu/oh-my-openagent/issues/7650)).
+- OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted.
 
 ### New Features
 
