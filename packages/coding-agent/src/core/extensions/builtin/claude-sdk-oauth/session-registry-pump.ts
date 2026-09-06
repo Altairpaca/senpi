@@ -133,8 +133,7 @@ function handleMessage(
 		else if (message.type === "result" && resultMatchesTurn(message, turn)) {
 			const failure = sdkResultFailure(message);
 			if (failure) throw failure;
-			claimTurn(entry, turn);
-			for (const buffered of turn.preReplay) deliver(entry, turn, buffered);
+			for (const buffered of claimTurn(entry, turn)) deliver(entry, turn, buffered);
 			finishTurn(registry, entry, turn, message);
 			return false;
 		} else if (message.type === "result") {
