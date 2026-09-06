@@ -1,7 +1,7 @@
 # Issue 1410 follow-up QA receipt
 
 Date: 2026-09-06
-Commit under test: `d07e2bfff`
+Commit under test: `cef5ee939`
 
 ## RED
 
@@ -27,7 +27,16 @@ bun test \
   packages/coding-agent/test/suite/model-usability-review.test.ts
 ```
 
-The result was green with no failed tests. The admission suite specifically
+The result was:
+
+```text
+3 pass
+0 fail
+27 expect() calls
+Ran 3 tests across 1 file.
+```
+
+The admission suite specifically
 covered refusal, rate-limit, and hard-error fallback candidates that cannot
 hold the live context, and verified the original model/session identity,
 absence of rejected model-change and fallback-applied events, and settlement.
