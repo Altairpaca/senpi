@@ -383,6 +383,7 @@ function removeSkillInvocationTokens(text: string, tokens: readonly SkillInvocat
 	let result = "";
 	for (const token of tokens) {
 		result += text.slice(cursor, token.start);
+		if (token.position === "inline") result += `[skill: ${token.name}]`;
 		cursor = token.end;
 		if (
 			token.position === "inline" &&
