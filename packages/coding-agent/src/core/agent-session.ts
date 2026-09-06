@@ -4751,8 +4751,6 @@ export class AgentSession {
 		if (!(model.id === "gpt-6-astra" && (model.provider === "openai" || model.provider === "openai-codex"))) {
 			this.agent.state.reasoningBaseline = undefined;
 		}
-		this.agent.abortServerSideFallback =
-			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
 		const previousTier = this._currentServiceTier;
 		const previousFastMode = this.isFastModeActive();
@@ -4760,6 +4758,8 @@ export class AgentSession {
 		const previousThinkingSelection = this.agent.state.thinkingSelection;
 		const previousReasoningBaseline = this.agent.state.reasoningBaseline;
 		const previousAbortServerSideFallback = this.agent.abortServerSideFallback;
+		this.agent.abortServerSideFallback =
+			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
 
 		if (opts.ephemeralThinkingLevel !== undefined) {
@@ -4775,7 +4775,15 @@ export class AgentSession {
 				? await this._emitModelSelect(model, previousModel, opts.modelSelectSource)
 				: undefined;
 			this.assertModelUsable(model, liveContextTokens);
-			if (opts.appendSessionEntry) this.sessionManager.appendModelChange(model.provider, model.id, opts.entryReason, previousModel?.provider, previousModel?.id);
+			if (opts.appendSessionEntry) {
+				this.sessionManager.appendModelChange(
+					model.provider,
+					model.id,
+					opts.entryReason,
+					previousModel?.provider,
+					previousModel?.id,
+				);
+			}
 			if (opts.persistDefault) this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 			// Emit only after all admission hooks have accepted the candidate.
 			this._emit({
@@ -7685,8 +7693,15 @@ export class AgentSession {
 		let is429TierRouted = false;
 		let hintTierDelayMs: number | undefined;
 		const tryFallback = async (reason: Parameters<typeof this._retryFallback.tryFallback>[0], failure: Parameters<typeof this._retryFallback.tryFallback>[1]) => {
-			try { return await tryFallback(reason, failure); }
-			catch (error) { if (error instanceof ModelUsabilityBudgetError) { this._resolveRetry(); return false; } throw error; }
+			try {
+				return await this._retryFallback.tryFallback(reason, failure);
+			} catch (error) {
+				if (error instanceof ModelUsabilityBudgetError) {
+					this._resolveRetry();
+					return false;
+				}
+				throw error;
+			}
 		};
 		if (sameModelRemint) {
 			this._retryAttempt++;

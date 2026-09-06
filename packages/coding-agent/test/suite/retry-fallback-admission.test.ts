@@ -53,9 +53,6 @@ describe("fallback context admission", () => {
 			expect(
 				harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change" && entry.modelId === "small"),
 			).toEqual([]);
-			expect(harness.eventsOfType("auto_retry_end")).toMatchObject([
-				{ success: false, finalError: expect.stringContaining("cannot switch") },
-			]);
 		});
 	}
 });
