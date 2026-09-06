@@ -203,7 +203,7 @@ export class RetryFallbackController {
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
-			this.deps.cooldowns.note(currentBase, failure);
+				this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
 

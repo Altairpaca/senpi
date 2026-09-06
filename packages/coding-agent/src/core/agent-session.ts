@@ -4753,22 +4753,13 @@ export class AgentSession {
 		}
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
-		if (opts.appendSessionEntry) {
-			this.sessionManager.appendModelChange(
-				model.provider,
-				model.id,
-				opts.entryReason,
-				previousModel?.provider,
-				previousModel?.id,
-			);
-		}
-		if (opts.persistDefault) {
-			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
-		}
-
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
 		const previousTier = this._currentServiceTier;
 		const previousFastMode = this.isFastModeActive();
+		const previousThinkingLevel = this.agent.state.thinkingLevel;
+		const previousThinkingSelection = this.agent.state.thinkingSelection;
+		const previousReasoningBaseline = this.agent.state.reasoningBaseline;
+		const previousAbortServerSideFallback = this.agent.abortServerSideFallback;
 		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
 
 		if (opts.ephemeralThinkingLevel !== undefined) {
@@ -4784,6 +4775,8 @@ export class AgentSession {
 				? await this._emitModelSelect(model, previousModel, opts.modelSelectSource)
 				: undefined;
 			this.assertModelUsable(model, liveContextTokens);
+			if (opts.appendSessionEntry) this.sessionManager.appendModelChange(model.provider, model.id, opts.entryReason, previousModel?.provider, previousModel?.id);
+			if (opts.persistDefault) this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 			// Emit only after all admission hooks have accepted the candidate.
 			this._emit({
 				type: "model_changed",
@@ -4797,6 +4790,11 @@ export class AgentSession {
 			if (previousModel) this.agent.state.model = previousModel;
 			else delete (this.agent.state as { model?: Model<Api> }).model;
 			this.agent.state.systemPrompt = previousSystemPrompt;
+			this.agent.state.thinkingLevel = previousThinkingLevel;
+			this.agent.state.thinkingSelection = previousThinkingSelection;
+			this.agent.state.reasoningBaseline = previousReasoningBaseline;
+			this.agent.abortServerSideFallback = previousAbortServerSideFallback;
+			this._currentServiceTier = previousTier;
 			throw error;
 		}
 	}
@@ -7686,6 +7684,10 @@ export class AgentSession {
 		let switchedFallback = false;
 		let is429TierRouted = false;
 		let hintTierDelayMs: number | undefined;
+		const tryFallback = async (reason: Parameters<typeof this._retryFallback.tryFallback>[0], failure: Parameters<typeof this._retryFallback.tryFallback>[1]) => {
+			try { return await tryFallback(reason, failure); }
+			catch (error) { if (error instanceof ModelUsabilityBudgetError) { this._resolveRetry(); return false; } throw error; }
+		};
 		if (sameModelRemint) {
 			this._retryAttempt++;
 			if (this._retryAttempt > retryProfile.turn.maxRetries) {
@@ -7707,20 +7709,7 @@ export class AgentSession {
 			// Billing-class failures never recover on this account, so the fallback
 			// switch pins as the session model instead of reverting after the cooldown.
 			const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
-			try {
-				switchedFallback = await this._retryFallback.tryFallback(reason, {
-					errorMessage,
-				});
-			} catch (error) {
-				// A fallback that cannot admit the live context is not a provider
-				// failure. Do not continue expanding the chain: preserve the session
-				// model and terminate recovery deterministically.
-				if (error instanceof ModelUsabilityBudgetError) {
-					this._resolveRetry();
-					return "blocked";
-				}
-				throw error;
-			}
+			switchedFallback = await tryFallback(reason, { errorMessage });
 			if (!switchedFallback) {
 				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 				if (exhaustedChainKey) {
@@ -7752,7 +7741,7 @@ export class AgentSession {
 				this._resolveRetry();
 				return "not-handled";
 			}
-			switchedFallback = await this._retryFallback.tryFallback("refusal", {});
+			switchedFallback = await tryFallback("refusal", {});
 			if (!switchedFallback) {
 				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 				if (exhaustedChainKey) {
@@ -7800,7 +7789,7 @@ export class AgentSession {
 				is429TierRouted = true;
 				this._retryAttempt++;
 				if (this._retryAttempt > retryProfile.turn.maxRetries) {
-					switchedFallback = await this._retryFallback.tryFallback("transient", {
+					switchedFallback = await tryFallback("transient", {
 						errorMessage,
 						retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
 					});
@@ -7835,7 +7824,7 @@ export class AgentSession {
 				if (tier === "no-hint-fast-fallback") {
 					// Fall back immediately when a candidate exists; otherwise degrade
 					// to same-model in-turn retries instead of failing the turn.
-					switchedFallback = await this._retryFallback.tryFallback("transient", { errorMessage });
+					switchedFallback = await tryFallback("transient", { errorMessage });
 					if (switchedFallback) {
 						this._retryAttempt = 1;
 					} else {
@@ -7847,7 +7836,7 @@ export class AgentSession {
 					this._retryAttempt++;
 					if (this._retryAttempt > retryProfile.turn.maxRetries) {
 						// Budget exhausted within tier1; fall back.
-						switchedFallback = await this._retryFallback.tryFallback("transient", {
+						switchedFallback = await tryFallback("transient", {
 							errorMessage,
 							retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
 						});
@@ -7892,7 +7881,7 @@ export class AgentSession {
 						if (inTurnResult.demoteToProbeBack) {
 							// Cumulative hinted wait exceeded cap; demote to tier2 fallback path.
 							const remainingHintMs = Math.max(0, (this._hintDeadlineMs ?? Date.now()) - Date.now());
-							switchedFallback = await this._retryFallback.tryFallback("transient", {
+							switchedFallback = await tryFallback("transient", {
 								errorMessage,
 								retryAfterMs: remainingHintMs,
 							});
@@ -7925,7 +7914,7 @@ export class AgentSession {
 				} else {
 					// tier2-fallback-probe-back or tier3-fallback-only: immediate fallback.
 					const remainingHintMs = hintMs ?? 0;
-					switchedFallback = await this._retryFallback.tryFallback("transient", {
+					switchedFallback = await tryFallback("transient", {
 						errorMessage,
 						retryAfterMs: remainingHintMs,
 					});
@@ -7946,7 +7935,7 @@ export class AgentSession {
 				this._retryAttempt++;
 			}
 			if (!is429TierRouted && this._retryAttempt > retryProfile.turn.maxRetries) {
-				switchedFallback = await this._retryFallback.tryFallback("transient", {
+				switchedFallback = await tryFallback("transient", {
 					errorMessage,
 					retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
 				});
@@ -7991,7 +7980,7 @@ export class AgentSession {
 			// branch above may have already switched on this same error, and hopping again
 			// here would skip that candidate's own retry budget.
 			if (!switchedFallback) {
-				switchedFallback = await this._retryFallback.tryFallback("transient", {
+				switchedFallback = await tryFallback("transient", {
 					errorMessage,
 					retryAfterMs: providerDelayMs,
 				});
