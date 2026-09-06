@@ -41,6 +41,24 @@
 
 # changes
 
+## 2026-09-06 - Preserve fallback decision logs across atomic admission
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: separates fallback decision logging from candidate reservation, so actual fallback attempts still record `no_chain` and `candidates_exhausted` without reserving a candidate before context admission succeeds.
+
+### Why
+
+- The atomic admission fix correctly moved reservation until after model admission, but also suppressed the diagnostic logger on the same probe path. That removed the only durable fallback decision observable and caused `fallback.log` to disappear for no-chain and exhausted-chain decisions.
+
+### Why an extension could not handle it
+
+- Candidate reservation and fallback decision logging are private retry-controller state and lifecycle behavior below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `RetryFallbackController.tryFallback` and `nextCandidate` decision handling.
+
 ## 2026-09-06 - Preserve inline skill anchors in composed prompts
 
 ### What changed

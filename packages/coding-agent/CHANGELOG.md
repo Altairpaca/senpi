@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Fallback decision logging remains visible when atomic admission probes reject or exhaust candidates.
 - Fallback activation now validates context admission before persisting or
   emitting model changes, and unusable refusal or transient fallback candidates
   fail closed without leaking internal admission errors.
