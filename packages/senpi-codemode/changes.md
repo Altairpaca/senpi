@@ -1,5 +1,66 @@
 # senpi-codemode fork changes
 
+## 2026-09-06 - JS kernel: cooperative interrupt, bounded stop, stdin isolation (#1403)
+
+### What changed
+
+- `src/kernels/js/worker-core.js`: handles the `interrupt` bridge message. It emits an
+  `interrupt-ack` status at once, rejects every pending bridge `tool.*` call and any later call from
+  the same cell with `CellInterruptedError` (`JS cell interrupted: <reason>`), and asks the runtime to
+  kill the cell's children, so a cell parked on a bridge call or a spawned child settles without
+  losing the worker.
+- `src/kernels/js/worker-runtime.js`: tracks `Bun.spawn` children created during the active cell
+  (forgotten when they exit or the cell ends) and kills the live ones on `interrupt()`.
+- `src/kernels/js/worker-shell-capture.js` (+ `.d.ts`): while a cell is active every `Bun.$`
+  template is framed as `true | (\n<template>\n)` so no command inherits the host's terminal as
+  stdin; `Bun.spawn` children are reported through the new optional `onChild` hook.
+- `src/kernels/js/context-manager.ts`: `interrupt()` and the kernel timeout go through
+  `#stopActive` - post `interrupt`, wait for the ack (`INTERRUPT_ACK_MS`) and then the settlement
+  grace (`JS_INTERRUPT_GRACE_MS`), and only replace the worker when the cell stays unsettled;
+  the host-composed result (`interruptResult`) wins over the worker's own error text; a worker
+  abandoned at the termination deadline gets a stderr note into the cell output. The worker
+  generation moved to `src/kernels/js/worker-slot.ts` (startup with inline fallback, message
+  fencing, bounded retirement) and the startup sequence to `src/kernels/js/worker-startup.ts`
+  (also the new home of `resolveJsWorkerEntryUrl`, re-exported from `context-manager.ts`).
+- `src/kernels/js/interrupt-bounds.ts`: `awaitCooperativeSettlement`, `retireWorker` (bounded by
+  `WORKER_TERMINATE_DEADLINE_MS`), `abandonedWorkerNote`.
+- `src/kernels/js/run-queue.ts`: pending runs carry `settlement`, `interruptResult`,
+  `interruptAck`, `settledByWorker`; `settleAll` prefers the in-flight interrupt result.
+- `src/bridge/reserved.ts`: `INTERRUPT_ACK_OP`.
+- `src/tool/detached-cell-manager.ts`: `stop` and the hard limit cancel through `#cancel`, which
+  parks the completion notification (`interruptOutcome`) until the kernel reported whether state
+  survived and keeps the handle's `note`; the public snapshot/notifier/options interfaces moved to
+  `src/tool/detached-cell-contract.ts` (re-exported) and the status/wake-source projections to
+  `src/tool/detached-cell-status.ts`; `src/tool/detached-notification-queue.ts` awaits async
+  snapshots; `src/tool/detached-cell-snapshot.ts` and `src/tool/detached-eval-result.ts` carry
+  `interruptNote` into the stop result.
+- `src/tool/cell-execution.ts` + `src/tool/interrupt-note.ts`: the foreground timeout path keeps the
+  whole interrupt handle (`interruptHandle`) so `describeTimeoutState` can wait for a bounded stop
+  and append the kernel's note; `src/tool/types.ts` adds the optional `note` to
+  `KernelInterruptHandle`.
+- `src/tool/detached-cell-notification.ts`: the state note comes from `interruptionStateNote` /
+  `unknownInterruptionStateNote` (`src/tool/interrupt-note.ts`) instead of a per-language constant.
+
+### Why
+
+- Audit of 30k eval calls (#1403): `stop` on a worker blocked in `Bun.spawnSync` hung the tool call
+  (51 min in production) because `worker.terminate()` had no deadline; `Bun.$` inherited the TUI's
+  stdin so `cat`, ssh/git prompts, and keychain dialogs blocked cells forever; every interrupt or
+  timeout wiped the VM and the note claimed the worker was "unresponsive" without ever asking it.
+  Python already preserves state on SIGINT; JavaScript now matches it where the cell can settle and
+  tells the truth where it cannot.
+
+### Why an extension could not handle it
+
+- Interrupt delivery, worker lifecycle, and the shell wrapper live inside the kernel package's
+  worker protocol; no extension can reach the worker thread or the run queue.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/context-manager.ts` was split; an upstream change to worker startup or
+  interrupt lands in `worker-slot.ts` / `worker-startup.ts` / `interrupt-bounds.ts` now.
+- LOW: `worker-core.js`, `worker-runtime.js`, `worker-shell-capture.js`, `detached-cell-*.ts`.
+
 ## 2026-09-05 - GPT eval dialect routes waits through tool.monitor
 
 ### What changed

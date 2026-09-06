@@ -8,7 +8,13 @@
 
 ### Changed
 
+- JavaScript eval cells now interrupt cooperatively: `stop` and kernel timeouts first ask the worker to settle the cell (pending bridge `tool.*` calls are rejected, `Bun.spawn` children are killed) and keep the worker VM and its globals when the cell settles within a 2 s grace; only an unsettled cell restarts the worker.
+
 ### Fixed
+
+- `eval({ action: "stop" })` no longer hangs when the JavaScript worker is blocked in a synchronous call such as `Bun.spawnSync`: worker termination is bounded by a 3 s deadline, a fresh worker replaces the blocked one, and the cell output names the blocked synchronous call.
+- `Bun.$` commands run from a JavaScript cell no longer inherit the TUI's terminal as stdin (a stdin reader such as `cat`, an ssh or git credential prompt, or a keychain prompt blocked the cell forever); the shell wrapper isolates stdin while a cell is active without changing output, exit codes, `cwd`, `env`, or explicit stdin redirects.
+- Stop results and detached-cell completion notifications report the real interrupt outcome (variables preserved, worker restarted, or outcome unknown) instead of a hardcoded per-language note.
 
 ### Removed
 
