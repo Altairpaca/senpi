@@ -7,6 +7,7 @@ import { DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../src/core/c
 import { StreamDurationBudgetError } from "../../src/core/compaction/stream-watchdog.ts";
 import {
 	classifyRequiredCompactionFallbackFailure,
+	type DeterministicFallbackDiagnostic,
 	createRequiredCompactionFallback,
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
 import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
@@ -327,7 +328,7 @@ describe("required compaction deterministic fallback", () => {
 		const branchEntries = harness.sessionManager.getBranch();
 		const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
 		expect(preparation).toBeDefined();
-		const diagnostics: { rejectionReason?: string; candidatesChecked?: number } = {};
+		const diagnostics: DeterministicFallbackDiagnostic = {};
 		const result = createRequiredCompactionFallback(
 			{ ...preparation!, firstKeptEntryId: preparedBoundaryId, tokensBefore: 10_000, settings: DEFAULT_COMPACTION_SETTINGS },
 			1_000_000,
@@ -372,10 +373,7 @@ describe("required compaction deterministic fallback", () => {
 			const branchEntries = harness.sessionManager.getBranch();
 			const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
 			expect(preparation).toBeDefined();
-			const diagnostics: {
-				rejectionReason?: string;
-				candidateRejections?: Array<{ firstKeptEntryId: string; rejectionReason: string }>;
-			} = {};
+			const diagnostics: DeterministicFallbackDiagnostic = {};
 
 			const result = createRequiredCompactionFallback(
 				{ ...preparation!, firstKeptEntryId: preparedBoundaryId, tokensBefore: 10_000, settings: DEFAULT_COMPACTION_SETTINGS },
