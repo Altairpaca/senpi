@@ -4912,4 +4912,30 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - LOW: `_handleRetryableError` fallback admission in
   packages/coding-agent/src/core/agent-session.ts.
+## 2026-09-06 - Make fallback activation atomic for unusable candidates
+
+### What changed
+
+- packages/coding-agent/src/core/agent-session.ts performs model-select hooks
+  and usability admission before persisting or emitting a model change.
+- packages/coding-agent/src/core/retry-fallback/controller.ts reserves fallback
+  candidates only after a successful model switch.
+
+### Why
+
+- An over-budget fallback could mutate session state and announce a rejected
+  model before admission failed, causing false model-change/retry events and
+  leaking the typed usability error.
+
+### Why this lives in the fork
+
+- Retry ownership, model admission, and fallback switching are core session
+  behavior below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: fallback switch admission in
+  packages/coding-agent/src/core/agent-session.ts and candidate reservation in
+  packages/coding-agent/src/core/retry-fallback/controller.ts.
+
 
