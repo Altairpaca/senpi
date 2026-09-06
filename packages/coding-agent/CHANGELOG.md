@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The Windows RPC host supervisor now creates its internal socket directory recursively, so launching `--internal-rpc-host-supervisor` directly on a fresh profile no longer crashes with `ENOENT ... mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` ([#1370](https://github.com/code-yeongyu/senpi/issues/1370))
+
 ### Removed
 
 ## [2026.9.6] - 2026-09-06

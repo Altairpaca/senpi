@@ -101,13 +101,18 @@ const CHILD_WATCH_FD = 3;
  * The internal hop must stay short enough for sun_path (104 bytes on macOS)
  * regardless of where the public socket lives, and private against other local
  * users, so it gets its own 0700 directory under the OS temp directory.
+ *
+ * On win32 the directory lives under the caller-supplied rpc-host-daemon
+ * directory, which ensureHost() creates but a direct --internal-rpc-host-supervisor
+ * launch does not, so the parent is created recursively.
  */
-async function createInternalSocketPath(
+export async function createInternalSocketPath(
 	baseDir = tmpdir(),
+	platform: NodeJS.Platform = process.platform,
 ): Promise<{ socket: string; dir?: string; secretPath?: string }> {
-	if (process.platform === "win32") {
+	if (platform === "win32") {
 		const dir = join(baseDir, `internal-${randomUUID()}`);
-		await mkdir(dir, { recursive: false, mode: 0o700 });
+		await mkdir(dir, { recursive: true, mode: 0o700 });
 		return {
 			socket: `\\\\.\\pipe\\senpi-rpc-internal-${randomUUID()}`,
 			dir,
