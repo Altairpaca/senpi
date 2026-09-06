@@ -11,6 +11,7 @@
 ### Fixed
 
 - Preserve Claude SDK OAuth terminal results and failure attribution across replay races.
+- Re-enable senpi compaction on Claude SDK OAuth lanes when `compaction.model` is configured, using that provider/model only for summarization and falling back safely to the session model when it cannot be resolved.
 
 ### Removed
 

@@ -31,9 +31,13 @@ import {
 	type SessionEntry,
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
-import type { CompactionSettings } from "./compaction-settings.ts";
+import type { CompactionSettings as BaseCompactionSettings } from "./compaction-settings.ts";
 
-export { type CompactionSettings, DEFAULT_COMPACTION_SETTINGS } from "./compaction-settings.ts";
+export type CompactionSettings = BaseCompactionSettings & {
+	/** Optional "provider/model" override for the compaction summarization model. */
+	model?: string;
+};
+export { DEFAULT_COMPACTION_SETTINGS } from "./compaction-settings.ts";
 
 import {
 	consumeStreamWithIdleTimeout,

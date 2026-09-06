@@ -565,3 +565,21 @@ If upstream changes branch summary preparation or adds new branch summary data s
 ### Expected merge conflict zones
 
 - `compaction.ts` around `completeSummarization` request option construction.
+
+## 2026-09-06 - Support an optional compaction summarization model
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: extends the exported compaction settings contract with an optional `model` provider/model override.
+
+### Why
+
+- Claude SDK OAuth sessions need an explicit senpi summarization model escape hatch when SDK-native compaction does not fire.
+
+### Why an extension could not handle it
+
+- The settings type is consumed by core compaction execution and must be part of the shared compaction contract before extension hooks run.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/compaction/compaction.ts` settings type re-export near the module imports.

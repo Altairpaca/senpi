@@ -132,7 +132,7 @@ export interface Settings {
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
-	compaction?: CompactionSettings;
+	compaction?: CompactionSettings & { model?: string };
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	hideThinkingBlock?: boolean;
@@ -1244,8 +1244,11 @@ export class SettingsManager {
 		return compactionKeepRecentTokens(this.settings.compaction);
 	}
 
-	getCompactionSettings(): ResolvedCompactionSettings {
-		return resolveCompactionSettings(this.settings.compaction);
+	getCompactionSettings(): ResolvedCompactionSettings & { model?: string } {
+		return {
+			...resolveCompactionSettings(this.settings.compaction),
+			model: this.settings.compaction?.model,
+		};
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

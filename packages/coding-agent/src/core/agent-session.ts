@@ -1365,6 +1365,24 @@ export class AgentSession {
 		}
 	}
 
+	/**
+	 * Resolve the model used for compaction summarization. When the user sets a
+	 * `compaction.model` override ("provider/model"), that model is used for the
+	 * summarization call instead of the session model — this is what lets an
+	 * SDK-owned lane (claude-sdk-oauth) compact on a cheaper/different model.
+	 * Any resolution failure (unset, malformed, unknown model) falls back to the
+	 * session model so compaction never silently breaks.
+	 */
+	private _resolveCompactionModel(sessionModel: Model<any>): Model<any> {
+		const override = this.settingsManager.getCompactionSettings().model;
+		if (!override) return sessionModel;
+		const slash = override.indexOf("/");
+		if (slash <= 0 || slash === override.length - 1) return sessionModel;
+		const provider = override.slice(0, slash);
+		const modelId = override.slice(slash + 1);
+		return this._modelRuntime.getModel(provider, modelId) ?? sessionModel;
+	}
+
 	private async _getCompactionRequestAuth(model: Model<any>): Promise<{
 		model: Model<any>;
 		apiKey?: string;
@@ -5685,13 +5703,19 @@ export class AgentSession {
 				}
 
 				if (!compactionResult) {
+					// A configured compaction.model override redirects only the
+					// summarization call to that model; every other part of the session
+					// (lifecycle record, preparation, branch) still tracks the session
+					// model. Falls back to the session model when the override is unset
+					// or cannot be resolved.
+					const compactionModel = this._resolveCompactionModel(model);
 					const {
 						model: requestModel,
 						apiKey,
 						headers,
 						extraBody,
 						env,
-					} = await this._getCompactionRequestAuth(model);
+					} = await this._getCompactionRequestAuth(compactionModel);
 					compactionResult = await this._runDefaultCompaction(
 						preparation,
 						requestModel,

@@ -1595,3 +1595,21 @@ untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts`
 - LOW: `index.ts` around the `session_compact` rejected branch.
 - LOW: `context-pipeline.ts` around the `sourceMessages` reduction predicate.
 - Coverage: `test/compaction/external-owner-breaker-isolation.test.ts`.
+
+## 2026-09-06 - Re-enable senpi compaction for configured SDK-lane overrides
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: accepts resolved compaction settings and lifts the Claude SDK OAuth stand-down when `compaction.model` is configured, while preserving the stand-down when it is unset.
+
+### Why
+
+- A configured alternate summarization model makes senpi the owner of summarization for the lane, preventing resident SDK sessions from growing without a compaction path.
+
+### Why an extension could not handle it
+
+- Lane ownership is decided by the builtin compaction policy before compaction triggers and context-reduction decisions; no external extension seam can override that policy safely.
+
+### Expected merge conflict zones
+
+- LOW: `lane-policy.ts` `LaneContext` and `disablesSenpiCompaction()` provider-scoping logic.

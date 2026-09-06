@@ -4835,3 +4835,39 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - `src/core/agent-session.ts` next-turn refresh and compaction lifecycle; `src/core/agent-session-runtime.ts` replacement ordering.
+
+## 2026-09-06 - Optional compaction model override for Claude SDK OAuth
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: resolves an optional `compaction.model` provider/model override for default compaction summarization, while preserving session-model lifecycle bookkeeping and falling back to the session model for malformed or unknown overrides.
+
+### Why
+
+- Claude SDK OAuth lanes can retain a resident SDK session whose native compaction does not fire; users need a reliable senpi-owned summarization escape hatch on a separate model.
+
+### Why an extension could not handle it
+
+- Model resolution, summarization authentication, and the core compaction execution request are session lifecycle boundaries below extension interception.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts` around `_resolveCompactionModel()` and `_executeCompaction()` default summarization request construction.
+
+## 2026-09-06 - Thread compaction model overrides through settings
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: preserves the optional `compaction.model` provider/model value in the resolved compaction settings returned to core and extensions.
+
+### Why
+
+- The compaction executor and lane policy need one resolved settings path so the override is applied consistently without changing unrelated session settings.
+
+### Why an extension could not handle it
+
+- Settings resolution is owned by the core settings manager and occurs before extension contexts consume the resolved compaction settings.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts` `Settings.compaction` typing and `getCompactionSettings()` return value.
