@@ -7,8 +7,8 @@ import { DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../src/core/c
 import { StreamDurationBudgetError } from "../../src/core/compaction/stream-watchdog.ts";
 import {
 	classifyRequiredCompactionFallbackFailure,
-	type DeterministicFallbackDiagnostic,
 	createRequiredCompactionFallback,
+	type DeterministicFallbackDiagnostic,
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
 import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
 import { SummaryRequestError } from "../../src/core/extensions/builtin/compaction/speculative.ts";
@@ -330,7 +330,12 @@ describe("required compaction deterministic fallback", () => {
 		expect(preparation).toBeDefined();
 		const diagnostics: DeterministicFallbackDiagnostic = {};
 		const result = createRequiredCompactionFallback(
-			{ ...preparation!, firstKeptEntryId: preparedBoundaryId, tokensBefore: 10_000, settings: DEFAULT_COMPACTION_SETTINGS },
+			{
+				...preparation!,
+				firstKeptEntryId: preparedBoundaryId,
+				tokensBefore: 10_000,
+				settings: DEFAULT_COMPACTION_SETTINGS,
+			},
 			1_000_000,
 			"summarization-timeout",
 			{},
@@ -376,7 +381,12 @@ describe("required compaction deterministic fallback", () => {
 			const diagnostics: DeterministicFallbackDiagnostic = {};
 
 			const result = createRequiredCompactionFallback(
-				{ ...preparation!, firstKeptEntryId: preparedBoundaryId, tokensBefore: 10_000, settings: DEFAULT_COMPACTION_SETTINGS },
+				{
+					...preparation!,
+					firstKeptEntryId: preparedBoundaryId,
+					tokensBefore: 10_000,
+					settings: DEFAULT_COMPACTION_SETTINGS,
+				},
 				1_000_000,
 				"summarization-timeout",
 				{},

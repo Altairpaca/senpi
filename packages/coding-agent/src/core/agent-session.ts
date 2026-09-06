@@ -7692,7 +7692,10 @@ export class AgentSession {
 		let switchedFallback = false;
 		let is429TierRouted = false;
 		let hintTierDelayMs: number | undefined;
-		const tryFallback = async (reason: Parameters<typeof this._retryFallback.tryFallback>[0], failure: Parameters<typeof this._retryFallback.tryFallback>[1]) => {
+		const tryFallback = async (
+			reason: Parameters<typeof this._retryFallback.tryFallback>[0],
+			failure: Parameters<typeof this._retryFallback.tryFallback>[1],
+		) => {
 			try {
 				return await this._retryFallback.tryFallback(reason, failure);
 			} catch (error) {
