@@ -1,6 +1,6 @@
 # changes
 
-## 2026-09-06 - Preserve inline skill anchors in composed prompts
+## [Unreleased] - Preserve inline skill anchors in composed prompts
 
 ### What changed
 
