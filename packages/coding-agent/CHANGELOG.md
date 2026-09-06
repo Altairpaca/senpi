@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- The deterministic compaction fallback now retains a prepared suffix whose tool results carry a well-formed image block instead of rejecting it as unsafe content and leaving the session stuck above the threshold; malformed blocks stay rejected and the fallback records each candidate's rejection reason in its diagnostics.
 - Fallback decision logging remains visible when atomic admission probes reject or exhaust candidates.
 - Fallback activation now validates context admission before persisting or
   emitting model changes, and unusable refusal or transient fallback candidates
