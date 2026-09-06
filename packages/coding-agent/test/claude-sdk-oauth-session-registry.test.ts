@@ -536,6 +536,16 @@ describe("Claude SDK OAuth session registry", () => {
 		expect(isBoundAccountTokenExpiring(entry, accounts)).toBe(false);
 	});
 
+	it("preserves a terminal result that arrives before replay claim", async () => {
+		const { query, registry, entry } = pumpFixture();
+		const turn = submitSessionTurn(registry, entry, { message: userContent });
+		const submitted = await submittedMessage(entry);
+		const terminal = result(submitted.uuid, entry.sdkSessionId);
+		query.emit(terminal);
+		expect((await turn).messages).toEqual([terminal]);
+		expect(entry.activeTurn).toBeNull();
+	});
+
 	it("claims a turn from the replayed submitted uuid", async () => {
 		const { query, registry, entry, replayEnabled } = pumpFixture();
 		const turn = submitSessionTurn(registry, entry, { message: userContent });
