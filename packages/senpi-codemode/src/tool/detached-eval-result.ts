@@ -40,6 +40,7 @@ export function createDetachedControlResult(snapshot: EvalDetachedCellSnapshot):
 		`Eval cell ${snapshot.cellId} (${snapshot.language}) is ${snapshot.state}.`,
 		output.length === 0 ? "(no buffered output)" : output,
 		...(terminationNote === undefined ? [] : [terminationNote]),
+		...(snapshot.interruptNote === undefined ? [] : [snapshot.interruptNote.trim()]),
 	].join("\n");
 	return {
 		content: [{ type: "text", text }, ...snapshot.result.content.filter((part) => part.type === "image")],

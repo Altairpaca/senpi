@@ -1,5 +1,5 @@
 import { IdleTimeout, type IdleTimeoutOptions, type TimeoutPauseHandle } from "../timeouts/idle-timeout.ts";
-import type { EvalKernel } from "./types.ts";
+import type { EvalKernel, KernelInterruptHandle } from "./types.ts";
 
 const INTERRUPT_DELIVERY_GRACE_MS = 100;
 
@@ -104,7 +104,8 @@ export class CellExecution {
 		this.#abort(this.#callerSignal.reason);
 	};
 
-	interruptStateRetained: Promise<boolean> | undefined;
+	/** Resolves with the kernel's interrupt handle once the abort reached it; undefined when no kernel was bound. */
+	interruptHandle: Promise<KernelInterruptHandle> | undefined;
 
 	#abort(reason: unknown): void {
 		if (!this.#active) return;
@@ -118,15 +119,12 @@ export class CellExecution {
 			return;
 		}
 		this.#interruptDeadline = setTimeout(() => this.#settleAbort(error), INTERRUPT_DELIVERY_GRACE_MS);
-		void Promise.resolve()
-			.then(async () => {
-				const handle = await kernel.interrupt(error.message);
-				this.interruptStateRetained = handle?.stateRetained;
-			})
-			.then(
-				() => this.#settleAbort(error),
-				(interruptError: unknown) => this.#settleAbort(interruptError),
-			);
+		const handle = Promise.resolve().then(async () => await kernel.interrupt(error.message));
+		this.interruptHandle = handle;
+		void handle.then(
+			() => this.#settleAbort(error),
+			(interruptError: unknown) => this.#settleAbort(interruptError),
+		);
 	}
 
 	#settleAbort(reason: unknown): void {
