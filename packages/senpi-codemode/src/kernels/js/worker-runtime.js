@@ -16,6 +16,7 @@ export class JsWorkerRuntime {
 	#env = new Map();
 	#hooks = null;
 	#pendingDisplays = [];
+	#children = new Set();
 
 	constructor(options) {
 		this.#cwd = options.cwd;
@@ -41,8 +42,22 @@ export class JsWorkerRuntime {
 			return value;
 		} finally {
 			this.#pendingDisplays = [];
+			this.#children.clear();
 			this.#hooks = null;
 		}
+	}
+
+	interrupt() {
+		for (const child of this.#children) {
+			if (child.exitCode === null && child.signalCode === null) child.kill();
+		}
+	}
+
+	#trackChild(child) {
+		if (child === null || typeof child !== "object" || typeof child.kill !== "function") return;
+		this.#children.add(child);
+		const forget = () => this.#children.delete(child);
+		if (child.exited instanceof Promise) child.exited.then(forget, forget);
 	}
 
 	async #drainPendingDisplays() {
@@ -99,6 +114,7 @@ export class JsWorkerRuntime {
 		const restoreShellCapture = installShellCapture({
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
+			onChild: (child) => this.#trackChild(child),
 		});
 		globalThis.__senpi_restore_console__ = () => {
 			console.log = originalLog;

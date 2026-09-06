@@ -166,10 +166,26 @@ when the call had no summary), clearing as soon as the last detached cell settle
 
 Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
 `eval({ action: "stop", cell_id })` to cancel it. Python stop interrupts the
-existing kernel and preserves variables. JavaScript stop kills and restarts its
-worker, so JavaScript VM state is lost. Detached completion messages state when
-kernel variables are available to the next eval cell; oversized buffered output
-is written under the session local root and referenced as `local://…`.
+existing kernel and preserves variables. JavaScript stop is cooperative first:
+the worker rejects the cell's pending bridge `tool.*` calls and kills the
+`Bun.spawn` children it started, and a cell that settles within the 2 s grace
+keeps the worker and every global. Only a cell that stays unsettled (a
+never-resolving promise, an un-abortable `fetch`, a `Bun.$` command) costs the
+worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
+`child_process.spawnSync`) cannot be stopped at all; after a 3 s termination
+deadline a fresh worker replaces it, the cell output gains a stderr line naming
+the blocked synchronous call, and the blocked call keeps running until it
+returns. Kernel-level timeouts follow the same path. Stop results and detached
+completion messages report the real outcome - variables preserved, worker
+restarted, or outcome unknown - never a per-language assumption; oversized
+buffered output is written under the session local root and referenced as
+`local://…`.
+
+Commands a cell runs through `Bun.$` never read the host's terminal: the worker
+thread shares the TUI's stdin, so the shell wrapper hands every template an
+empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,
+`env`, and explicit `< ${input}` redirects are unchanged; `Bun.spawn` and
+`Bun.spawnSync` already default stdin to `/dev/null`.
 
 ## Output and artifacts
 

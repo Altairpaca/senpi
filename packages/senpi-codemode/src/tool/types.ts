@@ -112,6 +112,8 @@ export interface EvalKernelRunInput {
 export interface KernelInterruptHandle {
 	/** Resolves once the kernel knows whether user state survived the interrupt. */
 	readonly stateRetained: Promise<boolean>;
+	/** Extra outcome detail worth showing the model, e.g. that a blocked worker was abandoned. */
+	readonly note?: string;
 }
 
 export interface EvalKernel {
