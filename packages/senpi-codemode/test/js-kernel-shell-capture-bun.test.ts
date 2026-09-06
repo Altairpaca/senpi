@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +50,38 @@ async function runCellUnderBun(code: string): Promise<DriverRun> {
 	}
 }
 
+const OPEN_STDIN_CELL_TIMEOUT_MS = 5_000;
+
+async function runCellUnderBunWithOpenStdin(code: string): Promise<DriverRun> {
+	const root = await mkdtemp(join(tmpdir(), "senpi-shell-stdin-"));
+	try {
+		const driverPath = join(root, "driver.ts");
+		const reportPath = join(root, "report.json");
+		await writeFile(driverPath, driverSource(OPEN_STDIN_CELL_TIMEOUT_MS), "utf8");
+		const child = spawn("bun", [driverPath, code, reportPath], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+		child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+			stdout += chunk;
+		});
+		child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+		const [status] = (await once(child, "exit")) as [number | null];
+		if (status !== 0) throw new Error(`bun driver exited with ${status}: ${stderr}`);
+		const report: DriverReport = JSON.parse(await readFile(reportPath, "utf8"));
+		return { stdout, stderr, report };
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+}
+
+function textOf(messages: readonly KernelToHostMessage[], stream: "stdout" | "stderr"): string {
+	return messages
+		.flatMap((message) => (message.type === "text" && message.stream === stream ? [message.data] : []))
+		.join("");
+}
+
 describe.skipIf(!bunAvailable)("JavaScript kernel under Bun keeps child output off the host terminal", () => {
 	it("Given a cell awaiting `Bun.$` without quiet when it runs then the output lands in the cell, not on fd 1", async () => {
 		const run = await runCellUnderBun(
@@ -78,5 +111,38 @@ describe.skipIf(!bunAvailable)("JavaScript kernel under Bun keeps child output o
 
 		expect(run.report.result).toMatchObject({ ok: true, valueRepr: "0" });
 		expect(run.stderr).not.toContain("SPAWN_LEAK_MARKER");
+	});
+});
+
+describe.skipIf(!bunAvailable)("JavaScript kernel under Bun keeps the host stdin away from `Bun.$` children", () => {
+	it("Given the host keeps its stdin open when a cell awaits `Bun.$` on a command that reads stdin then the command sees EOF instead of waiting on the host", async () => {
+		const run = await runCellUnderBunWithOpenStdin(
+			"const r = await Bun.$`cat`.nothrow(); return [r.exitCode, r.stdout.toString().length]",
+		);
+
+		expect(run.report.result).toMatchObject({ ok: true, valueRepr: "[0,0]" });
+	});
+
+	it("Given the host keeps its stdin open when the stdin reader heads a pipeline then the pipeline still completes", async () => {
+		const run = await runCellUnderBunWithOpenStdin("return (await Bun.$`cat | wc -c`.text()).trim()");
+
+		expect(run.report.result).toMatchObject({ ok: true, valueRepr: '"0"' });
+	});
+
+	it("Given stdin isolation when a command exits non-zero with output on both streams then exit code, stdout, and stderr are unchanged", async () => {
+		const run = await runCellUnderBunWithOpenStdin(
+			"const r = await Bun.$`sh -c 'printf PAR_ERR >&2; printf PAR_OUT; exit 7'`.nothrow().quiet(); return [r.exitCode, r.stdout.toString(), r.stderr.toString()]",
+		);
+
+		expect(run.report.result).toMatchObject({ ok: true, valueRepr: '[7,"PAR_OUT","PAR_ERR"]' });
+	});
+
+	it("Given stdin isolation when the cell redirects its own stdin from a Response then that input still reaches the command", async () => {
+		const run = await runCellUnderBunWithOpenStdin(
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder belongs to the cell's own Bun.$ template
+			'return await Bun.$`cat < ${new Response("own-input")}`.text()',
+		);
+
+		expect(run.report.result).toMatchObject({ ok: true, valueRepr: '"own-input"' });
 	});
 });

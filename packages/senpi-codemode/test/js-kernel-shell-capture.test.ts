@@ -124,6 +124,22 @@ describe("JS kernel shell output capture", () => {
 		expect(promise).toBeInstanceOf(FakeShellPromise);
 		expect(fake.printed).toEqual(["idle\n", ""]);
 		expect(emitted).toEqual([]);
+		expect(fake.bun.$.framed).toEqual([false]);
+	});
+
+	it("Given an active cell when `$` runs then the template is framed so its commands read an empty stdin", async () => {
+		const fake = installFakeBun();
+		fake.outputs.set("cat file.txt | wc -c", output("0\n"));
+		const { emitText } = emitter();
+		let active = true;
+		restore = installShellCapture({ isActive: () => active, emitText });
+
+		const framed = await fake.bun.$`cat file.txt | wc -c`.text();
+		active = false;
+		await fake.bun.$`echo after`;
+
+		expect(framed).toBe("0\n");
+		expect(fake.bun.$.framed).toEqual([true, false]);
 	});
 
 	it("Given the captured shell when shell-level configuration methods are used then they chain on the captured shell", () => {

@@ -1,5 +1,13 @@
 const SHELL_CONFIG_METHODS = ["env", "cwd", "nothrow", "throws"];
 const SHELL_READ_METHODS = ["text", "json", "lines", "arrayBuffer", "bytes", "blob"];
+// `true | ( … )` hands every command in the template an empty pipe as stdin. The worker thread shares
+// the host process's fd 0 (the TUI's terminal), which Bun.$ would otherwise inherit, so a stdin
+// reader would wait on the user's keyboard forever. The newline before `)` keeps a trailing comment
+// from swallowing the closing paren; the Bun shell has no other stdin control (no `$.stdin`, no
+// redirect on a subshell).
+const STDIN_ISOLATION_HEAD = "true | (\n";
+const STDIN_ISOLATION_TAIL = "\n)";
+
 export function installShellCapture(options) {
 	const bun = globalThis.Bun;
 	if (!isBunRuntime(bun)) return () => {};
@@ -20,7 +28,7 @@ function isBunRuntime(bun) {
 function capturedShell(originalShell, options) {
 	const shell = (strings, ...expressions) => {
 		if (!options.isActive()) return originalShell(strings, ...expressions);
-		const promise = originalShell(strings, ...expressions);
+		const promise = originalShell(isolateStdin(strings), ...expressions);
 		return captureShellPromise(promise, options.emitText);
 	};
 	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
@@ -31,6 +39,18 @@ function capturedShell(originalShell, options) {
 		};
 	}
 	return shell;
+}
+
+function isolateStdin(strings) {
+	if (!Array.isArray(strings) || !Array.isArray(strings.raw)) return strings;
+	const cooked = [...strings];
+	const raw = [...strings.raw];
+	const last = cooked.length - 1;
+	cooked[0] = `${STDIN_ISOLATION_HEAD}${cooked[0]}`;
+	raw[0] = `${STDIN_ISOLATION_HEAD}${raw[0]}`;
+	cooked[last] = `${cooked[last]}${STDIN_ISOLATION_TAIL}`;
+	raw[last] = `${raw[last]}${STDIN_ISOLATION_TAIL}`;
+	return Object.freeze(Object.assign(cooked, { raw: Object.freeze(raw) }));
 }
 
 function captureShellPromise(promise, emitText) {
