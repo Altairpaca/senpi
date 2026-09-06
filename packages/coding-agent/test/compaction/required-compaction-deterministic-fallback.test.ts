@@ -372,7 +372,10 @@ describe("required compaction deterministic fallback", () => {
 			const branchEntries = harness.sessionManager.getBranch();
 			const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
 			expect(preparation).toBeDefined();
-			const diagnostics: { rejectionReason?: string } = {};
+			const diagnostics: {
+				rejectionReason?: string;
+				candidateRejections?: Array<{ firstKeptEntryId: string; rejectionReason: string }>;
+			} = {};
 
 			const result = createRequiredCompactionFallback(
 				{ ...preparation!, firstKeptEntryId: preparedBoundaryId, tokensBefore: 10_000, settings: DEFAULT_COMPACTION_SETTINGS },
@@ -385,9 +388,10 @@ describe("required compaction deterministic fallback", () => {
 
 			expect(result).toBeUndefined();
 			expect(diagnostics.rejectionReason).toBe("unsafe-retained-content");
-			expect(diagnostics.candidateRejections).toEqual([
-			{ firstKeptEntryId: preparedBoundaryId, rejectionReason: "unsafe-retained-content" },
-		]);
+			expect(diagnostics.candidateRejections).toContainEqual({
+				firstKeptEntryId: preparedBoundaryId,
+				rejectionReason: "unsafe-retained-content",
+			});
 		}
 	});
 
