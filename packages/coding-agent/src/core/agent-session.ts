@@ -4778,21 +4778,20 @@ export class AgentSession {
 		}
 
 		this._emitHighReasoningWarningIfNeeded();
-		// Post-switch: the level reported here is the one actually in force (clamped, or restored
-		// from this model's memory), not the level requested for the previous model.
-		this._emit({
-			type: "model_changed",
-			model,
-			thinkingLevel: this.thinkingLevel,
-			source: opts.modelSelectSource,
-		});
-		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
-
-		if (!opts.emitModelSelect) return undefined;
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		try {
-			const systemPromptChange = await this._emitModelSelect(model, previousModel, opts.modelSelectSource);
+			const systemPromptChange = opts.emitModelSelect
+				? await this._emitModelSelect(model, previousModel, opts.modelSelectSource)
+				: undefined;
 			this.assertModelUsable(model, liveContextTokens);
+			// Emit only after all admission hooks have accepted the candidate.
+			this._emit({
+				type: "model_changed",
+				model,
+				thinkingLevel: this.thinkingLevel,
+				source: opts.modelSelectSource,
+			});
+			this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 			return systemPromptChange;
 		} catch (error) {
 			if (previousModel) this.agent.state.model = previousModel;

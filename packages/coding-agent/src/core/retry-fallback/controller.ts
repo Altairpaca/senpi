@@ -199,7 +199,7 @@ export class RetryFallbackController {
 		failure: { errorMessage?: string; retryAfterMs?: number },
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
-		const candidate = this.nextCandidate();
+		const candidate = this.nextCandidate(false);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
@@ -209,6 +209,7 @@ export class RetryFallbackController {
 
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		await this.deps.switchModel(candidate.model, thinking, "fallback");
+		this.triedSelectors.add(baseSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;

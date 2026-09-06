@@ -1,5 +1,19 @@
 # changes
 
+## 2026-09-06 - Make fallback activation atomic for unusable candidates
+
+### What changed
+
+- Fallback candidates are reserved only after a successful model switch, and `model_changed` is emitted only after usability admission succeeds. Refusal and transient/429 fallback failures now fail closed without leaking `ModelUsabilityBudgetError` or fallback events.
+
+### Why
+
+- An over-budget fallback could mutate session state and announce a rejected model before admission failed, causing false model-change/retry events and leaking the typed usability error.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts` fallback switch admission and `packages/coding-agent/src/core/retry-fallback/controller.ts` candidate reservation.
+
 ## 2026-09-06 - Preserve inline skill anchors in composed prompts
 
 ### What changed
