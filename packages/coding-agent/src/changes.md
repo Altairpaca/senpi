@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts` now preserves the active
+- packages/coding-agent/src/core/agent-session.ts now preserves the active
   session model and ends retry recovery deterministically when a fallback
   candidate fails the live context usability admission check.
 
