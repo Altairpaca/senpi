@@ -147,6 +147,8 @@ The command response reports only `{ cancelled }`, so this event is the only pus
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
 
+On win32 the supervisor's internal hop lives under `<agentDir>/rpc-host-daemon/internal-<uuid>`, and that directory is created recursively, so a launcher may take this route on a fresh profile where `rpc-host-daemon` does not exist yet. The public socket secret is not self-provisioned: on win32 the supervisor still reads `<publicSocket>.secret`, which `ensureHost()` writes before spawning, so a direct launch must provision it the same way.
+
 Hosts started through `ensureHost()` are wrapped by a lifecycle supervisor that owns the public socket and spawns the
 real RPC host on a private internal hop. The policy lives in `<agentDir>/rpc-host-daemon/settings.json`:
 

@@ -1,5 +1,25 @@
 # changes
 
+## win32 supervisor creates its internal socket directory recursively (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the win32 branch of `createInternalSocketPath()` now creates `<baseDir>/internal-<uuid>` with `recursive: true` instead of `recursive: false`. The function is exported and takes an injectable `platform`, mirroring `spawnableChildLaunch(launch, platform)` in the same module, so the win32 bootstrap is coverable from any host. The posix branch is unchanged.
+- `packages/coding-agent/docs/rpc.md`: the shared-host lifecycle section records that the win32 internal hop directory is created recursively, and that the public socket secret is still caller-provisioned.
+- `packages/coding-agent/test/suite/regressions/1370-rpc-internal-socket-mkdir.test.ts`: regression coverage for the win32 bootstrap against a missing `rpc-host-daemon`, plus a guard that the posix branch stays rooted in the OS temp dir.
+
+### Why
+
+- `runHostSupervisor()` passes `paths.dir` (`<agentDir>/rpc-host-daemon`) as the base directory. `ensureHost()` creates that parent before spawning, but the hidden `--internal-rpc-host-supervisor` launch route does not, so on a fresh Windows profile the supervisor died during bootstrap with `ENOENT: no such file or directory, mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` (#1370). The posix branch never hit this because it roots the directory in `tmpdir()`, which always exists.
+
+### Why an extension could not handle it
+
+- The failure happens inside the supervisor's own bootstrap, before any session, runtime, or extension surface exists.
+
+### Expected merge conflict zones
+
+- LOW: the `createInternalSocketPath` signature and its win32 `mkdir` call in `host-lifecycle.ts`, and the internal launch route paragraph in `docs/rpc.md`.
+
 ## Shared-host logical sessions are unlimited by default (2026-09-06)
 
 ### What changed
