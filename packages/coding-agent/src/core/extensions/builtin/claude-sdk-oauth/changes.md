@@ -1,5 +1,25 @@
 # claude-sdk-oauth
 
+## 2026-09-06 - Preserve early terminal results during turn claim
+
+### What changed
+
+- `session-registry-pump.ts` and `session-turn-claim.ts` retain a matching SDK result received before replay claim and attribute it when the claim arrives instead of discarding the turn as `SessionTurnAttributionError`.
+- `test/claude-sdk-oauth-session-registry.test.ts` covers the deterministic early-result ordering.
+
+### Why
+
+- Claude SDK OAuth can emit a terminal result before the replayed user message; the result belongs to the submitted turn and must settle it safely.
+
+### Why an extension could not handle it
+
+- The race occurs inside the builtin provider's private async query pump and turn claim state machine, before extension messages are delivered.
+
+### Expected merge conflict zones
+
+- LOW in `session-registry-pump.ts` and `session-turn-claim.ts` around pre-replay buffering and claim handling; test addition near the session registry pump fixtures.
+
+
 ## 2026-09-03 - Persist compaction-aware restart bindings
 
 ### What changed
