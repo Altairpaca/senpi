@@ -1,7 +1,11 @@
 import { JsWorkerRuntime } from "./worker-runtime.js";
 
+// Mirrors INTERRUPT_ACK_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
+const INTERRUPT_ACK_OP = "interrupt-ack";
+
 export function createWorkerCore(transport, options) {
 	let runtime = null;
+	let activeCell = null;
 	const pendingTools = new Map();
 
 	function emit(message) {
@@ -14,6 +18,7 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		const startedAtMs = performance.now();
+		activeCell = { cellId: message.cellId, interruption: null };
 		try {
 			const value = await runtime.run(message.code, message.cellId, {
 				emit,
@@ -22,14 +27,29 @@ export function createWorkerCore(transport, options) {
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs) });
 		} catch (error) {
 			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs) });
+		} finally {
+			activeCell = null;
 		}
 	}
 
 	async function callTool(toolName, args) {
+		if (activeCell?.interruption) throw activeCell.interruption;
 		const callId = `js-${crypto.randomUUID()}`;
 		const promise = new Promise((resolve, reject) => pendingTools.set(callId, { resolve, reject }));
 		emit({ type: "tool-call", callId, toolName, args });
 		return await promise;
+	}
+
+	function interruptCell(reason) {
+		if (!activeCell || !runtime) return;
+		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId } });
+		const interruption = cellInterruptedError(reason);
+		activeCell.interruption = interruption;
+		for (const [callId, pending] of pendingTools) {
+			pendingTools.delete(callId);
+			pending.reject(interruption);
+		}
+		runtime.interrupt();
 	}
 
 	function onMessage(message) {
@@ -55,6 +75,10 @@ export function createWorkerCore(transport, options) {
 			else pending.reject(errorFromBridge(message.error));
 			return;
 		}
+		if (message.type === "interrupt") {
+			interruptCell(message.reason ?? "interrupted");
+			return;
+		}
 		if (message.type === "close") {
 			emit({ type: "closed" });
 			transport.close();
@@ -77,6 +101,12 @@ function durationMs(startedAtMs) {
 function valueRepr(value) {
 	if (value === undefined) return undefined;
 	return JSON.stringify(value);
+}
+
+function cellInterruptedError(reason) {
+	const error = new Error(`JS cell interrupted: ${reason}`);
+	error.name = "CellInterruptedError";
+	return error;
 }
 
 function bridgeError(error) {

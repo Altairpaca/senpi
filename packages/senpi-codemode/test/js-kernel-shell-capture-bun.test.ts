@@ -21,14 +21,14 @@ type DriverRun = {
 	readonly report: DriverReport;
 };
 
-function driverSource(): string {
+function driverSource(cellTimeoutMs: number): string {
 	return [
 		'import { writeFile } from "node:fs/promises";',
 		`import { JavaScriptKernel } from ${JSON.stringify(kernelModulePath)};`,
 		"const [code, reportPath] = process.argv.slice(2);",
 		'const kernel = new JavaScriptKernel({ sessionId: "shell-capture", cwd: process.cwd(), parallelPoolWidth: 1 });',
 		"const messages = [];",
-		'const result = await kernel.run({ cellId: "shell-capture-cell", code, timeoutMs: 20_000, onMessage: (message) => messages.push(message) });',
+		`const result = await kernel.run({ cellId: "shell-capture-cell", code, timeoutMs: ${cellTimeoutMs}, onMessage: (message) => messages.push(message) });`,
 		"await kernel.close();",
 		'await writeFile(reportPath, JSON.stringify({ mode: kernel.mode, result, messages }), "utf8");',
 	].join("\n");
@@ -39,7 +39,7 @@ async function runCellUnderBun(code: string): Promise<DriverRun> {
 	try {
 		const driverPath = join(root, "driver.ts");
 		const reportPath = join(root, "report.json");
-		await writeFile(driverPath, driverSource(), "utf8");
+		await writeFile(driverPath, driverSource(20_000), "utf8");
 		const run = spawnSync("bun", [driverPath, code, reportPath], { encoding: "utf8", cwd: root, timeout: 60_000 });
 		if (run.status !== 0) throw new Error(`bun driver exited with ${run.status}: ${run.stderr}`);
 		const report: DriverReport = JSON.parse(await readFile(reportPath, "utf8"));
@@ -47,12 +47,6 @@ async function runCellUnderBun(code: string): Promise<DriverRun> {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
-}
-
-function textOf(messages: readonly KernelToHostMessage[], stream: "stdout" | "stderr"): string {
-	return messages
-		.flatMap((message) => (message.type === "text" && message.stream === stream ? [message.data] : []))
-		.join("");
 }
 
 describe.skipIf(!bunAvailable)("JavaScript kernel under Bun keeps child output off the host terminal", () => {

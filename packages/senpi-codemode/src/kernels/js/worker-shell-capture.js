@@ -1,6 +1,5 @@
 const SHELL_CONFIG_METHODS = ["env", "cwd", "nothrow", "throws"];
 const SHELL_READ_METHODS = ["text", "json", "lines", "arrayBuffer", "bytes", "blob"];
-
 export function installShellCapture(options) {
 	const bun = globalThis.Bun;
 	if (!isBunRuntime(bun)) return () => {};
@@ -20,8 +19,9 @@ function isBunRuntime(bun) {
 
 function capturedShell(originalShell, options) {
 	const shell = (strings, ...expressions) => {
+		if (!options.isActive()) return originalShell(strings, ...expressions);
 		const promise = originalShell(strings, ...expressions);
-		return options.isActive() ? captureShellPromise(promise, options.emitText) : promise;
+		return captureShellPromise(promise, options.emitText);
 	};
 	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
 	for (const method of SHELL_CONFIG_METHODS) {
@@ -87,13 +87,19 @@ function capturedSpawn(originalSpawn, options) {
 	return (...args) => {
 		if (!options.isActive()) return originalSpawn(...args);
 		const [first, second] = args;
+		let child;
 		if (Array.isArray(first)) {
 			const spawnOptions = second === undefined ? {} : second;
-			if (!needsStderrCapture(spawnOptions)) return originalSpawn(...args);
-			return drainStderr(originalSpawn(first, { ...spawnOptions, stderr: "pipe" }), options.emitText);
+			child = needsStderrCapture(spawnOptions)
+				? drainStderr(originalSpawn(first, { ...spawnOptions, stderr: "pipe" }), options.emitText)
+				: originalSpawn(...args);
+		} else {
+			child = needsStderrCapture(first)
+				? drainStderr(originalSpawn({ ...first, stderr: "pipe" }), options.emitText)
+				: originalSpawn(...args);
 		}
-		if (!needsStderrCapture(first)) return originalSpawn(...args);
-		return drainStderr(originalSpawn({ ...first, stderr: "pipe" }), options.emitText);
+		options.onChild?.(child);
+		return child;
 	};
 }
 
