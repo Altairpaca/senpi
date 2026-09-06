@@ -130,7 +130,14 @@ function handleMessage(
 				else deliver(entry, turn, buffered);
 			}
 		} else if (message.type === "stream_event") bufferBeforeReplay(registry, entry, turn, message);
-		else if (message.type === "result") {
+		else if (message.type === "result" && resultMatchesTurn(message, turn)) {
+			const failure = sdkResultFailure(message);
+			if (failure) throw failure;
+			claimTurn(entry, turn);
+			for (const buffered of turn.preReplay) deliver(entry, turn, buffered);
+			finishTurn(registry, entry, turn, message);
+			return false;
+		} else if (message.type === "result") {
 			// A result that fails before the SDK ever echoed our user message (a
 			// 400 version floor, a session limit) must surface as that failure so
 			// failover can classify and rotate; only a genuine success-before-claim
