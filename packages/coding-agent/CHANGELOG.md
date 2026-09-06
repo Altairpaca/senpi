@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Preserve Claude SDK OAuth terminal results and failure attribution across replay races.
+
 ### Removed
 
 ## [2026.9.5-3] - 2026-09-05
