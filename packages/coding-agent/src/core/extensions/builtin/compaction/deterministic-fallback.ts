@@ -258,7 +258,8 @@ export function createRequiredCompactionFallback(
 		const reject = (rejectionReason: DeterministicFallbackRejectionReason): undefined => {
 			if (diagnostics) {
 				diagnostics.rejectionReason = rejectionReason;
-				(diagnostics.candidateRejections ??= []).push({ firstKeptEntryId, rejectionReason });
+				diagnostics.candidateRejections ??= [];
+				diagnostics.candidateRejections.push({ firstKeptEntryId, rejectionReason });
 			}
 			return undefined;
 		};
