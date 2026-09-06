@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The permission system's external-directory check no longer freezes the whole session when a `bash` or `monitor` command mentions a path such as `/home/user/...`: path normalization now resolves symlinks with `lstat`/`readlink` per component instead of `fs.realpathSync`, which under Bun `open(2)`s every directory it resolves and blocks forever on an autofs trigger (macOS `/home`) or misclassifies files under execute-only directories as external.
+
 ### Removed
 
 ## [2026.9.6] - 2026-09-06
