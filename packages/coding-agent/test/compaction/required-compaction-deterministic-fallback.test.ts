@@ -385,6 +385,9 @@ describe("required compaction deterministic fallback", () => {
 
 			expect(result).toBeUndefined();
 			expect(diagnostics.rejectionReason).toBe("unsafe-retained-content");
+			expect(diagnostics.candidateRejections).toEqual([
+			{ firstKeptEntryId: preparedBoundaryId, rejectionReason: "unsafe-retained-content" },
+		]);
 		}
 	});
 
