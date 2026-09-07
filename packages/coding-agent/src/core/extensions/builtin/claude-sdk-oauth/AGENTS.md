@@ -42,6 +42,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 - `full`/`override` prompt modes default `settingSources` to `[]` (no CLAUDE.md double-injection). The CLI still prepends its own agent preamble; `full` means senpi's prompt arrives intact, not alone.
 - Env precedence: env > project settings > global settings > default. All `SENPI_*` vars are stripped from the subprocess env on every lane.
 - Subscription-limit responses classify as account-failover conditions, not terminal errors.
+- A persisted restart binding is validated against the branch, not against who wrote to it: the committed assistant is the first `message` after the marker, and only entries the model can see (messages, non-goal custom messages, compaction, branch summaries) retire it. `custom` ledger records of any type never do (oh-my-openagent#7925).
 - A continuity binding is resumable only after the SDK acknowledged its session id (`system/init` or the replay echo); unconfirmed ids cold-seed (`session_unconfirmed`) and an id Claude Code reports missing is forgotten, never retried.
 - Idle resident sessions retire after 30 minutes; at most 32 stay resident; in-flight sessions are never evicted.
 
