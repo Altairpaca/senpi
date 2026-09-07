@@ -1,5 +1,27 @@
 # changes.md — builtin compaction policy
 
+## Normalize failed and aborted assistant fragments in the fallback projection (2026-09-07)
+
+### What changed
+
+- New `fallback-failed-turn-normalization.ts` reuses the transport's canonical `dropFailedAssistantTurns` (the last step of `convertToLlm` in `packages/coding-agent/src/core/messages.ts`) to mark, positionally, the messages a provider request never receives: assistant turns that stopped with `error` or `aborted`, plus the tool results orphaned by that drop.
+- `deterministic-fallback.ts` applies that mask to its own candidate projection before structural acceptance runs, so a failed fragment's dangling `toolCall` block is no longer counted as an unpaired or incomplete call and its bytes are no longer charged against the retained budget. The mask is local to the projection; raw session history and the emitted `CompactionResult` boundary are unchanged.
+- Existing acceptance is untouched for everything else: valid call/result pairs, rejection of an incomplete ACTIVE call (`stopReason` `toolUse`/`stop` whose result is genuinely pending), malformed image and signature rejection, duplicate or reversed chains, and the effective-reserve budget all keep their behavior and diagnostics.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 7: after a provider error or abort, the retained suffix carries assistant fragments whose `toolCall` blocks never got a result. Structural acceptance treated those as cut atomic chains and rejected every candidate, so the deterministic fallback returned `undefined` and the session stayed wedged above its threshold - even though the transport already drops exactly those turns before the next request, meaning the rejected candidate would have been valid on the wire.
+
+### Why an extension could not handle it
+
+- Required-compaction fallback admission is this builtin's private recovery contract. An external extension observes only the final cancel reason and cannot re-admit a candidate this handler has already refused.
+
+### Expected merge conflict zones
+
+- LOW: the projection scan head in `deterministic-fallback.ts` (the mask lookup inside the reverse suffix loop).
+- LOW: `fallback-failed-turn-normalization.ts` is fork-owned and new.
+- Tests: `test/compaction/required-compaction-deterministic-fallback.test.ts`.
+
 ## Count retained image tokens separately from serialized payload bytes (2026-09-07)
 
 ### What changed
