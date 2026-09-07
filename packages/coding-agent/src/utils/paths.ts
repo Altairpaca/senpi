@@ -1,6 +1,6 @@
-import { realpathSync, statSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve as nodeResolvePath, relative, sep } from "node:path";
+import { isAbsolute, join, resolve as nodeResolvePath, normalize, parse, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
 
@@ -31,6 +31,56 @@ export function canonicalizePath(path: string): string {
 	} catch {
 		return path;
 	}
+}
+
+/** Symlink hops allowed while resolving one path; realpath(3) reports ELOOP past this. */
+const MAX_SYMLINK_HOPS = 40;
+
+function splitComponents(normalizedPath: string): { readonly root: string; readonly parts: readonly string[] } {
+	const { root } = parse(normalizedPath);
+	const parts = normalizedPath
+		.slice(root.length)
+		.split(sep)
+		.filter((part) => part.length > 0);
+	return { root, parts };
+}
+
+/**
+ * Resolve symlinks the way realpath(3) does — one lstat/readlink per component — without ever
+ * open(2)-ing a component. Bun's `fs.realpath*` opens every directory it resolves, so an autofs
+ * trigger such as macOS `/home` blocks the calling thread (on the host main thread that freezes
+ * the TUI) and an execute-only directory fails with EACCES; lstat needs only search permission
+ * and never mounts anything. Components from the first missing or unreadable one onward are kept
+ * verbatim, so a file that does not exist yet still lands where its symlinked parent points.
+ * Never throws. Use this instead of `realpathSync` for any path a model or user merely mentioned.
+ */
+export function realpathWithoutOpen(inputPath: string): string {
+	const { root, parts } = splitComponents(normalize(inputPath));
+	const pending = [...parts];
+	let resolved = root;
+	let hops = 0;
+	while (pending.length > 0) {
+		const part = pending.shift();
+		if (part === undefined) break;
+		const candidate = join(resolved, part);
+		let link: string;
+		try {
+			if (!lstatSync(candidate).isSymbolicLink()) {
+				resolved = candidate;
+				continue;
+			}
+			hops += 1;
+			if (hops > MAX_SYMLINK_HOPS) return join(candidate, ...pending);
+			link = readlinkSync(candidate);
+		} catch {
+			// Any fs error (ENOENT, EACCES, ENOTDIR, ...) ends resolution: keep the rest verbatim.
+			return join(candidate, ...pending);
+		}
+		const target = splitComponents(nodeResolvePath(resolved, link));
+		resolved = target.root;
+		pending.unshift(...target.parts);
+	}
+	return resolved;
 }
 
 export function getFileRevision(path: string): string | undefined {
