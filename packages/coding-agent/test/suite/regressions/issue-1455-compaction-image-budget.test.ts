@@ -10,6 +10,7 @@ import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createCompactionImage } from "./issue-1455-image-fixture.ts";
 
 const image = createCompactionImage();
+const RESERVE_TOKENS = 100;
 
 function createCase(content: ToolResultMessage["content"], args: Record<string, unknown> = {}) {
 	const manager = SessionManager.inMemory();
@@ -29,7 +30,7 @@ function createCase(content: ToolResultMessage["content"], args: Record<string, 
 	const branch = manager.getBranch();
 	const preparation = prepareCompaction(
 		branch,
-		{ ...DEFAULT_COMPACTION_SETTINGS, reserveTokens: 100, reserveScalingEnabled: false },
+		{ ...DEFAULT_COMPACTION_SETTINGS, reserveTokens: RESERVE_TOKENS, reserveScalingEnabled: false },
 		true,
 	);
 	if (!preparation) throw new Error("Expected a compaction preparation for the fixture");
@@ -99,13 +100,20 @@ describe("issue #1455: retained image token budgeting", () => {
 	});
 
 	it("keeps image costs additive when the serialized text floor dominates", () => {
-		// Given: the non-image control fits, but leaves less than one image token charge.
-		const text = { type: "text" as const, text: "x".repeat(10_000) };
-		expect(createCase([text]).run(12_000).result).toBeDefined();
+		// Given: prose whose serialized bytes exceed its chars/4 estimate, so the byte
+		// floor (not the ordinary estimator) decides admission. An unbroken alphanumeric
+		// run would trip the base64-run weighting and let the estimator dominate instead.
+		const text = { type: "text" as const, text: "lorem ipsum dolor sit amet ".repeat(400) };
+		const control = createCase([text]).run().result;
+		if (control?.estimatedTokensAfter === undefined) throw new Error("Expected the text-only control to fit");
+		// Headroom below one image charge (1,200 tokens) but above the image block's
+		// non-payload envelope bytes, so only the image token charge can tip the budget.
+		const contextWindow = control.estimatedTokensAfter + RESERVE_TOKENS + 600;
+		expect(createCase([text]).run(contextWindow).result).toBeDefined();
 		const fixture = createCase([text, image]);
 
 		// When: that same text is accompanied by a valid image.
-		const { result, diagnostics } = fixture.run(12_000);
+		const { result, diagnostics } = fixture.run(contextWindow);
 
 		// Then: the image charge cannot disappear behind max(text bytes, estimated tokens).
 		expect(result).toBeUndefined();
