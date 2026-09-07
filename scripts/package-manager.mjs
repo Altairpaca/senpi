@@ -9,7 +9,7 @@
 // `build-all.mjs` and `run-workspaces.mjs` both route through this module so
 // detection and spawning live in exactly one place.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { basename } from "node:path";
 
 export const SUPPORTED_PACKAGE_MANAGERS = ["npm", "bun", "pnpm"];
@@ -87,18 +87,70 @@ export function runScriptArguments(pm, script, forwarded = []) {
 	return pm.cmd === "pnpm" ? ["run", script, ...forwarded] : ["run", script, "--", ...forwarded];
 }
 
+const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/**
+ * Delivers a signal to the child's whole process group. A package manager runs
+ * the script through a shell, and neither the shell nor every manager forwards
+ * signals (npm -> sh -> node leaves node running), so signalling only the
+ * direct child orphans the real work. The child is spawned as its own group
+ * leader (`detached`), so the negative-pid kill reaches every descendant at
+ * once with no dependence on process-listing timing.
+ */
+function signalGroup(child, signal) {
+	if (child.pid === undefined) return;
+	try {
+		if (process.platform === "win32") {
+			spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+		} else {
+			process.kill(-child.pid, signal);
+		}
+	} catch {
+		// the group is already gone
+	}
+}
+
 /**
  * Spawns `<pm> <args>` in `cwd` with inherited stdio and resolves with the exit
  * status (1 when the child died on a signal or could not be spawned at all).
+ *
+ * Termination signals are forwarded to the child's process group so a watcher
+ * started through a root script dies with Ctrl-C instead of surviving as an
+ * orphan; once the child is gone the same signal is re-raised on this process,
+ * which then ends the way a plain script would, without running further
+ * workspaces.
  */
 export function spawnPackageManager(pm, args, { cwd, env, label }) {
 	const invocation = packageManagerInvocation(pm, args);
 	return new Promise((resolve) => {
-		const child = spawn(invocation.command, invocation.args, { cwd, stdio: "inherit", env, shell: false });
+		const detached = process.platform !== "win32";
+		const child = spawn(invocation.command, invocation.args, { cwd, stdio: "inherit", env, shell: false, detached });
+		let forwarded;
+		const handlers = new Map(
+			FORWARDED_SIGNALS.map((signal) => [
+				signal,
+				() => {
+					forwarded = signal;
+					signalGroup(child, signal);
+				},
+			]),
+		);
+		for (const [signal, handler] of handlers) process.on(signal, handler);
+		const release = () => {
+			for (const [signal, handler] of handlers) process.off(signal, handler);
+		};
 		child.on("error", (error) => {
+			release();
 			console.error(`\n[${label}] failed to spawn ${pm.cmd}: ${error.message}`);
 			resolve(1);
 		});
-		child.on("close", (status) => resolve(status ?? 1));
+		child.on("close", (status) => {
+			release();
+			if (forwarded) {
+				process.kill(process.pid, forwarded);
+				return;
+			}
+			resolve(status ?? 1);
+		});
 	});
 }

@@ -1,91 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { parseArguments, resolveWorkspaceDirectories } from "./run-workspaces.mjs";
-
-const driverPath = fileURLToPath(new URL("./run-workspaces.mjs", import.meta.url));
-
-// Every fixture package script appends one JSON line per invocation, so a
-// workspace that ran twice, or a root script that was re-entered, shows up as
-// data rather than as a timing artifact. Forwarded arguments land in `forwarded`.
-const RECORDER_SOURCE = `
-const fs = require("node:fs");
-const [, , name, exitCode = "0", ...forwarded] = process.argv;
-fs.appendFileSync(process.env.RUN_WORKSPACES_MARKER_FILE, JSON.stringify({ name, cwd: process.cwd(), forwarded }) + "\\n");
-process.exit(Number(exitCode));
-`;
-
-async function writeManifest(root, relativeDirectory, manifest) {
-	const directory = join(root, relativeDirectory);
-	await mkdir(directory, { recursive: true });
-	await writeFile(join(directory, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`);
-}
-
-async function createFixture({ workspaces, packages, rootScripts = {} }) {
-	// realpath: macOS hands out /var/folders/... while children observe /private/var/...
-	const root = await realpath(await mkdtemp(join(tmpdir(), "senpi-run-workspaces-")));
-	const recorder = join(root, "record.cjs").replaceAll("\\", "/");
-	await writeFile(join(root, "record.cjs"), RECORDER_SOURCE);
-	const script = (name, exitCode = 0) => `node "${recorder}" ${name} ${exitCode}`;
-	await writeManifest(root, ".", {
-		name: "fixture-root",
-		private: true,
-		workspaces,
-		scripts: { test: script("ROOT"), ...rootScripts },
-	});
-	for (const [relativeDirectory, { name, scripts }] of Object.entries(packages)) {
-		await writeManifest(root, relativeDirectory, {
-			name,
-			version: "1.0.0",
-			private: true,
-			scripts: Object.fromEntries(
-				Object.entries(scripts ?? {}).map(([scriptName, exitCode]) => [scriptName, script(name, exitCode)]),
-			),
-		});
-	}
-	const markerFile = join(root, "markers.jsonl");
-	return {
-		root,
-		markerFile,
-		script,
-		async markers() {
-			const content = await readFile(markerFile, "utf8").catch(() => "");
-			return content
-				.split("\n")
-				.filter(Boolean)
-				.map((line) => JSON.parse(line));
-		},
-		async dispose() {
-			await rm(root, { recursive: true, force: true });
-		},
-	};
-}
-
-// The driver is spawned with this test process's environment, so it runs under
-// whichever package manager launched the test run: bun via `bun run test:scripts`,
-// npm via `npm run test:scripts`, plain node when invoked directly. That is the
-// contract under test — the same manifest must behave identically everywhere.
-function runDriver(fixture, args) {
-	return spawnSync(process.execPath, [driverPath, ...args], {
-		cwd: fixture.root,
-		encoding: "utf8",
-		env: { ...process.env, RUN_WORKSPACES_MARKER_FILE: fixture.markerFile },
-	});
-}
-
-const THREE_WORKSPACES = {
-	workspaces: ["packages/*"],
-	packages: {
-		"packages/a": { name: "@fixture/a", scripts: { test: 0, clean: 0 } },
-		"packages/b": { name: "@fixture/b", scripts: { clean: 0 } },
-		"packages/c": { name: "@fixture/c", scripts: { test: 0 } },
-	},
-};
+import { createFixture, runDriver, THREE_WORKSPACES } from "./run-workspaces.test-support.mjs";
 
 describe("run-workspaces", () => {
 	it("runs the script once in every workspace that defines it and never re-enters the root", async () => {
