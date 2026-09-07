@@ -5,6 +5,7 @@
 ### What changed
 
 - `paths.ts`: `canonicalizePath` resolves through `realpathSync.native` instead of `realpathSync`. Its contract is unchanged - it still swallows to the raw input on throw, so the callers that use it for identity comparison keep the convenience behaviour they depend on.
+- `paths.ts`: `canonicalizePathStrict` is new. It resolves the same way but does not swallow, so a caller that cannot act on an unconfirmed path gets an error instead of its own input handed back. The convenience form keeps every existing caller.
 
 ### Why
 
