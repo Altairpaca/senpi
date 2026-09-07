@@ -411,13 +411,13 @@ const OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS: ReadonlyMap<number, number> =
 const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // Flagship default context windows. OpenAI documents a 1,050,000-token window for both models;
 // the project deliberately ships cost-tier defaults (users widen through model overrides):
-// GPT-5.6 Sol keeps 650,000; GPT-6 Astra ships the documented maximum input (922,000 of 1,050,000).
+// GPT-5.6 Sol keeps 650,000; GPT-6 Astra keeps 600,000.
+const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
-	["gpt-6-astra", OPENAI_MAX_CONTEXT_INPUT_CAP],
+	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
 ]);
 const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
-const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = OPENAI_MAX_CONTEXT_INPUT_CAP;
 
 function toOpenAiInputCap(contextWindow: number, maxTokens: number): number {
 	if (maxTokens !== 128000) return contextWindow;
@@ -1002,6 +1002,16 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 		...(model.compat as OpenAIResponsesCompat | undefined),
 		supportsExplicitPromptCacheMode: true,
 	};
+}
+
+// Every catalog that ships a GPT-6 Astra entry declares the same context window.
+// Upstream passthrough catalogs (opencode, openrouter, github-copilot,
+// vercel-ai-gateway) otherwise inherit the documented 1,050,000 window while the
+// first-party OpenAI catalogs carry the input cap, so the effective Astra budget
+// changed with the provider that routed the request.
+function applyGpt6AstraContextWindow(model: Model<Api>): void {
+	if (!model.id.includes("gpt-6-astra")) return;
+	model.contextWindow = GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW;
 }
 
 function isGemini3ProModel(modelId: string): boolean {
@@ -3360,6 +3370,7 @@ async function generateModels() {
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
+		applyGpt6AstraContextWindow(model);
 		if (
 			model.id.includes("gpt-6-astra") &&
 			(model.api === "openai-responses" ||
