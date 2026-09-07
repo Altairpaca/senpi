@@ -114,7 +114,7 @@ import {
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
 } from "./extensions/builtin/compaction/model-usability-budget.ts";
-import { resolveReserveTokens } from "./extensions/builtin/compaction/policy.ts";
+import { resolveReserveTokens, shouldTriggerCompaction } from "./extensions/builtin/compaction/policy.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
@@ -6455,11 +6455,33 @@ export class AgentSession {
 			usageMessage?.role === "assistant" && this._isAssistantFromBeforeLatestCompaction(usageMessage)
 				? estimateMessagesTokens(canonicalMessages)
 				: estimate.tokens;
-		if (!shouldCompact(contextTokens, model.contextWindow, settings)) return;
+		// An explicit user prompt passes the proactive policy in the compaction
+		// extension's before_agent_start, which automatic continuations never emit.
+		// Sampling the same predicate here makes both routes compact at the same
+		// usage instead of letting a continuation ride past the threshold up to the
+		// hard valve (#7921 case 4).
+		const atHardLimit = shouldCompact(contextTokens, model.contextWindow, settings);
+		const overProactiveThreshold = shouldTriggerCompaction(
+			{
+				tokens: contextTokens,
+				contextWindow: model.contextWindow,
+				percent: model.contextWindow > 0 ? (contextTokens / model.contextWindow) * 100 : 0,
+			},
+			model.contextWindow,
+			settings,
+		);
+		if (!atHardLimit && !overProactiveThreshold) return;
 
 		const compacted = await this._runPrePromptCompaction(this._findLastAssistantMessage(), true, "pre_prompt");
 		if (!compacted) {
-			if (this._isCompactionOnCooldown() || this._isCompactionDelegated() || this._hasSupersedingCompactionClaim()) {
+			// Proactive pressure alone must never brick an automatic continuation:
+			// only the hard reserve valve stays fail-closed (#531/#886).
+			if (
+				!atHardLimit ||
+				this._isCompactionOnCooldown() ||
+				this._isCompactionDelegated() ||
+				this._hasSupersedingCompactionClaim()
+			) {
 				return;
 			}
 			throw new RequiredCompactionError();

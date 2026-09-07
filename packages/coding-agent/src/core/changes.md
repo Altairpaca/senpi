@@ -1,3 +1,21 @@
+## Automatic continuations pass the proactive compaction policy, #7921 case 4 (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_revalidateScheduledContinuationAdmission` now samples the shared proactive predicate (`shouldTriggerCompaction`) in addition to the hard-reserve valve (`shouldCompact`), so a scheduled continuation compacts at the same usage an explicit user prompt does. Proactive pressure alone never rejects the continuation: only the hard-reserve case still throws `RequiredCompactionError`.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 4: the proactive threshold lives in the compaction extension's `before_agent_start`, which automatic continuations (tool-result continuations, queued follow-up/steer drained at `agent_end`) never emit. A continuation above the threshold but below the hard limit reached the provider uncompacted while a user prompt at identical usage compacted first.
+
+### Why an extension could not handle it
+
+- Automatic continuations bypass `before_agent_start` entirely, so no extension handler observes them. This is the single core choke point every scheduled continuation passes before the provider.
+
+### Expected merge conflict zones
+
+- LOW: the body of `_revalidateScheduledContinuationAdmission` and the `builtin/compaction/policy.ts` import line.
+
 ## Workspace trust keys resolve strictly (2026-09-07)
 
 ### What changed
