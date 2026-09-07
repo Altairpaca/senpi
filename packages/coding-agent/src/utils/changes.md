@@ -1,5 +1,24 @@
 # changes
 
+## Open-free path resolution and watch-target helpers (2026-09-07)
+
+### What changed
+
+- `paths.ts` gains `realpathWithoutOpen(path)`: realpath(3) semantics with one `lstatSync`/`readlinkSync` per component (`MAX_SYMLINK_HOPS` 40), components from the first missing or unreadable one kept verbatim, never throws. It is the walker `permission-system/external-dir.ts` introduced on 2026-09-06, moved here so the permission parser and `terminal/monitor-registry.ts` share one implementation.
+- `fs-watch.ts` gains `canonicalWatchPath(path)` (the win32-only `realpathSync.native` lookup `watchWithErrorHandler` already performed, now reusable) and `probeDirectoryOpenable(directory)` (`opendir` + one `read` + `close` on the async pool, so a caller can bound the open that a synchronous `fs.watch` would otherwise perform on its own thread).
+
+### Why
+
+- Bun's `fs.realpath*` opens every directory it resolves; on a wedged autofs trigger that open never returns and freezes the host main thread. Paths that a model merely mentions must be resolved without `open(2)`; `canonicalizePath` stays realpath-based for startup/config paths that senpi owns.
+
+### Why an extension could not handle it
+
+- Both consumers are in-tree: the permission `tool_call` hook (`permission-system/parsers.ts`) and the file-monitor registry (`terminal/monitor-registry.ts`) run on the host itself, and they must derive the same identity string from the same walker. An extension cannot replace the resolution the host performs before its own hook fires.
+
+### Expected merge conflict zones
+
+- `paths.ts` import block and the new exported function; `fs-watch.ts` (upstream has no such helpers).
+
 ## Keep synchronous Windows process-tree kill; never throw on missing taskkill (2026-09-03)
 
 ### What changed
