@@ -400,8 +400,10 @@ const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 // OpenAI budgets input and output separately: the Responses API rejects a request with
 // `context_too_large` once the prompt alone exceeds (documented context window - max output),
 // whatever `max_output_tokens` asks for. senpi's `contextWindow` is the prompt budget, so the
-// catalog stores the input cap: 272,000 for the 400,000 tier and 922,000 for the 1,050,000 tier
-// (the same split applies to the Azure clones). Issue #1422.
+// catalog stores the input cap: 272,000 for the 400,000 tier and 922,000 for the 1,050,000 tier.
+// The split follows the model, not the gateway: `applyOpenAiInputCap` runs over every provider's
+// GPT-5.x / GPT-6 rows (Azure, Bedrock, Copilot, OpenRouter, Vercel, OpenGateway, OpenCode...)
+// because those gateways forward the same upstream limit. Issue #1422.
 const OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS: ReadonlyMap<number, number> = new Map([
 	[400000, OPENAI_LONG_CONTEXT_INPUT_THRESHOLD],
 	[1050000, 922000],
@@ -420,6 +422,24 @@ const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = OPENAI_MAX_CONTEXT_INPUT_CAP;
 function toOpenAiInputCap(contextWindow: number, maxTokens: number): number {
 	if (maxTokens !== 128000) return contextWindow;
 	return OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS.get(contextWindow) ?? contextWindow;
+}
+
+const OPENAI_GATEWAY_ID_PREFIX = /^(?:[a-z]{2}\.)?(?:global\.)?openai[./]/;
+
+/** GPT-5.x / GPT-6 rows on any provider: the OpenAI input/output split follows the model, not the gateway. */
+function isOpenAiFlagshipFamilyId(id: string): boolean {
+	const bare = id.replace(OPENAI_GATEWAY_ID_PREFIX, "");
+	return /^gpt-(?:5|6)(?:[.-]|$)/.test(bare) && !bare.startsWith("gpt-oss");
+}
+
+function applyOpenAiInputCap(model: Model<Api>): void {
+	if (!isOpenAiFlagshipFamilyId(model.id)) return;
+	// models.dev (and the gateways that mirror it) report gpt-5-pro output as 272000,
+	// a duplicate of the input sub-limit; the documented max output is 128000.
+	if (model.id.replace(OPENAI_GATEWAY_ID_PREFIX, "") === "gpt-5-pro" && model.maxTokens === 272000) {
+		model.maxTokens = 128000;
+	}
+	model.contextWindow = toOpenAiInputCap(model.contextWindow, model.maxTokens);
 }
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -2710,9 +2730,6 @@ async function generateModels() {
 		if (candidate.provider === "openai" && flagshipContextWindow !== undefined) {
 			candidate.contextWindow = flagshipContextWindow;
 		}
-		if (candidate.provider === "openai") {
-			candidate.contextWindow = toOpenAiInputCap(candidate.contextWindow, candidate.maxTokens);
-		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
 			candidate.cost = withOpenAiLongContextPricing(standardCost ?? candidate.cost);
@@ -2721,11 +2738,6 @@ async function generateModels() {
 		if (candidate.provider === "cloudflare-ai-gateway") {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
 			if (standardCost) candidate.cost = withOpenAiLongContextPricing(standardCost);
-		}
-		// models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit);
-		// the actual max output is 128000. Also propagates to the derived Azure clone.
-		if (candidate.provider === "openai" && candidate.id === "gpt-5-pro") {
-			candidate.maxTokens = 128000;
 		}
 		// Keep Kimi K3's canonical output limit when gateway metadata is missing or incorrect.
 		if (
@@ -3339,6 +3351,7 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		applyOpenAiInputCap(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
