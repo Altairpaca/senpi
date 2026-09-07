@@ -1,5 +1,24 @@
 # claude-sdk-oauth
 
+## 2026-09-07 - Emit one continuity observation per turn (discarded attempts stay silent)
+
+### What changed
+
+- `session-turn-attempt.ts`: `staged.emit()` moved out of the attempt generator's `finally` onto the retained-completion path. A discarded attempt (account failover unwinds the generator via `return()`) and an internally-failed attempt (throws to `catch`) now emit nothing; only an attempt consumed to completion emits, so a turn yields exactly one continuity observation. A turn where every attempt fails still yields the single terminal observation from `residentSessionMessages`.
+
+### Why
+
+- senpi#1432 follow-up: the observability contract (session-observability.ts head comment and the AGENTS.md invariant) promises exactly one observation per completed turn, but the `finally` emitted the discarded attempt's staged decision too. A two-account failover turn therefore logged two `claude_sdk_oauth_session_continuity` events (the discarded `delta` plus the retained `fork`), and a fully-failed turn logged its staged decision plus the terminal error - inflating the continuity counts the #1432 report was built on.
+
+### Why an extension could not handle it
+
+- The attempt lifecycle and the staged-observation emit are private to this builtin provider; no extension hook observes attempt retention.
+
+### Expected merge conflict zones
+
+- LOW: `session-turn-attempt.ts` around the generator `try/catch` tail (the removed `finally`).
+
+
 ## 2026-09-07 - Reattach across account failover; retire the unwired failover decision
 
 ### What changed
