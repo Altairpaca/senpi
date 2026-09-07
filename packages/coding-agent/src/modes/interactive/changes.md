@@ -4,6 +4,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/interactive/tips/catalog/subagent-tips.ts`: added a workflow tip that points users to the report-bug skill and explains that it records provider and model details, routes the issue, and waits for confirmation before filing.
+- The tip is gated with requiresCommand: "tasks" like every other workflow tip, so it only surfaces where the omo-senpi task command exists.
 
 ### Why
 

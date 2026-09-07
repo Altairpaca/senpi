@@ -73,6 +73,7 @@ export const SUBAGENT_TIPS = [
 	{
 		id: "workflow-skills.report-bug",
 		bindings: [],
+		requiresCommand: "tasks",
 		render: () =>
 			'Hit a bug? Say "report a bug" - the report-bug skill finds the session, records the exact provider and model, routes it to the right repository, and files an evidence-backed issue only after you confirm.',
 	},
