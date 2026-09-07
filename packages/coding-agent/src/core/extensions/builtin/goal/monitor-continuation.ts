@@ -12,7 +12,10 @@ import {
 } from "./cache-warm.ts";
 import { subscribeGoalChannelState } from "./channel-state-subscriptions.ts";
 
-export { GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS } from "./cache-warm.ts";
+export {
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
+} from "./cache-warm.ts";
 
 import {
 	continuationTurnUsedTools,
@@ -323,12 +326,12 @@ export class MonitorAwareGoalContinuation {
 
 	#schedule(goal: Goal, kind: DelayedContinuationKind): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
+		// A live wake source arms the stall backstop only: the normal resumption is
+		// the drain fire in #setWakeSourceCount, so the model is not invoked on the
+		// prompt-cache safe-wait interval while the session waits.
 		const delayMs =
 			kind === "monitor"
-				? resolveGoalMonitorContinuationDelayMs(
-						this.#ctx?.getPromptCacheSafeWaitSeconds?.(),
-						this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.(),
-					)
+				? resolveGoalMonitorContinuationDelayMs(this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.())
 				: GOAL_USER_GRACE_DELAY_MS;
 		this.#scheduledDelayMs = delayMs;
 		if (kind === "monitor") {

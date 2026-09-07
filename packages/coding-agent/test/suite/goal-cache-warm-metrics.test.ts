@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	estimateCacheWarmMetrics,
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
 	resolveGoalMonitorContinuationDelayMs,
 } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 
@@ -20,19 +21,25 @@ function anthropicModel(costOverrides: Partial<Model<Api>["cost"]> = {}): Model<
 	} as Model<Api>;
 }
 
-describe("goal monitor continuation delay", () => {
+describe("goal monitor stall backstop delay", () => {
 	it.each([
-		[undefined, undefined, 240_000],
-		[270, undefined, 270_000],
-		[3570, undefined, 3_570_000],
-		[3570, 900, 900_000],
-		[5, undefined, 5_000],
-		[7200, undefined, 3_600_000],
-		[270, 0, 270_000],
-		[0, undefined, 240_000],
-		[Number.NaN, undefined, 240_000],
-	] as const)("resolves cache-safe wait %s with ceiling %s to %sms", (safeWait, ceiling, expected) => {
-		expect(resolveGoalMonitorContinuationDelayMs(safeWait, ceiling)).toBe(expected);
+		[undefined, 3_570_000],
+		[3570, 3_570_000],
+		[900, 900_000],
+		[5, 5_000],
+		[7200, 3_600_000],
+		[0, 3_570_000],
+		[-30, 3_570_000],
+		[Number.NaN, 3_570_000],
+	] as const)("resolves backstop ceiling %s to %sms", (backstopMaxSeconds, expected) => {
+		expect(resolveGoalMonitorContinuationDelayMs(backstopMaxSeconds)).toBe(expected);
+	});
+
+	it("ignores the prompt-cache safe wait entirely", () => {
+		// The backstop is a stall guard, not a cache-warm timer: passing a
+		// cache-safe wait as the only argument must not shorten it to 270s.
+		expect(resolveGoalMonitorContinuationDelayMs(undefined)).toBe(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
+		expect(resolveGoalMonitorContinuationDelayMs.length).toBe(1);
 	});
 });
 

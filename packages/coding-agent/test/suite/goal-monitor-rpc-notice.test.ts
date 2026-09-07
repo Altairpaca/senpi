@@ -80,14 +80,14 @@ describe("goal monitor scheduling notice over RPC", () => {
 		await runner.emit({ type: "agent_start" });
 		await runner.emit({ type: "agent_end", messages: [fauxAssistantMessage("clean stop")] });
 
-		expect(scheduleEvents).toEqual([expect.objectContaining({ delayMs: 240_000, dueAtMs: 240_000 })]);
+		expect(scheduleEvents).toEqual([expect.objectContaining({ delayMs: 3_570_000, dueAtMs: 3_570_000 })]);
 		const records = rpcRecords(chunks);
 		expect(records).toContainEqual(
 			expect.objectContaining({
 				type: "entry_appended",
 				entry: expect.objectContaining({
 					customType: "goal-cache-warmup",
-					data: expect.objectContaining({ phase: "scheduled", dueAtMs: 240_000, iteration: 1 }),
+					data: expect.objectContaining({ phase: "scheduled", dueAtMs: 3_570_000, iteration: 1 }),
 				}),
 			}),
 		);

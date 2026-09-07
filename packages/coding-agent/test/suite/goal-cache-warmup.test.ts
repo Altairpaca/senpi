@@ -14,6 +14,7 @@ import {
 } from "./goal-monitor-test-harness.ts";
 
 const ENTRY_TYPE = "goal-cache-warmup";
+const BACKSTOP_DELAY_MS = 3_570_000;
 
 function cacheModel(): Model<Api> {
 	return {
@@ -80,8 +81,8 @@ describe("goal cache-warm continuation story", () => {
 		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
 			expect.objectContaining({
 				goalId: expect.any(String),
-				delayMs: 270_000,
-				dueAtMs: 270_000,
+				delayMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
@@ -94,8 +95,8 @@ describe("goal cache-warm continuation story", () => {
 			expect.objectContaining({
 				phase: "scheduled",
 				goalId: expect.any(String),
-				delayMs: 270_000,
-				dueAtMs: 270_000,
+				delayMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
@@ -109,7 +110,7 @@ describe("goal cache-warm continuation story", () => {
 
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
 		const resumedEventRecorded = waitForEventCount(harness.events, "goal_continuation_resumed", 1);
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
 		await Promise.all([delayedDeliveryRecorded, resumedEventRecorded]);
 
 		expect(harness.sent).toHaveLength(1);
@@ -118,8 +119,8 @@ describe("goal cache-warm continuation story", () => {
 		expect(channelEvents(harness, "goal_continuation_resumed")).toEqual([
 			expect.objectContaining({
 				goalId: expect.any(String),
-				delayMs: 270_000,
-				waitedMs: 270_000,
+				delayMs: BACKSTOP_DELAY_MS,
+				waitedMs: BACKSTOP_DELAY_MS,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({
@@ -135,7 +136,7 @@ describe("goal cache-warm continuation story", () => {
 		expect(resumed[0]).toEqual(
 			expect.objectContaining({
 				phase: "resumed",
-				waitedMs: 270_000,
+				waitedMs: BACKSTOP_DELAY_MS,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000 }),
@@ -152,7 +153,7 @@ describe("goal cache-warm continuation story", () => {
 		for (let iteration = 1; iteration <= 2; iteration++) {
 			const delivered = waitForSentCount(harness, iteration);
 			const resumed = waitForEventCount(harness.events, "goal_continuation_resumed", iteration);
-			await vi.advanceTimersByTimeAsync(270_000);
+			await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
 			await Promise.all([delivered, resumed]);
 			if (iteration < 2) {
 				await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -191,7 +192,7 @@ describe("goal cache-warm continuation story", () => {
 		vi.useFakeTimers();
 		const { harness, ctx } = await setupWarmHarness("thread-cache-warm-user-reset");
 		const firstResumed = waitForEventCount(harness.events, "goal_continuation_resumed", 1);
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
 		await firstResumed;
 
 		await runGoalHandlers(
