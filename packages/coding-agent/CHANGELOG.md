@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Explicit `/compact` now works on Claude SDK-owned sessions after a rejected smaller-model switch, so the recommended recovery from a failed downswitch is usable again ([#1423](https://github.com/code-yeongyu/senpi/pull/1423) by [@realsigridjin](https://github.com/realsigridjin)). Automatic threshold, overflow, pre-prompt, and speculative compaction stay SDK-owned, and failed manual attempts are now recorded by the compaction circuit breaker instead of being invisible to it.
 - A plain `--session <id>` resume on the `claude-sdk-oauth` provider no longer re-sends the whole conversation with `Session continuity lost (options_changed)` after a restart (code-yeongyu/oh-my-openagent#7884). A restored session binding whose system prompt or toolset fingerprint drifted - an engine upgrade, a prompt-content change, or the UTC date rolling over - now reattaches to the existing SDK session and sends only the new turn, the same way a live session already did; only an account or model identity change still cold-seeds. The continuity observation names which half drifted (`system_prompt_changed` / `toolset_changed`) instead of the bare `options_changed`.
 - The `Current date:` line is normalized out of the `claude-sdk-oauth` prompt fingerprint even when extension prompt sections follow the `Current working directory:` line, which is the shape every real session has. Previously the normalization only matched when that line ended the prompt, so the fingerprint changed at every UTC midnight.
 
