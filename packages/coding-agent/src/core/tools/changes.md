@@ -1,5 +1,27 @@
 # core/tools changes
 
+## Canonical identity is resolved, not guessed (2026-09-07)
+
+### What changed
+
+- `bounded-realpath.ts` (new) holds the shared pieces: `withResolutionDeadline` races a resolution against `RESOLUTION_DEADLINE_MS` (2s) and attaches a handler to the abandoned promise, `isMissingPathError`, and `foldPathForCaseInsensitiveFilesystem`.
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` goes back to the `realpath` walk-up it used before the same-day open-free change, now raced against that deadline; past the deadline `realpathWithoutOpenStrict` answers instead.
+- `file-mutation-queue.ts` `getMutationQueueKey` likewise resolves with `realpath` under the deadline, keeps the ENOENT tolerance, falls back to the strict walker, and folds the key on filesystems that ignore case.
+
+### Why
+
+- The open-free walker cannot supply what these two callers need. It preserves the caller's spelling, so on a case-insensitive volume `Notes.txt` and `notes.txt` became two mutation-queue keys for one file and concurrent edits stopped being serialized. It also tolerated every error, so EACCES/EIO/ELOOP produced an unresolved path presented as canonical where `realpath` had failed closed. Only the kernel knows the on-disk spelling, so correctness has to come from `realpath` and boundedness from the deadline, not the reverse.
+- The deadline keeps the wedged-mount fix: `realpath` never returns on a macOS autofs trigger, and these run before every read/ls/grep/find/edit/write, so the caller still gets an answer while the doomed I/O is what fails.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure that the built-in file tools call before any extension hook runs; the canonical path they produce is the input to extension containment policies.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and `canonicalizeFilesystemPath` (upstream keeps a plain realpath walk-up); `file-mutation-queue.ts` `getMutationQueueKey`; `bounded-realpath.ts` is fork-only.
+- `test/canonical-path-identity.test.ts`, `test/bounded-realpath.test.ts` (new).
+
 ## Filesystem canonicalization never opens a path component (2026-09-07)
 
 ### What changed
