@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- JavaScript eval cells no longer lose their completion value when a nested function, callback, or try/catch helper contains `return`: the cell wrapper now skips last-expression capture only for a genuine top-level `return`, and a property named `return` no longer primes the statement scanner as the keyword (#1439).
+- Eval output truncation notices now name the real cause: a width-clamped line reports `N line(s) clamped to M columns (… dropped)`, a byte-capped tail reports the actual cap, and a notice never presents the output's own size as a limit.
+
 ### Removed
 
 ## [2026.9.7] - 2026-09-07
