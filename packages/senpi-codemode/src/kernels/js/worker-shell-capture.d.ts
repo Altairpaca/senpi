@@ -17,3 +17,13 @@ export interface ShellCaptureOptions {
 }
 
 export function installShellCapture(options: ShellCaptureOptions): ShellCaptureRestore;
+
+declare global {
+	/**
+	 * Set by the JS worker core when applying the session environment deleted inherited
+	 * `PI_*` keys (see worker-core.js). Under Bun a `delete process.env.X` does not
+	 * unsetenv, so shell capture pins the worker's environment view for spawned children
+	 * while this list is non-empty.
+	 */
+	var __senpi_session_env_deletions__: string[] | undefined;
+}

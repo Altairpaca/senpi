@@ -3,6 +3,17 @@ import { JsWorkerRuntime } from "./worker-runtime.js";
 // Mirrors INTERRUPT_ACK_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
 const INTERRUPT_ACK_OP = "interrupt-ack";
 
+// Mirrors SESSION_ENVIRONMENT_KEYS in src/kernels/session-env.ts (this worker file
+// cannot import TypeScript). Keys the active session does not set must be dropped so a
+// value inherited from the host environment never leaks into a cell or its children.
+const SESSION_ENVIRONMENT_KEYS = [
+	"PI_SESSION_ID",
+	"PI_SESSION_FILE",
+	"PI_PROVIDER",
+	"PI_MODEL",
+	"PI_REASONING_LEVEL",
+];
+
 export function createWorkerCore(transport, options) {
 	let runtime = null;
 	let activeCell = null;
@@ -54,6 +65,7 @@ export function createWorkerCore(transport, options) {
 
 	function onMessage(message) {
 		if (message.type === "init") {
+			applySessionEnvironment(message.sessionEnv);
 			runtime = new JsWorkerRuntime({
 				cwd: options.cwd,
 				parallelPoolWidth: options.parallelPoolWidth,
@@ -96,6 +108,20 @@ export function createWorkerCore(transport, options) {
 
 function durationMs(startedAtMs) {
 	return Math.max(0, Math.round(performance.now() - startedAtMs));
+}
+
+function applySessionEnvironment(sessionEnv) {
+	const provided = new Set(Object.keys(sessionEnv ?? {}));
+	const deleted = [];
+	for (const key of SESSION_ENVIRONMENT_KEYS) {
+		if (key in process.env && !provided.has(key)) deleted.push(key);
+		delete process.env[key];
+	}
+	for (const [key, value] of Object.entries(sessionEnv ?? {})) process.env[key] = value;
+	// Under Bun, deleting from process.env does not unsetenv, so children spawned without
+	// an explicit env would still see the deleted keys. installShellCapture reads this list
+	// and pins the worker's environment view for such children (see worker-shell-capture.js).
+	globalThis.__senpi_session_env_deletions__ = deleted;
 }
 
 function valueRepr(value) {

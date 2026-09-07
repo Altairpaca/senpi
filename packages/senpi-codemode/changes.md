@@ -1,5 +1,17 @@
 # senpi-codemode fork changes
 
+## 2026-09-07 - Eval kernels carry the session environment
+
+### What changed
+
+- New `src/kernels/session-env.ts` resolves the per-session `PI_*` environment (`PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`) from the extension session context and merges it over the inherited environment with the bash tool's delete-then-set semantics.
+- `runtime-factory` resolves the environment at session start and threads it through `CreateCodemodeSessionManagerOptions.sessionEnv` into every kernel: the JS worker applies it to its own `process.env` at worker init (so `env()`, `process.env`, `Bun.$`, `Bun.spawn`, and `child_process` children all see it), and the py/rb/jl interpreters spawn with it merged into their environment (so `os.environ` and their children see it). Restarted or reset interpreters re-apply it because it is a kernel option, not a one-shot spawn side effect.
+- Under Bun a `delete process.env.X` does not unsetenv, so `worker-shell-capture.js` additionally pins the worker's environment view (`$.env` seed plus explicit `env` on captured `Bun.spawn` calls without one) whenever the session environment deleted inherited keys; without this, children would still see deleted `PI_*` values in the OS environment.
+
+### Why
+
+- A child spawned from an eval cell saw no `PI_SESSION_ID`, so `omo-agent-toolkit ulw-loop` invoked from a cell resolved the cwd-global state instead of the active session — a real data-corruption path. The contract is that a child spawned from eval sees the same session environment a child spawned from the `bash` tool sees; the core exposes no importable helper for that set (its bash implementation is private and the host package is a type-only dependency here), so the five-key contract is mirrored in one documented helper.
+
 ## 2026-09-07 - Fail clearly when compiled codemode assets are missing
 
 ### What changed

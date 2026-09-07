@@ -38,6 +38,7 @@ describe("JS kernel shell output capture", () => {
 	afterEach(() => {
 		restore();
 		restore = () => {};
+		Reflect.deleteProperty(globalThis, "__senpi_session_env_deletions__");
 		if (hadBun) Object.defineProperty(globalThis, "Bun", { value: originalBun, configurable: true, writable: true });
 		else Reflect.deleteProperty(globalThis, "Bun");
 	});
@@ -201,6 +202,43 @@ describe("JS kernel shell output capture", () => {
 
 		expect(fake.spawnCalls).toEqual([{ cmd: ["ls"], options: { cmd: ["ls"], stdout: "pipe", stderr: "pipe" } }]);
 		expect(emitted).toEqual([{ stream: "stderr", data: "child stderr for ls\n" }]);
+	});
+
+	it("Given deleted session keys when capture installs then Bun spawns pin the worker's environment view", async () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-pin-session";
+		globalThis.__senpi_session_env_deletions__ = ["PI_SESSION_FILE"];
+		const { emitText } = emitter();
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText });
+
+			fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			fake.bun.spawn(["keep"], { env: { CUSTOM: "1" } });
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			const pinned = fake.spawnCalls[0]?.options;
+			expect(pinned?.env).toEqual({ ...process.env });
+			expect(pinned?.stderr).toBe("pipe");
+			expect(fake.spawnCalls[1]?.options.env).toEqual({ CUSTOM: "1" });
+			// The shell default environment is seeded from the same view before wrapping.
+			expect(fake.bun.$.calls).toContain("env");
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given no deleted session keys when capture installs then spawn options pass through unchanged", async () => {
+		const fake = installFakeBun();
+		const { emitText } = emitter();
+		restore = installShellCapture({ isActive: () => true, emitText });
+
+		fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(fake.spawnCalls).toEqual([
+			{ cmd: ["sh", "-c", 'printf %s "$PI_SESSION_ID"'], options: { stderr: "pipe" } },
+		]);
+		expect(fake.bun.$.calls).toEqual([]);
 	});
 
 	it("Given explicit stdio choices or no active cell when Bun.spawn runs then the options pass through unchanged", async () => {
