@@ -22,6 +22,7 @@ import { SessionEventWriter } from "./session-event-writer.ts";
 import { RpcSessionRegistry } from "./session-registry.ts";
 import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
+	readSocketIdentityFile,
 	type SocketFileIdentity,
 	shieldSocketDuringClose,
 	statSocketIdentity,
@@ -318,7 +319,20 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	registerShutdownSignals(shutdown);
 	// Arm before listen: a supervisor death during the listen transition must
 	// still close the child and clean its private endpoint.
-	armHostWatchdog(watchdogConfig, (reason, cleanup) => {
+	const watchdog =
+		watchdogConfig && supervisorPublicOwnerFile
+			? {
+					...watchdogConfig,
+					// The supervisor may die while this host is still waiting for the token
+					// below; read it before the watchdog removes the scratch directory, or the
+					// shutdown's ownership check has nothing to prove with and leaves the
+					// public socket behind.
+					beforeCleanup: async () => {
+						supervisorPublicIdentity ??= await readSocketIdentityFile(supervisorPublicOwnerFile);
+					},
+				}
+			: watchdogConfig;
+	armHostWatchdog(watchdog, (reason, cleanup) => {
 		process.stderr.write(`senpi rpc host: ${reason}; shutting down\n`);
 		// Enter shutdown before killing session-owned child processes. The Windows
 		// tree killer is synchronous, while the shutdown fallback must be armed

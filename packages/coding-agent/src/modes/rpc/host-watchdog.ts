@@ -39,6 +39,14 @@ export interface HostWatchdogConfig {
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
 	readonly publicSocket?: string;
+	/**
+	 * Runs when the watchdog fires, BEFORE `scratchDir` and `cleanupPaths` are removed. The
+	 * host uses it to read state that lives inside the supervisor's private directory and
+	 * that its shutdown still needs - the public-socket ownership token above all. A
+	 * supervisor killed while the host is still starting up leaves that token unread, and
+	 * removing the directory first would turn the public socket into an unprovable orphan.
+	 */
+	readonly beforeCleanup?: () => Promise<void>;
 }
 
 function parsePositiveInteger(value: string | undefined): number | undefined {
@@ -102,14 +110,15 @@ export function armHostWatchdog(
 	if (!config) return () => {};
 	const fire = (reason: string): void => {
 		disarm();
+		const captured = captureBeforeCleanup(config);
 		if (process.platform === "win32") {
 			// Arm the host shutdown fallback before attempting metadata cleanup. The
 			// synchronous Win32 removal below handles the state files deterministically,
 			// while the fallback still covers a named-pipe close that never completes.
-			const cleanup = Promise.resolve().then(() => cleanupWatchdogPaths(config));
+			const cleanup = captured.then(() => cleanupWatchdogPaths(config));
 			onSupervisorGone(reason, cleanup);
 		} else {
-			void cleanupWatchdogPaths(config).finally(() => onSupervisorGone(reason));
+			void captured.then(() => cleanupWatchdogPaths(config)).finally(() => onSupervisorGone(reason));
 		}
 	};
 	const disarmers: Array<() => void> = [];
@@ -206,6 +215,14 @@ function processAlive(pid: number): boolean {
 	} catch (cause) {
 		return cause instanceof Error && "code" in cause && cause.code !== "ESRCH";
 	}
+}
+
+// A failing capture must never block the cleanup or the shutdown it precedes.
+function captureBeforeCleanup(config: HostWatchdogConfig): Promise<void> {
+	if (config.beforeCleanup === undefined) return Promise.resolve();
+	return Promise.resolve()
+		.then(config.beforeCleanup)
+		.catch(() => undefined);
 }
 
 async function cleanupWatchdogPaths(config: HostWatchdogConfig): Promise<void> {
