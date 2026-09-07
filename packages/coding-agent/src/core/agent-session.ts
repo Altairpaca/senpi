@@ -1083,7 +1083,14 @@ export class AgentSession {
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
 	private _skipNextPostRetryCompactionCheck = false;
-	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; revision: number } | undefined;
+	/**
+	 * Armed when an accepted compaction produced a summary that still leaves the
+	 * context over budget. It survives synthetic revision bumps (model or settings
+	 * changes, queue mutation, extension continuations, scheduled retries) because
+	 * none of those change the context that was rejected; only a real reduction, a
+	 * new user prompt, or a manual compaction releases it (#7921 case 6).
+	 */
+	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; contentTokens: number } | undefined;
 	private _delegatedCompactionKey: { provider: string; id: string } | undefined;
 	private _skipNextPostCompactionAssistantCheck = false;
 	private _scheduledContinuationRecompacted = false;
@@ -1788,6 +1795,33 @@ export class AgentSession {
 
 	private _incrementMessageRevision(): void {
 		this._messageRevision++;
+		// A revision bump alone is not evidence that the rejected context changed:
+		// releasing here let a synthetic bump retry the unchanged oversized context
+		// (#7921 case 6). Release only once the context actually shrank.
+		this._releaseBlockedPostCompactionAdmissionIfReduced();
+	}
+
+	/** Byte-derived size of the context an admission decision would carry. */
+	private _blockedAdmissionContentTokens(): number {
+		return estimateMessagesTokens(filterContextExcludedMessages(this.agent.state.messages));
+	}
+
+	/** A compaction that genuinely reduced the context clears the blocked state. */
+	private _releaseBlockedPostCompactionAdmissionIfReduced(): void {
+		const blocked = this._blockedPostCompactionAssistant;
+		if (blocked === undefined) return;
+		if (this._blockedAdmissionContentTokens() < blocked.contentTokens) {
+			this._blockedPostCompactionAssistant = undefined;
+		}
+	}
+
+	/**
+	 * Unconditional release for manual `/compact`, the user's explicit remedy. An
+	 * ordinary user prompt is deliberately not a release: it only adds context, so
+	 * it cannot make the rejected context admissible, and the pre-prompt gate
+	 * already owns its own fail-closed rejection for that route.
+	 */
+	private _releaseBlockedPostCompactionAdmission(): void {
 		this._blockedPostCompactionAssistant = undefined;
 	}
 
@@ -5410,6 +5444,9 @@ export class AgentSession {
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		const model = this.model;
 		if (!model) throw new Error(formatNoModelSelectedMessage());
+		// Manual compaction is the user's explicit remedy for a blocked admission
+		// (#7921 case 6).
+		this._releaseBlockedPostCompactionAdmission();
 		const pathEntries = this.sessionManager.getBranch();
 		const settings = cursorOverflowCompactionSettings(this._getCompactionSettings(), model.provider, "manual");
 		if (!prepareCompaction(pathEntries, settings)) {
@@ -6088,12 +6125,9 @@ export class AgentSession {
 		inlineReason: "pre_prompt" | "threshold",
 		retryAfterCompaction = false,
 	): Promise<boolean> {
+		this._releaseBlockedPostCompactionAdmissionIfReduced();
 		const blockedAdmission = this._blockedPostCompactionAssistant;
-		if (
-			blockedAdmission !== undefined &&
-			blockedAdmission.assistant === assistantMessage &&
-			blockedAdmission.revision === this._messageRevision
-		) {
+		if (blockedAdmission !== undefined && blockedAdmission.assistant === assistantMessage) {
 			throw new RequiredCompactionError();
 		}
 
@@ -6288,7 +6322,7 @@ export class AgentSession {
 				) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
-						revision: this._messageRevision,
+						contentTokens: this._blockedAdmissionContentTokens(),
 					};
 				}
 				return compacted;
@@ -6405,7 +6439,7 @@ export class AgentSession {
 				) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
-						revision: this._messageRevision,
+						contentTokens: this._blockedAdmissionContentTokens(),
 					};
 				}
 				return compacted;

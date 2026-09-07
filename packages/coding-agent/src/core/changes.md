@@ -1,3 +1,21 @@
+## Insufficient accepted compaction keeps its blocked state, #7921 case 6 (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_blockedPostCompactionAssistant` now records the byte-derived context size at the moment it arms (`_blockedAdmissionContentTokens`) instead of a message revision. `_incrementMessageRevision` no longer clears it; `_releaseBlockedPostCompactionAdmissionIfReduced` releases it only when the context actually shrank, and `compact()` releases it unconditionally as the user's explicit remedy. The admission guard in `_enforceCompactionBeforeProvider` matches on the blocked assistant alone.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 6: an accepted compaction whose summary left the context over budget blocked the session, but any synthetic revision bump - a model or settings change, a queue mutation, an extension continuation, a scheduled retry - cleared the block, and the automatic continuation retried the unchanged oversized context, paying for another doomed compaction each time. Queued data was kept but the work was wasted.
+
+### Why an extension could not handle it
+
+- The blocked state is core admission bookkeeping; no extension observes the revision counter or the admission guard.
+
+### Expected merge conflict zones
+
+- LOW: the `_blockedPostCompactionAssistant` declaration, `_incrementMessageRevision`, the two arming sites in `_checkCompaction`, and the guard at the head of `_enforceCompactionBeforeProvider`.
+
 ## Final admission revalidates late content, #7921 case 5 (2026-09-07)
 
 ### What changed
