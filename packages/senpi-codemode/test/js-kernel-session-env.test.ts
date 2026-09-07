@@ -39,9 +39,10 @@ describe("JavaScriptKernel session environment", () => {
 		async ({ expectedMode, workerEntryUrl }) => {
 			await withJavaScriptKernel(
 				async (kernel) => {
-					expect(kernel.mode).toBe(expectedMode);
-
 					const helperValue = await cellValue(kernel, 'return env("PI_SESSION_ID")');
+					// The inline fallback is decided by the first spawn attempt, so the mode is
+					// observable only after a cell has run.
+					expect(kernel.mode).toBe(expectedMode);
 					expect(helperValue).toBe("js-session-env-77");
 
 					const processValue = await cellValue(kernel, "return process.env.PI_SESSION_ID ?? null");
