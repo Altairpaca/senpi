@@ -23,6 +23,8 @@ import { readProcessIdentity } from "../app-server/daemon/process.ts";
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
 /** Supervisor-owned private directory the host removes on watchdog shutdown. */
 export const HOST_SCRATCH_DIR_ENV = "SENPI_RPC_HOST_SCRATCH_DIR";
+/** Public socket path the supervisor bound; the host removes it ownership-checked. */
+export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 /** Fallback binding when no inherited fd is available: poll this pid. */
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 /** Poll cadence for the ppid fallback. */
@@ -36,6 +38,7 @@ export interface HostWatchdogConfig {
 	readonly ppid?: number;
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
+	readonly publicSocket?: string;
 }
 
 function parsePositiveInteger(value: string | undefined): number | undefined {
@@ -57,11 +60,13 @@ export function readHostWatchdogConfig(
 	if (fd === undefined && ppid === undefined) return undefined;
 	const scratchDir = env[HOST_SCRATCH_DIR_ENV];
 	const cleanupPaths = env[HOST_CLEANUP_PATHS_ENV]?.split("\n").filter(Boolean);
+	const publicSocket = env[HOST_PUBLIC_SOCKET_ENV];
 	return {
 		fd,
 		ppid,
 		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
 		cleanupPaths,
+		publicSocket: publicSocket === "" ? undefined : publicSocket,
 	};
 }
 
@@ -75,6 +80,7 @@ export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undef
 		[HOST_WATCH_FD_ENV]: process.env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD"),
 		[HOST_WATCH_PPID_ENV]: process.env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID"),
 		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
+		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
 		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
 	});
 }
