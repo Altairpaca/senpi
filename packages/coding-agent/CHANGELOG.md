@@ -12,6 +12,9 @@
 
 ### Fixed
 
+- A plain `--session <id>` resume on the `claude-sdk-oauth` provider no longer re-sends the whole conversation with `Session continuity lost (options_changed)` after a restart (code-yeongyu/oh-my-openagent#7884). A restored session binding whose system prompt or toolset fingerprint drifted - an engine upgrade, a prompt-content change, or the UTC date rolling over - now reattaches to the existing SDK session and sends only the new turn, the same way a live session already did; only an account or model identity change still cold-seeds. The continuity observation names which half drifted (`system_prompt_changed` / `toolset_changed`) instead of the bare `options_changed`.
+- The `Current date:` line is normalized out of the `claude-sdk-oauth` prompt fingerprint even when extension prompt sections follow the `Current working directory:` line, which is the shape every real session has. Previously the normalization only matched when that line ended the prompt, so the fingerprint changed at every UTC midnight.
+
 ### Removed
 
 ## [2026.9.7] - 2026-09-07
