@@ -13,6 +13,16 @@ describe("collectTips", () => {
 		}
 	});
 
+	it("includes the memory aha-moment tip", () => {
+		const tips = collectTips();
+
+		expect(tips.find((tip) => tip.id === "memory.aha-moment")).toEqual({
+			id: "memory.aha-moment",
+			text: "Memory speaks up on its own: when something remembered would change the next step, an Aha moment! line surfaces it mid-task. Silence means nothing relevant was found.",
+			requiresCommand: "memory",
+		});
+	});
+
 	it("includes the fallback-chains-setting tip", () => {
 		const tips = collectTips();
 

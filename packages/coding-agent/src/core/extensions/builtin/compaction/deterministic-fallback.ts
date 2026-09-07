@@ -7,6 +7,7 @@ import {
 	getSessionContextEntryId,
 	type SessionEntry,
 } from "../../../session-manager.ts";
+import { markFailedTurnFragments } from "./fallback-failed-turn-normalization.ts";
 import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
 import { resolveEffectiveReserveTokens } from "./policy.ts";
 import { hasUnsafeRetainedContent } from "./retained-message-safety.ts";
@@ -176,6 +177,13 @@ export function createRequiredCompactionFallback(
 		return undefined;
 	}
 
+	// Evaluate the candidate the provider would actually receive: `convertToLlm`
+	// drops failed/aborted assistant turns (and their orphaned tool results) before
+	// every request, so their dangling toolCall blocks are neither incomplete calls
+	// nor retained tokens here. Raw session history stays untouched - this mask is
+	// local to the fallback projection (code-yeongyu/oh-my-openagent#7921).
+	const droppedByFailedTurnNormalization = markFailedTurnFragments(projectedMessages);
+
 	const messageIndexesByEntryId = new Map<string, number>();
 	for (const [index, message] of projectedMessages.entries()) {
 		const entryId = getSessionContextEntryId(message);
@@ -189,6 +197,10 @@ export function createRequiredCompactionFallback(
 	for (let index = projectedMessages.length - 1; index >= 0; index--) {
 		const message = projectedMessages[index];
 		tokenSuffix[index] = tokenSuffix[index + 1];
+		if (droppedByFailedTurnNormalization[index]) {
+			unsafeSuffix[index] = unsafeSuffix[index + 1];
+			continue;
+		}
 		let messageUnsafe = false;
 		let serialized: string | undefined;
 		try {
