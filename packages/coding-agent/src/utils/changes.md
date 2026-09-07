@@ -1,5 +1,23 @@
 # changes
 
+## Canonical identity resolves through the native realpath (2026-09-07)
+
+### What changed
+
+- `paths.ts`: `canonicalizePath` resolves through `realpathSync.native` instead of `realpathSync`. Its contract is unchanged - it still swallows to the raw input on throw, so the callers that use it for identity comparison keep the convenience behaviour they depend on.
+
+### Why
+
+- Node's JS-implemented `realpathSync` collapses a `..` inside a symlink target lexically, before following the symlink that segment sits behind, so it can answer a path that differs from the one the kernel opens. Two spellings that name one file could therefore compare unequal, and a path that escapes through a symlinked parent could compare as though it did not. `realpathSync.native` (libuv) agrees with the kernel on both platforms measured.
+
+### Why an extension could not handle it
+
+- `canonicalizePath` is the identity primitive the loader and trust plumbing call before any extension is constructed, so nothing downstream can correct an answer it has already returned.
+
+### Expected merge conflict zones
+
+- LOW: the single `realpathSync` call inside `canonicalizePath`; no signature or control-flow change.
+
 ## Open-free resolution follows realpath(3) for `.` and `..` (2026-09-07)
 
 ### What changed

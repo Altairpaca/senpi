@@ -12,6 +12,7 @@
 
 ### Fixed
 - Fixed deterministic compaction recovery rejecting realistic tool-result images because their Base64 bytes were counted against the token window. Image tokens are now charged separately while text, metadata, and genuine overflow protections remain intact ([#1455](https://github.com/code-yeongyu/senpi/issues/1455) by [@ayden94](https://github.com/ayden94)).
+- Plugin hook targets are now checked for containment against the filesystem rather than a path-collapsing resolver. A hook path that walked back up through a symlinked directory inside the plugin root could resolve to a file outside that root while still being reported as contained, so it was accepted; containment now resolves through `realpathSync.native`, which agrees with the kernel. Corrective on Node, behaviour-preserving on Bun.
 
 - The `claude-sdk-oauth` lane now logs exactly one continuity observation per turn again (#1432): an attempt discarded by account failover no longer emits its staged observation alongside the retained one, so `claude_sdk_oauth_session_continuity` counts reflect turns, not attempted accounts.
 
