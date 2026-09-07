@@ -13,8 +13,17 @@ export function installShellCapture(options) {
 	if (!isBunRuntime(bun)) return () => {};
 	const originalShell = bun.$;
 	const originalSpawn = bun.spawn;
+	const deletedKeys = globalThis.__senpi_session_env_deletions__;
+	const pinEnv =
+		globalThis.__senpi_session_env_applied__ === true || (Array.isArray(deletedKeys) && deletedKeys.length > 0);
+	if (pinEnv && typeof originalShell.env === "function") {
+		// Bun.spawn without an explicit env inherits the OS environ, not the worker's process.env,
+		// and deleting from process.env does not unsetenv under Bun. Pinning the worker's
+		// environment view mirrors the bash tool, which always spawns with an explicit env.
+		originalShell.env({ ...process.env });
+	}
 	bun.$ = capturedShell(originalShell, options);
-	bun.spawn = capturedSpawn(originalSpawn, options);
+	bun.spawn = capturedSpawn(originalSpawn, options, pinEnv);
 	return () => {
 		bun.$ = originalShell;
 		bun.spawn = originalSpawn;
@@ -103,20 +112,26 @@ function outputText(value) {
 	return typeof value === "string" ? value : "";
 }
 
-function capturedSpawn(originalSpawn, options) {
+function capturedSpawn(originalSpawn, options, pinEnv) {
 	return (...args) => {
 		if (!options.isActive()) return originalSpawn(...args);
 		const [first, second] = args;
 		let child;
 		if (Array.isArray(first)) {
 			const spawnOptions = second === undefined ? {} : second;
-			child = needsStderrCapture(spawnOptions)
-				? drainStderr(originalSpawn(first, { ...spawnOptions, stderr: "pipe" }), options.emitText)
-				: originalSpawn(...args);
+			const effective = pinEnv && spawnOptions.env === undefined ? { ...spawnOptions, env: { ...process.env } } : spawnOptions;
+			child = needsStderrCapture(effective)
+				? drainStderr(originalSpawn(first, { ...effective, stderr: "pipe" }), options.emitText)
+				: effective === spawnOptions
+					? originalSpawn(...args)
+					: originalSpawn(first, effective);
 		} else {
-			child = needsStderrCapture(first)
-				? drainStderr(originalSpawn({ ...first, stderr: "pipe" }), options.emitText)
-				: originalSpawn(...args);
+			const effective = pinEnv && first !== null && typeof first === "object" && first.env === undefined ? { ...first, env: { ...process.env } } : first;
+			child = needsStderrCapture(effective)
+				? drainStderr(originalSpawn({ ...effective, stderr: "pipe" }), options.emitText)
+				: effective === first
+					? originalSpawn(...args)
+					: originalSpawn(effective);
 		}
 		options.onChild?.(child);
 		return child;
