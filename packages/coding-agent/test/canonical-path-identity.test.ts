@@ -110,7 +110,6 @@ describe("file mutation queue identity", () => {
 			const { requested, real } = createSymlinkEscapeFixture(dir);
 			const started: string[] = [];
 			const releaseFirst = Promise.withResolvers<void>();
-			const secondStarted = Promise.withResolvers<void>();
 			const firstEntered = Promise.withResolvers<void>();
 
 			// when
@@ -119,20 +118,16 @@ describe("file mutation queue identity", () => {
 				firstEntered.resolve();
 				await releaseFirst.promise;
 			});
+			await firstEntered.promise;
 			const second = withFileMutationQueue(real, async () => {
 				started.push("second");
-				secondStarted.resolve();
 			});
-			// Wait for the holder to be inside its callback, then prove the other spelling is still
-			// queued behind it: whichever settles first decides, so no timer can make this pass.
-			await firstEntered.promise;
-			const whileHeld = await Promise.race([
-				secondStarted.promise.then(() => "second-started"),
-				new Promise<string>((resolveRace) => setTimeout(() => resolveRace("still-queued"), 50)),
-			]);
+			// Registrations are serialized, so a call on an UNRELATED key whose callback has run proves
+			// `second` finished registering. Its own queue is empty, so it cannot wait on the held lock.
+			// If the two spellings had produced different keys, `second` would have run by now too.
+			await withFileMutationQueue(join(dir, "unrelated.txt"), async () => undefined);
 
 			// then
-			expect(whileHeld).toBe("still-queued");
 			expect(started).toEqual(["first"]);
 			releaseFirst.resolve();
 			await Promise.all([first, second]);
