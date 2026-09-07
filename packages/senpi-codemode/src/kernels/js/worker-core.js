@@ -117,11 +117,14 @@ function applySessionEnvironment(sessionEnv) {
 		if (key in process.env && !provided.has(key)) deleted.push(key);
 		delete process.env[key];
 	}
-	for (const [key, value] of Object.entries(sessionEnv ?? {})) process.env[key] = value;
-	// Under Bun, deleting from process.env does not unsetenv, so children spawned without
-	// an explicit env would still see the deleted keys. installShellCapture reads this list
-	// and pins the worker's environment view for such children (see worker-shell-capture.js).
+	const applied = Object.entries(sessionEnv ?? {});
+	for (const [key, value] of applied) process.env[key] = value;
+	// A worker's process.env is its own view: Bun.$ and node:child_process read it, but Bun.spawn
+	// without an explicit env inherits the OS environ, which also still holds deleted keys because
+	// `delete process.env.X` does not unsetenv under Bun. installShellCapture reads these flags and
+	// pins the worker's environment view for such children (see worker-shell-capture.js).
 	globalThis.__senpi_session_env_deletions__ = deleted;
+	globalThis.__senpi_session_env_applied__ = applied.length > 0 || deleted.length > 0;
 }
 
 function valueRepr(value) {

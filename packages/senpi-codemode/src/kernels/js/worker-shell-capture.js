@@ -14,10 +14,11 @@ export function installShellCapture(options) {
 	const originalShell = bun.$;
 	const originalSpawn = bun.spawn;
 	const deletedKeys = globalThis.__senpi_session_env_deletions__;
-	const pinEnv = Array.isArray(deletedKeys) && deletedKeys.length > 0;
+	const pinEnv =
+		globalThis.__senpi_session_env_applied__ === true || (Array.isArray(deletedKeys) && deletedKeys.length > 0);
 	if (pinEnv && typeof originalShell.env === "function") {
-		// Deleting from process.env does not unsetenv under Bun, so shell commands would
-		// still see deleted session keys in the inherited environment. Pinning the worker's
+		// Bun.spawn without an explicit env inherits the OS environ, not the worker's process.env,
+		// and deleting from process.env does not unsetenv under Bun. Pinning the worker's
 		// environment view mirrors the bash tool, which always spawns with an explicit env.
 		originalShell.env({ ...process.env });
 	}

@@ -39,6 +39,7 @@ describe("JS kernel shell output capture", () => {
 		restore();
 		restore = () => {};
 		Reflect.deleteProperty(globalThis, "__senpi_session_env_deletions__");
+		Reflect.deleteProperty(globalThis, "__senpi_session_env_applied__");
 		if (hadBun) Object.defineProperty(globalThis, "Bun", { value: originalBun, configurable: true, writable: true });
 		else Reflect.deleteProperty(globalThis, "Bun");
 	});
@@ -227,7 +228,27 @@ describe("JS kernel shell output capture", () => {
 		}
 	});
 
-	it("Given no deleted session keys when capture installs then spawn options pass through unchanged", async () => {
+	it("Given a session environment applied without deletions when Bun.spawn runs without env then the worker view is pinned", async () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-applied-session";
+		globalThis.__senpi_session_env_deletions__ = [];
+		globalThis.__senpi_session_env_applied__ = true;
+		const { emitText } = emitter();
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText });
+
+			fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			const pinned = fake.spawnCalls[0]?.options;
+			expect(pinned?.env).toEqual({ ...process.env });
+			expect(pinned?.env).toHaveProperty("PI_SESSION_ID", "capture-applied-session");
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given no session environment when capture installs then spawn options pass through unchanged", async () => {
 		const fake = installFakeBun();
 		const { emitText } = emitter();
 		restore = installShellCapture({ isActive: () => true, emitText });
