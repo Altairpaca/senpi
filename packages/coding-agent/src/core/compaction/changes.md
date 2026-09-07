@@ -1,3 +1,21 @@
+## 2026-09-07 - Effective admission reserve (#7921 case 2)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: resolve the effective reserve in `shouldCompact` through the shared policy resolver.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921: a million-token model must reserve 40,000 tokens by default, not the raw 16,384.
+
+### Why an extension could not handle it
+
+- Core admission calls this predicate before extension compaction can enforce its budget. The policy imports core types only, so this runtime import introduces no cycle.
+
+### Expected merge conflict zones
+
+- `shouldCompact` and policy imports.
+
 ## 2026-09-07 - Stuck-overflow classification (#1422)
 
 ### What changed
