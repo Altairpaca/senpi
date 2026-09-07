@@ -4,7 +4,9 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` exempts manual requests from the SDK-native `session_before_compact` cancellation. Automatic threshold, overflow, pre-prompt, and speculative ownership remain SDK-owned.
+- `lane-policy.ts` exposes one reason-aware `ownsCompaction` predicate: manual requests are senpi-owned for recovery even on SDK-native lanes; automatic threshold, overflow, pre-prompt, and speculative routes remain SDK-owned. The predicate is used for the before-compact admission and failure-accounting sites; the message-end degradation site is automatic-only and remains unchanged.
+- Failed manual compactions are recorded by the circuit breaker, including on SDK-native lanes; manual requests no longer bypass the breaker.
+- Concurrent SDK/native and senpi work is protected by the existing speculative generation and message-revision checks before generated results are applied.
 
 ### Why
 

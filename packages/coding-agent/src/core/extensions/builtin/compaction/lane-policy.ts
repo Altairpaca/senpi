@@ -57,6 +57,8 @@ export interface LaneContext {
 export interface CompactionLanePolicy {
 	/** True when the SDK owns this lane's context and senpi compaction must stand down. */
 	disablesSenpiCompaction(context: LaneContext): boolean;
+	/** Manual requests are explicitly owned by senpi for recovery, even on SDK lanes. */
+	ownsCompaction(context: LaneContext, reason: "manual" | string): boolean;
 }
 
 export interface CompactBoundaryEntry {
@@ -91,6 +93,9 @@ export function createCompactionLanePolicy(
 	let cachedCwd: string | undefined;
 	let cachedResumeMode: string | undefined;
 	return {
+		ownsCompaction(context: LaneContext, reason: "manual" | string): boolean {
+			return reason === "manual" || !this.disablesSenpiCompaction(context);
+		},
 		disablesSenpiCompaction(context: LaneContext): boolean {
 			if (context.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
 			// A configured compaction model override makes senpi own summarization

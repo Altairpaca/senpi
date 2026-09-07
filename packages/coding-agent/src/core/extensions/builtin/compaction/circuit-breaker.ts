@@ -54,8 +54,7 @@ export function isTripped(state: CompactionExtensionState, now: number): boolean
 	return state.trippedAt !== null && now < state.trippedAt + COOLDOWN_MS;
 }
 
-export function shouldBypass(_state: CompactionExtensionState, opts?: ShouldBypassOptions): boolean {
-	if (opts?.manual === true) return true;
-	if (opts?.reason === "manual") return true;
+export function shouldBypass(_state: CompactionExtensionState, _opts?: ShouldBypassOptions): boolean {
+	// Manual recovery is still subject to the breaker: repeated failures must trip it.
 	return false;
 }
