@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,10 +22,11 @@ function createRoot(): string {
 	return root;
 }
 
-// `entry -> "jump/../secret"` with `jump -> outside/subdir`: POSIX follows jump first and lands in
-// outside/secret, while collapsing `..` lexically answers allowed/secret. A containment decision fed
-// the lexical answer approves one directory while the I/O reaches another, and an identity key built
-// from it treats one file as two.
+// `entry -> "jump/../secret"` with `jump -> outside/subdir`: the `..` belongs to the link target, so
+// it is applied after `jump` expands and the file reached is outside/secret. Collapsing it lexically
+// instead answers allowed/secret, which would let a containment policy approve one directory while
+// the read leaves it, and would key one file as two in the mutation queue. The fixture reads through
+// the requested path and pins that byte, so it cannot encode the wrong side of the escape.
 function createSymlinkEscapeFixture(dir: string): { readonly requested: string; readonly real: string } {
 	const allowed = join(dir, "allowed");
 	const outside = join(dir, "outside");
@@ -36,7 +37,9 @@ function createSymlinkEscapeFixture(dir: string): { readonly requested: string; 
 	writeFileSync(join(allowed, "secret", "f.txt"), "allowed");
 	symlinkSync(join(outside, "subdir"), join(allowed, "jump"), "dir");
 	symlinkSync("jump/../secret", join(allowed, "entry"), "dir");
-	return { requested: join(allowed, "entry", "f.txt"), real: join(outside, "secret", "f.txt") };
+	const requested = join(allowed, "entry", "f.txt");
+	expect(readFileSync(requested, "utf8")).toBe("outside");
+	return { requested, real: join(outside, "secret", "f.txt") };
 }
 
 describe("open-free resolution agrees with realpath(3)", () => {
@@ -50,15 +53,18 @@ describe("open-free resolution agrees with realpath(3)", () => {
 		expect(realpathWithoutOpen(requested)).toBe(real);
 	});
 
-	it.skipIf(isWindows)("applies `..` in the requested path after following symlinks", () => {
+	it.skipIf(isWindows)("resolves a relative symlink target against the link's own directory", () => {
 		// given
 		const dir = createRoot();
-		const real = join(dir, "real");
-		mkdirSync(join(real, "inner"), { recursive: true });
-		symlinkSync(join(real, "inner"), join(dir, "link"), "dir");
+		const nested = join(dir, "nested");
+		mkdirSync(join(nested, "real"), { recursive: true });
+		writeFileSync(join(nested, "real", "target.txt"), "nested");
+		symlinkSync("real", join(nested, "alias"), "dir");
+		const requested = join(nested, "alias", "target.txt");
 
 		// when / then
-		expect(realpathWithoutOpen(join(dir, "link", "..", "target.txt"))).toBe(join(real, "target.txt"));
+		expect(realpathWithoutOpen(requested)).toBe(realpathSync(requested));
+		expect(realpathWithoutOpen(requested)).toBe(join(nested, "real", "target.txt"));
 	});
 
 	it("keeps a missing descendant under its resolved parent", () => {
