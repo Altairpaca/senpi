@@ -20,11 +20,16 @@ process.exit(Number(exitCode));
 
 // A long-running fixture script: records its pid once running, then waits until
 // SIGTERM arrives and records that too. Ten seconds is only the safety net for a
-// driver that never forwards the signal.
+// driver that never forwards the signal. The pid marker is written to a temp
+// name and renamed into place: a directory watcher fires on creation, before
+// writeFileSync has written the content, and a reader that raced it saw an
+// empty file (CI, 'Script tests (bun)', 2026-09-07). rename is atomic, so the
+// marker never exists without its content.
 export const WAITER_SOURCE = `
 const fs = require("node:fs");
 const marker = process.env.RUN_WORKSPACES_MARKER_FILE;
-fs.writeFileSync(marker + ".started", String(process.pid));
+fs.writeFileSync(marker + ".started.tmp", String(process.pid));
+fs.renameSync(marker + ".started.tmp", marker + ".started");
 process.on("SIGTERM", () => { fs.writeFileSync(marker + ".terminated", ""); process.exit(0); });
 setTimeout(() => process.exit(9), 10_000);
 `;
