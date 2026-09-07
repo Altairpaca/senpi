@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rename, rm, stat, unlink } from "node:fs/promises";
 import { createServer, type Server, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
 
 const roots: string[] = [];
@@ -48,7 +48,7 @@ describe.skipIf(process.platform === "win32")("RPC socket shutdown ownership", (
 
 					expect(await stop(host.child, "SIGTERM")).toEqual([143, null]);
 
-					await expect(stat(host.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+					await expectSocketRemoved(host.socketPath);
 				},
 				testTimeoutMs,
 			);
@@ -92,7 +92,7 @@ describe.skipIf(process.platform === "win32")("RPC socket shutdown ownership", (
 
 			expect(await stop(host.child, "SIGKILL")).toEqual([null, "SIGKILL"]);
 
-			await expect(stat(host.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+			await expectSocketRemoved(host.socketPath);
 		},
 		testTimeoutMs,
 	);
@@ -163,6 +163,19 @@ async function startHost(supervised: boolean): Promise<{
 		child.once("close", onClose);
 	});
 	return { child, socketPath };
+}
+
+/**
+ * The public socket is unlinked by whichever process owns the teardown (the supervised host's
+ * watchdog shutdown, or the host's own SIGTERM path), and that unlink is not sequenced before the
+ * supervisor's `close` reaches this process. Wait for the removal itself, bounded, instead of
+ * asserting one stat snapshot taken at `close`.
+ */
+async function expectSocketRemoved(socketPath: string): Promise<void> {
+	await vi.waitFor(() => expect(stat(socketPath)).rejects.toMatchObject({ code: "ENOENT" }), {
+		timeout: deadlineMs,
+		interval: 25,
+	});
 }
 
 async function stop(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): Promise<unknown[]> {

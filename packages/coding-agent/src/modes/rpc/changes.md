@@ -1,5 +1,25 @@
 # changes
 
+## Watchdog reads the ownership token before it removes the scratch directory (2026-09-07)
+
+### What changed
+
+- `host-watchdog.ts`: `HostWatchdogConfig.beforeCleanup` runs when the watchdog fires, before `scratchDir` and `cleanupPaths` are removed; a failing hook never blocks the cleanup or the shutdown behind it.
+- `multi-session-host.ts`: a supervised host passes a hook that reads the supervisor's `public-socket.owner` token if the startup wait has not loaded it yet, so the ownership-checked removal of the public socket has something to prove with.
+- `test/suite/rpc-socket-ownership.test.ts`: the two removal assertions wait, bounded, for the path to disappear instead of stat-ing one snapshot at `close`.
+
+### Why
+
+The supervisor publishes the token right after its `listen()` and prints `ready` immediately after, while the host learns the token through a 25 ms poll. Under load (CI, or the earlier cases of the same test file) the supervisor could be SIGKILLed while the host was still polling. The watchdog then removed the scratch directory first, the host's shutdown ran `unlinkOwnedSocket(publicSocket, undefined)`, correctly refused (`ownership unknown; leaving it`), and the public socket outlived both processes. `test/suite/rpc-socket-ownership.test.ts` failed on `main` exactly this way (senpi #1442); standalone the same sequence passed, which is why it read as a flaky test rather than the startup race it is.
+
+### Why an extension could not handle it
+
+The watchdog fires inside the host's transport lifecycle below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `host-watchdog.ts` config field and `fire()`; the `armHostWatchdog` call in `multi-session-host.ts`; the two assertions in the ownership test.
+
 ## Socket teardown is ownership-checked, never path-only (2026-09-07)
 
 ### What changed
