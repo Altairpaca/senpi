@@ -114,4 +114,12 @@ describe("JavaScript kernel last-expression capture", () => {
 			expect(parseJavaScriptResult(run.result)).toBe(42);
 		});
 	});
+
+	it("suppresses capture for a top-level return even when that return does not fire", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(kernel, 'if (false) return 1;\n"tail"');
+
+			expect(parseJavaScriptResult(run.result)).toBeUndefined();
+		});
+	});
 });
