@@ -110,8 +110,8 @@ describe("file mutation queue identity", () => {
 			const { requested, real } = createSymlinkEscapeFixture(dir);
 			const started: string[] = [];
 			const releaseFirst = Promise.withResolvers<void>();
-			const secondStarted = Promise.withResolvers<void>();
 			const firstEntered = Promise.withResolvers<void>();
+			const secondRegistered = Promise.withResolvers<void>();
 
 			// when
 			const first = withFileMutationQueue(requested, async () => {
@@ -119,23 +119,22 @@ describe("file mutation queue identity", () => {
 				firstEntered.resolve();
 				await releaseFirst.promise;
 			});
+			await firstEntered.promise;
+			// Registration (the async key resolution) is the only step that could reorder the two; once
+			// the probe below has registered, the queue itself is the barrier. If the two spellings got
+			// different keys, `second` would run here immediately and `started` would already hold both.
+			const probe = withFileMutationQueue(real, async () => {
+				secondRegistered.resolve();
+			});
 			const second = withFileMutationQueue(real, async () => {
 				started.push("second");
-				secondStarted.resolve();
 			});
-			// Wait for the holder to be inside its callback, then prove the other spelling is still
-			// queued behind it: whichever settles first decides, so no timer can make this pass.
-			await firstEntered.promise;
-			const whileHeld = await Promise.race([
-				secondStarted.promise.then(() => "second-started"),
-				new Promise<string>((resolveRace) => setTimeout(() => resolveRace("still-queued"), 50)),
-			]);
+			await Promise.race([secondRegistered.promise, second]);
 
 			// then
-			expect(whileHeld).toBe("still-queued");
 			expect(started).toEqual(["first"]);
 			releaseFirst.resolve();
-			await Promise.all([first, second]);
+			await Promise.all([first, probe, second]);
 			expect(started).toEqual(["first", "second"]);
 		},
 		20_000,
