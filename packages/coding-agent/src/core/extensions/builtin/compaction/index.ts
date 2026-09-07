@@ -556,7 +556,7 @@ export default function compactionExtension(
 		let warmJobConsumed = false;
 		invalidateSpeculativeCompaction(ctx);
 		try {
-			if (lanePolicy.disablesSenpiCompaction(ctx)) {
+			if (event.reason !== "manual" && lanePolicy.disablesSenpiCompaction(ctx)) {
 				return {
 					cancel: true,
 					rejectionCause: "external-owner",

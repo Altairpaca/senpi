@@ -1,5 +1,23 @@
 # changes.md — builtin compaction policy
 
+## Allow explicit manual compaction on SDK-owned automatic lanes (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` exempts manual requests from the SDK-native `session_before_compact` cancellation. Automatic threshold, overflow, pre-prompt, and speculative ownership remain SDK-owned.
+
+### Why
+
+- A rejected downsizing leaves the larger model selected so the user can compact first. Cancelling explicit `/compact` with `external-owner` blocked that recovery; manual requests must reach the existing summary generation and persistence path without weakening model admission.
+
+### Why an extension could not handle it
+
+- The cancellation is owned by this builtin hook. Another extension cannot safely undo its rejection or replace the coordinated compaction lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` around the SDK-native lane guard in `session_before_compact`.
+
 ## Omit speculation lead from resumed-session admission (2026-09-03)
 
 ### What changed
