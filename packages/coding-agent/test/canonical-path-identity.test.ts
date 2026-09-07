@@ -43,9 +43,10 @@ function createSymlinkEscapeFixture(dir: string): { readonly requested: string; 
 }
 
 describe("open-free resolution agrees with realpath(3)", () => {
-	// The oracle here is the file the I/O opens, not `realpathSync`: Bun's realpath collapses this
-	// `..` lexically on Linux and answers allowed/secret, disagreeing with the kernel's own
-	// resolution of the same path (measured). Pinning it to realpathSync would pin that bug.
+	// The oracle here is the file the I/O opens, not `realpathSync`: Node's JS `fs.realpathSync`
+	// collapses this `..` lexically and answers allowed/secret (measured on node v24 and v26), while
+	// `realpathSync.native` and Bun agree with the kernel. Vitest runs under Node, so pinning the
+	// walker to `realpathSync` would pin that bug into the suite.
 	it.skipIf(isWindows)("applies `..` in a symlink target after following that target's symlinks", () => {
 		// given
 		const dir = createRoot();
