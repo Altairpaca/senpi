@@ -91,11 +91,7 @@ describe("ProjectTrustStore", () => {
 		// And a trust store that already contains a TRUE decision under the key a
 		// path-collapsing resolver would have produced for it (the pre-fix key).
 		const collapsedKey = join(inside, "workspace");
-		writeFileSync(
-			join(agentDir, "trust.json"),
-			JSON.stringify({ [collapsedKey]: true }, null, 2),
-			"utf-8",
-		);
+		writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [collapsedKey]: true }, null, 2), "utf-8");
 
 		// When the store is consulted for that workspace
 		const store = new ProjectTrustStore(agentDir);
@@ -109,12 +105,7 @@ describe("ProjectTrustStore", () => {
 		// Control: the same store DOES honour a decision keyed by the real location,
 		// so this assertion can fail rather than passing on a lookup that never matches.
 		const realKey = realpathSync.native(reachedThroughSymlink);
-		writeFileSync(
-			join(agentDir, "trust.json"),
-			JSON.stringify({ [realKey]: true }, null, 2),
-			"utf-8",
-		);
+		writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realKey]: true }, null, 2), "utf-8");
 		expect(new ProjectTrustStore(agentDir).get(reachedThroughSymlink)).toBe(true);
 	});
-
 });

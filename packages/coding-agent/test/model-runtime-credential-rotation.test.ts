@@ -158,9 +158,7 @@ describe("credential rotation over a pooled provider", () => {
 		await runtime.registerNativeProvider(faux.provider);
 		await runtime.refresh({ allowNetwork: false, providers: ["policy-only"] });
 		faux.setResponses([fauxAssistantMessage("policy-ok")]);
-		const events = await collectClosedRuntimeEvents(
-			runtime.stream(faux.getModel(), { messages: [], tools: [] }),
-		);
+		const events = await collectClosedRuntimeEvents(runtime.stream(faux.getModel(), { messages: [], tools: [] }));
 		expect(events.some((event) => event.type === "done")).toBe(true);
 		expect(faux.getCallLog()).toHaveLength(1);
 		rmSync(dir, { recursive: true, force: true });
