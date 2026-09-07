@@ -13,6 +13,7 @@ export function installShellCapture(options) {
 	if (!isBunRuntime(bun)) return () => {};
 	const originalShell = bun.$;
 	const originalSpawn = bun.spawn;
+	const originalSpawnSync = typeof bun.spawnSync === "function" ? bun.spawnSync : null;
 	const deletedKeys = globalThis.__senpi_session_env_deletions__;
 	const pinEnv =
 		globalThis.__senpi_session_env_applied__ === true || (Array.isArray(deletedKeys) && deletedKeys.length > 0);
@@ -24,9 +25,11 @@ export function installShellCapture(options) {
 	}
 	bun.$ = capturedShell(originalShell, options);
 	bun.spawn = capturedSpawn(originalSpawn, options, pinEnv);
+	if (originalSpawnSync !== null) bun.spawnSync = capturedSpawnSync(originalSpawnSync, pinEnv);
 	return () => {
 		bun.$ = originalShell;
 		bun.spawn = originalSpawn;
+		if (originalSpawnSync !== null) bun.spawnSync = originalSpawnSync;
 	};
 }
 
@@ -110,6 +113,24 @@ function emitShellOutput(output, emitText) {
 function outputText(value) {
 	if (value instanceof Uint8Array) return new TextDecoder().decode(value);
 	return typeof value === "string" ? value : "";
+}
+
+// Bun.spawnSync inherits the OS environ the same way Bun.spawn does, so a cell calling it
+// without an explicit env must get the worker's view pinned too (measured on Bun 1.4.0).
+function capturedSpawnSync(originalSpawnSync, pinEnv) {
+	return (...args) => {
+		if (!pinEnv) return originalSpawnSync(...args);
+		const [first, second] = args;
+		if (Array.isArray(first)) {
+			const spawnOptions = second === undefined ? {} : second;
+			if (spawnOptions === null || typeof spawnOptions !== "object" || spawnOptions.env !== undefined)
+				return originalSpawnSync(...args);
+			return originalSpawnSync(first, { ...spawnOptions, env: { ...process.env } });
+		}
+		if (first !== null && typeof first === "object" && first.env === undefined)
+			return originalSpawnSync({ ...first, env: { ...process.env } });
+		return originalSpawnSync(...args);
+	};
 }
 
 function capturedSpawn(originalSpawn, options, pinEnv) {

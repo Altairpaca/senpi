@@ -248,6 +248,40 @@ describe("JS kernel shell output capture", () => {
 		}
 	});
 
+	it("Given a session environment when Bun.spawnSync runs without env then the worker view is pinned and explicit env is kept", () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-sync-session";
+		globalThis.__senpi_session_env_applied__ = true;
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText: emitter().emitText });
+
+			fake.bun.spawnSync(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			fake.bun.spawnSync(["keep"], { env: { CUSTOM: "1" } });
+			fake.bun.spawnSync({ cmd: ["obj"] });
+
+			expect(fake.spawnSyncCalls[0]?.options.env).toEqual({ ...process.env });
+			expect(fake.spawnSyncCalls[0]?.options.env).toHaveProperty("PI_SESSION_ID", "capture-sync-session");
+			expect(fake.spawnSyncCalls[1]?.options.env).toEqual({ CUSTOM: "1" });
+			expect(fake.spawnSyncCalls[2]?.options.env).toEqual({ ...process.env });
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given no session environment when Bun.spawnSync runs then it passes through unchanged and restore reinstates it", () => {
+		const fake = installFakeBun();
+		const originalSpawnSync = fake.bun.spawnSync;
+		restore = installShellCapture({ isActive: () => true, emitText: emitter().emitText });
+		expect(fake.bun.spawnSync).not.toBe(originalSpawnSync);
+
+		fake.bun.spawnSync(["sh", "-c", "true"]);
+		expect(fake.spawnSyncCalls).toEqual([{ cmd: ["sh", "-c", "true"], options: {} }]);
+
+		restore();
+		restore = () => {};
+		expect(fake.bun.spawnSync).toBe(originalSpawnSync);
+	});
+
 	it("Given no session environment when capture installs then spawn options pass through unchanged", async () => {
 		const fake = installFakeBun();
 		const { emitText } = emitter();

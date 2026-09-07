@@ -13,6 +13,14 @@ const childCell = [
 	"return String(child.stdout ?? '');",
 ].join("\n");
 
+// Bun.spawnSync without an explicit env inherits the OS environ, not the worker's process.env;
+// the shell capture must pin the worker view for it. Skipped where the cell runtime is not Bun.
+const bunSpawnSyncCell = [
+	"if (typeof Bun === 'undefined' || typeof Bun.spawnSync !== 'function') return 'not-bun';",
+	"const child = Bun.spawnSync([process.execPath, '-e', 'process.stdout.write(String(process.env.PI_SESSION_ID ?? \"\"))']);",
+	"return new TextDecoder().decode(child.stdout);",
+].join("\n");
+
 async function cellValue(kernel: JavaScriptKernel, code: string): Promise<unknown> {
 	const run = await runJavaScriptCell(kernel, code);
 	return parseJavaScriptResult(run.result);
@@ -50,6 +58,10 @@ describe("JavaScriptKernel session environment", () => {
 
 					const childValue = await cellValue(kernel, childCell);
 					expect(childValue).toBe("js-session-env-77");
+
+					const bunSyncValue = await cellValue(kernel, bunSpawnSyncCell);
+					expect(bunSyncValue === "not-bun" || bunSyncValue === "js-session-env-77").toBe(true);
+					if (Object.hasOwn(globalThis, "Bun")) expect(bunSyncValue).toBe("js-session-env-77");
 				},
 				{
 					sessionEnv: { PI_SESSION_ID: "js-session-env-77", PI_PROVIDER: "fake", PI_MODEL: "fake-model" },
