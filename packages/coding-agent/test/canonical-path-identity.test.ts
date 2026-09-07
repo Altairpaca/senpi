@@ -111,7 +111,6 @@ describe("file mutation queue identity", () => {
 			const started: string[] = [];
 			const releaseFirst = Promise.withResolvers<void>();
 			const firstEntered = Promise.withResolvers<void>();
-			const secondRegistered = Promise.withResolvers<void>();
 
 			// when
 			const first = withFileMutationQueue(requested, async () => {
@@ -120,21 +119,18 @@ describe("file mutation queue identity", () => {
 				await releaseFirst.promise;
 			});
 			await firstEntered.promise;
-			// Registration (the async key resolution) is the only step that could reorder the two; once
-			// the probe below has registered, the queue itself is the barrier. If the two spellings got
-			// different keys, `second` would run here immediately and `started` would already hold both.
-			const probe = withFileMutationQueue(real, async () => {
-				secondRegistered.resolve();
-			});
 			const second = withFileMutationQueue(real, async () => {
 				started.push("second");
 			});
-			await Promise.race([secondRegistered.promise, second]);
+			// Registrations are serialized, so a call on an UNRELATED key whose callback has run proves
+			// `second` finished registering. Its own queue is empty, so it cannot wait on the held lock.
+			// If the two spellings had produced different keys, `second` would have run by now too.
+			await withFileMutationQueue(join(dir, "unrelated.txt"), async () => undefined);
 
 			// then
 			expect(started).toEqual(["first"]);
 			releaseFirst.resolve();
-			await Promise.all([first, probe, second]);
+			await Promise.all([first, second]);
 			expect(started).toEqual(["first", "second"]);
 		},
 		20_000,
