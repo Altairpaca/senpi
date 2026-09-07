@@ -1,3 +1,22 @@
+## 2026-09-07 - Dedupe skills from duplicate copies of one package
+
+### What changed
+
+- `src/core/package-identity.ts`: `findNearestPackageIdentity` and `dedupePathsByPackageIdentity` moved out of the resource loader as pure functions (nearest `package.json` name + relative resource path).
+- `src/core/resource-loader.ts`: skill paths assembled during `reload()` are deduped by package identity the same way extension paths already were, so a second physical copy of one package contributes no skills and no collision diagnostics.
+
+### Why
+
+- omo-ai loads its plugin via `--extension`; when `settings.packages` also held a worktree checkout of `@code-yeongyu/omo-senpi`, extensions deduped by package name but every one of the 24 skills raised a "name collision" warning at startup. Skills and extensions from one package identity now follow one rule: the earliest registration wins.
+
+### Why an extension could not handle it
+
+- Skill discovery and collision diagnostics run in the core loader before any extension code executes.
+
+### Expected merge conflict zones
+
+- LOW: `resource-loader.ts` around skill path assembly and the former private package-identity helpers.
+
 
 ## 2026-09-05 - Persist Astra reasoning configuration updates
 
