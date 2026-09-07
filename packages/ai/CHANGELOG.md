@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed context-overflow classification so OpenAI's "exceeds the model's context window" wording is detected and token-quota / rate-limit messages that mention tokens are not treated as overflow (code-yeongyu/oh-my-openagent#7921).
+
 ### Removed
 
 ## [2026.9.7] - 2026-09-07

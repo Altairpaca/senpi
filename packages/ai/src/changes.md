@@ -1,4 +1,22 @@
 
+## 2026-09-07 - Classify OpenAI context-window overflow and token rate limits (code-yeongyu/oh-my-openagent#7921)
+
+### What changed
+
+- `packages/ai/src/utils/overflow.ts`: widen the OpenAI overflow pattern so "exceeds the model's context window" and "exceeds this model's context window" match, and add NON_OVERFLOW exclusions for tokens-per-window quota wording, TPM/RPM, quota exceeded, retry-after, HTTP 429 prefixes, and overloaded providers so those stay on the rate-limit path (code-yeongyu/oh-my-openagent#7921).
+
+### Why
+
+- OpenAI's current overflow text does not contain "exceeds the context window" as a contiguous phrase, so compaction recovery missed real overflows. Generic overflow fallbacks also matched token-quota 429s ("too many tokens per minute", "exceeds the limit of N tokens per minute"), so the agent showed a context-overflow error instead of the provider rate-limit error.
+
+### Why an extension could not handle it
+
+- `isContextOverflow` is the shared pi-ai classifier that compaction and overflow recovery consult before any extension hook runs; only a core pattern change can correct both the miss and the false positive.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/utils/overflow.ts` OVERFLOW_PATTERNS OpenAI entry and NON_OVERFLOW_PATTERNS.
+
 ## 2026-09-05 - Project Astra configuration updates at the Responses wire
 
 ### What changed
