@@ -117,15 +117,39 @@ describe("bounded resolution", () => {
 });
 
 describe("case-insensitive identity folding", () => {
-	it("folds only on filesystems that ignore case", () => {
-		// given
-		const spelled = "/Volumes/Data/Notes.txt";
+	// The platform is stubbed so both branches run on every CI runner: asserted against the host's own
+	// platform, the Linux branch reduces to "unchanged", which a deleted fold also satisfies.
+	function withPlatform<T>(platform: NodeJS.Platform, run: () => T): T {
+		const original = Object.getOwnPropertyDescriptor(process, "platform");
+		Object.defineProperty(process, "platform", { value: platform, configurable: true });
+		try {
+			return run();
+		} finally {
+			if (original) Object.defineProperty(process, "platform", original);
+		}
+	}
+
+	it("lowercases and NFC-normalizes the key where the filesystem ignores case", () => {
+		// given: "e" + combining acute (NFD) spelled with capitals
+		const spelled = "/Volumes/Data/Cafe\u0301/Notes.txt";
 
 		// when
-		const folded = foldPathForCaseInsensitiveFilesystem(spelled);
+		const folded = withPlatform("darwin", () => foldPathForCaseInsensitiveFilesystem(spelled));
+
+		// then: precomposed \u00e9, all lowercase
+		expect(folded).toBe("/volumes/data/caf\u00e9/notes.txt");
+		expect(folded).not.toBe(spelled);
+	});
+
+	it("leaves the key untouched where the filesystem is case-sensitive", () => {
+		// given
+		const spelled = "/home/user/Cafe\u0301/Notes.txt";
+
+		// when
+		const folded = withPlatform("linux", () => foldPathForCaseInsensitiveFilesystem(spelled));
 
 		// then
-		expect(folded).toBe(isCaseSensitiveFilesystem ? spelled : spelled.toLowerCase());
+		expect(folded).toBe(spelled);
 	});
 
 	it.skipIf(isCaseSensitiveFilesystem || isWindows)(
