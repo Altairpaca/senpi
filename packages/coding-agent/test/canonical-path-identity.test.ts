@@ -92,33 +92,37 @@ describe("canonicalizeFilesystemPath", () => {
 });
 
 describe("file mutation queue identity", () => {
-	it.skipIf(isWindows)("serializes two spellings that name one file", async () => {
-		// given
-		const dir = createRoot();
-		const { requested, real } = createSymlinkEscapeFixture(dir);
-		const started: string[] = [];
-		const releaseFirst = Promise.withResolvers<void>();
-		const secondStarted = Promise.withResolvers<void>();
+	it.skipIf(isWindows)(
+		"serializes two spellings that name one file",
+		async () => {
+			// given
+			const dir = createRoot();
+			const { requested, real } = createSymlinkEscapeFixture(dir);
+			const started: string[] = [];
+			const releaseFirst = Promise.withResolvers<void>();
+			const secondStarted = Promise.withResolvers<void>();
 
-		// when
-		const first = withFileMutationQueue(requested, async () => {
-			started.push("first");
-			await releaseFirst.promise;
-		});
-		const second = withFileMutationQueue(real, async () => {
-			started.push("second");
-			secondStarted.resolve();
-		});
-		const earlySecond = await Promise.race([
-			secondStarted.promise.then(() => "second-started"),
-			new Promise<string>((resolveRace) => setImmediate(() => resolveRace("still-queued"))),
-		]);
+			// when
+			const first = withFileMutationQueue(requested, async () => {
+				started.push("first");
+				await releaseFirst.promise;
+			});
+			const second = withFileMutationQueue(real, async () => {
+				started.push("second");
+				secondStarted.resolve();
+			});
+			const earlySecond = await Promise.race([
+				secondStarted.promise.then(() => "second-started"),
+				new Promise<string>((resolveRace) => setImmediate(() => resolveRace("still-queued"))),
+			]);
 
-		// then
-		expect(earlySecond).toBe("still-queued");
-		expect(started).toEqual(["first"]);
-		releaseFirst.resolve();
-		await Promise.all([first, second]);
-		expect(started).toEqual(["first", "second"]);
-	}, 20_000);
+			// then
+			expect(earlySecond).toBe("still-queued");
+			expect(started).toEqual(["first"]);
+			releaseFirst.resolve();
+			await Promise.all([first, second]);
+			expect(started).toEqual(["first", "second"]);
+		},
+		20_000,
+	);
 });

@@ -1,16 +1,32 @@
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import { realpathWithoutOpen } from "../../utils/paths.ts";
+import { realpathWithoutOpenStrict } from "../../utils/paths.ts";
+import {
+	foldPathForCaseInsensitiveFilesystem,
+	isMissingPathError,
+	RESOLUTION_TIMED_OUT,
+	withResolutionDeadline,
+} from "./bounded-realpath.ts";
 
 const fileMutationQueues = new Map<string, Promise<void>>();
 let registrationQueue = Promise.resolve();
 
 /**
- * Two paths that name the same file must produce the same key, and a path that does not exist yet
- * keys on its resolved form. Resolution walks lstat/readlink instead of realpath so it never
- * open(2)-s a component: a target under a wedged mount would otherwise stall every write and edit.
+ * Every spelling of one file must produce one key, or two mutations of that file run concurrently
+ * and the later write silently discards the earlier one. `realpath` supplies that identity,
+ * including the on-disk case of an alias such as `Notes.txt` vs `notes.txt`; a path that does not
+ * exist yet keys on its resolved form. On a wedged mount `realpath` never returns, so the
+ * resolution is bounded and falls back to the open(2)-free walker, and the key is case-folded on
+ * filesystems that ignore case so the fallback and the fast path agree on the same file.
  */
 async function getMutationQueueKey(filePath: string): Promise<string> {
-	return realpathWithoutOpen(resolve(filePath));
+	const resolvedPath = resolve(filePath);
+	const canonicalPath = await withResolutionDeadline(realpath(resolvedPath)).catch((error: unknown) => {
+		if (isMissingPathError(error)) return resolvedPath;
+		throw error;
+	});
+	const identity = canonicalPath === RESOLUTION_TIMED_OUT ? realpathWithoutOpenStrict(resolvedPath) : canonicalPath;
+	return foldPathForCaseInsensitiveFilesystem(identity);
 }
 
 /**
