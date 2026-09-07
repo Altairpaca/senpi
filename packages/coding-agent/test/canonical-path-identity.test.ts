@@ -43,14 +43,17 @@ function createSymlinkEscapeFixture(dir: string): { readonly requested: string; 
 }
 
 describe("open-free resolution agrees with realpath(3)", () => {
+	// The oracle here is the file the I/O opens, not `realpathSync`: Bun's realpath collapses this
+	// `..` lexically on Linux and answers allowed/secret, disagreeing with the kernel's own
+	// resolution of the same path (measured). Pinning it to realpathSync would pin that bug.
 	it.skipIf(isWindows)("applies `..` in a symlink target after following that target's symlinks", () => {
 		// given
 		const dir = createRoot();
 		const { requested, real } = createSymlinkEscapeFixture(dir);
 
 		// when / then
-		expect(realpathWithoutOpen(requested)).toBe(realpathSync(requested));
 		expect(realpathWithoutOpen(requested)).toBe(real);
+		expect(readFileSync(realpathWithoutOpen(requested), "utf8")).toBe(readFileSync(requested, "utf8"));
 	});
 
 	it.skipIf(isWindows)("resolves a relative symlink target against the link's own directory", () => {
