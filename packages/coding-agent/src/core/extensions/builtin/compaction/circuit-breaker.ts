@@ -54,7 +54,16 @@ export function isTripped(state: CompactionExtensionState, now: number): boolean
 	return state.trippedAt !== null && now < state.trippedAt + COOLDOWN_MS;
 }
 
-export function shouldBypass(_state: CompactionExtensionState, _opts?: ShouldBypassOptions): boolean {
-	// Manual recovery is still subject to the breaker: repeated failures must trip it.
+/**
+ * A tripped breaker halts *automatic* compaction only. An explicit `/compact` is the
+ * user's escape hatch - and on an SDK-owned lane it is the documented recovery from a
+ * rejected model downswitch - so refusing it during the cooldown would strand the very
+ * session the recovery exists for. Manual failures are still recorded (see the
+ * `ownsCompaction` failure-accounting site in `index.ts`), so they count toward the
+ * trip that protects the automatic routes.
+ */
+export function shouldBypass(_state: CompactionExtensionState, opts?: ShouldBypassOptions): boolean {
+	if (opts?.manual === true) return true;
+	if (opts?.reason === "manual") return true;
 	return false;
 }

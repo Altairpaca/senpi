@@ -130,16 +130,16 @@ describe("compaction circuit breaker", () => {
 	});
 
 	describe("Given the breaker is tripped", () => {
-		describe("When manual /compact reaches the breaker", () => {
-			it("Then the manual route is cancelled while the breaker is tripped", () => {
+		describe("When manual /compact bypasses breaker", () => {
+			it("Then the manual route proceeds without circuit_breaker cancellation", () => {
 				const tripped: FutureBreakerState = { consecutiveFailures: TRIP_THRESHOLD, trippedAt: 0 };
 
 				const bypassed = shouldBypassFuture(tripped, { manual: true });
 				const manualDecision = evaluateAutoCompact(tripped, COOLDOWN_MS / 2, { manual: true });
 
-				expect(bypassed).toBe(false);
-				expect(manualDecision.cancel).toBe(true);
-				expect(manualDecision.reason).toBe(CIRCUIT_BREAKER_REASON);
+				expect(bypassed).toBe(true);
+				expect(manualDecision.cancel).toBe(false);
+				expect(manualDecision.reason).toBeUndefined();
 			});
 		});
 	});
