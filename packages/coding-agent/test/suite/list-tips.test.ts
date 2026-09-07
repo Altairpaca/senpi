@@ -49,6 +49,7 @@ describe("collectTips", () => {
 			{
 				id: "workflow-skills.report-bug",
 				text: 'Hit a bug? Say "report a bug" - the report-bug skill finds the session, records the exact provider and model, routes it to the right repository, and files an evidence-backed issue only after you confirm.',
+				requiresCommand: "tasks",
 			},
 		];
 		const expectedIds = new Set(expectedTips.map((tip) => tip.id));
