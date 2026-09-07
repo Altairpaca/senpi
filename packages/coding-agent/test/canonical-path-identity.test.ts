@@ -101,23 +101,28 @@ describe("file mutation queue identity", () => {
 			const started: string[] = [];
 			const releaseFirst = Promise.withResolvers<void>();
 			const secondStarted = Promise.withResolvers<void>();
+			const firstEntered = Promise.withResolvers<void>();
 
 			// when
 			const first = withFileMutationQueue(requested, async () => {
 				started.push("first");
+				firstEntered.resolve();
 				await releaseFirst.promise;
 			});
 			const second = withFileMutationQueue(real, async () => {
 				started.push("second");
 				secondStarted.resolve();
 			});
-			const earlySecond = await Promise.race([
+			// Wait for the holder to be inside its callback, then prove the other spelling is still
+			// queued behind it: whichever settles first decides, so no timer can make this pass.
+			await firstEntered.promise;
+			const whileHeld = await Promise.race([
 				secondStarted.promise.then(() => "second-started"),
-				new Promise<string>((resolveRace) => setImmediate(() => resolveRace("still-queued"))),
+				new Promise<string>((resolveRace) => setTimeout(() => resolveRace("still-queued"), 50)),
 			]);
 
 			// then
-			expect(earlySecond).toBe("still-queued");
+			expect(whileHeld).toBe("still-queued");
 			expect(started).toEqual(["first"]);
 			releaseFirst.resolve();
 			await Promise.all([first, second]);

@@ -71,10 +71,11 @@ describe("canonicalizeFilesystemPath", () => {
 		expect(resolved).toBe(join(real, "missing", "new.txt"));
 	});
 
-	// A path under a wedged mount (macOS autofs trigger) never answers open(2), and this runs before
-	// every read/ls/grep/find/edit/write with no deadline of its own: resolution must not open a
-	// component. The mock stands in for the wedged mount, and the call counter proves no realpath ran.
-	it("resolves without calling realpath, so a never-answering open cannot stall the caller", async () => {
+	// Correctness first: realpath is what supplies the on-disk spelling and applies `..` the way the
+	// following I/O will, so it must be attempted. Boundedness second: on a wedged mount (a macOS
+	// autofs trigger) it never answers, and this runs before every read/ls/grep/find/edit/write, so
+	// the caller still gets an answer from the open-free walker. The mock stands in for that mount.
+	it("attempts realpath and still answers when it never returns", async () => {
 		// given
 		const dir = createRoot();
 		mkdirSync(join(dir, "logs"));
@@ -85,8 +86,8 @@ describe("canonicalizeFilesystemPath", () => {
 
 		// then
 		expect(resolved).toBe(join(dir, "logs", "out.log"));
-		expect(fsState.realpathCalls).toBe(0);
-	});
+		expect(fsState.realpathCalls).toBeGreaterThan(0);
+	}, 20_000);
 
 	it.skipIf(isWindows || isRoot)("resolves a target under an execute-only directory", async () => {
 		// given

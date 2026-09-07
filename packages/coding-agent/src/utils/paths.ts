@@ -1,6 +1,6 @@
 import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve as nodeResolvePath, normalize, parse, relative, sep } from "node:path";
+import { isAbsolute, join, resolve as nodeResolvePath, parse, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
 
