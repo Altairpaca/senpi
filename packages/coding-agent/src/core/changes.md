@@ -1,3 +1,22 @@
+## Final admission revalidates late content, #7921 case 5 (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_enforceFinalProviderAdmission` projects pending steering and follow-up input (`_pendingQueuedInputMessages`) alongside the turn-local messages it was handed, re-reading the queues on every oversize sample so a compaction retry measures whatever arrived meanwhile. It also now runs when late queued input exists rather than only when a `custom` message is present, and resolves its reserve through `resolveEffectiveReserveTokens` instead of an inline copy of the scaling rule.
+- `packages/coding-agent/src/core/agent-session.ts`: the stale-usage exemption is narrowed to the usage number itself. `_getAutoCompactionReason` and the automatic route of `_checkCompaction` still ignore a provider usage figure measured before the accepted compaction boundary, but no longer exempt the messages: when the byte-derived estimate of the current context already exceeds the policy (`_exceedsPolicyByContentEstimate`), the threshold decision proceeds on that estimate. The inline pre-prompt route is unchanged because `_enforceCompactionBeforeProvider` already re-samples and owns that rejection.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 5: oversized steering queued after the projection was assembled rode into the first provider request of the turn, and a large fresh tool result appended after an accepted compaction was skipped entirely because the last usage message predated the boundary - a context measured at 80,000 tokens against a 10,000-token window reported no compaction reason at all.
+
+### Why an extension could not handle it
+
+- Both gates are core admission: the final projection is assembled in `AgentSession` after the last extension hook has returned, and the stale-usage exemption is core's own accounting rule.
+
+### Expected merge conflict zones
+
+- LOW: `_enforceFinalProviderAdmission`, `_getAutoCompactionReason`, and the threshold branch of `_checkCompaction`.
+
 ## Automatic continuations pass the proactive compaction policy, #7921 case 4 (2026-09-07)
 
 ### What changed

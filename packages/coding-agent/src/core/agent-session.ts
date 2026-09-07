@@ -114,7 +114,11 @@ import {
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
 } from "./extensions/builtin/compaction/model-usability-budget.ts";
-import { resolveReserveTokens, shouldTriggerCompaction } from "./extensions/builtin/compaction/policy.ts";
+import {
+	resolveEffectiveReserveTokens,
+	resolveReserveTokens,
+	shouldTriggerCompaction,
+} from "./extensions/builtin/compaction/policy.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
@@ -2117,7 +2121,10 @@ export class AgentSession {
 		}
 
 		const model = this.model;
-		if (!model || this._isAssistantFromBeforeLatestCompaction(message)) {
+		// Narrowed to the stale usage number itself: pre-boundary provenance does
+		// not exempt a context whose own content already exceeds the policy.
+		if (!model) return undefined;
+		if (this._isAssistantFromBeforeLatestCompaction(message) && !this._exceedsPolicyByContentEstimate()) {
 			return undefined;
 		}
 
@@ -2159,13 +2166,31 @@ export class AgentSession {
 					usageMessage?.role === "assistant" &&
 					this._isAssistantFromBeforeLatestCompaction(usageMessage)
 				) {
-					return undefined;
+					// Drop only the stale usage number; the messages themselves still count.
+					const contentTokens = estimateMessagesTokens(messages);
+					return shouldCompact(contentTokens, model.contextWindow, settings) ? "threshold" : undefined;
 				}
 			}
 			contextTokens = estimate.tokens;
 		}
 
 		return shouldCompact(contextTokens, model.contextWindow, settings) ? "threshold" : undefined;
+	}
+
+	/**
+	 * Content measured by bytes, ignoring every provider usage number. The
+	 * stale-usage exemptions below only claim that a usage figure measured before
+	 * the accepted compaction boundary is not evidence of current pressure; they
+	 * must not exempt the messages themselves, because fresh post-boundary content
+	 * (a large tool result, late steering) is measurable without any usage report
+	 * (#7921 case 5).
+	 */
+	private _exceedsPolicyByContentEstimate(): boolean {
+		const model = this.model;
+		if (!model) return false;
+		const settings = this._getCompactionSettings();
+		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(this.agent.state.messages));
+		return shouldCompact(contextTokens, model.contextWindow, settings);
 	}
 
 	private _hasPendingPostCompactionUsageExemption(message: AssistantMessage): boolean {
@@ -6111,11 +6136,28 @@ export class AgentSession {
 	}
 
 	/**
+	 * Pending queued input the provider will also carry on this turn. Steering and
+	 * follow-up text enqueued after the admission projection was assembled - by a
+	 * `before_agent_start` handler, an extension action, or the user racing the
+	 * gate - is drained into the same run, so the final gate must measure it
+	 * (#7921 case 5).
+	 */
+	private _pendingQueuedInputMessages(): AgentMessage[] {
+		const timestamp = Date.now();
+		return [...this._steeringMessages, ...this._followUpMessages].map((text) => ({
+			role: "user" as const,
+			content: [{ type: "text" as const, text }],
+			timestamp,
+		}));
+	}
+
+	/**
 	 * The normal pre-prompt check only estimates persisted session context. This
 	 * final gate also includes turn-local messages which the provider will see:
-	 * the current prompt, next-turn custom messages, and before_agent_start
-	 * additions. Compaction rewrites only session context, so callers retain and
-	 * reapply their already-assembled one-shot additions after it succeeds.
+	 * the current prompt, next-turn custom messages, before_agent_start additions,
+	 * and steering or follow-up input queued after that projection was assembled.
+	 * Compaction rewrites only session context, so callers retain and reapply
+	 * their already-assembled one-shot additions after it succeeds.
 	 */
 	private async _enforceFinalProviderAdmission(messages: readonly AgentMessage[]): Promise<void> {
 		// User-only prompts are deliberately admitted without this gate: prompt
@@ -6123,18 +6165,23 @@ export class AgentSession {
 		// (issues #531/#886), so oversized user prompts rely on threshold
 		// compaction — which also samples the local transcript estimate — and on
 		// provider-overflow recovery. This gate closes the separate gap opened by
-		// turn-local custom additions, which the pre-prompt check cannot observe.
-		if (!messages.some((message) => message.role === "custom")) return;
+		// turn-local custom additions and by late queued input, neither of which the
+		// pre-prompt check can observe.
+		const lateQueuedMessages = this._pendingQueuedInputMessages();
+		if (!messages.some((message) => message.role === "custom") && lateQueuedMessages.length === 0) return;
 
 		const model = this.model;
 		if (!model) return;
 		const settings = this._getCompactionSettings();
-		const reserveTokens =
-			settings.reserveScalingEnabled === false
-				? settings.reserveTokens
-				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
+		const reserveTokens = resolveEffectiveReserveTokens(model.contextWindow, settings);
 		const isOversized = (): boolean => {
-			const providerMessages = filterContextExcludedMessages([...this.agent.state.messages, ...messages]);
+			const providerMessages = filterContextExcludedMessages([
+				...this.agent.state.messages,
+				...messages,
+				// Re-read the queues on every sample: this closure is evaluated again
+				// after compaction, when more input may have arrived.
+				...this._pendingQueuedInputMessages(),
+			]);
 			const estimate = estimateContextTokens(providerMessages);
 			const usageMessage = estimate.lastUsageIndex === null ? undefined : providerMessages[estimate.lastUsageIndex];
 			// Kept assistant usage can describe the pre-compaction request. Once a
@@ -6192,7 +6239,14 @@ export class AgentSession {
 		// compaction boundary. This prevents a stale pre-compaction usage/error
 		// from retriggering compaction on the first prompt after compaction.
 		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
-		if (this._isAssistantFromBeforeLatestCompaction(assistantMessage)) {
+		// The inline (pre-prompt) caller re-samples the current context itself and
+		// owns the fail-closed rejection, so only the automatic route needs the
+		// narrowed exemption here: fresh post-boundary content still counts even
+		// though this message's own usage predates the boundary (#7921 case 5).
+		if (
+			this._isAssistantFromBeforeLatestCompaction(assistantMessage) &&
+			(inlineReason !== undefined || !this._exceedsPolicyByContentEstimate())
+		) {
 			return false;
 		}
 		// Case 1: Overflow - LLM returned context overflow error.
@@ -6304,6 +6358,7 @@ export class AgentSession {
 		// This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
 		// responses can still compact and do not reset context accounting.
 		let contextTokens: number;
+		let staleUsageContentTokens: number | undefined;
 		if (inlineReason) {
 			const messages = filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
 			contextTokens = estimateContextTokens(messages).tokens;
@@ -6324,10 +6379,12 @@ export class AgentSession {
 						usageMsg.role === "assistant" &&
 						this._isAssistantFromBeforeLatestCompaction(usageMsg)
 					) {
-						return false;
+						// Drop only the stale usage number; the messages themselves still count.
+						staleUsageContentTokens = estimateMessagesTokens(messages);
+						if (!shouldCompact(staleUsageContentTokens, contextWindow, settings)) return false;
 					}
 				}
-				contextTokens = estimate.tokens;
+				contextTokens = staleUsageContentTokens ?? estimate.tokens;
 			}
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
