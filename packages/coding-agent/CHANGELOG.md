@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Compaction admission now uses the scaled effective reserve, while preserving the session-level scaling opt-out (code-yeongyu/oh-my-openagent#7921, case 2).
+
 ### Breaking Changes
 
 ### Added
