@@ -1,12 +1,16 @@
-# 2026-09-07 - OpenAI catalog contextWindow stores the documented input cap (#1422)
+## 2026-09-07 - OpenAI catalog contextWindow stores the documented input cap (#1422)
 
 ### What changed
 
-- `scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `src/providers/data/{openai,openai-codex,azure-openai-responses}.json` (the same run picked up one OpenRouter price refresh).
+- `packages/ai/scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, `packages/ai/src/providers/data/azure-openai-responses.json`, `packages/ai/src/providers/data/.manifest.json` (the same run picked up one OpenRouter price refresh).
 
 ### Why
 
 - The Responses API rejects a request with `context_too_large` once the prompt alone exceeds window minus max output, regardless of `max_output_tokens`. senpi uses `contextWindow` as the prompt budget everywhere (compaction gates, usage meter, output clamp), so the totals put every gate above the point where the provider already rejects. The catalog already used the input-cap convention for gpt-5.4/5.5/5.6 (272,000); the flagship rows were the inconsistent ones.
+
+### Why an extension could not handle it
+
+- The catalog generator and its committed data are the source of every model's `contextWindow`; no extension hook runs before the catalog is loaded.
 
 ### Expected merge conflict zones
 
