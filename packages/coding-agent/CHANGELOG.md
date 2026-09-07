@@ -6,6 +6,8 @@
 
 ### Added
 
+- A memory tip now explains the `Aha moment!` line: memory can surface a stored fact on its own when it would change the next step, and silence means nothing relevant was found (`memory.aha-moment`, shown when the `memory` command is available) ([#1465](https://github.com/code-yeongyu/senpi/pull/1465)).
+
 ### Changed
 
 - The GPT-6 Astra series now declares a 600,000-token context window on every provider that serves it. The effective prompt budget no longer depends on the route: the first-party OpenAI catalogs and the opencode, openrouter, github-copilot, and vercel-ai-gateway passthrough catalogs all agree. Set a different budget through model overrides if you want one.
