@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -103,6 +103,51 @@ describe("#1422 overflow recovery with auto-compaction disabled", () => {
 		expect(recovered).toBe(true);
 		expect(runAutoCompaction).toHaveBeenCalledTimes(1);
 		expect(runAutoCompaction).toHaveBeenCalledWith("overflow", true);
+	});
+
+	it("recovers end to end: the provider rejects the context, one compaction runs, the retry succeeds", async () => {
+		//#given - the reported session shape: auto-compaction off, and the provider rejects a context
+		// that is still below every local gate (astra's 922k input cap sat under senpi's 1.05M valve)
+		const harness = await createHarness({
+			api: "openai-responses",
+			provider: "openai",
+			models: [{ id: "gpt-6-astra", contextWindow: 100_000 }],
+			settings: { compaction: { enabled: false, keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "compacted after the provider rejected the context",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("earlier work that the summary will replace"),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					"Error Code context_too_large: Your input exceeds the context window of this model. Please adjust your input and try again.",
+			}),
+			fauxAssistantMessage("continued after compaction"),
+		]);
+		await harness.session.prompt("first turn");
+
+		//#when - the next turn is rejected by the provider
+		await harness.session.prompt("second turn");
+
+		//#then - exactly one overflow compaction ran and the retried request completed
+		expect(harness.eventsOfType("compaction_end").map((event) => [event.reason, event.willRetry])).toEqual([
+			["overflow", true],
+		]);
+		expect(harness.faux.state.callCount).toBe(3);
+		const lastAssistant = [...harness.session.messages].reverse().find((message) => message.role === "assistant");
+		expect(lastAssistant).toMatchObject({ stopReason: "stop" });
 	});
 
 	it("still classifies a provider overflow as an overflow reason when auto-compaction is off", async () => {
