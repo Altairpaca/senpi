@@ -1,5 +1,27 @@
 # core/tools changes
 
+## Filesystem canonicalization never opens a path component (2026-09-07)
+
+### What changed
+
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` is now `realpathWithoutOpen(resolve(filePath))` (shared walker in `src/utils/paths.ts`) instead of an `fs.promises.realpath` walk-up that climbed to the nearest existing ancestor, retrying `lstat`/`readlink` per level. The walker keeps the same contract — symlinks resolved, missing descendants appended verbatim — so the local `isMissingPathError` helper is gone.
+- `file-mutation-queue.ts` `getMutationQueueKey` uses the same walker, so the queue key for a path that does not exist yet is still its resolved form.
+
+### Why
+
+- `canonicalizeFilesystemPath` runs before every `read`/`ls`/`grep`/`find`/`edit`/`write` and has no deadline of its own. Bun implements `fs.realpath*` by `open(2)`-ing every directory it resolves, so a path under a wedged mount (a macOS autofs trigger whose automounter never answers) stalled the tool call forever — measured on such a host: `canonicalizeFilesystemPath(<trigger>/probe.log)` was still pending after 4s with no error, while the `lstat` walker returns immediately. The same open-based resolution also fails with EACCES under an execute-only directory, which #1419 already fixed for the permission classifier.
+- The mutation-queue key must be stable for the same file, so it needs the same resolver the policy layer uses.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure invoked by the built-in file tools before any extension hook runs.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and the `canonicalizeFilesystemPath` body (upstream keeps the realpath walk-up).
+- `file-mutation-queue.ts` import block and `getMutationQueueKey`.
+- `test/filesystem-policy-canonicalize.test.ts` (new: symlinked parent, missing descendants, no-realpath proof, execute-only directory).
+
 ## Adopt upstream ctx.cwd tool resolution without dropping fork tool surfaces (2026-09-03)
 
 ### What changed
