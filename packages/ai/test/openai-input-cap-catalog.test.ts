@@ -42,12 +42,12 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 
 	it.each([
 		["vercel-ai-gateway", "openai/gpt-5.6-luna", 922_000],
-		["vercel-ai-gateway", "openai/gpt-6-astra", 922_000],
+		["vercel-ai-gateway", "openai/gpt-6-astra", 600_000],
 		["opengateway", "openai/gpt-5.6-luna", 922_000],
 		["opengateway", "openai/gpt-5.6-sol", 922_000],
 		["amazon-bedrock", "openai.gpt-5.6-luna", 922_000],
 		["amazon-bedrock", "global.openai.gpt-5.6-terra", 922_000],
-		["openrouter", "openai/gpt-6-astra", 922_000],
+		["openrouter", "openai/gpt-6-astra", 600_000],
 		["openai", "gpt-5-pro", 272_000],
 		["azure-openai-responses", "gpt-5-pro", 272_000],
 	] as const)("%s/%s resolves to %i", (provider: BuiltinProvider, id: string, contextWindow: number) => {
@@ -58,7 +58,7 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 	});
 
 	it("keeps the direct OpenAI cost-tier defaults below the cap", () => {
-		//#given - luna/terra ship the 272k tier and sol its 650k default on purpose
+		//#given - luna/terra ship the 272k tier, sol its 650k default and astra its 600k default on purpose
 		const openai = getBuiltinModels("openai");
 		const byId = new Map(openai.map((model) => [model.id, model.contextWindow]));
 
@@ -66,6 +66,6 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 		expect(byId.get("gpt-5.6-luna")).toBe(272_000);
 		expect(byId.get("gpt-5.6-terra")).toBe(272_000);
 		expect(byId.get("gpt-5.6-sol")).toBe(650_000);
-		expect(byId.get("gpt-6-astra")).toBe(922_000);
+		expect(byId.get("gpt-6-astra")).toBe(600_000);
 	});
 });
