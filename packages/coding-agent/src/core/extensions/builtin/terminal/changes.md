@@ -1,5 +1,23 @@
 # terminal builtin extension — fork surface
 
+## Foreground git commands stay non-interactive (2026-09-08)
+
+### What changed
+
+- `shared.ts`: `FOREGROUND_ENV_OVERRIDES` gains two keys. `GIT_EDITOR: "true"` makes git spawn `/usr/bin/true` as the editor for foreground one-shot commands — git treats a zero-exit editor as accepted, so a `git commit` without `-m` aborts with `Aborting commit due to empty commit message` and a `git rebase -i` takes the todo list as-is instead of parking the captured PTY inside nvim on COMMIT_EDITMSG. `GIT_TERMINAL_PROMPT: "0"` makes git fail fast on credential prompts (exit 128, `could not read Username`) — the same opt-out `package-manager.ts` uses for its own git calls. Background PTY sessions still spawn with only `sessionEnvOverrides` (`runBackground` in `tools/bash.ts`), so interactive git in a background session keeps the user's real settings.
+
+### Why
+
+- Child agents and foreground one-shot commands run with a captured PTY: when git opens an editor or asks for credentials on that terminal nobody can type, and the tool blocks until the timeout kills the command. The existing foreground overrides already removed color/pager interactivity; the editor and credential prompts were the two remaining terminal-input paths.
+
+### Why an extension could not handle it
+
+- The overrides are injected by this builtin's own `runForeground` spawn path from its shared constants; an outside extension cannot alter the environment of a PTY the terminal manager spawns.
+
+### Expected merge conflict zones
+
+- LOW: the `FOREGROUND_ENV_OVERRIDES` constant and its doc comment in `shared.ts`, plus the foreground/background env assertions in `test/terminal-bash-tool-output.test.ts`.
+
 ## File monitors resolve parent identity without realpath and gate `fs.watch` behind a bounded open (2026-09-07)
 
 ### What changed
