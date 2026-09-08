@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../src/compat.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
-import type { Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
+import type { AssistantMessage, Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
 
 /**
  * Anthropic rejects a request whose message history references a tool that is
@@ -161,6 +161,53 @@ function toolNamesIn(params: Record<string, unknown>): string[] {
 	return tools.map((tool) => tool.name);
 }
 
+/**
+ * A same-model assistant turn that ran Anthropic's native tool search. The
+ * result block replays verbatim on the next request, so the names it references
+ * must still resolve against that request's `tools` array.
+ */
+function nativeSearchTurn(referenceNames: string[], useId = "srvtoolu_search"): AssistantMessage {
+	return {
+		...fauxAssistantMessage("native search"),
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-sonnet-4-6",
+		content: [
+			{
+				type: "providerNative",
+				subtype: "server_tool_use",
+				raw: { type: "server_tool_use", id: useId, name: "tool_search_tool_bm25", input: { query: "memory" } },
+			},
+			{
+				type: "providerNative",
+				subtype: "tool_search_tool_result",
+				raw: {
+					type: "tool_search_tool_result",
+					tool_use_id: useId,
+					content: {
+						type: "tool_search_tool_search_result",
+						tool_references: referenceNames.map((tool_name) => ({ type: "tool_reference", tool_name })),
+					},
+				},
+			},
+		],
+	};
+}
+
+function nativeSearchResultBlocks(params: Record<string, unknown>): Array<{ tool_use_id?: string; content?: unknown }> {
+	return allBlocks(params).filter((block) => block.type === "tool_search_tool_result") as Array<{
+		tool_use_id?: string;
+		content?: unknown;
+	}>;
+}
+
+function nativeSearchReferenceNames(params: Record<string, unknown>): string[] {
+	return nativeSearchResultBlocks(params).flatMap((block) => {
+		const content = block.content as { tool_references?: Array<{ tool_name?: string }> } | undefined;
+		return (content?.tool_references ?? []).map((reference) => reference.tool_name ?? "");
+	});
+}
+
 describe("Anthropic tool-reference integrity", () => {
 	it("demotes history tool calls whose tool is no longer available", async () => {
 		const context: Context = {
@@ -298,5 +345,109 @@ describe("Anthropic tool-reference integrity", () => {
 		for (const block of toolResultBlocks(params)) {
 			if (Array.isArray(block.content)) expect(block.content.length).toBeGreaterThan(0);
 		}
+	});
+	it("normalizes gateway-namespaced native search references to the request's tool names", async () => {
+		// Live 2026-09-08: the native search result replayed
+		// `mcp__925c__memory` while the request defined `memory`; the namespace
+		// belongs to the wire path, not to senpi, and it does not survive across
+		// requests, so the next turn 400ed with "Tool reference 'mcp__925c__memory'
+		// not found in available tools".
+		const context: Context = {
+			messages: [userMessage("find a tool"), nativeSearchTurn(["mcp__925c__memory"]), userMessage("done")],
+			tools: [makeTool("tool_search"), makeTool("memory")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(toolNamesIn(params)).toContain("memory");
+		expect(nativeSearchReferenceNames(params)).toEqual(["memory"]);
+		expect(allBlocks(params).some((block) => block.type === "server_tool_use")).toBe(true);
+	});
+
+	it("keeps literal native search references and drops only the ones that no longer resolve", async () => {
+		const context: Context = {
+			messages: [
+				userMessage("find a tool"),
+				nativeSearchTurn(["memory", "mcp__925c__gone", "mcp__925c__todo"]),
+				userMessage("done"),
+			],
+			tools: [makeTool("tool_search"), makeTool("memory"), makeTool("todo")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(nativeSearchReferenceNames(params)).toEqual(["memory", "todo"]);
+	});
+
+	it("drops a native search pair whose every reference stopped resolving", async () => {
+		const context: Context = {
+			messages: [userMessage("find a tool"), nativeSearchTurn(["mcp__925c__gone"]), userMessage("done")],
+			tools: [makeTool("tool_search"), makeTool("memory")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(nativeSearchResultBlocks(params)).toHaveLength(0);
+		expect(allBlocks(params).some((block) => block.type === "server_tool_use")).toBe(false);
+		// The assistant turn survives as text so the transcript keeps its shape.
+		const assistant = messagesOf(params).filter((message) => message.role === "assistant");
+		expect(assistant).toHaveLength(1);
+		expect(blocksOf(assistant[0]!).every((block) => block.type === "text")).toBe(true);
+		expect(JSON.stringify(params)).not.toContain('"tool_name":"mcp__925c__gone"');
+	});
+
+	it("renames a gateway-namespaced history tool call to the request's tool name", async () => {
+		const context: Context = {
+			messages: [
+				userMessage("remember this"),
+				fauxAssistantMessage(fauxToolCall("mcp__925c__memory", { input: "note" }, { id: "call_memory" }), {
+					stopReason: "toolUse",
+				}),
+				toolResultMessage("call_memory", "mcp__925c__memory", "stored"),
+				userMessage("done"),
+			],
+			tools: [makeTool("memory")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		const calls = toolUseBlocks(params);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.name).toBe("memory");
+		expect(toolResultBlocks(params).map((block) => block.tool_use_id)).toEqual(["call_memory"]);
+		expect(textBlocks(params).some((block) => block.text?.includes("no longer available"))).toBe(false);
+	});
+
+	it("demotes a history tool call whose only discovery was a stripped tool_reference", async () => {
+		const context: Context = {
+			messages: [
+				userMessage("find a tool"),
+				fauxAssistantMessage(fauxToolCall("tool_search", { query: "drag" }, { id: "call_search" }), {
+					stopReason: "toolUse",
+				}),
+				toolResultMessage("call_search", "tool_search", "1 tool(s) activated", ["mcp_computer_use_drag"]),
+				fauxAssistantMessage(fauxToolCall("mcp_computer_use_drag", { x: 1 }, { id: "call_drag" }), {
+					stopReason: "toolUse",
+				}),
+				toolResultMessage("call_drag", "mcp_computer_use_drag", "dragged"),
+				userMessage("done"),
+			],
+			tools: [makeTool("tool_search"), makeTool("mcp_computer_use_drag")],
+		};
+
+		const params = await captureParams(
+			context,
+			(payload) => {
+				const mutable = payload as { tools?: Array<{ name: string }> };
+				mutable.tools = (mutable.tools ?? []).filter((tool) => tool.name !== "mcp_computer_use_drag");
+				return payload;
+			},
+			"claude-sonnet-4-6",
+		);
+
+		expect(toolNamesIn(params)).not.toContain("mcp_computer_use_drag");
+		expect(toolUseBlocks(params).map((block) => block.name)).toEqual(["tool_search"]);
+		expect(JSON.stringify(params)).not.toContain('"tool_name":"mcp_computer_use_drag"');
+		expect(textBlocks(params).some((block) => block.text?.includes("mcp_computer_use_drag"))).toBe(true);
 	});
 });
