@@ -1,3 +1,22 @@
+## Same-model recovery for a native tool-search 400 (senpi #1482, 2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the hard-error fallback branch first consumes the session's pending native tool-search injection failure (`_takeNativeToolSearchInjectionFailure`). When present, it skips `tryFallback()` and runs the shared retry scheduling (zero-delay `auto_retry_start`, failed-message removal, continuation) on the SAME model — the adapter is already disabled for the session, so the next attempt succeeds in place and the user is not demoted to a weaker model. The pending flag is consumed once, so a second rejection takes the ordinary hard-error chain.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: two cases pin the contract — one same-model retry with no `retry_fallback_applied` events, and a normal fallback switch on the second consecutive 400.
+
+### Why
+
+- A native tool-search 400 hard-errored the model and the hard-error branch always switched to the next fallback candidate (`RetryFallbackController` intentionally excludes the current model), demoting the user mid-task even though the same model succeeds once native injection is off (senpi #1482).
+
+### Why an extension could not handle it
+
+- No hook exists at the fallback-decision point; the retry branch is session-owned. The extension can only record that its own request was rejected (the pending flag on the provider-scoped `ToolSearchService`) — consuming it must happen in the session.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `hardErrorFallback` branch and retry-delay computation in `agent-session.ts` (fork-heavy area); LOW: the suite test additions.
+
 ## GPT-6 Astra high-reasoning warning parity (2026-09-08)
 
 ### What changed

@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- A rejected Anthropic request now reports its HTTP status through the provider response hook: previously the Anthropic SDK's rejection path never reached `onResponse`/`after_provider_response`, so the native tool-search adapter's permanent 400 fallback was dead code on the live error path (senpi #1481). Errors without a numeric status (network failures, aborts) report nothing rather than a fabricated code.
+
+- A native tool-search 400 no longer demotes the session to a weaker model: the turn is retried once in place on the same model with native injection already disabled for the session, and only a second rejection consults the fallback chain (senpi #1482).
+
 - Anthropic requests no longer fail with `Tool reference '<name>' not found in available tools` after a native tool search: references that come back under a gateway namespace (`mcp__<id>__<tool>`) are folded onto the request's own tool names before the request is sent, references that no longer resolve are dropped, and a search result left with no references is demoted to text instead of being replayed verbatim. A history tool call whose only justification was such a dangling reference is demoted like any other unavailable call, so one stale native search result can no longer hard-error the model and force a fallback.
 
 - The GPT-6 Astra prompt preset now does the work itself by default: anything that closes in a handful of calls is the model's own, a follow-up on work it delegated earlier is taken back rather than forwarded to the child, and only a sizeable independent track earns a subagent. The routing line opens a new request instead of every turn, so a steering message gets the work rather than a restatement of what was understood, and a new initiative rule consults stored memory for the user's preferences before asking anything memory may already answer. Observed across the 2026-09-06..08 sessions: Astra spent 15-39% of its tool calls on `task` / `task_send` against 2-4% for the Claude and Kimi presets on the same tools.
