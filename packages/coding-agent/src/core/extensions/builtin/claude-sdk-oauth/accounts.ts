@@ -1,7 +1,9 @@
 import type { Credential, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
 
 export type AccountSlot = {
+	/** Immutable operational identity, including SDK session bindings. */
 	name: string;
+	displayName?: string;
 	refresh: string;
 	access: string;
 	expires: number;

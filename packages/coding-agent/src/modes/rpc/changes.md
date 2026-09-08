@@ -1,5 +1,7 @@
 # changes
 
+
+
 ## The refused-switch entry crosses the RPC seam and stays bookkeeping (2026-09-10)
 
 ### What changed

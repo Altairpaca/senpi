@@ -7,7 +7,10 @@ export const DEFAULT_SLOT_NAME = "default";
 export type CredentialSlotSource = "login" | "import" | "env";
 
 export type CredentialSlot = {
+	/** Immutable operational identity. */
 	name: string;
+	/** Optional presentation metadata; never used for credential selection. */
+	displayName?: string;
 	source?: CredentialSlotSource;
 	key?: string;
 	access?: string;
@@ -28,6 +31,54 @@ export function assertValidSlotName(name: string): void {
 			`Invalid account name '${name}': use letters, digits, '-' or '_', starting with a letter or digit`,
 		);
 	}
+}
+
+const UNSAFE_DISPLAY_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+/** Treat persisted metadata as untrusted presentation input. */
+export function accountDisplayName(value: unknown): string | undefined {
+	if (typeof value !== "string" || UNSAFE_DISPLAY_CHARACTERS.test(value)) return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 && trimmed.length <= 80 ? trimmed : undefined;
+}
+
+export function accountLabel(account: { name: string; displayName?: string }): string {
+	const displayName = accountDisplayName(account.displayName);
+	return displayName === undefined ? account.name : `${displayName} (${account.name})`;
+}
+
+/** Pure metadata update; callers serialize this against the latest stored credential. */
+export function renameSlotDisplayName(
+	credential: PooledCredential,
+	name: string,
+	value: string | null,
+): PooledCredential {
+	assertValidSlotName(name);
+	const accounts = Array.isArray(credential.accounts) ? credential.accounts : listSlots(credential);
+	const target = accounts.find((slot) => slot.name === name);
+	if (!target) throw new Error(`Stored provider account not found: ${name}`);
+	if (target.source === "env") throw new Error(`Environment provider account cannot be renamed: ${name}`);
+	const displayName = value === null ? undefined : accountDisplayName(value);
+	if (value !== null && displayName === undefined) {
+		throw new Error("Display name must contain 1-80 characters without control or formatting characters.");
+	}
+	if (
+		displayName !== undefined &&
+		accounts.some(
+			(slot) =>
+				slot.name !== name && accountDisplayName(slot.displayName)?.toLowerCase() === displayName.toLowerCase(),
+		)
+	) {
+		throw new Error("Display name is already used by another account for this provider.");
+	}
+	return {
+		...credential,
+		accounts: accounts.map((slot) => {
+			if (slot.name !== name) return slot;
+			const { displayName: _displayName, ...unchanged } = slot;
+			return displayName === undefined ? unchanged : { ...unchanged, displayName };
+		}),
+	};
 }
 
 function storedSlots(credential: PooledCredential): CredentialSlot[] {
@@ -177,14 +228,31 @@ function nextLoginSlotName(credential: PooledCredential): string {
  * written through untouched. Reading its top-level fields as a flat credential
  * would append the provider's placeholder material as a second slot.
  */
-export function appendLoginSlot(current: PooledCredential | undefined, flat: Credential): Credential {
+export function appendLoginSlot(
+	current: PooledCredential | undefined,
+	flat: Credential,
+	onAllocated?: (name: string) => void,
+): Credential {
 	if ("accounts" in flat && Array.isArray(flat.accounts) && flat.accounts.length > 0) {
+		// Provider-owned envelopes identify an addition by immutable ID, never by
+		// token equality or array position. Ambiguous envelopes have no receipt.
+		const previous = new Set(
+			(current && Array.isArray(current.accounts) ? current.accounts : listSlots(current)).map((slot) => slot.name),
+		);
+		const added = (flat.accounts as CredentialSlot[]).filter((slot) => !previous.has(slot.name));
+		if (added.length === 1 && SLOT_NAME_PATTERN.test(added[0].name) && added[0].source !== "env") {
+			onAllocated?.(added[0].name);
+		}
 		return flat;
 	}
 	if (!current) {
+		onAllocated?.(DEFAULT_SLOT_NAME);
 		return flat;
 	}
-	return upsertSlot(current, slotFromFlatCredentialNamed(flat, nextLoginSlotName(current)));
+	const name = nextLoginSlotName(current);
+	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
+	onAllocated?.(name);
+	return next;
 }
 
 /**

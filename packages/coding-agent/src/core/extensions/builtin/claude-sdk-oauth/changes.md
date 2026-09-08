@@ -1,5 +1,7 @@
 # claude-sdk-oauth
 
+
+
 ## Recording a refused model switch keeps the stored binding (2026-09-10)
 
 ### What changed

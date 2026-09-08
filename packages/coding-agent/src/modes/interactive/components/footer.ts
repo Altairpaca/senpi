@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
-import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
+import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import type { InteractiveSession } from "../interactive-host-runtime.ts";
@@ -48,11 +48,12 @@ export function accountFooterSuffix(credential: Credential | undefined, sessionI
 	const slots = listSlots(credential);
 	if (slots.length < 2) return "";
 	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
-	if (typeof pinned === "string" && slots.some((slot) => slot.name === pinned)) return `@${pinned}`;
+	const pinnedSlot = slots.find((slot) => slot.name === pinned);
+	if (pinnedSlot) return `@${accountLabel(pinnedSlot)}`;
 	const winner = rendezvousOrder(sessionId, slots, (input) =>
 		createHash("sha256").update(input).digest().readBigUInt64BE(0),
 	)[0];
-	return winner === undefined ? "" : `@${winner.name}`;
+	return winner === undefined ? "" : `@${accountLabel(winner)}`;
 }
 
 /** Format with up to 1 decimal place, dropping trailing `.0`. */

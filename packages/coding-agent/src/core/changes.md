@@ -1,3 +1,5 @@
+## 2026-09-08 - Atomic account display-name metadata (senpi#1495)
+
 ## Shared manual-continue submission predicate (2026-09-10)
 
 ### What changed

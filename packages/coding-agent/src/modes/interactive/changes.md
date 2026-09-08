@@ -210,6 +210,25 @@
 
 - LOW: the `handleEvent` switch beside other model and session notices.
 
+## 2026-09-08 - Safe account labels in footer and English help (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: displays `@displayName (name)` for named accounts while pin matching and HRW winner selection still use only immutable `name`; legacy name-only output is unchanged.
+- `packages/coding-agent/src/modes/interactive/help-content.ts`: documents account rename/clear commands, validation, immutable IDs, environment restrictions and optional post-login naming cancellation.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts` needs readable labels without selecting a different account; `packages/coding-agent/src/modes/interactive/help-content.ts` makes the display/identity distinction and new commands discoverable.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts` owns the host footer's account segment and `packages/coding-agent/src/modes/interactive/help-content.ts` owns the shared English help body; extensions provide the commands, not these presentation surfaces.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/components/footer.ts` account suffix helper and `packages/coding-agent/src/modes/interactive/help-content.ts` final help section assembly.
+
 ## 2026-09-08 - Shortcut context exposes the effective service tier
 
 ### What changed
