@@ -8,6 +8,8 @@
 
 ### Changed
 
+- A goal that is parked on live wake sources (terminal monitor, background bash session, detached `eval` cell, or `senpi-task` child) re-checks at least every 4m30s again: `promptCache.goalBackstopMaxSeconds` now defaults to 270 instead of 3570, so a monitor whose filter never matches or whose stream never ends cannot leave the goal parked for an hour. Resumption stays event-driven (a wake source that delivers starts a turn, and the last source draining queues exactly one continuation); the shorter backstop is the floor underneath it and lands inside the 5-minute prompt-cache TTL. Set `goalBackstopMaxSeconds: 3570` to keep the long, cheaper backstop from 2026.9.7-2 on a wait you trust ([#1476](https://github.com/code-yeongyu/senpi/pull/1476)).
+
 ### Fixed
 
 - Sessions created without builtin extensions (SDK embedders, oh-my-openagent's in-process delegated children) now send the priority service tier of a `-fast` catalog model, a scoped `:priority` pin, or session fast mode on the wire; previously only the interactive service-tier extension's payload hook wrote `service_tier`, so a delegated task displayed a fast model but ran at the standard tier (code-yeongyu/oh-my-openagent#6795). Extensions can read the session's `effectiveServiceTier` from their context.
