@@ -74,4 +74,55 @@ describe("Anthropic native tool-search reference integrity", () => {
 		expect(blocksOf(assistant[0]!).every((block) => block.type === "text")).toBe(true);
 		expect(JSON.stringify(params)).not.toContain('"tool_name":"mcp__925c__gone"');
 	});
+
+	it("folds a recased gateway-namespaced native search reference onto the request's tool name", async () => {
+		// Live 2026-09-08 (session 01a08016): the search result came back as
+		// mcp__a4e6__Memory / mcp__a4e6__LspSymbols / mcp__a4e6__XSearch for the
+		// request tools memory / lsp_symbols / x_search; a hyphenated MCP tool kept
+		// its literal name under the namespace.
+		const context: Context = {
+			messages: [
+				userMessage("find a tool"),
+				nativeSearchTurn([
+					"mcp__a4e6__Memory",
+					"mcp__a4e6__LspSymbols",
+					"mcp__a4e6__XSearch",
+					"mcp__a4e6__cloudflare-docs_search_cloudflare_documentation",
+				]),
+				userMessage("done"),
+			],
+			tools: [
+				makeTool("tool_search"),
+				makeTool("memory"),
+				makeTool("lsp_symbols"),
+				makeTool("x_search"),
+				makeTool("cloudflare-docs_search_cloudflare_documentation"),
+			],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(nativeSearchReferenceNames(params)).toEqual([
+			"memory",
+			"lsp_symbols",
+			"x_search",
+			"cloudflare-docs_search_cloudflare_documentation",
+		]);
+		expect(allBlocks(params).some((block) => block.type === "server_tool_use")).toBe(true);
+	});
+
+	it("drops a recased reference when two request tools fold onto the same name", async () => {
+		const context: Context = {
+			messages: [
+				userMessage("find a tool"),
+				nativeSearchTurn(["mcp__a4e6__XSearch", "mcp__a4e6__Memory"]),
+				userMessage("done"),
+			],
+			tools: [makeTool("tool_search"), makeTool("x_search"), makeTool("x-search"), makeTool("memory")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(nativeSearchReferenceNames(params)).toEqual(["memory"]);
+	});
 });

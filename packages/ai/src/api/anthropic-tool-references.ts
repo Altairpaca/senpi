@@ -30,13 +30,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * survive across requests. Those references are folded back to the request's
  * own tool names; a reference that still does not resolve is dropped, and a
  * search pair left with no references is demoted to text.
+ *
+ * The same wire path can also recase the tool it namespaces (`memory` comes
+ * back as `mcp__a4e6__Memory`, `lsp_symbols` as `mcp__a4e6__LspSymbols`), so
+ * the suffix alone no longer matches the request's tool name byte for byte.
+ * Names are therefore compared with case and `_`/`-` separators folded away,
+ * and a folded key resolves only when exactly one request tool owns it: the
+ * fold never guesses between two candidates.
  */
 const GATEWAY_TOOL_NAMESPACE = /^mcp__[^_]+__(.+)$/;
 
-function resolveAvailableToolName(name: string, definedNames: ReadonlySet<string>): string | undefined {
-	if (definedNames.has(name)) return name;
-	const namespaced = GATEWAY_TOOL_NAMESPACE.exec(name);
-	if (namespaced?.[1] !== undefined && definedNames.has(namespaced[1])) return namespaced[1];
+interface AvailableToolNames {
+	readonly defined: ReadonlySet<string>;
+	readonly folded: ReadonlyMap<string, string>;
+}
+
+function foldToolNameKey(name: string): string {
+	return name.toLowerCase().replaceAll(/[-_]/g, "");
+}
+
+function collectAvailableToolNames(tools: unknown): AvailableToolNames {
+	const defined = new Set<string>();
+	if (Array.isArray(tools)) {
+		for (const tool of tools) {
+			if (isRecord(tool) && typeof tool.name === "string") defined.add(tool.name);
+		}
+	}
+	const folded = new Map<string, string>();
+	const ambiguous = new Set<string>();
+	for (const name of defined) {
+		const key = foldToolNameKey(name);
+		if (folded.has(key)) ambiguous.add(key);
+		else folded.set(key, name);
+	}
+	for (const key of ambiguous) folded.delete(key);
+	return { defined, folded };
+}
+
+function resolveAvailableToolName(name: string, available: AvailableToolNames): string | undefined {
+	const suffix = GATEWAY_TOOL_NAMESPACE.exec(name)?.[1];
+	const candidates = suffix === undefined ? [name] : [name, suffix];
+	for (const candidate of candidates) {
+		if (available.defined.has(candidate)) return candidate;
+	}
+	for (const candidate of candidates) {
+		const folded = available.folded.get(foldToolNameKey(candidate));
+		if (folded !== undefined) return folded;
+	}
 	return undefined;
 }
 
@@ -58,13 +98,8 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 	const messages = params.messages;
 	if (!Array.isArray(messages) || messages.length === 0) return params;
 
-	const definedNames = new Set<string>();
-	if (Array.isArray(params.tools)) {
-		for (const tool of params.tools) {
-			if (isRecord(tool) && typeof tool.name === "string") definedNames.add(tool.name);
-		}
-	}
-	const resolve = (name: string): string | undefined => resolveAvailableToolName(name, definedNames);
+	const available = collectAvailableToolNames(params.tools);
+	const resolve = (name: string): string | undefined => resolveAvailableToolName(name, available);
 
 	const demotedCallNames = new Map<string, string>();
 	const renamedCallNames = new Map<string, string>();
@@ -79,7 +114,7 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 	}
 
 	let changed = false;
-	const availableToolNames = [...definedNames];
+	const availableToolNames = [...available.defined];
 	const seenDemotedCallNames = new Set<string>();
 	const rewrittenMessages: MessageParam[] = [];
 	for (const message of messages) {

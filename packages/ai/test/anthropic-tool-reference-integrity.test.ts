@@ -220,4 +220,24 @@ describe("Anthropic tool-reference integrity", () => {
 		expect(JSON.stringify(params)).not.toContain('"tool_name":"mcp_computer_use_drag"');
 		expect(textBlocks(params).some((block) => block.text?.includes("mcp_computer_use_drag"))).toBe(true);
 	});
+
+	it("renames a recased gateway-namespaced history tool call to the request's tool name", async () => {
+		const context: Context = {
+			messages: [
+				userMessage("search x"),
+				fauxAssistantMessage(fauxToolCall("mcp__a4e6__XSearch", { input: "omo" }, { id: "call_x" }), {
+					stopReason: "toolUse",
+				}),
+				toolResultMessage("call_x", "mcp__a4e6__XSearch", "3 posts"),
+				userMessage("done"),
+			],
+			tools: [makeTool("x_search")],
+		};
+
+		const params = await captureParams(context, undefined, "claude-sonnet-4-6");
+
+		expect(toolUseBlocks(params).map((block) => block.name)).toEqual(["x_search"]);
+		expect(toolResultBlocks(params).map((block) => block.tool_use_id)).toEqual(["call_x"]);
+		expect(textBlocks(params).some((block) => block.text?.includes("no longer available"))).toBe(false);
+	});
 });
