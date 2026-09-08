@@ -29,6 +29,12 @@ export class ProviderRetryWatchdogAbortError extends Error {
 	}
 }
 
+export function demoteToolUseWithoutToolCalls(message: AssistantMessage): AssistantMessage {
+	// Count raw blocks: cursor-resolved calls are legitimate completed tool calls and must not be demoted.
+	if (message.stopReason !== "toolUse" || message.content.some((block) => block.type === "toolCall")) return message;
+	return { ...message, stopReason: "stop" };
+}
+
 export function promoteStopWithPendingToolCalls(message: AssistantMessage): AssistantMessage {
 	if (message.stopReason !== "stop") return message;
 	if (!message.content.some((block) => block.type === "toolCall")) return message;

@@ -31,6 +31,7 @@ export type GoalContinuationInput = {
 	readonly hasPendingMessages: boolean;
 	readonly path: GoalContinuationPath;
 	readonly lastStopReason: AssistantAgentMessage["stopReason"] | undefined;
+	readonly lastTurnWasMalformedToolUse: boolean;
 	readonly consecutiveContinuations: number;
 	readonly lastContinuationSignature: string | undefined;
 	readonly currentSignature: string | undefined;
@@ -78,7 +79,8 @@ function didAgentEndCleanly(messages: readonly AgentMessage[]): boolean {
 	if (lastAssistantIndex === undefined) return false;
 
 	const lastAssistant = messages[lastAssistantIndex];
-	if (lastAssistant?.role !== "assistant" || !isContinuableStopReason(lastAssistant.stopReason)) return false;
+	if (lastAssistant?.role !== "assistant") return false;
+	if (!isContinuableStopReason(lastAssistant.stopReason) && !isMalformedToolUseTurn(lastAssistant)) return false;
 
 	for (let index = lastAssistantIndex + 1; index < messages.length; index++) {
 		const message = messages[index];
@@ -99,6 +101,10 @@ function findLastAssistantMessageIndex(messages: readonly AgentMessage[]): numbe
 
 function isContinuableStopReason(stopReason: AssistantAgentMessage["stopReason"]): boolean {
 	return stopReason === "stop" || stopReason === "length";
+}
+
+export function isMalformedToolUseTurn(message: AssistantAgentMessage): boolean {
+	return message.stopReason === "toolUse" && !message.content.some((content) => content.type === "toolCall");
 }
 
 function isAbortedToolResult(message: ToolResultAgentMessage): boolean {
@@ -185,7 +191,10 @@ function isEligibleForGoalContinuation(input: GoalContinuationInput): boolean {
 	if (input.goal?.status !== "active" || input.hasPendingMessages) return false;
 	if (input.path === "systemRecovery" || input.path === "providerRecovery") return true;
 	if (input.path === "immediate") {
-		return input.lastStopReason !== undefined && isContinuableStopReason(input.lastStopReason);
+		return (
+			input.lastTurnWasMalformedToolUse ||
+			(input.lastStopReason !== undefined && isContinuableStopReason(input.lastStopReason))
+		);
 	}
 	return input.isIdle;
 }
