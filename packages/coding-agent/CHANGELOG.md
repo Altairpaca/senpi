@@ -8,6 +8,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
 - Terminal monitor state events now include command, filter, persistence, deadline, fire counts, and last-fired timestamps; monitor endings emit a typed lifecycle event, and coalesced monitor notifications persist the contributing monitor details.
 
 ### Changed
