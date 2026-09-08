@@ -1,4 +1,4 @@
-## Same-model recovery for a native tool-search 400 (senpi #1482, 2026-09-08)
+## Same-model recovery for a native tool-search 400 (2026-09-08)
 
 ### What changed
 
