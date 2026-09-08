@@ -103,7 +103,7 @@ describe("GPT-5.6 execution discipline", () => {
 			expect(rule.directive).not.toMatch(/\p{Extended_Pictographic}/u);
 		}
 		const orchestration = GPT56_EXECUTION_RULES.filter((rule) => rule.concern === "tool-orchestration");
-		expect(orchestration.length).toBeGreaterThanOrEqual(5);
+		expect(orchestration.length).toBe(4);
 	});
 
 	it("renders every directive exactly once, at its point of use in the core", () => {

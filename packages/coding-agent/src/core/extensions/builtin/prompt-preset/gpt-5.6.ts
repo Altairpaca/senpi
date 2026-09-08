@@ -87,10 +87,10 @@ const EVAL_FIRST_ROUTING =
 	"When a code-execution tool is available, batch the independent reads, searches, symbol lookups, and commands of a step in one cell: enumerate them first, dispatch them together with the runtime's parallel helper, and inspect every result; an extra read-only call in that wave costs almost nothing, while acting on a stale assumption costs the whole turn. Edits, side-effecting commands, approvals, waits, and any call whose input is another call's result stay sequential, one action observed before the next.";
 
 const EVIDENCE_COMPARISON =
-	"Name the state a cell should produce before running it and compare the returned evidence with that state when it comes back; a cell that changed something is also checked for changes beyond that state. A result that hides a failed item or a truncated tail is not evidence.";
+	"Before running a cell, name the state it should produce; when it returns, compare the returned evidence with that state and check that a mutating cell changed nothing beyond it. A result that hides a failed item or a truncated tail is not evidence.";
 
 const PERCEIVED_STATE_LOOP =
-	"When the result must be seen rather than read - a page, a component, an image, a 3D scene, a layout - make one change, render or screenshot it, look, then make the next; check a 3D scene from several angles and a page at desktop and mobile widths for blank, misframed, or overlapping output. Compare what you see with the reference or the stated intent, and ask only where two readings of that intent diverge.";
+	"A result that must be seen rather than read - a page, a component, an image, a 3D scene, a layout - gets one change, a render or screenshot, a look, then the next change; a 3D scene is checked from several angles and a page at desktop and mobile widths. Compare what you see with the reference or the stated intent; ask only where two readings of that intent diverge.";
 
 const STAY_DIRECT_EXCEPTIONS =
 	"Call tools directly instead when one call is enough, the output is already small, each result decides the next call, semantic judgment sits between calls, or the action needs approval - and after two failed cell strategies for the same fact, or an empty or suspiciously narrow result, fall back to direct calls and one or two meaningful alternatives before concluding nothing exists.";

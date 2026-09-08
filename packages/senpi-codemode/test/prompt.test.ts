@@ -118,7 +118,7 @@ describe("buildEvalPrompt", () => {
 
 		// Then: the system-prompt guidance carries the batching decision rule.
 		expect(guidelines).toEqual([
-			"Prefer eval when a step's calls are independent: one cell runs them together and returns the facts the decision needs with every failure kept verbatim; edits and result-dependent calls go one at a time, each observed before the next.",
+			"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
 			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
 		]);
 	});
@@ -240,16 +240,16 @@ describe("buildEvalPrompt", () => {
 
 		// When/Then: the first guideline is the family-tuned batching contract.
 		expect(guideline("claude-opus-4-8")).toBe(
-			"Prefer eval for any step needing more than one tool call: one cell that runs independent calls in parallel, handles per-call failures in code, and returns distilled facts.",
+			"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
 		);
 		expect(guideline("gpt-5.6")).toBe(
-			"Use eval to compose tool work in one cell; long cells detach on timeout and notify on completion, so do not poll.",
+			"Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on timeout and notify on completion, so do not poll.",
 		);
 		expect(buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).promptGuidelines[0]).toBe(
 			"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.",
 		);
 		expect(guideline("kimi-k2.6")).toBe(
-			"**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
+			"Put a step's independent calls into one eval cell with parallel(thunks) and keep every failed item in the result.",
 		);
 	});
 
