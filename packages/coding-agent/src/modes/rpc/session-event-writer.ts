@@ -96,6 +96,17 @@ export class SessionEventWriter {
 	private inFlight?: { queue: RecordQueue; node: QueueNode };
 	private failure?: unknown;
 	private controlOverflowReported = false;
+	private closeOverflowReported = false;
+	private reservedCloseRecords = 0;
+	private reservedCloseBytes = 0;
+
+	get pendingCloseRecordCount(): number {
+		return this.reservedCloseRecords;
+	}
+
+	get pendingCloseByteLength(): number {
+		return this.reservedCloseBytes;
+	}
 
 	constructor(writeRaw: RawWriter, scheduleFlush?: FlushScheduler);
 	constructor(writeRaw: RawWriter, waitForBackpressure: BackpressureWaiter, scheduleFlush?: FlushScheduler);
@@ -295,8 +306,64 @@ export class SessionEventWriter {
 		this.requestFlush();
 	}
 
-	/** Queue a successful response for a joined close after the terminal lifecycle record. */
+	/**
+	 * Admit reply debt before routing can mutate attachments or await finalization.
+	 * Reserve the lifecycle as well: the claimant's role is not known yet. Rejected
+	 * closes do not wait, retain their ids, or create per-request stderr output.
+	 */
+	reserveCloseResponse(
+		sessionId: string,
+		response: object,
+		records = 2,
+	): { release: () => void; complete: (terminal: boolean) => void } | undefined {
+		const bytes =
+			Buffer.byteLength(serializeJsonLine({ ...response, sessionId })) +
+			(records === 2 ? Buffer.byteLength(serializeJsonLine({ type: "session_closed", sessionId })) : 0);
+		if (
+			this.bufferedRecordCount + this.reservedCloseRecords + records > MAX_SHARED_STDIO_QUEUE_RECORDS ||
+			this.bufferedByteLength + this.reservedCloseBytes + bytes > MAX_SHARED_STDIO_QUEUE_BYTES
+		) {
+			if (!this.closeOverflowReported) {
+				this.closeOverflowReported = true;
+				const overflow = {
+					type: "overflow",
+					command: "close_session",
+					error: "rpc_close_output_overflow, resync required",
+				};
+				if (this.fanout.isEmpty()) {
+					this.append(this.controlQueue, overflow);
+					this.markReady(this.controlQueue);
+				} else this.fanout.broadcast(serializeJsonLine(overflow));
+				this.requestFlush();
+			}
+			return undefined;
+		}
+		this.reservedCloseRecords += records;
+		this.reservedCloseBytes += bytes;
+		let active = true;
+		const release = () => {
+			if (!active) return;
+			active = false;
+			this.reservedCloseRecords -= records;
+			this.reservedCloseBytes -= bytes;
+		};
+		return {
+			release,
+			complete: (terminal) => {
+				if (!active) return;
+				release();
+				if (terminal) this.closeSession(sessionId, response);
+				else this.appendClosedResponse(sessionId, response);
+			},
+		};
+	}
+
+	/** Queue a joined close only after admitting its noncompactable reply. */
 	enqueueClosedResponse(sessionId: string, response: object): void {
+		this.reserveCloseResponse(sessionId, response, 1)?.complete(false);
+	}
+
+	private appendClosedResponse(sessionId: string, response: object): void {
 		const targetId = this.connectionContext.getStore();
 		const taggedResponse = { ...response, sessionId };
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
@@ -350,6 +417,7 @@ export class SessionEventWriter {
 		} while (this.readyQueues.length > 0);
 		await Promise.all([...this.fanout.values()].map(({ actor }) => actor.flush()));
 		this.controlOverflowReported = false;
+		if (this.reservedCloseRecords === 0) this.closeOverflowReported = false;
 	}
 
 	private async drainReadyQueues(): Promise<void> {
@@ -393,8 +461,8 @@ export class SessionEventWriter {
 
 	private exceedsStdioCapacity(line: string): boolean {
 		return (
-			this.bufferedRecordCount >= MAX_SHARED_STDIO_QUEUE_RECORDS ||
-			this.bufferedByteLength + Buffer.byteLength(line) > MAX_SHARED_STDIO_QUEUE_BYTES
+			this.bufferedRecordCount + this.reservedCloseRecords >= MAX_SHARED_STDIO_QUEUE_RECORDS ||
+			this.bufferedByteLength + this.reservedCloseBytes + Buffer.byteLength(line) > MAX_SHARED_STDIO_QUEUE_BYTES
 		);
 	}
 

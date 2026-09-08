@@ -232,6 +232,14 @@ returns after the session's destinations consume their output, not merely on IPC
 failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
 unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
+Close admission counts both queued output and pending close replies (including their serialized bytes) before
+releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
+admitted joiners follow those records in FIFO order. Excess closes are not admitted and do not release ownership.
+One bounded `overflow` record with `command: "close_session"` and
+`error: "rpc_close_output_overflow, resync required"` reports the saturation episode instead of retaining a reply
+or promise for each rejected request. Clients must stop issuing closes, drain output, and resynchronize unacknowledged
+requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
+Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
 
 The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
 plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
@@ -256,7 +264,7 @@ containment, or containment of arbitrary native code. They are not an extension 
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session` plus the negotiated launch capabilities. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. |
-| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). A concurrent close joins the same teardown and receives its own successful response. |
+| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 

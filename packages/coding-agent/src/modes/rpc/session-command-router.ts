@@ -506,14 +506,6 @@ export class SessionCommandRouter {
 	}
 
 	private async close(command: Extract<RpcCommand, { type: "close_session" }>): Promise<RpcResponse | undefined> {
-		// This must be the first operation: binding.dispose() awaits teardown and
-		// otherwise leaves a window where commands can enter the old handler.
-		let claim: { finalizer: boolean };
-		try {
-			claim = this.claimClose(command.sessionId, { drainAttachments: false });
-		} catch (cause) {
-			return error(command.id, "close_session", this.code(cause));
-		}
 		const response = {
 			id: command.id,
 			type: "response" as const,
@@ -521,17 +513,32 @@ export class SessionCommandRouter {
 			success: true as const,
 			data: {},
 		};
-		const owner = this.writer.currentConnection();
-		if (owner !== undefined) this.releaseOwnerAttachment(owner, command.sessionId);
-		if (claim.finalizer) {
-			await this.finalizeClose(command.sessionId, this.bindings.get(command.sessionId), () =>
-				this.writer.closeSession(command.sessionId, response),
-			);
-		} else {
-			await this.finalizations.get(command.sessionId)?.promise;
-			this.writer.enqueueClosedResponse(command.sessionId, response);
+		const reply = this.writer.reserveCloseResponse(command.sessionId, response);
+		if (!reply) return undefined;
+		// Admission and claiming are synchronous, before any teardown await. A
+		// saturated requester neither releases an attachment nor joins a promise.
+		let claim: { finalizer: boolean };
+		try {
+			claim = this.claimClose(command.sessionId, { drainAttachments: false });
+		} catch (cause) {
+			reply.release();
+			return error(command.id, "close_session", this.code(cause));
 		}
-		return undefined;
+		try {
+			const owner = this.writer.currentConnection();
+			if (owner !== undefined) this.releaseOwnerAttachment(owner, command.sessionId);
+			if (claim.finalizer) {
+				await this.finalizeClose(command.sessionId, this.bindings.get(command.sessionId), () =>
+					reply.complete(true),
+				);
+			} else {
+				await this.finalizations.get(command.sessionId)?.promise;
+				reply.complete(false);
+			}
+			return undefined;
+		} finally {
+			reply.release();
+		}
 	}
 
 	/** Detaches the closing connection's UI/width state; a rerender failure must not abort the close. */

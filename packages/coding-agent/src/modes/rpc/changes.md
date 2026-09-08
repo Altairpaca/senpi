@@ -1,5 +1,25 @@
 # changes
 
+## Bound quarantined and joined close reply admission (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` counts admitted close reply records and serialized bytes against the existing stdio queue budgets before they are queued. The first closer reserves both terminal records; direct duplicate replies use the same admission gate. Saturation emits one bounded `rpc_close_output_overflow, resync required` notice per episode, not one buffered reply or stderr line per rejected command.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` admits reply debt before claiming an attachment or awaiting finalization. Rejected commands do neither; admitted replies transfer their reservation to FIFO output, with release on every completion/error path. Native-exit canonical ownership is unchanged.
+- `packages/coding-agent/docs/rpc.md` documents close admission, overflow recovery, and the distinction between an overflow notice and a successful acknowledgment.
+
+### Why
+
+- A native-FIFO-blocked quarantined worker can remain resident indefinitely. Previously, 4,196 duplicate closes queued 4,196 noncompactable replies beyond the 4,096-record bound; checking only at enqueue also leaves unbounded reply debt in joined finalization promises.
+
+### Why an extension could not handle it
+
+- Output budgets, reply admission and attachment claims are transport/router infrastructure below extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-event-writer.ts` close/output admission and `packages/coding-agent/src/modes/rpc/session-command-router.ts` close routing. Tests cover count and byte saturation with real quarantined workers and held finalization; existing terminal/FIFO and native-pressure proofs remain intact.
+
 ## Shared RPC session workers retain ownership until exit (2026-09-08)
 
 ### What changed
