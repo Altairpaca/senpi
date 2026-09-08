@@ -1,3 +1,21 @@
+## Size-adaptive summarization duration budget setting (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts`: new optional `compaction.summarizationMaxDurationMs` setting resolving to a positive finite number or `undefined` (adaptive default).
+
+### Why
+
+- Large sessions deadlock on compaction when the fixed 120s summarization watchdog outlives slow providers (#1068); the setting is the user-facing escape hatch over the size-adaptive default.
+
+### Why an extension could not handle it
+
+- The settings contract is consumed by core compaction execution before extension hooks run.
+
+### Expected merge conflict zones
+
+- LOW: the three settings files' `CompactionSettings` / `ResolvedCompactionSettings` shapes.
+
 ## Same-model recovery for a native tool-search 400 (2026-09-08)
 
 ### What changed
