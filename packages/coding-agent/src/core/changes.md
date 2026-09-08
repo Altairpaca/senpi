@@ -1,3 +1,22 @@
+## The session request carries its effective service tier without an extension (2026-09-08, code-yeongyu/oh-my-openagent#6795)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: the Agent `streamFn` sets `serviceTier` on the stream options when the caller did not: the session's `effectiveServiceTier` for the active model (catalog `-fast` variant, scoped `:priority` pin, or session fast mode), else the request model's own catalog tier for side requests (title/branch summaries). Only APIs that accept `service_tier` (`supportsServiceTier`) receive it. The late-bound session ref used by the Cursor exec bridge is now the shared `sessionRef`.
+- `packages/coding-agent/src/core/agent-session.ts`: hands `getEffectiveServiceTier` to the extension runner.
+
+### Why
+
+- A `-fast` catalog variant (`openai-codex/gpt-5.6-luna-fast`) declares `serviceTier: "priority"`, and `ModelRuntime.prepareRequest` already honors its sibling field `upstreamModelId`, yet the tier itself reached the wire only through the builtin service-tier extension's payload hook. Sessions created without builtin extensions - SDK embedders, oh-my-openagent's in-process delegated children - silently ran at the standard tier while displaying a fast model. The extension keeps its per-model memory role; its hook only fills a missing field, so both paths agree.
+
+### Why an extension could not handle it
+
+- The affected sessions load no extensions by construction; the request-side default has to live in the session's own stream function.
+
+### Expected merge conflict zones
+
+- LOW: the `streamFn` option literal and the session ref in `sdk.ts`; the runner context-actions literal in `agent-session.ts`.
+
 ## Insufficient accepted compaction keeps its blocked state, #7921 case 6 (2026-09-07)
 
 ### What changed
