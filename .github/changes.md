@@ -4,7 +4,7 @@
 
 ### What changed
 
-- Updated the Bun pins in CI, binary builds, and npm publishing to stable 1.4.2, together with the workflow assertion and current CI guidance.
+- Updated `.github/workflows/ci.yml`, `.github/workflows/build-binaries.yml`, and `.github/workflows/publish-npm.yml` to pin stable Bun 1.4.2, together with the workflow assertion and current CI guidance.
 
 ### Why
 
