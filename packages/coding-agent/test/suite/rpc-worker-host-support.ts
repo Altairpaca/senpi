@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -127,14 +127,16 @@ export async function startWorkerHost(extensionSource?: string, options: { socke
 	if (extensionSource) await writeFile(extension, extensionSource);
 	const bin = join(scratch, "bin");
 	await mkdir(bin);
-	await symlink(execFileSync("which", ["bun"], { encoding: "utf8" }).trim(), join(bin, "bun"));
+	const bun = options.node ? undefined : process.env.SENPI_RPC_TEST_BUN;
+	if (bun) await symlink(bun, join(bin, "bun"));
 	await symlink(process.execPath, join(bin, "node"));
 	const socketPath = join(scratch, "rpc.sock");
 	const binary = options.node ? undefined : process.env.SENPI_RPC_TEST_BINARY;
+	const useNode = binary === undefined && bun === undefined;
 	const child = spawn(
-		binary ?? join(bin, options.node ? "node" : "bun"),
+		binary ?? join(bin, bun ? "bun" : "node"),
 		[
-			...(binary ? [] : [resolve(options.node ? "dist/cli.js" : "src/cli.ts")]),
+			...(binary ? [] : [resolve(useNode ? "dist/cli.js" : "src/cli.ts")]),
 			"--mode",
 			"rpc",
 			"--multi-session",
@@ -153,7 +155,7 @@ export async function startWorkerHost(extensionSource?: string, options: { socke
 				SENPI_CODING_AGENT_DIR: agentDir,
 				SENPI_OFFLINE: "1",
 				SENPI_RPC_CLOSE_GRACE_MS: "100",
-				...(options.node ? { SENPI_RUNTIME: "node" } : {}),
+				...(useNode ? { SENPI_RUNTIME: "node" } : {}),
 			},
 			stdio: ["pipe", "pipe", "pipe"],
 		},
