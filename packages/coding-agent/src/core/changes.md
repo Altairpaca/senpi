@@ -1,3 +1,21 @@
+## GPT-6 Astra high-reasoning warning parity (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: include GPT-6 Astra variants in the existing Sol warning policy, retaining the xhigh/max threshold and shared warning content.
+
+### Why
+
+- Astra users need the same excessive-reasoning warning as Sol users at the same effort levels.
+
+### Why an extension could not handle it
+
+- The shared core predicate controls warning events for model and thinking-level changes across CLI surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the model-id matcher in `packages/coding-agent/src/core/high-reasoning-warning.ts`.
+
 ## Goal backstop default is 270s (2026-09-08)
 
 ### What changed

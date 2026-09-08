@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- GPT-6 Astra variants now show the same high-reasoning warning as GPT-5.6 Sol at `xhigh` and `max` effort.
+
 - Sessions created without builtin extensions (SDK embedders, oh-my-openagent's in-process delegated children) now send the priority service tier of a `-fast` catalog model, a scoped `:priority` pin, or session fast mode on the wire; previously only the interactive service-tier extension's payload hook wrote `service_tier`, so a delegated task displayed a fast model but ran at the standard tier (code-yeongyu/oh-my-openagent#6795). Extensions can read the session's `effectiveServiceTier` from their context.
 
 - Foreground `bash` commands now run git with `GIT_EDITOR=true` and `GIT_TERMINAL_PROMPT=0`, so a `git commit` without `-m`, an interactive rebase, or a terminal credential prompt on the captured foreground PTY fails fast (`Aborting commit due to empty commit message` / `could not read Username`) instead of blocking the agent until the command timeout kills it. Background PTY sessions keep the user's real git settings.
