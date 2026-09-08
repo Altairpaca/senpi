@@ -2744,6 +2744,7 @@ export class InteractiveMode {
 			modelRegistry: extensionRunner.getModelRegistry(),
 			model: this.session.model,
 			serviceTier: this.session.serviceTier,
+			effectiveServiceTier: this.session.effectiveServiceTier,
 			scopedModels: this.session.scopedModels,
 			thinkingLevel: this.session.thinkingLevel,
 			isIdle: () => this.session.isIdle,

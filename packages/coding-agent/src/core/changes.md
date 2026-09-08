@@ -1,4 +1,152 @@
-## 2026-09-07 - Dedupe skills from duplicate copies of one package
+## Same-model recovery for a native tool-search 400 (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the hard-error fallback branch first consumes the session's pending native tool-search injection failure (`_takeNativeToolSearchInjectionFailure`). When present, it skips `tryFallback()` and runs the shared retry scheduling (zero-delay `auto_retry_start`, failed-message removal, continuation) on the SAME model — the adapter is already disabled for the session, so the next attempt succeeds in place and the user is not demoted to a weaker model. The pending flag is consumed once, so a second rejection takes the ordinary hard-error chain.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: two cases pin the contract — one same-model retry with no `retry_fallback_applied` events, and a normal fallback switch on the second consecutive 400.
+
+### Why
+
+- A native tool-search 400 hard-errored the model and the hard-error branch always switched to the next fallback candidate (`RetryFallbackController` intentionally excludes the current model), demoting the user mid-task even though the same model succeeds once native injection is off (senpi #1482).
+
+### Why an extension could not handle it
+
+- No hook exists at the fallback-decision point; the retry branch is session-owned. The extension can only record that its own request was rejected (the pending flag on the provider-scoped `ToolSearchService`) — consuming it must happen in the session.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `hardErrorFallback` branch and retry-delay computation in `agent-session.ts` (fork-heavy area); LOW: the suite test additions.
+
+## GPT-6 Astra high-reasoning warning parity (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: include GPT-6 Astra variants in the existing Sol warning policy, retaining the xhigh/max threshold and shared warning content.
+
+### Why
+
+- Astra users need the same excessive-reasoning warning as Sol users at the same effort levels.
+
+### Why an extension could not handle it
+
+- The shared core predicate controls warning events for model and thinking-level changes across CLI surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the model-id matcher in `packages/coding-agent/src/core/high-reasoning-warning.ts`.
+
+## Goal backstop default is 270s (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `getPromptCacheGoalBackstopMaxSeconds()` falls back to 270 instead of 3570.
+- `packages/coding-agent/src/core/settings-shapes.ts`: `PromptCacheSettings.goalBackstopMaxSeconds` documents the 270 default.
+
+### Why
+
+- The goal monitor's backstop is the floor under the event-driven drain fire; a wake source that never delivers (a misconfigured monitor filter, an endless stream) must not park a goal for an hour. See `extensions/builtin/goal/changes.md` (2026-09-08).
+
+### Why an extension could not handle it
+
+- The default lives in core settings resolution and the extension runner's fallback, not in extension code.
+
+### Expected merge conflict zones
+
+- LOW: the two literal defaults above.
+
+## The session request carries its effective service tier without an extension (2026-09-08)
+
+### What changed
+
+- Tracks code-yeongyu/oh-my-openagent#6795.
+
+- `packages/coding-agent/src/core/sdk.ts`: the Agent `streamFn` sets `serviceTier` on the stream options when the caller did not: the session's `effectiveServiceTier` for the active model (catalog `-fast` variant, scoped `:priority` pin, or session fast mode), else the request model's own catalog tier for side requests (title/branch summaries). Only APIs that accept `service_tier` (`supportsServiceTier`) receive it. The late-bound session ref used by the Cursor exec bridge is now the shared `sessionRef`.
+- `packages/coding-agent/src/core/agent-session.ts`: hands `getEffectiveServiceTier` to the extension runner.
+
+### Why
+
+- A `-fast` catalog variant (`openai-codex/gpt-5.6-luna-fast`) declares `serviceTier: "priority"`, and `ModelRuntime.prepareRequest` already honors its sibling field `upstreamModelId`, yet the tier itself reached the wire only through the builtin service-tier extension's payload hook. Sessions created without builtin extensions - SDK embedders, oh-my-openagent's in-process delegated children - silently ran at the standard tier while displaying a fast model. The extension keeps its per-model memory role; its hook only fills a missing field, so both paths agree.
+
+### Why an extension could not handle it
+
+- The affected sessions load no extensions by construction; the request-side default has to live in the session's own stream function.
+
+### Expected merge conflict zones
+
+- LOW: the `streamFn` option literal and the session ref in `sdk.ts`; the runner context-actions literal in `agent-session.ts`.
+
+## Insufficient accepted compaction keeps its blocked state, #7921 case 6 (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_blockedPostCompactionAssistant` now records the byte-derived context size at the moment it arms (`_blockedAdmissionContentTokens`) instead of a message revision. `_incrementMessageRevision` no longer clears it; `_releaseBlockedPostCompactionAdmissionIfReduced` releases it only when the context actually shrank, and `compact()` releases it unconditionally as the user's explicit remedy. The admission guard in `_enforceCompactionBeforeProvider` matches on the blocked assistant alone.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 6: an accepted compaction whose summary left the context over budget blocked the session, but any synthetic revision bump - a model or settings change, a queue mutation, an extension continuation, a scheduled retry - cleared the block, and the automatic continuation retried the unchanged oversized context, paying for another doomed compaction each time. Queued data was kept but the work was wasted.
+
+### Why an extension could not handle it
+
+- The blocked state is core admission bookkeeping; no extension observes the revision counter or the admission guard.
+
+### Expected merge conflict zones
+
+- LOW: the `_blockedPostCompactionAssistant` declaration, `_incrementMessageRevision`, the two arming sites in `_checkCompaction`, and the guard at the head of `_enforceCompactionBeforeProvider`.
+
+## Final admission revalidates late content, #7921 case 5 (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_enforceFinalProviderAdmission` projects pending steering and follow-up input (`_pendingQueuedInputMessages`) alongside the turn-local messages it was handed, re-reading the queues on every oversize sample so a compaction retry measures whatever arrived meanwhile. It also now runs when late queued input exists rather than only when a `custom` message is present, and resolves its reserve through `resolveEffectiveReserveTokens` instead of an inline copy of the scaling rule.
+- `packages/coding-agent/src/core/agent-session.ts`: the stale-usage exemption is narrowed to the usage number itself. `_getAutoCompactionReason` and the automatic route of `_checkCompaction` still ignore a provider usage figure measured before the accepted compaction boundary, but no longer exempt the messages: when the byte-derived estimate of the current context already exceeds the policy (`_exceedsPolicyByContentEstimate`), the threshold decision proceeds on that estimate. The inline pre-prompt route is unchanged because `_enforceCompactionBeforeProvider` already re-samples and owns that rejection.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 5: oversized steering queued after the projection was assembled rode into the first provider request of the turn, and a large fresh tool result appended after an accepted compaction was skipped entirely because the last usage message predated the boundary - a context measured at 80,000 tokens against a 10,000-token window reported no compaction reason at all.
+
+### Why an extension could not handle it
+
+- Both gates are core admission: the final projection is assembled in `AgentSession` after the last extension hook has returned, and the stale-usage exemption is core's own accounting rule.
+
+### Expected merge conflict zones
+
+- LOW: `_enforceFinalProviderAdmission`, `_getAutoCompactionReason`, and the threshold branch of `_checkCompaction`.
+
+## Automatic continuations pass the proactive compaction policy, #7921 case 4 (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_revalidateScheduledContinuationAdmission` now samples the shared proactive predicate (`shouldTriggerCompaction`) in addition to the hard-reserve valve (`shouldCompact`), so a scheduled continuation compacts at the same usage an explicit user prompt does. Proactive pressure alone never rejects the continuation: only the hard-reserve case still throws `RequiredCompactionError`.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 4: the proactive threshold lives in the compaction extension's `before_agent_start`, which automatic continuations (tool-result continuations, queued follow-up/steer drained at `agent_end`) never emit. A continuation above the threshold but below the hard limit reached the provider uncompacted while a user prompt at identical usage compacted first.
+
+### Why an extension could not handle it
+
+- Automatic continuations bypass `before_agent_start` entirely, so no extension handler observes them. This is the single core choke point every scheduled continuation passes before the provider.
+
+### Expected merge conflict zones
+
+- LOW: the body of `_revalidateScheduledContinuationAdmission` and the `builtin/compaction/policy.ts` import line.
+
+## Workspace trust keys resolve strictly (2026-09-07)
+
+### What changed
+
+- `trust-manager.ts`: `normalizeCwd` resolves through `canonicalizePathStrict` and falls back to the resolved-but-unconfirmed path only when the filesystem will not confirm it, instead of silently accepting whatever `canonicalizePath` handed back.
+
+### Why
+
+- Trust keys are compared as strings, so a path the filesystem never confirmed could be keyed by its raw spelling and inherit a decision recorded for a different directory that merely writes the same way. Resolving strictly makes the unconfirmed case explicit; because no stored key can match a location the kernel does not agree on, the effect is that the user is asked again rather than inheriting. This also retires keys written by the previous path-collapsing resolver: they no longer match, so they no longer grant trust.
+
+### Why an extension could not handle it
+
+- Trust is resolved before extensions load and gates whether project resources may be read at all, so nothing downstream can re-key or revoke a decision the store has already returned.
+
+### Expected merge conflict zones
+
+- LOW: the body of `normalizeCwd` and the `../utils/paths.ts` import line.
 
 ### What changed
 
@@ -17,6 +165,8 @@
 
 - LOW: `resource-loader.ts` around skill path assembly and the former private package-identity helpers.
 
+
+## 2026-09-07 - Dedupe skills from duplicate copies of one package
 
 ## 2026-09-07 - Overflow recovery outlives the auto-compaction flag; session-scoped toggle (#1422)
 

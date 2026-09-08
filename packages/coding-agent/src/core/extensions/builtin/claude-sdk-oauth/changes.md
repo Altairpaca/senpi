@@ -1,5 +1,44 @@
 # claude-sdk-oauth
 
+## 2026-09-08 - `/claude-account add` relays login prompts through the shared account-command interaction
+
+### What changed
+
+- `account-command.ts`: `addAccount` builds its `AuthInteraction` with `createExtensionLoginInteraction` from `../oauth-login-interaction.ts` instead of a local relay that sent every prompt to `ctx.ui.input(prompt.message)`. Prompts now honour their type and placeholder and are dismissed when the provider aborts them; `auth_url` opens the browser in the TUI and `device_code` prints the user code. `ClaudeAccountCommandDeps` gains an optional `openBrowser` so tests can observe the launch. The local `authEventMessage` helper is gone.
+
+### Why
+
+- code-yeongyu/senpi#1485 fixed the same relay shape in `/gpt-account add`; the Claude command shared the placeholder, per-prompt-signal and browser gaps, so both commands now use one implementation.
+
+### Why an extension could not handle it
+
+- The command is registered by the builtin provider extension and drives `modelRuntime.login` directly; no user extension can interpose on that relay.
+
+### Expected merge conflict zones
+
+- LOW: `account-command.ts` import block, `ClaudeAccountCommandDeps`, and `addAccount`. Fork-only file.
+
+## 2026-09-07 - Restart bindings survive ledger entries appended after the committed assistant
+
+### What changed
+
+- `session-commit-boundary.ts`: `assistantContentHash` fingerprints only the semantic payload of each block - `text`, `thinking` (text and signature), and `toolCall` `{id, name, arguments}` - plus role/api/provider/model. Timing stamps, streaming indices, partial JSON, and any other transport metadata no longer participate; an unknown block shape is still hashed whole (fail-closed).
+- `session-binding.ts`: `bindingFromStoredBranch` no longer requires the committed assistant to sit immediately after the marker, and no longer checks the suffix against a hard-coded allowlist of custom types. The committed assistant is the first `message` entry after the marker; every entry the session-manager never projects into the LLM context (`custom` of any type, `label`, `session_info`, `thinking_level_change`, `model_change`, `configuration_update`, plus the goal-continuation `custom_message`) is admitted before and after it. Entries the model can see - `message`, any other `custom_message`, `compaction`, `branch_summary` - still fail closed.
+
+### Why
+
+- oh-my-openagent#7925 (`assistant_rewritten` cascade): the commit boundary compared a hash taken at the last `message_update` with the `message_end` message. Both carry the same answer, but the stream pipeline keeps stamping metadata around it after the last update (senpi#691 fixed one such field, thinking timing, by denylisting it). Every new volatile field re-opens the same hole: a plain turn commits as `rewritten`, the next turn forks or flattens, and after a flatten there is no earlier assistant boundary so every following turn flattens again with the whole conversation. Allowlisting the semantic payload closes the class instead of the instance; an extension that actually rewrites text, thinking, or tool arguments is still detected.
+- oh-my-openagent#7925: every `omo --session <id>` resume cold-seeded with `registry_miss` and the sidecar vanished. The co-resident memory extension appends `custom` ledger records after each turn and one more on every `session_start`, none of which were in the allowlist, so the next restart deleted a valid sidecar. The allowlist had already been patched twice for the same defect class (stop hooks, rule scans, goal warm-ups); the correct invariant is "never reaches the model", which the entry type decides, not the writer.
+
+### Why an extension could not handle it
+
+- The sidecar validation is private to this builtin's restart path; no extension hook observes it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-binding.ts` around `bindingFromStoredBranch` and the retired `SAFE_BINDING_SUFFIX_TYPES` allowlist.
+- LOW: `session-commit-boundary.ts` around `assistantContentHash`.
+
 ## 2026-09-07 - Emit one continuity observation per turn (discarded attempts stay silent)
 
 ### What changed
