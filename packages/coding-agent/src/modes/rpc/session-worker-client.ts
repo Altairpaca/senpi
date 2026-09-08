@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -24,7 +25,7 @@ const compiledWorkerEntry =
 export class SessionWorkerClient {
 	readonly worker = new Worker(
 		isBunBinary
-			? new URL(compiledWorkerEntry, import.meta.url)
+			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
 			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
 	);
 	readonly exited: Promise<void>;
