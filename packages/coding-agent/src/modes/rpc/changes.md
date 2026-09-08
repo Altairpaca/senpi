@@ -1,5 +1,28 @@
 # changes
 
+## Shared RPC session workers retain ownership until exit (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` introduce per-session workers, prepare/grant/commit opening, bounded requests and IPC credit, and main-owned reservations retained through quarantine until actual worker exit.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts` selects the worker registry for CLI shared hosts and reports stdio capacity failures without terminating sibling sessions.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` and `rpc-types.ts` carry worker ownership and the observable quarantined state while retaining the injected in-process registry seam.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` and `connection-handler.ts` keep classic semantics inside each worker and flush shared-session events into the bounded transport synchronously.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` routes snapshots and requester identity across IPC, releases unrelated connections' sessions independently, preserves exact settlement events, and removes exited-worker attachment bookkeeping.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` returns worker credit only after the session's own destinations drain and bounds stdio queues with visible overflow and terminal-failure records.
+
+### Why
+
+- A session's synchronous filesystem operation or JavaScript loop must not freeze the shared transport or other sessions. Neither timeout nor routing closure proves worker termination, and a second writer must not be admitted while the old worker can resume.
+
+### Why an extension could not handle it
+
+- Canonical admission, transport credit, routing ownership and worker lifetime are host infrastructure below the extension boundary. The classic handler still owns command semantics inside the worker.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-command-router.ts` attachment/close paths, `session-event-writer.ts` output scheduling, `session-binding.ts` and `connection-handler.ts` binding options. LOW: `multi-session-host.ts`, `session-registry.ts`, `rpc-types.ts`, and the new worker modules.
+
 ## Watchdog reads the ownership token before it removes the scratch directory (2026-09-07)
 
 ### What changed

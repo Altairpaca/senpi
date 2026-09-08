@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- CLI shared RPC mode now bounds concurrent preparing, active, and quarantined workers at 20, replacing unlimited logical-session admission. Known-path attachments do not allocate workers and remain available at capacity. New worker opening has one 30-second prepare/commit/bind budget; timeout retains reservations until actual exit.
+
 ### Added
 
 - Terminal monitor state events now include command, filter, persistence, deadline, fire counts, and last-fired timestamps; monitor endings emit a typed lifecycle event, and coalesced monitor notifications persist the contributing monitor details.
@@ -13,6 +15,8 @@
 - A goal that is parked on live wake sources (terminal monitor, background bash session, detached `eval` cell, or `senpi-task` child) re-checks at least every 4m30s again: `promptCache.goalBackstopMaxSeconds` now defaults to 270 instead of 3570, so a monitor whose filter never matches or whose stream never ends cannot leave the goal parked for an hour. Resumption stays event-driven (a wake source that delivers starts a turn, and the last source draining queues exactly one continuation); the shorter backstop is the floor underneath it and lands inside the 5-minute prompt-cache TTL. Set `goalBackstopMaxSeconds: 3570` to keep the long, cheaper backstop from 2026.9.7-2 on a wait you trust ([#1476](https://github.com/code-yeongyu/senpi/pull/1476)).
 
 ### Fixed
+
+- Shared RPC hosts now run each session in a worker isolate, so a session-local filesystem stall or JavaScript loop does not freeze sibling sessions. Canonical writer reservations are granted before opening and retained until actual worker exit, including during close-timeout quarantine. Worker admission and IPC output are bounded; standalone builds include the worker entrypoint ([#1492](https://github.com/code-yeongyu/senpi/issues/1492)).
 
 - Anthropic mid-output server fallback now recovers through the configured refusal chain without cooling down the original model. When server fallback is allowed, abandoned tool calls are not executed and fallback markers stay out of subsequent requests.
 

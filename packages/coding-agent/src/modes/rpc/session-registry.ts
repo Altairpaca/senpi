@@ -9,6 +9,7 @@ import {
 } from "../../core/agent-session-runtime.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { beginSessionClose, closeMarkedSession, closeSession, type SessionTeardownHost } from "./session-teardown.ts";
+import type { SessionWorkerClient } from "./session-worker-client.ts";
 
 /** The immutable flags selected when a routing session is opened. */
 export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
@@ -16,11 +17,12 @@ export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
 }
 
 export type SessionRuntime = AgentSessionRuntime;
-export type RpcSessionState = "opening" | "open" | "closing" | "closed";
+export type RpcSessionState = "opening" | "open" | "closing" | "quarantined" | "closed";
 
 export interface RpcSessionEntry {
 	state: RpcSessionState;
 	runtime?: SessionRuntime;
+	worker?: SessionWorkerClient;
 	/** Resolves replacement against the runtime currently owned by this entry. */
 	switchSession?: SessionRuntime["switchSession"];
 	/** Rebind callback installed by the shared RPC connection handler. */
