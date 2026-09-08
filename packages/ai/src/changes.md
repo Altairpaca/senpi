@@ -1,4 +1,23 @@
 
+## 2026-09-08 - Anthropic tool references resolve against the request's own tools (senpi native tool-search 400)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `demoteUnavailableToolReferences` now decides availability from the final `tools` array alone and repairs every reference site. A `tool_reference` whose `tool_name` carries a gateway namespace (`mcp__<id>__<tool>`) is folded back to the request's own tool name when that tool is defined (`resolveAvailableToolName`); a reference that still does not resolve is dropped. Replayed native `tool_search_tool_result` blocks are repaired the same way (`rewriteToolReferenceItems`), and a search pair whose every reference stopped resolving is demoted to text together with its `server_tool_use`. A history `tool_use` under a gateway namespace is renamed to the request's tool name; a `tool_use` whose only justification was a dangling discovery is demoted like any other unavailable call. `collectToolReferenceNames` is gone: discovered names no longer stand in for missing definitions.
+- `packages/ai/test/anthropic-tool-reference-integrity.test.ts`: five cases pin the invariant (namespaced native reference folded to `memory`; mixed list keeps the resolvable names; emptied search pair demoted; namespaced history `tool_use` renamed; dangling discovery no longer keeps its `tool_use`).
+
+### Why
+
+- Live 2026-09-08 (senpi 4adba7afb, omo desktop, claude-fable-5-1): a native tool search returned `tool_reference` names as `mcp__925c__memory`, `mcp__925c__todo`, ... — a namespace neither senpi nor the request defined — and the block replayed verbatim on the next request, which Anthropic rejected with `Tool reference 'mcp__925c__memory' not found in available tools`. The turn hard-errored and fell back to a weaker model. The repair pass saw the names as dangling but only rewrote `tool_result` content, so native results fell through untouched, and a dangling discovery still exempted a later `tool_use` from demotion.
+
+### Why an extension could not handle it
+
+- The reference repair runs after every `before_provider_request` hook, immediately before the SDK call, against the final tools array; an extension cannot see that array or the replayed provider-native blocks the provider itself assembles from history.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `demoteUnavailableToolReferences` block and its helpers in `packages/ai/src/api/anthropic-messages.ts` (upstream has no gateway-namespace handling); LOW: the integrity test file (fork-only).
+
 ## 2026-09-08 - Simple stream options carry the requested service tier (code-yeongyu/oh-my-openagent#6795)
 
 ### What changed
