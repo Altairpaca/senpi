@@ -74,6 +74,8 @@ function endpoint(input: Readable, output: Writable, diagnostic: () => string) {
 	return {
 		records,
 		wait,
+		pauseReading: () => input.pause(),
+		resumeReading: () => input.resume(),
 		send(command: Record<string, unknown>) {
 			output.write(`${JSON.stringify(command)}\n`);
 		},
@@ -121,7 +123,10 @@ export async function waitForFifoReader(path: string) {
 	}
 }
 
-export async function startWorkerHost(extensionSource?: string, options: { socket?: boolean; node?: boolean } = {}) {
+export async function startWorkerHost(
+	extensionSource?: string,
+	options: { socket?: boolean; node?: boolean; preload?: string } = {},
+) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-worker-test-"));
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
@@ -129,6 +134,8 @@ export async function startWorkerHost(extensionSource?: string, options: { socke
 	await mkdir(agentDir);
 	const extension = join(scratch, "gates.mjs");
 	if (extensionSource) await writeFile(extension, extensionSource);
+	const preload = join(scratch, "observe-transport.mjs");
+	if (options.preload) await writeFile(preload, options.preload);
 	const bin = join(scratch, "bin");
 	await mkdir(bin);
 	const bun = options.node ? undefined : process.env.SENPI_RPC_TEST_BUN;
@@ -137,10 +144,14 @@ export async function startWorkerHost(extensionSource?: string, options: { socke
 	const socketPath = join(scratch, "rpc.sock");
 	const binary = options.node ? undefined : process.env.SENPI_RPC_TEST_BINARY;
 	const useNode = binary === undefined && bun === undefined;
+	// cli.ts intentionally spawns an isolated child for --import. Observed
+	// fixtures own the real host PID by entering the same production cli-main.
+	const nodeEntry = options.preload ? "dist/cli-main.js" : "dist/cli.js";
 	const child = spawn(
 		binary ?? join(bin, bun ? "bun" : "node"),
 		[
-			...(binary ? [] : [resolve(useNode ? "dist/cli.js" : "src/cli.ts")]),
+			...(options.preload ? ["--import", preload] : []),
+			...(binary ? [] : [resolve(useNode ? nodeEntry : "src/cli.ts")]),
 			"--mode",
 			"rpc",
 			"--multi-session",
@@ -165,6 +176,12 @@ export async function startWorkerHost(extensionSource?: string, options: { socke
 		},
 	);
 	const exited = once(child, "close");
+	if (options.preload) {
+		child.once("exit", (code, signal) =>
+			process.stderr.write(`PRESSURE_CHILD_EXIT ${JSON.stringify({ pid: child.pid, code, signal })}\n`),
+		);
+		child.once("close", () => process.stderr.write(`PRESSURE_CHILD_CLOSE ${child.pid}\n`));
+	}
 	let stderr = "";
 	let listening: (() => void) | undefined;
 	const ready = new Promise<void>((resolveReady) => {
@@ -177,13 +194,19 @@ export async function startWorkerHost(extensionSource?: string, options: { socke
 	const stdio = endpoint(child.stdout, child.stdin, () => stderr);
 	const connections: Array<{ dispose(): void }> = [];
 	const dispose = async () => {
+		if (options.preload)
+			process.stderr.write(
+				`PRESSURE_DISPOSE ${JSON.stringify({ pid: child.pid, exitCode: child.exitCode, stdout: child.stdout.readableFlowing, stderr: child.stderr.readableFlowing })}\n`,
+			);
 		for (const connection of connections) connection.dispose();
 		child.kill("SIGTERM");
 		const deadline = setTimeout(() => child.kill("SIGKILL"), 10_000);
 		await exited;
 		clearTimeout(deadline);
 		stdio.dispose();
+		if (options.preload) process.stderr.write(`PRESSURE_REMOVE ${scratch}\n`);
 		await rm(scratch, { recursive: true, force: true });
+		if (options.preload) process.stderr.write(`PRESSURE_REMOVED ${scratch}\n`);
 	};
 	if (options.socket) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
