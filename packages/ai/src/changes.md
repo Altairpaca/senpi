@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/ai/src/api/anthropic-tool-references.ts` (new): the Anthropic tool-reference integrity pass (`demoteUnavailableToolReferences` and its helpers) moved out of `anthropic-messages.ts` into its own module, mirroring `anthropic-tool-pairs.ts`. `anthropic-messages.ts` only imports the pass now.
+- `packages/ai/src/api/anthropic-tool-references.ts` (new): the Anthropic tool-reference integrity pass (`demoteUnavailableToolReferences` and its helpers) moved out of `packages/ai/src/api/anthropic-messages.ts` into its own module, mirroring `anthropic-tool-pairs.ts`. `packages/ai/src/api/anthropic-messages.ts` only imports the pass now (and keeps `httpStatusOfError`, which #1487 added beside it).
 - `resolveAvailableToolName` compares names with case and `_`/`-` separators folded away (`foldToolNameKey`) after the literal and namespace-stripped literal lookups fail. `collectAvailableToolNames` builds the folded index from the request's `tools` array once per request and drops any folded key that two request tools share, so the fold never guesses between candidates; such a reference stays unresolved and is dropped like before.
 - `packages/ai/test/anthropic-tool-reference-integrity.test.ts`: three cases pin the fold (recased native search references `mcp__a4e6__Memory` / `LspSymbols` / `XSearch` plus a hyphenated literal fold onto `memory` / `lsp_symbols` / `x_search` / the literal; a recased namespaced history `tool_use` is renamed; an ambiguous fold is dropped).
 
