@@ -277,7 +277,7 @@ export class RpcSessionRegistry {
 		sessionPath?: string;
 		cwd: string;
 		name?: string;
-		status: RpcSessionState;
+		status: Exclude<RpcSessionState, "quarantined">;
 	}> {
 		this.syncRuntimeMetadata();
 		return [...this.entries].map(([sessionId, entry]) => ({
@@ -286,7 +286,7 @@ export class RpcSessionRegistry {
 			sessionPath: entry.sessionPath,
 			cwd: entry.cwd,
 			name: entry.runtime?.session.sessionManager.getSessionName(),
-			status: entry.state,
+			status: entry.state === "quarantined" ? "closing" : entry.state,
 		}));
 	}
 

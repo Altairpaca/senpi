@@ -6,7 +6,7 @@
 
 - `packages/coding-agent/src/modes/rpc/session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` introduce per-session workers, prepare/grant/commit opening, bounded requests and IPC credit, and main-owned reservations retained through quarantine until actual worker exit.
 - `packages/coding-agent/src/modes/rpc/multi-session-host.ts` selects the worker registry for CLI shared hosts and reports stdio capacity failures without terminating sibling sessions.
-- `packages/coding-agent/src/modes/rpc/session-registry.ts` and `rpc-types.ts` carry worker ownership and the observable quarantined state while retaining the injected in-process registry seam.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` carries worker ownership and internal quarantine while retaining the injected in-process registry seam. `worker-session-registry.ts` publishes quarantined workers as the existing `closing` wire status, preserving desktop eager-reattach semantics without releasing ownership.
 - `packages/coding-agent/src/modes/rpc/session-binding.ts` and `connection-handler.ts` keep classic semantics inside each worker and flush shared-session events into the bounded transport synchronously.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts` routes snapshots and requester identity across IPC, releases unrelated connections' sessions independently, preserves exact settlement events, and removes exited-worker attachment bookkeeping.
 - `packages/coding-agent/src/modes/rpc/session-event-writer.ts` returns worker credit only after the session's own destinations drain and bounds stdio queues with visible overflow and terminal-failure records.

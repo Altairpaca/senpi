@@ -364,7 +364,7 @@ export type RpcResponse =
 					sessionPath?: string;
 					cwd: string;
 					name?: string;
-					status: "opening" | "open" | "closing" | "quarantined" | "closed";
+					status: "opening" | "open" | "closing" | "closed";
 				}>;
 			};
 	  }

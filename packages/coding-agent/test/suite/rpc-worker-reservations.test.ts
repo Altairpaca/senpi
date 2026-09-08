@@ -50,6 +50,12 @@ it.each(["close", "deadline"])(
 			else expect(await opening).toBe("cancelled");
 			expect(exited).toBe(false);
 			expect(registry.peek(handle)?.state).toBe("quarantined");
+			const published = registry.list();
+			expect(published.find((entry) => entry.sessionId === handle)?.status).toBe("closing");
+			// Match the desktop eagerReattach predicate, not an expanded private state enum.
+			expect(published.some((entry) => entry.sessionPath === canonicalFifo && entry.status !== "closing")).toBe(
+				false,
+			);
 			expect(registry.size).toBeGreaterThan(0);
 			await expect(registry.openSession({ cwd, sessionPath: alias })).rejects.toThrow("session_path_in_use");
 			const header = `${JSON.stringify({ type: "session", version: 3, id: "retry-durable", timestamp: new Date(0).toISOString(), cwd })}\n`;

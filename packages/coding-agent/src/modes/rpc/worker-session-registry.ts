@@ -155,7 +155,7 @@ export class WorkerSessionRegistry {
 		sessionPath?: string;
 		cwd: string;
 		name?: string;
-		status: RpcSessionEntry["state"];
+		status: Exclude<RpcSessionEntry["state"], "quarantined">;
 	}> {
 		return [...this.entries].map(([sessionId, entry]) => {
 			const state = entry.worker?.snapshot?.state;
@@ -165,7 +165,7 @@ export class WorkerSessionRegistry {
 				sessionPath: state?.sessionFile ?? entry.sessionPath,
 				cwd: state?.cwd ?? entry.cwd,
 				name: state?.sessionName,
-				status: entry.state,
+				status: entry.state === "quarantined" ? "closing" : entry.state,
 			};
 		});
 	}
