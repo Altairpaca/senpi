@@ -1026,6 +1026,7 @@ describe("goal continuation while a monitor is active", () => {
 						hasPendingMessages: false,
 						path: "immediate",
 						lastStopReason: "stop",
+						lastTurnWasMalformedToolUse: false,
 						consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 						lastContinuationSignature: goal.lastContinuationSignature,
 						currentSignature: undefined,
