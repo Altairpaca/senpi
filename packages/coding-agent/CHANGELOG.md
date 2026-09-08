@@ -10,6 +10,8 @@
 
 ### Changed
 
+- Prompt presets route eval work by dependency instead of call count: independent reads, searches, and probes batch into one cell, while edits, side-effecting commands, approvals, and result-dependent calls run one at a time and are observed; every cell is compared with the state it was meant to produce, and visual work (pages, images, 3D scenes) gets a change-render-look loop. GPT eval rules lose their capitals; the Kimi K3 preset carries a worked read-change-run-compare-stop loop.
+
 - A goal that is parked on live wake sources (terminal monitor, background bash session, detached `eval` cell, or `senpi-task` child) re-checks at least every 4m30s again: `promptCache.goalBackstopMaxSeconds` now defaults to 270 instead of 3570, so a monitor whose filter never matches or whose stream never ends cannot leave the goal parked for an hour. Resumption stays event-driven (a wake source that delivers starts a turn, and the last source draining queues exactly one continuation); the shorter backstop is the floor underneath it and lands inside the 5-minute prompt-cache TTL. Set `goalBackstopMaxSeconds: 3570` to keep the long, cheaper backstop from 2026.9.7-2 on a wait you trust ([#1476](https://github.com/code-yeongyu/senpi/pull/1476)).
 
 ### Fixed
