@@ -184,7 +184,9 @@ export function nativeSearchTurn(referenceNames: string[], useId = "srvtoolu_sea
 	};
 }
 
-export function nativeSearchResultBlocks(params: Record<string, unknown>): Array<{ tool_use_id?: string; content?: unknown }> {
+export function nativeSearchResultBlocks(
+	params: Record<string, unknown>,
+): Array<{ tool_use_id?: string; content?: unknown }> {
 	return allBlocks(params).filter((block) => block.type === "tool_search_tool_result") as Array<{
 		tool_use_id?: string;
 		content?: unknown;
