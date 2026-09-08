@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The eval tool description teaches cell mechanics only (batch independent calls, real code, failures kept verbatim, truncated output re-read) and drops the "default execution surface / never a chain / distilled facts only" wording; routing lives in the model's prompt preset.
+
 ### Fixed
 
 ### Removed
