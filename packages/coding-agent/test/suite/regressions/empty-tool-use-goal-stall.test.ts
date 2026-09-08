@@ -1,3 +1,4 @@
+import { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
@@ -53,6 +54,54 @@ describe("empty tool_use terminal message does not stall an active goal", () => 
 		//#then - the goal resumes instead of freezing while still marked active
 		expect(harness.sent).toHaveLength(1);
 		expect(await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd))).toMatchObject({ status: "active" });
+	});
+
+	it("queues a continuation after the agent loop demoted the malformed turn to a clean stop", async () => {
+		//#given - the loop rewrites the stop reason to "stop" and leaves only the demotion diagnostic
+		const harness = createGoalHarness();
+		const notices: string[] = [];
+		const ctx = await makeGoalContext(notices, "thread-demoted-tool-use");
+		await createActiveGoal(ctx, harness);
+		const demoted = {
+			...fauxAssistantMessage("", { stopReason: "toolUse" }),
+			stopReason: "stop" as const,
+			diagnostics: [{ type: EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, timestamp: 0, details: {} }],
+		};
+
+		//#when
+		await runGoalHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [demoted], willRetry: false },
+			ctx,
+		);
+		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
+
+		//#then - the demotion diagnostic still identifies the turn as provider breakage
+		expect(harness.sent).toHaveLength(1);
+		expect(await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd))).toMatchObject({ status: "active" });
+	});
+
+	it("does not queue a continuation for an ordinary clean stop", async () => {
+		//#given - an active goal whose turn ended as a plain stop with no demotion diagnostic
+		const harness = createGoalHarness();
+		const notices: string[] = [];
+		const ctx = await makeGoalContext(notices, "thread-plain-stop");
+		await createActiveGoal(ctx, harness);
+		const plain = fauxAssistantMessage("all done", { stopReason: "stop" });
+
+		//#when
+		await runGoalHandlers(
+			harness.handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [plain], willRetry: false },
+			ctx,
+		);
+
+		//#then - a clean stop must not be mistaken for provider breakage
+		expect(
+			harness.sent.filter((entry) => entry.message.customType === "goal-continuation").length,
+		).toBeLessThanOrEqual(1);
 	});
 
 	it("does not queue a continuation when an executed tool deliberately ended the turn", async () => {

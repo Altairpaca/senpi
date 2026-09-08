@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { type AgentMessage, EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC } from "@earendil-works/pi-agent-core";
 import type { Goal } from "./types.ts";
 
 type AssistantAgentMessage = Extract<AgentMessage, { role: "assistant" }>;
@@ -103,8 +103,16 @@ function isContinuableStopReason(stopReason: AssistantAgentMessage["stopReason"]
 	return stopReason === "stop" || stopReason === "length";
 }
 
+// The agent loop demotes a tool-call-less `toolUse` stop to `stop` before `agent_end`, so the
+// original stop reason is gone by the time a goal sees the turn. Accept either shape: the raw
+// message (extensions observing it pre-demotion) or the demotion diagnostic the loop leaves behind.
 export function isMalformedToolUseTurn(message: AssistantAgentMessage): boolean {
-	return message.stopReason === "toolUse" && !message.content.some((content) => content.type === "toolCall");
+	if (message.content.some((content) => content.type === "toolCall")) return false;
+	if (message.stopReason === "toolUse") return true;
+	return (
+		message.stopReason === "stop" &&
+		(message.diagnostics ?? []).some((diagnostic) => diagnostic.type === EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC)
+	);
 }
 
 function isAbortedToolResult(message: ToolResultAgentMessage): boolean {
