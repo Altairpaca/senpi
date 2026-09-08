@@ -395,7 +395,7 @@ export class ExtensionRunner {
 		keepRecentTokens: 20000,
 	});
 	private getPromptCacheSafeWaitSecondsFn: () => number | undefined = () => undefined;
-	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 3570;
+	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 270;
 	private getPromptCacheKeepAliveSettingsFn: NonNullable<ExtensionContextActions["getPromptCacheKeepAliveSettings"]> =
 		() => ({ enabled: false, maxRequestsPerSession: 3, maxCostUsdPerSession: 0.05, marginSeconds: 60 });
 	private getLookAtSettingsFn: ExtensionContextActions["getLookAtSettings"] = () => ({

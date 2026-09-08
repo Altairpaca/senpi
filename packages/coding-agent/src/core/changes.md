@@ -1,3 +1,22 @@
+## Goal backstop default is 270s (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `getPromptCacheGoalBackstopMaxSeconds()` falls back to 270 instead of 3570.
+- `packages/coding-agent/src/core/settings-shapes.ts`: `PromptCacheSettings.goalBackstopMaxSeconds` documents the 270 default.
+
+### Why
+
+- The goal monitor's backstop is the floor under the event-driven drain fire; a wake source that never delivers (a misconfigured monitor filter, an endless stream) must not park a goal for an hour. See `extensions/builtin/goal/changes.md` (2026-09-08).
+
+### Why an extension could not handle it
+
+- The default lives in core settings resolution and the extension runner's fallback, not in extension code.
+
+### Expected merge conflict zones
+
+- LOW: the two literal defaults above.
+
 ## The session request carries its effective service tier without an extension (2026-09-08)
 
 ### What changed
