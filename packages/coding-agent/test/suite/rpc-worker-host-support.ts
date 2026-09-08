@@ -90,6 +90,10 @@ function endpoint(input: Readable, output: Writable, diagnostic: () => string) {
 	};
 }
 
+// Keep native-entry rescue live when a registry test controls the host request clock.
+const fifoSetTimeout = setTimeout;
+const fifoClearTimeout = clearTimeout;
+
 export async function waitForFifoReader(path: string) {
 	const opening = open(path, "w");
 	let expired = false;
@@ -98,7 +102,7 @@ export async function waitForFifoReader(path: string) {
 		return await Promise.race([
 			opening,
 			new Promise<never>((_resolve, reject) => {
-				timer = setTimeout(() => {
+				timer = fifoSetTimeout(() => {
 					expired = true;
 					reject(new Error("FIFO reader entry deadline"));
 				}, 35_000);
@@ -113,7 +117,7 @@ export async function waitForFifoReader(path: string) {
 		}
 		throw cause;
 	} finally {
-		if (timer) clearTimeout(timer);
+		if (timer) fifoClearTimeout(timer);
 	}
 }
 

@@ -4,8 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
+import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
 import { waitForFifoReader } from "./rpc-worker-host-support.ts";
+
+const realSetTimeout = setTimeout;
+const realClearTimeout = clearTimeout;
+
+async function phase<T>(name: string, signal: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	process.stderr.write(`RESERVATION_AWAIT ${name}\n`);
+	try {
+		const result = await Promise.race([
+			signal,
+			new Promise<never>((_resolve, reject) => {
+				timer = realSetTimeout(() => reject(new Error(`Reservation phase timed out: ${name}`)), 10_000);
+			}),
+		]);
+		process.stderr.write(`RESERVATION_DONE ${name}\n`);
+		return result;
+	} finally {
+		realClearTimeout(timer);
+	}
+}
 
 it.each(["close", "deadline"])(
 	"retains canonical ownership after %s until the blocked worker actually exits",
@@ -33,6 +54,9 @@ it.each(["close", "deadline"])(
 		});
 		let gate: Awaited<ReturnType<typeof open>> | undefined;
 		try {
+			// Advance the real request scheduler only after the native FIFO entry signal.
+			// Worker threads and filesystem operations remain real; the test keeps its 60s ceiling.
+			if (action === "deadline") vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
 			const opening = registry.openSession({ cwd, sessionPath: fifo }).then(
 				() => "opened",
 				() => "cancelled",
@@ -46,8 +70,12 @@ it.each(["close", "deadline"])(
 			const exit = worker.exited.then(() => {
 				exited = true;
 			});
-			if (action === "close") await registry.close(handle);
-			else expect(await opening).toBe("cancelled");
+			if (action === "close") await phase("close", registry.close(handle));
+			else {
+				await vi.advanceTimersByTimeAsync(SESSION_WORKER_LIMITS.openMs);
+				vi.useRealTimers();
+				expect(await phase("opening-deadline", opening)).toBe("cancelled");
+			}
 			expect(exited).toBe(false);
 			expect(registry.peek(handle)?.state).toBe("quarantined");
 			const published = registry.list();
@@ -57,30 +85,40 @@ it.each(["close", "deadline"])(
 				false,
 			);
 			expect(registry.size).toBeGreaterThan(0);
-			await expect(registry.openSession({ cwd, sessionPath: alias })).rejects.toThrow("session_path_in_use");
+			await expect(phase("alias-denial", registry.openSession({ cwd, sessionPath: alias }))).rejects.toThrow(
+				"session_path_in_use",
+			);
 			const header = `${JSON.stringify({ type: "session", version: 3, id: "retry-durable", timestamp: new Date(0).toISOString(), cwd })}\n`;
 			await unlink(fifo);
 			await writeFile(fifo, header);
-			await gate.write(header);
-			await gate.close();
+			await phase("gate-write", gate.write(header));
+			await phase("gate-close", gate.close());
 			gate = undefined;
-			await exit;
-			expect(await opening).toBe("cancelled");
-			const retry = await registry.openSession({ cwd, sessionPath: alias });
+			await phase("worker-exit", exit);
+			expect(await phase("opening-cancelled", opening)).toBe("cancelled");
+			const retry = await phase("same-path-retry", registry.openSession({ cwd, sessionPath: alias }));
 			expect(retry.durableSessionId).toBe("retry-durable");
 			expect(retry.sessionId).not.toBe(handle);
 			expect(registry.peek(retry.sessionId)?.state).toBe("open");
 		} finally {
-			await gate?.close();
-			await Promise.all(
-				registry.list().map(async ({ sessionId }) => {
-					const worker = registry.peek(sessionId)?.worker;
-					worker?.quarantine();
-					await worker?.exited;
-				}),
-			);
-			vi.unstubAllEnvs();
-			await rm(scratch, { recursive: true, force: true });
+			vi.useRealTimers();
+			try {
+				await phase("cleanup-gate", gate?.close() ?? Promise.resolve());
+				await phase(
+					"cleanup-workers",
+					Promise.all(
+						registry.list().map(({ sessionId }) => {
+							const worker = registry.peek(sessionId)?.worker;
+							const exited = worker?.exited;
+							worker?.quarantine();
+							return exited;
+						}),
+					),
+				);
+			} finally {
+				vi.unstubAllEnvs();
+				await rm(scratch, { recursive: true, force: true });
+			}
 		}
 	},
 	60_000,
