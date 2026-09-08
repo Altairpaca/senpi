@@ -52,6 +52,7 @@ import { normalizeAnthropicRetryFailure } from "../utils/retry-profile/failure.t
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	applyServerFallbackAbort,
+	applyServerFallbackContinuation,
 	parseServerFallbackReceipt,
 	parseStickyFallbackReceipt,
 	type ServerFallbackReceipt,
@@ -1342,17 +1343,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						break;
 					}
 				} else if (event.type === "content_block_start") {
-					if (event.content_block.type === "fallback" && output.content.length > 0) {
-						throw new Error("Anthropic performed an unsupported mid-output model fallback");
-					}
-					const receipt =
-						options?.abortServerSideFallback === true
-							? parseServerFallbackReceipt(event.content_block)
-							: undefined;
+					const receipt = parseServerFallbackReceipt(event.content_block);
 					if (receipt !== undefined) {
-						serverFallbackReceipt = receipt;
-						serverFallbackAbort.abort();
-						break;
+						if (options?.abortServerSideFallback === true) {
+							serverFallbackReceipt = receipt;
+							serverFallbackAbort.abort();
+							break;
+						}
+						usageModel = applyServerFallbackContinuation(output, model, receipt);
 					}
 					if (event.content_block.type === "text") {
 						const block: Block = {
