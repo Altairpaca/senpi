@@ -906,6 +906,13 @@ function isNativeToolSearchResultBlock(block: unknown): block is Record<string, 
 	);
 }
 
+/** Numeric HTTP status carried by an SDK error (Anthropic APIError.status), if any. */
+function httpStatusOfError(error: unknown): number | undefined {
+	if (!isRecord(error)) return undefined;
+	const status = error.status;
+	return typeof status === "number" && Number.isInteger(status) && status >= 100 && status < 600 ? status : undefined;
+}
+
 function demoteUnavailableToolReferences(params: MessageCreateParamsStreaming): MessageCreateParamsStreaming {
 	const messages = params.messages;
 	if (!Array.isArray(messages) || messages.length === 0) return params;
@@ -1482,25 +1489,40 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					throw error;
 				}
 			};
-			const { params: sentParams, response } = await retryProviderRequest(
-				async () => {
-					try {
-						return await createRequest();
-					} catch (error) {
-						if (unsignedThinkingReplay !== "text" && isInvalidUnsignedThinkingSignatureError(error)) {
-							unsignedThinkingReplay = "text";
-							if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
-							return createRequest();
+			let requestOutcome: { params: MessageCreateParamsStreaming; response: Response };
+			try {
+				requestOutcome = await retryProviderRequest(
+					async () => {
+						try {
+							return await createRequest();
+						} catch (error) {
+							if (unsignedThinkingReplay !== "text" && isInvalidUnsignedThinkingSignatureError(error)) {
+								unsignedThinkingReplay = "text";
+								if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
+								return createRequest();
+							}
+							throw error;
 						}
-						throw error;
-					}
-				},
-				{
-					maxRetries: options?.maxRetries,
-					maxRetryDelayMs: options?.maxRetryDelayMs,
-					signal: requestSignal,
-				},
-			);
+					},
+					{
+						maxRetries: options?.maxRetries,
+						maxRetryDelayMs: options?.maxRetryDelayMs,
+						signal: requestSignal,
+					},
+				);
+			} catch (error) {
+				// The SDK rejects HTTP failures instead of returning a Response, so a
+				// rejected request never reached onResponse. Deliver the numeric status
+				// once, after every internal retry, before the caller handles the error;
+				// errors without a status (network, aborts) report nothing rather than
+				// a fabricated code.
+				const status = httpStatusOfError(error);
+				if (status !== undefined) {
+					await options?.onResponse?.({ status, headers: {} }, model);
+				}
+				throw error;
+			}
+			const { params: sentParams, response } = requestOutcome;
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
