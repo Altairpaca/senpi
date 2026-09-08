@@ -237,7 +237,12 @@ The classic handler, extension UI bridge, renderer callbacks and provider scope 
 plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
 file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
 `src/modes/rpc/session-worker.ts` as an explicit entrypoint; Node bundles must ship `session-worker.js` beside the
-chunk containing its worker client. Third-party/rebranded bundlers must carry this entrypoint too.
+chunk containing its worker client. Third-party/rebranded Bun wrappers must pass the published
+`dist/modes/rpc/session-worker.js` as an additional compile entry, set an explicit `--root`, and set
+`--define=SENPI_RPC_SESSION_WORKER_ENTRY='"./<worker-path-relative-to-root>"'`. The define is a build-time
+contract, not an environment variable. Its path must match Bun's embedded entry name, not the source machine's
+absolute path or the runtime working directory. Verify the relocated wrapper by opening two shared sessions;
+a standalone Senpi smoke does not verify a wrapper's different compile graph.
 
 Workers isolate JavaScript event loops, not OS processes: they do not promise syscall cancellation, process-fatal OOM
 containment, or containment of arbitrary native code. They are not an extension sandbox.

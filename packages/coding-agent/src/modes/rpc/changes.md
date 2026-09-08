@@ -4,6 +4,7 @@
 
 ### What changed
 
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts` accepts the build-time `SENPI_RPC_SESSION_WORKER_ENTRY` define so external Bun wrappers can embed the published dist worker under their own explicit compile root. Source/Node resolution and the standalone source-entry default are unchanged.
 - `packages/coding-agent/src/modes/rpc/session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` introduce per-session workers, prepare/grant/commit opening, bounded requests and IPC credit, and main-owned reservations retained through quarantine until actual worker exit.
 - `packages/coding-agent/src/modes/rpc/multi-session-host.ts` selects the worker registry for CLI shared hosts and reports stdio capacity failures without terminating sibling sessions.
 - `packages/coding-agent/src/modes/rpc/session-registry.ts` carries worker ownership and internal quarantine while retaining the injected in-process registry seam. `worker-session-registry.ts` publishes quarantined workers as the existing `closing` wire status, preserving desktop eager-reattach semantics without releasing ownership.

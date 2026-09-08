@@ -14,10 +14,17 @@ import type {
 
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 
+/** Bun wrapper builders define the worker entry name relative to their explicit --root. */
+declare const SENPI_RPC_SESSION_WORKER_ENTRY: string | undefined;
+const compiledWorkerEntry =
+	typeof SENPI_RPC_SESSION_WORKER_ENTRY === "string"
+		? SENPI_RPC_SESSION_WORKER_ENTRY
+		: "./src/modes/rpc/session-worker.ts";
+
 export class SessionWorkerClient {
 	readonly worker = new Worker(
 		isBunBinary
-			? "./src/modes/rpc/session-worker.ts"
+			? compiledWorkerEntry
 			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
 	);
 	readonly exited: Promise<void>;
