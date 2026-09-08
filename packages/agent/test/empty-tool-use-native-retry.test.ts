@@ -6,6 +6,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { demoteToolUseWithoutToolCalls, EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC } from "../src/assistant-terminal-state.ts";
 import { withEmptyAssistantRecovery } from "../src/empty-assistant-recovery.ts";
 
 function nativeToolCallingModel(): Model<"anthropic-messages"> {
@@ -90,6 +91,39 @@ describe("empty tool_use recovery on native tool-calling providers", () => {
 			message.content.filter((block: AssistantMessage["content"][number]) => block.type === "toolCall"),
 		).toHaveLength(1);
 		expect(message.stopReason).toBe("toolUse");
+	});
+
+	it("leaves an unwrapped native model to the loop's demotion instead of a stream retry", async () => {
+		//#given - a native tool-calling model that neither text-tool-call recovery nor a tool-call format covers
+		const model: Model<"anthropic-messages"> = {
+			...nativeToolCallingModel(),
+			id: "gemini-3-pro",
+			name: "gemini-3-pro",
+		};
+		let calls = 0;
+		const streamFunction = (): ReturnType<typeof streamOf> => {
+			calls += 1;
+			return streamOf(thinkingOnlyToolUse());
+		};
+		const context: Context = { systemPrompt: "", messages: [], tools: [] };
+
+		//#when
+		const recovered = withEmptyAssistantRecovery(model, streamFunction as never);
+		const message = await (await recovered(model as never, context, undefined)).result();
+
+		//#then - the stream is not rewrapped, so liveness is preserved and no retry fires
+		expect(calls).toBe(1);
+		expect(recovered).toBe(streamFunction);
+
+		//#then - the loop's demotion still removes the contradiction and records why
+		const demoted = demoteToolUseWithoutToolCalls(message);
+		expect(demoted.stopReason).toBe("stop");
+		expect(
+			demoted.diagnostics?.some(
+				(entry: NonNullable<AssistantMessage["diagnostics"]>[number]) =>
+					entry.type === EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC,
+			),
+		).toBe(true);
 	});
 
 	it("fails the turn as an error when the retry is malformed too", async () => {
