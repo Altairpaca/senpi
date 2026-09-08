@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `streamSimple` on the OpenAI Responses and Codex Responses adapters forwards the new `SimpleStreamOptions.serviceTier` into the request (`service_tier`) and tier-aware usage pricing; the simple path previously dropped it (code-yeongyu/oh-my-openagent#6795).
+
 ### Removed
 
 ## [2026.9.7-2] - 2026-09-07

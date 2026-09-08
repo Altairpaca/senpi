@@ -1,6 +1,8 @@
-## The session request carries its effective service tier without an extension (2026-09-08, code-yeongyu/oh-my-openagent#6795)
+## The session request carries its effective service tier without an extension (2026-09-08)
 
 ### What changed
+
+- Tracks code-yeongyu/oh-my-openagent#6795.
 
 - `packages/coding-agent/src/core/sdk.ts`: the Agent `streamFn` sets `serviceTier` on the stream options when the caller did not: the session's `effectiveServiceTier` for the active model (catalog `-fast` variant, scoped `:priority` pin, or session fast mode), else the request model's own catalog tier for side requests (title/branch summaries). Only APIs that accept `service_tier` (`supportsServiceTier`) receive it. The late-bound session ref used by the Cursor exec bridge is now the shared `sessionRef`.
 - `packages/coding-agent/src/core/agent-session.ts`: hands `getEffectiveServiceTier` to the extension runner.
