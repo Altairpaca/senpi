@@ -6,6 +6,8 @@
 
 ### Added
 
+- Pooled OAuth credential slots now retain optional human-readable display names while preserving immutable slot identities for selection, affinity, refresh, and failover.
+
 ### Changed
 
 ### Fixed
