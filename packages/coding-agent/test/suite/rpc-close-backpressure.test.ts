@@ -112,6 +112,44 @@ it.each([false, true])("scopes close overflow to affected socket requesters (lat
 		}
 		expect(a).toEqual([overflow]);
 		expect(writer.pendingCloseRecordCount).toBe(MAX_SHARED_STDIO_QUEUE_RECORDS);
+
+		// Finish one admitted first closer while its notice is still blocked.
+		// Then drain socket actors only (no stdio lane), and saturate the SAME
+		// actors again. A global flush latch must not hide this later episode.
+		const first = admitted.shift();
+		if (!first) throw new Error("Missing first close reservation");
+		writer.withConnection("a", () => first.complete(true));
+		for (const reply of admitted.splice(0)) reply.release();
+		drained.resolve();
+		await phase("socket-only-first-episode-drained", writer.flush());
+		expect(writer.pendingCloseRecordCount).toBe(0);
+		expect(writer.pendingCloseByteLength).toBe(0);
+		expect(a).toEqual([
+			overflow,
+			{ type: "session_closed", sessionId: "rpc-a" },
+			{ ...response("0"), sessionId: "rpc-a" },
+		]);
+		for (let i = 0; i < MAX_SHARED_STDIO_QUEUE_RECORDS / 2; i++) {
+			const reply = writer.withConnection("a", () => writer.reserveCloseResponse("rpc-a", response(`next-${i}`)));
+			if (!reply) throw new Error("Admission did not recover after drain");
+			admitted.push(reply);
+		}
+		for (let i = 0; i < 100; i++)
+			expect(
+				writer.withConnection("a", () => writer.reserveCloseResponse("rpc-a", response("next-rejected"))),
+			).toBeUndefined();
+		await phase("socket-only-second-episode-drained", writer.flush());
+		expect(a.filter((record) => record.type === "overflow")).toHaveLength(2);
+		expect(b.filter((record) => record.type === "overflow")).toHaveLength(2);
+		const repeatedNotice = Promise.withResolvers<void>();
+		noticeWritten = repeatedNotice.resolve;
+		expect(
+			writer.withConnection("b", () => writer.reserveCloseResponse("rpc-b", response("next-b"))),
+		).toBeUndefined();
+		await phase("same-peer-second-episode-notice", repeatedNotice.promise);
+		expect(b.filter((record) => record.type === "overflow")).toHaveLength(3);
+		expect(writer.pendingCloseRecordCount).toBe(MAX_SHARED_STDIO_QUEUE_RECORDS);
+		expect(disconnected).toEqual([]);
 	} finally {
 		for (const reply of admitted) reply.release();
 		drained.resolve();
