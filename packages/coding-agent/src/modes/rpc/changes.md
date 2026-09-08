@@ -4,12 +4,13 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` counts admitted close reply records and serialized bytes against the existing stdio queue budgets before they are queued. The first closer reserves both terminal records; direct duplicate replies use the same admission gate. Saturation emits one bounded `rpc_close_output_overflow, resync required` notice per episode, not one buffered reply or stderr line per rejected command.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` counts admitted close reply records and serialized bytes against the existing stdio queue budgets before they are queued. The first closer reserves both terminal records; direct duplicate replies use the same admission gate. Saturation emits a bounded `rpc_close_output_overflow, resync required` notice, not one buffered reply or stderr line per rejected command. Stdio keeps one notice per episode. Socket notices target only the rejected requester, with at most one outstanding notice per sink until consumption; actor identity isolates reconnects without retaining dead connections.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts` admits reply debt before claiming an attachment or awaiting finalization. Rejected commands do neither; admitted replies transfer their reservation to FIFO output, with release on every completion/error path. Native-exit canonical ownership is unchanged.
 - `packages/coding-agent/docs/rpc.md` documents close admission, overflow recovery, and the distinction between an overflow notice and a successful acknowledgment.
 
 ### Why
 
+- Broadcasting one global socket notice incorrectly told healthy peers to resynchronize and suppressed notification for later affected requesters. Deterministic two-connection tests reproduce both failures and preserve independent peer progress.
 - A native-FIFO-blocked quarantined worker can remain resident indefinitely. Previously, 4,196 duplicate closes queued 4,196 noncompactable replies beyond the 4,096-record bound; checking only at enqueue also leaves unbounded reply debt in joined finalization promises.
 
 ### Why an extension could not handle it

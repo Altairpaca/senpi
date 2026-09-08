@@ -50,6 +50,77 @@ it.each(["records", "bytes"])("bounds duplicate close %s without dropping admitt
 	}
 });
 
+it.each([false, true])("scopes close overflow to affected socket requesters (late peer=%s)", async (latePeer) => {
+	const writer = new SessionEventWriter(() => {});
+	const a: Array<Record<string, unknown>> = [];
+	const b: Array<Record<string, unknown>> = [];
+	const drained = Promise.withResolvers<void>();
+	const disconnected: string[] = [];
+	let noticeWritten: (() => void) | undefined;
+	const connectB = () =>
+		writer.registerConnection("b", {
+			writeRaw: (line) => {
+				const record = JSON.parse(line);
+				b.push(record);
+				if (record.type === "overflow") noticeWritten?.();
+			},
+			waitForBackpressure: () => Promise.resolve(),
+			close: () => disconnected.push("b"),
+		});
+	writer.registerConnection("a", {
+		writeRaw: (line) => a.push(JSON.parse(line)),
+		waitForBackpressure: () => drained.promise,
+		close: () => disconnected.push("a"),
+	});
+	if (!latePeer) connectB();
+	const admitted = [];
+	try {
+		// These are the same real admission tokens that joined router closes
+		// retain while their finalizer is pending; none has completed yet.
+		for (let i = 0; i < MAX_SHARED_STDIO_QUEUE_RECORDS / 2; i++) {
+			const reply = writer.withConnection("a", () => writer.reserveCloseResponse("rpc-a", response(String(i))));
+			if (!reply) throw new Error("Premature admission failure");
+			admitted.push(reply);
+		}
+		for (let i = 0; i < 100; i++)
+			expect(
+				writer.withConnection("a", () => writer.reserveCloseResponse("rpc-a", response("rejected-a"))),
+			).toBeUndefined();
+		expect(a).toEqual([overflow]);
+		if (latePeer) connectB();
+		// B still makes progress while A's notice is blocked at its sink
+		// contract. B has not lost output and must not be told to resynchronize.
+		await writer.withConnection("b", () =>
+			writer.enqueueControl({ type: "response", id: "healthy-b", success: true }),
+		);
+		expect(b).toEqual([{ type: "response", id: "healthy-b", success: true }]);
+		expect(disconnected).toEqual([]);
+		// If B subsequently asks for capacity too, it needs its own notice even
+		// though A's notice is still outstanding. Unregister/register is a new sink.
+		for (let epoch = 0; epoch < 2; epoch++) {
+			if (epoch > 0) {
+				writer.unregisterConnection("b");
+				connectB();
+			}
+			const notice = Promise.withResolvers<void>();
+			noticeWritten = notice.resolve;
+			expect(
+				writer.withConnection("b", () => writer.reserveCloseResponse("rpc-b", response("rejected-b"))),
+			).toBeUndefined();
+			await phase("requester-overflow-written", notice.promise);
+			expect(b.filter((record) => record.type === "overflow")).toHaveLength(epoch + 1);
+		}
+		expect(a).toEqual([overflow]);
+		expect(writer.pendingCloseRecordCount).toBe(MAX_SHARED_STDIO_QUEUE_RECORDS);
+	} finally {
+		for (const reply of admitted) reply.release();
+		drained.resolve();
+		await writer.flush();
+		writer.unregisterConnection("a");
+		writer.unregisterConnection("b");
+	}
+});
+
 it.each(["quarantined", "finalizing-records", "finalizing-bytes"])(
 	"bounds real FIFO worker close debt while %s and retains ownership until native exit",
 	async (state) => {

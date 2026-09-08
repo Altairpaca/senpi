@@ -237,8 +237,10 @@ releasing an attachment or waiting for teardown. An admitted first closer reserv
 admitted joiners follow those records in FIFO order. Excess closes are not admitted and do not release ownership.
 One bounded `overflow` record with `command: "close_session"` and
 `error: "rpc_close_output_overflow, resync required"` reports the saturation episode instead of retaining a reply
-or promise for each rejected request. Clients must stop issuing closes, drain output, and resynchronize unacknowledged
-requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
+or promise for each rejected request. Over sockets, this notice goes only to the requester whose close was rejected;
+each connection may have at most one outstanding notice, released when its sink consumes it. A healthy peer is not
+told to resynchronize, and a newly affected or reconnected peer receives its own notice. Stdio retains one notice per
+episode. Clients receiving a notice must stop issuing closes, drain output, and resynchronize unacknowledged requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
 Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
 
 The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only

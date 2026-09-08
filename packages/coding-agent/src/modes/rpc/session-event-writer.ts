@@ -7,6 +7,7 @@ import {
 	SessionEventFanout,
 	type SessionEventWriterConnection,
 } from "./session-event-fanout.ts";
+import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 export { RENDERED_COMPONENT_RECORD, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 
@@ -97,6 +98,7 @@ export class SessionEventWriter {
 	private failure?: unknown;
 	private controlOverflowReported = false;
 	private closeOverflowReported = false;
+	private readonly closeOverflowActors = new WeakSet<SocketEventSinkActor>();
 	private reservedCloseRecords = 0;
 	private reservedCloseBytes = 0;
 
@@ -323,17 +325,24 @@ export class SessionEventWriter {
 			this.bufferedRecordCount + this.reservedCloseRecords + records > MAX_SHARED_STDIO_QUEUE_RECORDS ||
 			this.bufferedByteLength + this.reservedCloseBytes + bytes > MAX_SHARED_STDIO_QUEUE_BYTES
 		) {
-			if (!this.closeOverflowReported) {
+			const overflow = {
+				type: "overflow",
+				command: "close_session",
+				error: "rpc_close_output_overflow, resync required",
+			};
+			const targetId = this.currentConnection();
+			if (targetId !== undefined) {
+				const actor = this.fanout.get(targetId)?.actor;
+				if (actor && !this.closeOverflowActors.has(actor)) {
+					this.closeOverflowActors.add(actor);
+					// One outstanding notice per sink, released only on consumption.
+					// Actor identity isolates reconnects and does not retain dead sinks.
+					actor.enqueue(serializeJsonLine(overflow), undefined, () => this.closeOverflowActors.delete(actor));
+				}
+			} else if (!this.closeOverflowReported) {
 				this.closeOverflowReported = true;
-				const overflow = {
-					type: "overflow",
-					command: "close_session",
-					error: "rpc_close_output_overflow, resync required",
-				};
-				if (this.fanout.isEmpty()) {
-					this.append(this.controlQueue, overflow);
-					this.markReady(this.controlQueue);
-				} else this.fanout.broadcast(serializeJsonLine(overflow));
+				this.append(this.controlQueue, overflow);
+				this.markReady(this.controlQueue);
 				this.requestFlush();
 			}
 			return undefined;
