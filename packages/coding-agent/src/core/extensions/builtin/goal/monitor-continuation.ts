@@ -25,6 +25,7 @@ import {
 	type GoalContinuationPath,
 	hasGoalContinuationProgress,
 	hashAssistantText,
+	isMalformedToolUseTurn,
 	normalizeAssistantText,
 } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
@@ -508,6 +509,7 @@ export class MonitorAwareGoalContinuation {
 			hasPendingMessages: ctx.hasPendingMessages(),
 			path,
 			lastStopReason: lastAssistant?.stopReason,
+			lastTurnWasMalformedToolUse: lastAssistant?.role === "assistant" && isMalformedToolUseTurn(lastAssistant),
 			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 			lastContinuationSignature: goal.lastContinuationSignature,
 			currentSignature: buildCurrentGoalContinuationSignature(ctx, goal, lastAssistantText(messages)),
