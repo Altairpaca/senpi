@@ -1,4 +1,23 @@
 
+## 2026-09-08 - Simple stream options carry the requested service tier (code-yeongyu/oh-my-openagent#6795)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `SimpleStreamOptions.serviceTier` (`ServiceTierPreference`: `"auto" | "flex" | "priority"`) names the processing tier a caller requests.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`: `streamSimple` forwards that option into the provider options, so it reaches `service_tier` on the wire and the tier-aware usage pricing, exactly like a full `stream()` call. Azure is unchanged (it does not sell Priority processing).
+
+### Why
+
+- The simple path dropped `serviceTier` in `buildBaseOptions`, so the only way to send the field was to mutate the request payload from an extension hook. A session that loads no extensions (SDK embedders, oh-my-openagent's in-process delegated children) could therefore never run at the priority tier even when its model was a `-fast` catalog variant.
+
+### Why this lives in the fork
+
+- `streamSimple` is the provider-neutral entry every host goes through; the field has to be threaded there.
+
+### Expected merge conflict zones
+
+- LOW: `SimpleStreamOptions` in `types.ts`; the `streamSimple` option literals in both Responses adapters.
+
 ## 2026-09-07 - Classify OpenAI context-window overflow and token rate limits (code-yeongyu/oh-my-openagent#7921)
 
 ### What changed
