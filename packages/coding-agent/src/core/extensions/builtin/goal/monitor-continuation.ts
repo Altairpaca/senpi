@@ -326,9 +326,10 @@ export class MonitorAwareGoalContinuation {
 
 	#schedule(goal: Goal, kind: DelayedContinuationKind): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
-		// A live wake source arms the stall backstop only: the normal resumption is
-		// the drain fire in #setWakeSourceCount, so the model is not invoked on the
-		// prompt-cache safe-wait interval while the session waits.
+		// A live wake source arms the periodic backstop only: the normal resumption
+		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
+		// goal every `promptCache.goalBackstopMaxSeconds` in case the source never
+		// delivers.
 		const delayMs =
 			kind === "monitor"
 				? resolveGoalMonitorContinuationDelayMs(this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.())
