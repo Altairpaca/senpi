@@ -24,7 +24,7 @@ const compiledWorkerEntry =
 export class SessionWorkerClient {
 	readonly worker = new Worker(
 		isBunBinary
-			? compiledWorkerEntry
+			? new URL(compiledWorkerEntry, import.meta.url)
 			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
 	);
 	readonly exited: Promise<void>;

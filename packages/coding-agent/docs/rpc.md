@@ -241,7 +241,10 @@ chunk containing its worker client. Third-party/rebranded Bun wrappers must pass
 `dist/modes/rpc/session-worker.js` as an additional compile entry, set an explicit `--root`, and set
 `--define=SENPI_RPC_SESSION_WORKER_ENTRY='"./<worker-path-relative-to-root>"'`. The define is a build-time
 contract, not an environment variable. Its path must match Bun's embedded entry name, not the source machine's
-absolute path or the runtime working directory. Verify the relocated wrapper by opening two shared sessions;
+absolute path or the runtime working directory. The client resolves it against its compiled `import.meta.url`
+before constructing the Worker: Bun 1.4.0 resolves a bare relative Worker string against the real cwd instead
+of the embedded filesystem. Verify the relocated wrapper on the wrapper's supported Bun version and platform
+by opening two shared sessions;
 a standalone Senpi smoke does not verify a wrapper's different compile graph.
 
 Workers isolate JavaScript event loops, not OS processes: they do not promise syscall cancellation, process-fatal OOM
