@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## 2026-09-08 - Shared monitor telemetry contract
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: state entries gain optional command/filter/persistent/deadlineMs/fireCount/lastFiredAtMs fields, and the new `terminal_monitor_ended` event has a shared payload type and boundary guard.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` is the wire contract for observers rendering monitor details and retaining ended watches. Optional state fields preserve mixed-version consumers.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` defines the shared seam, while the terminal builtin owns the actual registry and event emissions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` event constants, entry fields, and ended payload guard.
+
 ## Account commands relay OAuth login prompts through the extension UI (2026-09-08)
 
 ### What changed

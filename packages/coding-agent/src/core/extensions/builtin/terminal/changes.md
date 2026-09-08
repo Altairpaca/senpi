@@ -1030,3 +1030,24 @@ lifecycle code, the N-API `startPtySession` callback, and terminal runtime const
 - Regression coverage: `test/terminal-bash-abort.test.ts` (pre-aborted signal spawns nothing, SIGTERM-ignoring
   command, PTY held open across abort and timeout, plain-run pin) and `packages/pty/test/registry.test.ts`
   (bounded stop/teardown on a session that never reports exit).
+
+## Monitor telemetry over extension events (2026-09-08)
+
+### What changed
+
+- `monitor-registry.ts`: live monitor snapshots now carry command/filter/persistence/deadline and fire counters, and each monitor emits one typed ended record with its terminal reason and exit code.
+- `extension.ts` and `session-bundle.ts`: publish enriched state and `terminal_monitor_ended` through the existing extension and RPC event channels; replay endings across a parked reload exactly once. Fire-stat refreshes do not trigger manifest writes or wake-source transitions.
+- `monitor-notify.ts`, `notify.ts`, and `tools/monitor.ts`: retain monitor details in coalesced `senpi-monitor:notification` custom-message entries, including overflow-only monitors, and capture registration metadata without changing the monitor schema or description. `details` is already accepted and persisted by the custom-message API, so no fallback event or content prefix is needed.
+- `durable-command.ts` and `durable-file.ts`: retain command/persistence metadata after restart. `fireCount` counts emitted line and summary events in this registry lifetime, including the final summary; paused/filtered lines are excluded. Existing persistent file-watch lifetime semantics are unchanged.
+
+### Why
+
+- omo-desktop needs complete monitor records, lifecycle history, and monitor ids on each coalesced notification to render runtime details and timeline joins.
+
+### Why an extension could not handle it
+
+- The registry owns monitor lifecycle, fire accounting, and terminal exit classification; the builtin terminal extension is the existing event publisher and notification owner.
+
+### Expected merge conflict zones
+
+- MEDIUM: `monitor-registry.ts` lifecycle and snapshot paths; LOW: `extension.ts`, `session-bundle.ts`, `durable-command.ts`, `durable-file.ts`, `monitor-notify.ts`, `notify.ts`, and `tools/monitor.ts`.
