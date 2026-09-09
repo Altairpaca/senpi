@@ -8,6 +8,8 @@
 
 ### Added
 
+- `generate_image` gains `model` (`gpt-image-2.5-sunburst` default, `gpt-image-2.5-flare`, `gpt-image-2`), `xhigh`/`max` quality, free-form validated `size`, and `reference_image_paths` (1-5 local PNG/JPEG/WEBP files, up to 50 MB each) that edit or reference existing images through the edits endpoint; the `gpt-image-gen` skill now documents model selection, quality tiers, size limits, and reference-image editing ([#1513](https://github.com/code-yeongyu/senpi/pull/1513)).
+
 - `compaction.summarizationMaxDurationMs` (settings) replaces the size-adaptive summarization wall-clock budget with a fixed one when set; positive finite values only, clamped to the 30-minute ceiling ([#1501](https://github.com/code-yeongyu/senpi/pull/1501)).
 
 ### Changed
