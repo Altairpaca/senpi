@@ -798,7 +798,15 @@ async function loadExtension(
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
-		const extension = await initializeExtension(factory, extensionPath, resolvedPath, cwd, eventBus, runtime, sharedHostEnabled);
+		const extension = await initializeExtension(
+			factory,
+			extensionPath,
+			resolvedPath,
+			cwd,
+			eventBus,
+			runtime,
+			sharedHostEnabled,
+		);
 		return { extension, error: null };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);

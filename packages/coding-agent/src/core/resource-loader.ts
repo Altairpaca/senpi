@@ -797,8 +797,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private buildGlobalDefaultExtensionLoadOptions(): {
-		factoryResolver: ExtensionFactoryResolver
-		sharedHostEnabled: boolean
+		factoryResolver: ExtensionFactoryResolver;
+		sharedHostEnabled: boolean;
 	} {
 		return {
 			factoryResolver: (_extensionPath, resolvedPath) =>
@@ -1305,7 +1305,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private async loadExtensionFactories(runtime: ExtensionRuntime, sharedHostEnabled: boolean): Promise<{
+	private async loadExtensionFactories(
+		runtime: ExtensionRuntime,
+		sharedHostEnabled: boolean,
+	): Promise<{
 		extensions: Extension[];
 		errors: Array<{ path: string; error: string }>;
 	}> {
@@ -1375,13 +1378,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		if (bundledExtensionPaths.length > 0) {
-			const bundledResult = await loadExtensions(
-				bundledExtensionPaths,
-				this.cwd,
-				this.eventBus,
-				runtime,
-				{ sharedHostEnabled },
-			);
+			const bundledResult = await loadExtensions(bundledExtensionPaths, this.cwd, this.eventBus, runtime, {
+				sharedHostEnabled,
+			});
 			extensions.push(...bundledResult.extensions);
 			errors.push(...bundledResult.errors);
 		}
