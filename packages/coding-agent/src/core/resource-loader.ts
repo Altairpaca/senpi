@@ -325,6 +325,7 @@ export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager?: SettingsManager;
+	sharedHostEnabled?: boolean;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
@@ -361,6 +362,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
+	private sharedHostEnabled: boolean;
 	private eventBus: EventBus;
 	private packageManager: DefaultPackageManager;
 	private additionalExtensionPaths: string[];
@@ -423,6 +425,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
+		this.sharedHostEnabled = options.sharedHostEnabled ?? this.settingsManager.getExperimentalSharedHost();
 		this.eventBus = options.eventBus ?? createEventBus();
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -793,10 +796,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private buildGlobalDefaultExtensionLoadOptions(): { factoryResolver: ExtensionFactoryResolver } {
+	private buildGlobalDefaultExtensionLoadOptions(): {
+		factoryResolver: ExtensionFactoryResolver
+		sharedHostEnabled: boolean
+	} {
 		return {
 			factoryResolver: (_extensionPath, resolvedPath) =>
 				resolveGeneratedGlobalDefaultExtensionFactory(resolvedPath, this.agentDir),
+			sharedHostEnabled: this.sharedHostEnabled,
 		};
 	}
 
