@@ -16,6 +16,23 @@
 
 - `packages/coding-agent/src/core/resource-loader.ts`: resource-loader options, constructor, and extension-set assembly.
 
+## Resume oversized sessions into required compaction (2026-09-09)
+
+### What changed
+
+- `sdk.ts` admits only restored sessions whose projection remains unusable after the compaction-eligible resume branch, when compaction is enabled; `agent-session.ts` publishes that projection through the existing session event stream and forces compaction before the first provider prompt. Startup and model-switch assertions are unchanged.
+
+### Why
+
+- A restored transcript can fit the raw context window while system prompt, tool schemas, and output reserve make the first provider request fail. Deferring that admission lets the existing required-compaction route reduce the transcript instead of crashing the constructor.
+
+### Why an extension could not handle it
+
+- The projection is evaluated before extensions are wired, so only core can retain the shortfall and defer provider admission.
+
+### Expected merge conflict zones
+
+- MEDIUM in `sdk.ts` startup admission and `agent-session.ts` pre-provider compaction gate; LOW in the interactive event switch.
 ## Size-adaptive summarization duration budget setting (2026-09-08)
 
 ### What changed
