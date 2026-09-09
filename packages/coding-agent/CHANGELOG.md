@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Extensions can inspect the effective shared-host capability during registration, allowing RPC-dependent tools to stay absent when shared-host support is disabled and available when it is enabled.
+
 - Fresh `claude-sdk-oauth` sessions with injected context and multiple first-turn user messages now report continuity `bootstrap` instead of a false `registry_miss` loss; sessions that have a prior assistant message still flatten on a genuine registry miss.
 
 ### Removed
