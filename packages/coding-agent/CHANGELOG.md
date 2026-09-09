@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fresh `claude-sdk-oauth` sessions with injected context and multiple first-turn user messages now report continuity `bootstrap` instead of a false `registry_miss` loss; sessions that have a prior assistant message still flatten on a genuine registry miss.
+
 ### Removed
 
 ## [2026.9.9] - 2026-09-09
