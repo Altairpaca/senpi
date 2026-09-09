@@ -1,3 +1,21 @@
+## Registration-time shared-host capability (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` forwards the shared-host policy through extension-loading options.
+
+### Why
+
+- `packages/coding-agent/src/core/resource-loader.ts` owns the effective settings and extension discovery lifecycle needed for capability-gated tool registration.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` loads factories before extensions can access bound session actions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: resource-loader options, constructor, and extension-set assembly.
+
 ## Size-adaptive summarization duration budget setting (2026-09-08)
 
 ### What changed
