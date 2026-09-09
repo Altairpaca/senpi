@@ -1,3 +1,4 @@
+import { isClassifierRefusal } from "@earendil-works/pi-ai";
 import type { AgentEndEvent } from "../../types.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 
@@ -16,6 +17,21 @@ function isSdkOauthAccountExhaustion(
 		? message.content.map((part) => (part?.type === "text" ? part.text : "")).join("\n")
 		: "";
 	return SDK_OAUTH_EXHAUSTION_MARKERS.every((marker) => text.includes(marker));
+}
+
+// Codex backend type:error responses persist only the message, not the policy
+// code/payload. Match that diagnostic, never ordinary assistant text.
+const CODEX_POLICY_ERROR_PATTERN =
+	/^(?:Codex error: )?This request was blocked by our safety systems\.(?: Reason: .+)?$/i;
+
+export function didTerminalPolicyRejectionEndTurn(event: AgentEndEvent): boolean {
+	if (event.willRetry !== false) return false;
+	const message = lastAssistantMessage(event.messages);
+	if (message === undefined) return false;
+	return (
+		isClassifierRefusal(message) ||
+		(message.stopReason === "error" && CODEX_POLICY_ERROR_PATTERN.test(message.errorMessage ?? ""))
+	);
 }
 
 export function didTerminalProviderErrorEndTurn(event: AgentEndEvent): boolean {
