@@ -4520,6 +4520,10 @@ export class InteractiveMode {
 				this.showHighReasoningWarning(event);
 				break;
 
+			case "resume_compaction_required":
+				this.showWarning(event.notice);
+				break;
+
 			case "settings_source_selected":
 				this.showSettingsSourceSelected(event);
 				break;
