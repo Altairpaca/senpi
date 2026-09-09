@@ -8,9 +8,13 @@
 
 ### Added
 
+- `compaction.summarizationMaxDurationMs` (settings) replaces the size-adaptive summarization wall-clock budget with a fixed one when set; positive finite values only, clamped to the 30-minute ceiling ([#1501](https://github.com/code-yeongyu/senpi/pull/1501)).
+
 ### Changed
 
 ### Fixed
+
+- Large sessions can compact again: the summarization wall-clock budget scales with the estimated input (`max(120s, 2ms per token)`, capped at 30 minutes) instead of a fixed 120 seconds, so a 200k+ token summary on a slower provider is no longer rejected while still streaming and the session no longer stays wedged above its compaction threshold. Small inputs keep the exact 120-second contract, the idle watchdog is unchanged, and the retry allowance stays at half of one attempt ([#1068](https://github.com/code-yeongyu/senpi/issues/1068), [#1501](https://github.com/code-yeongyu/senpi/pull/1501)).
 
 ### Removed
 
@@ -520,7 +524,6 @@
 ### Fixed
 
 - Hooks trust-state reads keep complete snapshots on a lock-free fast path while malformed or empty reads acquire the bounded writer lock and revalidate under writer exclusion. This prevents mixed-version legacy writers from hiding an absent-active-absent lock cycle around truncate-and-rewrite; a still-malformed exclusive reread or exhausted active lease fails closed without surfacing `ELOCKED`. Lock release failures no longer mask reader or writer failures, and multiple failures retain causal order. The files are internal same-account application state: new POSIX files use `0600`, existing POSIX numeric modes are retained, and custom ownership, ACL, or DACL preservation is not supported.
-
 
 - Compaction no longer wedges when the summarizer model hijacks the forwarded agent tools and answers with a bare tool call (observed on openai-codex gpt-5.6-sol at high reasoning as `Compaction rejected: summarization response contained no text (stopReason: toolUse)` followed by `Context remains above the compaction threshold because compaction did not complete`). The summarization request is retried once with tool calling forbidden (`toolChoice: "none"`, tools kept in the request for Anthropic compatibility), and a persistent empty-summary failure now degrades into the deterministic no-LLM fallback on required-compaction routes instead of leaving the session stuck above the threshold.
 - Windows session resume no longer aborts the process when `fs.watch()` receives an event for a watch path containing a non-canonical component; existing paths are canonicalized before watching ([#1229](https://github.com/code-yeongyu/senpi/issues/1229)).
@@ -1456,7 +1459,6 @@
   tree, and degrades to killing the direct child only when no launcher starts at all
   ([#807](https://github.com/code-yeongyu/senpi/pull/807) by [@yeongjunyoo](https://github.com/yeongjunyoo)).
 
-
 - MCP shutdown no longer risks terminating unrelated processes on macOS when Homebrew `proctools` provides `pgrep`: process-tree collection now passes an explicit match-all pattern, and the kill path skips PID 1 and non-positive PIDs as defense in depth ([#824](https://github.com/code-yeongyu/senpi/pull/824) by [@bagelcode-jhkim](https://github.com/bagelcode-jhkim)).
 - `claude-sdk-oauth` sessions no longer re-send the full conversation after a transient content-less user message disappears. Such messages are now excluded from the sent-stream continuity hash, so an unchanged conversation stays a `delta` instead of forking with `sent_stream_diverged` ([#791](https://github.com/code-yeongyu/senpi/pull/791) by [@1vivy](https://github.com/1vivy)).
 - `config-reload` now accepts an extension watch rooted at the agent directory when every `filterGlob` is root-anchored and non-protected, so extensions can live-watch safe root config files such as `omo.jsonc`. Unfiltered targets, unanchored filters, and protected paths (`auth.json`, `sessions/`, `logs/`) remain rejected ([#819](https://github.com/code-yeongyu/senpi/issues/819)).
@@ -1468,7 +1470,6 @@
 - Expanding several tool results at once (Ctrl+O) no longer renders mismatched or truncated content when a frame grows above the viewport. The viewport-remap path now replays rows above the visible window so cached component layout and terminal output stay aligned ([#701](https://github.com/code-yeongyu/senpi/issues/701), [#879](https://github.com/code-yeongyu/senpi/pull/879)).
 
 - Fallback retries no longer escalate reasoning. A requested level the fallback model does not support previously resolved to that model's highest supported level, which pushed 191 of 197 always-on models to maximum reasoning on unattended retries; it now clamps to the nearest supported level. A session interrupted inside a fallback window also no longer resumes with the primary model carrying the fallback model's reasoning level, and favorite model patterns keep their `:level` / `:priority` decorators instead of being flattened to bare ids ([#894](https://github.com/code-yeongyu/senpi/pull/894)).
-
 
 ### New Features
 

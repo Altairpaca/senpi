@@ -1,5 +1,26 @@
 # changes.md — builtin compaction policy
 
+## Scale the speculative attempt budget and retry allowance with the input size (2026-09-08)
+
+### What changed
+
+- `speculative-summary.ts`: `generateSummaryMessage` applies `summarizationMaxDurationMs()` to the summarization stream (the size-adaptive default, or the resolved budget passed by the caller) instead of the fixed 120s default.
+- `speculative.ts`: computes one per-attempt budget from the summarization input and `compaction.summarizationMaxDurationMs`, passes it into `generateSummaryMessage`, and feeds the same value to the retry gate.
+- `summarization-retry.ts`: `allowSummarizationRetry()` now takes the attempt budget and keeps the "half of one attempt" total allowance (`summarizationRetryTotalBudgetMs()`), so large sessions keep proportional retry room instead of being disqualified after 60s of elapsed time.
+
+### Why
+
+- #1068: with a fixed 120s attempt budget, large sessions lose every summarization attempt to the wall-clock watchdog; the extension route's fixed 60s retry allowance compounds the deadlock by refusing retries after one slow attempt.
+
+### Why an extension could not handle it
+
+- The watchdog constants live in core; the extension route owns the attempt loop, so both sides must share one budget number.
+
+### Expected merge conflict zones
+
+- LOW: `speculative-summary.ts` options and stream consumption.
+- LOW: `speculative.ts` retry-loop budget computation.
+
 ## Recover fitting retained suffixes with consistent token accounting (2026-09-08)
 
 ### What changed
