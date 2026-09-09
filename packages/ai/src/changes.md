@@ -1,3 +1,24 @@
+## 2026-09-09 - GPT Image 2.5 generation and reference-image editing
+
+### What changed
+
+- `packages/ai/scripts/generate-image-models.ts` and `packages/ai/src/image-models.generated.ts`: add GPT Image 2.5 Sunburst and Flare ahead of the existing OpenAI models with $5 input / $30 output / $1.25 cached-input rates per million tokens. Both new entries and GPT Image 2 advertise text and image inputs; the OpenRouter catalog is unchanged.
+- `packages/ai/src/api/openai-images-params.ts`: own the quality/size options, prompt construction, and exported `parseOpenAIImageSize` validator. Accept `xhigh`/`max` quality and arbitrary integer dimensions that satisfy the divisibility, edge, aspect-ratio, and pixel-count limits.
+- `packages/ai/src/api/openai-images-edit.ts` and `packages/ai/src/api/openai-images.ts`: upload up to 16 base64 reference images via `/images/edits`, without `input_fidelity`, using the generation path's payload/response hooks, retry, usage, and error handling. Keep the OpenAI SDK pinned at 6.26.0 with one localized request-type assertion.
+- `packages/ai/src/images.ts`: expose the parser, quality/size types, and `OpenAIImagesOptions` through the existing compat re-export without eagerly loading the SDK.
+
+### Why
+
+- The GPT Image 2.5 models released on 2026-09-08 add quality tiers and support high-resolution generation and reference-image edits. The adapter previously advertised only text inputs, rejected references, and typed only the preset dimensions.
+
+### Why an extension could not handle it
+
+- The built-in catalog, public option types, request validation, and SDK endpoint selection belong to the AI provider layer; callers should not need to rewrite payloads or implement uploads themselves.
+
+### Expected merge conflict zones
+
+- LOW: the OpenAI portion of the generated image catalog, its static generator entries, and the images export surface; MEDIUM: the request-construction block in `packages/ai/src/api/openai-images.ts`. The parameter and edit builders are new files.
+
 ## 2026-09-08 - Recased gateway-namespaced tool references fold onto the request's tool names
 
 ### What changed
