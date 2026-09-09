@@ -1,3 +1,35 @@
+## 2026-09-07 - Effective admission reserve (#7921 case 2)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: resolve the effective reserve in `shouldCompact` through the shared policy resolver.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921: a million-token model must reserve 40,000 tokens by default, not the raw 16,384.
+
+### Why an extension could not handle it
+
+- Core admission calls this predicate before extension compaction can enforce its budget. The policy imports core types only, so this runtime import introduces no cycle.
+
+### Expected merge conflict zones
+
+- `shouldCompact` and policy imports.
+
+## 2026-09-07 - Stuck-overflow classification (#1422)
+
+### What changed
+
+- New `packages/coding-agent/src/core/compaction/stuck-overflow.ts`: `isTurnStuckOnContextOverflow(message, contextWindow)` is true for a provider overflow error and for a zero-output `length` stop that filled the window, false for a completed answer whose usage merely exceeds the window. Imported by path from `agent-session.ts` and the goal extension; the barrel stays selective.
+
+### Why
+
+- Overflow recovery and the goal continuation guard need one definition of "this turn cannot progress by re-sending the same context".
+
+### Expected merge conflict zones
+
+- None upstream; the module is fork-only.
+
 ## 2026-09-05 - Re-anchor Astra configuration updates after compaction
 
 ### What changed
@@ -583,3 +615,26 @@ If upstream changes branch summary preparation or adds new branch summary data s
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/compaction/compaction.ts` settings type re-export near the module imports.
+
+## 2026-09-08 - Scale the summarization duration budget with the input size
+
+### What changed
+
+- `stream-watchdog.ts`: new `summarizationMaxDurationMs()` computes the per-attempt wall-clock budget as the larger of the 120s floor and 2ms per estimated input token, clamped to a 30-minute cap, with an optional explicit override.
+- `compaction.ts`: `completeSummarization()` estimates the context being summarized and applies the scaled budget instead of the fixed `DEFAULT_SUMMARIZATION_MAX_DURATION_MS`; `generateSummary()` and `generateSummaryWithUsage()` accept an optional override that flows from the resolved compaction settings.
+- `compaction-execution.ts`: `compact()` forwards `settings.summarizationMaxDurationMs` to history and turn-prefix summaries.
+- `compaction-settings.ts`: the resolved settings contract gains the optional `summarizationMaxDurationMs` override.
+- `compaction-settings-access.ts` / `compaction-settings-resolver.ts`: new optional `compaction.summarizationMaxDurationMs` setting; non-positive and non-finite values fall back to the adaptive default.
+
+### Why
+
+- #1068: a 257k-token session summarization on a slower provider exceeds the hardcoded 120s budget while still streaming, so every compaction attempt is rejected and the session cannot drop below its compaction threshold. At a 1M context window the automatic threshold fires only when the summarizable input is already hundreds of thousands of tokens, so the fixed 120s budget guarantees failure exactly when compaction becomes mandatory.
+
+### Why an extension could not handle it
+
+- `completeSummarization()` is the shared core choke point for every summarization stream; the extension policy layer reaches it only through this function's options, and the budget must apply per attempt inside the core watchdog.
+
+### Expected merge conflict zones
+
+- LOW: `compaction.ts` around `completeSummarization` and the `generateSummary*` signatures.
+- LOW: `compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts` settings contracts.

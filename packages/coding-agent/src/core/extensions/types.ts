@@ -87,6 +87,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
@@ -424,6 +425,13 @@ export interface ExtensionContext {
 	model: Model<any> | undefined;
 	/** Current service tier for the active model (from -fast suffix or scoped model config) */
 	serviceTier: ServiceTier | undefined;
+	/**
+	 * The tier the session's requests carry right now: `serviceTier`, promoted to `"priority"`
+	 * while session fast mode is on. Hosts that spawn delegated sessions read this to inherit the
+	 * parent's effective execution tier. Optional so hand-built contexts stay valid; readers fall
+	 * back to `serviceTier`.
+	 */
+	effectiveServiceTier?: ServiceTier | undefined;
 	/** Models scoped to this session. Empty when all available models are usable. */
 	scopedModels: readonly ScopedModel[];
 	/** Current thinking level, when provided by the session runtime. */
@@ -1636,6 +1644,8 @@ export interface ExtensionAPI {
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
+	/** Effective shared-host capability for registration-time extension decisions. */
+	readonly sharedHostEnabled: boolean;
 
 	// =========================================================================
 	// Event Subscription
@@ -1772,6 +1782,9 @@ export interface ExtensionAPI {
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+
+	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
+	registerReadClassifier(classifier: ReadClassifier): () => void;
 
 	// =========================================================================
 	// Actions
@@ -2276,6 +2289,8 @@ export interface ExtensionActions {
 export interface ExtensionContextActions {
 	getModel: () => Model<any> | undefined;
 	getServiceTier: () => ServiceTier | undefined;
+	/** Effective request tier (fast mode included). Defaults to `getServiceTier` when omitted. */
+	getEffectiveServiceTier?: () => ServiceTier | undefined;
 	getScopedModels: () => readonly ScopedModel[];
 	getAgentDir?: () => string;
 	isIdle: () => boolean;

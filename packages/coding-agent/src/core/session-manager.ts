@@ -20,6 +20,7 @@ import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { reserveSessionWrite } from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -907,6 +908,7 @@ export class SessionManager {
 	}
 
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
 		this.residentStore.clear();
@@ -982,7 +984,9 @@ export class SessionManager {
 
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			reserveSessionWrite(path);
+			this.sessionFile = path;
 		}
 		return this.sessionFile;
 	}
@@ -1027,6 +1031,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		reserveSessionWrite(this.sessionFile);
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
@@ -1067,6 +1072,7 @@ export class SessionManager {
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
@@ -1775,6 +1781,7 @@ export class SessionManager {
 				parentId = labelEntry.id;
 			}
 
+			reserveSessionWrite(newSessionFile);
 			this.residentStore.clear();
 			this.mirrorTrimmed = false;
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
@@ -1844,6 +1851,7 @@ export class SessionManager {
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
 		const resolvedPath = resolvePath(path);
+		reserveSessionWrite(resolvedPath);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
 		if (cwdOverride === undefined && existsSync(resolvedPath)) {
@@ -1938,6 +1946,7 @@ export class SessionManager {
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
 		};
+		reserveSessionWrite(newSessionFile);
 		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 
 		// Copy all non-header entries from source

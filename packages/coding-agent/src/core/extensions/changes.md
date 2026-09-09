@@ -1,5 +1,87 @@
 # Core Extensions Changes
 
+## 2026-09-09 - Expose shared-host policy during extension registration
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds the read-only `ExtensionAPI.sharedHostEnabled` capability.
+- `packages/coding-agent/src/core/extensions/loader.ts` forwards the loading policy into extension factories.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` lets RPC-dependent tools distinguish enabled and disabled hosts before registering.
+- `packages/coding-agent/src/core/extensions/loader.ts` makes the decision available before a factory registers searchable tools.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned registration API.
+- `packages/coding-agent/src/core/extensions/loader.ts` constructs that API before session events or bound runtime actions are available.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: registration-time context fields.
+- `packages/coding-agent/src/core/extensions/loader.ts`: factory initialization and loading options.
+
+## 2026-09-09 - Register compact read classifiers through the extension API
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds `ExtensionAPI.registerReadClassifier(classifier): () => void`, using the shared `ReadClassifier` type.
+- `packages/coding-agent/src/core/extensions/loader.ts`: registers classifiers in the shared read registry and returns a tracked unregister function. Failed factory loads and runtime invalidation remove their registrations; stale APIs cannot register new classifiers.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` gives extensions a typed way to classify memory paths without replacing the built-in read tool.
+- `packages/coding-agent/src/core/extensions/loader.ts` connects that API to the renderer's registry while preserving the existing failed-load and reload cleanup lifecycle.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-provided API; extensions cannot add methods to that public contract themselves.
+- `packages/coding-agent/src/core/extensions/loader.ts` owns API construction and runtime cleanup, so it must wire registrations into the shared registry and remove them when their owner becomes inactive.
+
+### Expected merge conflict zones
+
+- LOW: the `ReadClassifier` import and the rendering-registration methods next to `registerEntryRenderer` in `packages/coding-agent/src/core/extensions/types.ts`.
+- LOW: the registry import and `createExtensionAPI` registration block in `packages/coding-agent/src/core/extensions/loader.ts`.
+
+## 2026-09-08 - Runner fallback for the goal backstop setting follows the 270s default
+
+### What changed
+
+- `runner.ts`: the `getPromptCacheGoalBackstopMaxSecondsFn` placeholder (used until the session wires `SettingsManager.getPromptCacheGoalBackstopMaxSeconds`) returns 270 instead of 3570, matching the new `promptCache.goalBackstopMaxSeconds` default.
+
+### Why
+
+- The goal monitor re-checks a parked goal every backstop interval so a wake source that never delivers cannot strand it for an hour; a host that has not wired the settings getter must arm the same 270s floor. See `builtin/goal/changes.md` (2026-09-08).
+
+### Why an extension could not handle it
+
+- The placeholder is the runner's own default for the extension context action; extensions only read the resolved value.
+
+### Expected merge conflict zones
+
+- LOW: the single `getPromptCacheGoalBackstopMaxSecondsFn` initializer in `runner.ts`.
+
+## 2026-09-08 - Expose the effective service tier and let core carry it (code-yeongyu/oh-my-openagent#6795)
+
+### What changed
+
+- `types.ts`: `ExtensionContext.effectiveServiceTier` (optional) reports the tier the session's requests carry right now - `serviceTier` promoted to `"priority"` while session fast mode is on. `ExtensionContextActions.getEffectiveServiceTier` (optional) feeds it; `runner.ts` falls back to `getServiceTier` when a host omits it.
+- `builtin/service-tier.ts`: exports `supportsServiceTier(api)`. On `model_select`, a remembered `"auto"` for a Codex model whose catalog says priority now also clears the SESSION's cached tier (`setSessionFastMode(false)`, which only touches a catalog-inherited Codex priority), instead of suppressing the tier in the payload hook alone.
+
+### Why
+
+- The session itself now puts `effectiveServiceTier` on the request (`core/sdk.ts`), so the extension's memory decision has to reach session state or the two writers would disagree after a mid-session switch. Hosts that delegate work (oh-my-openagent tasks) need the effective tier, not the catalog tier, to inherit a parent's `/fast`.
+
+### Why an extension could not handle it
+
+- Both are context surface: what the runner exposes to extensions, and how the builtin keeps the session's request-side tier honest.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionContext`/`ExtensionContextActions` in `types.ts`, the context getters in `runner.ts`, the `model_select` handler in `builtin/service-tier.ts`.
+
+
 ## 2026-09-04 - UI prompt lifecycle events
 
 ### What changed
