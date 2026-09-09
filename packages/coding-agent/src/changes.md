@@ -20,6 +20,24 @@
 - MEDIUM: `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts` execution and schema extraction; see the imagegen-local tracker for details.
 - LOW: the two new imagegen modules, skill guide, and focused tool regression tests.
 
+## 2026-09-09 - Export the compact read classifier API
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `CompactReadClassification`, `ReadClassifier`, `registerReadClassifier`, and `classifyRead` from the shared read-classifier module alongside the core tool exports.
+
+### Why
+
+- `packages/coding-agent/src/index.ts` makes the classifier contract available to extensions and SDK consumers through the public package entry point, sharing the same registry used by the read renderer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts` is the package's public export surface. An extension cannot expose host-owned types and functions from that entry point without a core export change.
+
+### Expected merge conflict zones
+
+- LOW: the core tool export block in `packages/coding-agent/src/index.ts`, immediately after the exports from `core/tools/index.ts`.
+
 ## 2026-09-08 - Construct shared RPC runtimes inside session workers
 
 ### What changed

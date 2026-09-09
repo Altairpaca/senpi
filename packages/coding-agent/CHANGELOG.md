@@ -4,17 +4,33 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
 - CLI shared RPC mode now bounds concurrent preparing, active, and quarantined workers at 20, replacing unlimited logical-session admission. Known-path attachments do not allocate workers and remain available at capacity. New worker opening has one 30-second prepare/commit/bind budget; timeout retains reservations until actual exit.
 
 ### Added
 
 - `generate_image` gains `model` (`gpt-image-2.5-sunburst` default, `gpt-image-2.5-flare`, `gpt-image-2`), `xhigh`/`max` quality, free-form validated `size`, and `reference_image_paths` (1-5 local PNG/JPEG/WEBP files, up to 50 MB each) that edit or reference existing images through the edits endpoint; the `gpt-image-gen` skill now documents model selection, quality tiers, size limits, and reference-image editing ([#1513](https://github.com/code-yeongyu/senpi/pull/1513)).
 
+- Extensions can register compact read classifiers with `pi.registerReadClassifier()` or the public `registerReadClassifier()` export. Memory reads show a stable `✦ <headline> <label>` line with the existing expand hint; `SKILL.md` keeps precedence. Registrations return an unregister function, and the extension API also cleans them up on failed loads and runtime invalidation.
+
 - `compaction.summarizationMaxDurationMs` (settings) replaces the size-adaptive summarization wall-clock budget with a fixed one when set; positive finite values only, clamped to the 30-minute ceiling ([#1501](https://github.com/code-yeongyu/senpi/pull/1501)).
 
 ### Changed
 
 ### Fixed
+
+- Resumed sessions in the compaction band open cleanly again: `projectModelUsabilityBudget` on `admission: "resume"` now admits compaction-eligible restored transcripts when the uncompacted context fits within the model's summarization capacity and the post-compaction context fits execution reserves, rather than charging full output generation reserves against the uncompacted transcript before auto-compaction can run.
 
 - Large sessions can compact again: the summarization wall-clock budget scales with the estimated input (`max(120s, 2ms per token)`, capped at 30 minutes) instead of a fixed 120 seconds, so a 200k+ token summary on a slower provider is no longer rejected while still streaming and the session no longer stays wedged above its compaction threshold. Small inputs keep the exact 120-second contract, the idle watchdog is unchanged, and the retry allowance stays at half of one attempt ([#1068](https://github.com/code-yeongyu/senpi/issues/1068), [#1501](https://github.com/code-yeongyu/senpi/pull/1501)).
 

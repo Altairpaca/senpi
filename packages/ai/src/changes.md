@@ -524,6 +524,26 @@
 
 - LOW: `utils/retry.ts` provider timeout pattern.
 
+## 2026-09-09 - Keep Anthropic thinking parameters stable across tool continuations
+
+### What changed
+
+- `api/anthropic-messages.ts` `buildParams()`: the "final assistant turn starts with tool_use" guard now degrades thinking only for a budget-thinking request (`thinking.type: "enabled"`) whose final assistant turn came from a different wire API (`finalAssistantTurnIsForeign`, the Kimi/OpenAI replay shape the guard was written for). Adaptive requests, and native turns under budget thinking, keep the caller's `thinking` and `output_config.effort`.
+
+### Why
+
+- With adaptive thinking the model routinely answers a trivial tool call with `tool_use` and no thinking block. The old guard then sent the tool continuation with `thinking: {type: "disabled"}` (and no `output_config`), and Anthropic keys the prompt cache on the thinking parameters: the continuation missed the whole cached prefix and re-wrote it (2026-09-09 capture, claude-opus-5 through a logging proxy: turn 2 first call `cache_read 28114`, its tool continuation `cache_read 0 / cache_creation 28239`, next turn `cache_read 28181` from the adaptive line). That is the "cache misses every second prompt / burns the 5h limit" report; every tool-using turn paid a full cache write.
+- The premise no longer holds for the models that matter: replaying that exact continuation with `thinking` left adaptive returned HTTP 200 on claude-opus-5, claude-opus-4-6 and claude-fable-5 (and 200 on claude-sonnet-4-5 under `enabled` thinking). The remaining risk is the original incident shape only - foreign history under budget thinking - so that is the only case that still degrades.
+
+### Why an extension could not handle it
+
+- The degrade happens inside the provider request builder after every extension hook has run; no extension sees or can veto the `thinking` rewrite.
+
+### Expected merge conflict zones
+
+- LOW: `src/api/anthropic-messages.ts` thinking degrade guard in `buildParams()` and the `finalAssistantTurnIsForeign` helper next to `finalAssistantTurnStartsWithToolUse`.
+- LOW: `test/anthropic-cross-model-history.test.ts` (the Fable expectation flipped from `effort: low` to adaptive/high; two native-turn cases added).
+
 ## 2026-09-09 - Anthropic OAuth callback listener: ephemeral port fallback and idle timeout
 
 ### What changed
