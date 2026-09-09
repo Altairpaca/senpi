@@ -20,6 +20,8 @@
 
 ### Added
 
+- Extensions can register compact read classifiers with `pi.registerReadClassifier()` or the public `registerReadClassifier()` export. Memory reads show a stable `✦ <headline> <label>` line with the existing expand hint; `SKILL.md` keeps precedence. Registrations return an unregister function, and the extension API also cleans them up on failed loads and runtime invalidation.
+
 - `compaction.summarizationMaxDurationMs` (settings) replaces the size-adaptive summarization wall-clock budget with a fixed one when set; positive finite values only, clamped to the 30-minute ceiling ([#1501](https://github.com/code-yeongyu/senpi/pull/1501)).
 
 ### Changed
