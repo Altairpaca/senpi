@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Anthropic prompt caching no longer breaks on every tool continuation: when the model answers a tool call without a thinking block (the normal adaptive-thinking outcome), the follow-up request keeps the same `thinking`/`output_config` instead of degrading to disabled thinking, so the cached prefix is read instead of re-written ("cache misses every second prompt"). Only a budget-thinking request replaying a tool turn produced by another API still degrades, the case Anthropic has rejected.
+
 ### Removed
 
 ## [2026.9.8] - 2026-09-08
