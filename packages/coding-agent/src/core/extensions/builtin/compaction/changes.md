@@ -1,5 +1,25 @@
 # changes.md — builtin compaction policy
 
+## Allow compaction-eligible restored transcripts during resumed-session admission (2026-09-09)
+
+### What changed
+
+- `projectModelUsabilityBudget`: on `admission: "resume"`, when compaction is enabled and speculation lead is omitted, transcripts whose uncompacted tokens would exceed the target window due to full output generation reserves are now admitted if the uncompacted context fits within the model's summarization capacity (`liveContextTokens + compactionReserveTokens + safetyMarginTokens <= contextWindow`) and the post-compaction context fits for execution (`effectiveKeepRecentTokens + baseRequiredTokens <= contextWindow`).
+- `test/suite/model-usability-budget.test.ts`: added tests covering resume admission for uncompacted transcripts requiring compaction (such as 346k tokens on a 400k model with 128k output reserve) and confirming rejection when compaction is disabled.
+
+### Why
+
+- Resuming a session with a high-context model (e.g. `gpt-6-astra` with a 400,000 window and 128,000 maxTokens output reserve) charged the full output generation reserve (128,000) against the uncompacted transcript (e.g. 346,286 tokens) on startup admission.
+- The resulting 520,291-token requirement threw `ModelUsabilityBudgetError` before the session could open, preventing the compaction extension from running its automatic `before_agent_start` compaction and permanently locking the session.
+
+### Why an extension could not handle it
+
+- `createAgentSession` evaluates model usability during session construction before extension event hooks are wired.
+
+### Expected merge conflict zones
+
+- `model-usability-budget.ts` projection calculation; `test/suite/model-usability-budget.test.ts`.
+
 ## Scale the speculative attempt budget and retry allowance with the input size (2026-09-08)
 
 ### What changed

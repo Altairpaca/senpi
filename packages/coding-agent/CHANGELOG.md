@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Resumed sessions in the compaction band open cleanly again: `projectModelUsabilityBudget` on `admission: "resume"` now admits compaction-eligible restored transcripts when the uncompacted context fits within the model's summarization capacity and the post-compaction context fits execution reserves, rather than charging full output generation reserves against the uncompacted transcript before auto-compaction can run.
+
 - Large sessions can compact again: the summarization wall-clock budget scales with the estimated input (`max(120s, 2ms per token)`, capped at 30 minutes) instead of a fixed 120 seconds, so a 200k+ token summary on a slower provider is no longer rejected while still streaming and the session no longer stays wedged above its compaction threshold. Small inputs keep the exact 120-second contract, the idle watchdog is unchanged, and the retry allowance stays at half of one attempt ([#1068](https://github.com/code-yeongyu/senpi/issues/1068), [#1501](https://github.com/code-yeongyu/senpi/pull/1501)).
 
 ### Removed
