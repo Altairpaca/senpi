@@ -65,12 +65,11 @@ describe("ExtensionUIContext.question prompt wrapping", () => {
 			resolveAnswer = resolve;
 		});
 		let invoked = false;
-		const ui = {
-			question: async () => {
-				invoked = true;
-				return answer;
-			},
-		} as ExtensionUIContext;
+		const ui = {} as ExtensionUIContext;
+		ui.question = async () => {
+			invoked = true;
+			return answer;
+		};
 
 		runner.setUIContext(ui, "tui");
 		const question = runner.createContext().ui.question;
