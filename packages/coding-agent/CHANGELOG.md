@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- The Windows RPC host supervisor now creates its internal socket directory recursively, so launching `--internal-rpc-host-supervisor` directly on a fresh profile no longer crashes with `ENOENT ... mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` ([#1370](https://github.com/code-yeongyu/senpi/issues/1370))
+- The Windows RPC host supervisor now creates its internal socket directory recursively and provisions a missing public socket secret while reusing an existing valid one, so launching `--internal-rpc-host-supervisor` directly on a fresh profile reaches its listener instead of crashing with `ENOENT ... mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` and then `ENOENT ... open '<publicSocket>.secret'` ([#1370](https://github.com/code-yeongyu/senpi/issues/1370))
 
 - A pool slot holding a provider's managed sentinel (`claude-sdk-oauth-managed`) is healed the moment auth.json is read and the repair is written back once, so a second login on an affected build no longer leaves a dead `login-N` entry that hard-errors every request whose affinity picks it; the rotation classifier also treats an unconfigured-slot auth miss as a per-credential failure, so a single bad slot can never dead-end a healthy multi-account pool.
 - A provider-owned login pool is merged onto the stored pool at commit time instead of overwriting it with the pre-browser-flow snapshot, so a sibling account's rotated refresh token and rate-limit block survive another account's interactive login.

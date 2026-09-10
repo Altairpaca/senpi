@@ -67,7 +67,7 @@ import {
 import {
 	authenticateSocket,
 	createSocketSecret,
-	readSocketSecret,
+	ensureSocketSecret,
 	resolveSocketTransportAddress,
 	SOCKET_SECRET_FILE_ENV,
 	sendSocketHandshake,
@@ -378,12 +378,16 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const paths = createHostDaemonPaths(launch.agentDir ?? getAgentDir());
 	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
 	const publicSocket = launch.socket;
+	// Direct-launch contract: the supervisor owns the public secret. ensureHost()
+	// writes it before spawning, but the hidden --internal-rpc-host-supervisor route
+	// has no such caller, so a fresh profile would otherwise die reading it (#1370).
+	// It is provisioned BEFORE the internal hop and the child so a provisioning
+	// failure leaves no scratch directory and no host process behind.
+	const publicSecret = process.platform === "win32" ? await ensurePublicSocketSecret(publicSocket) : undefined;
 	const internal = await createInternalSocketPath(paths.dir);
 	const internalSocket = internal.socket;
 	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
 	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
-	const publicSecret =
-		process.platform === "win32" ? await readSocketSecret(socketSecretPath(publicSocket)) : undefined;
 	const clientSockets = new Set<Socket>();
 	const busySessions = new Map<string, number>();
 	let observerHealthy = false;
@@ -652,6 +656,23 @@ function registerSupervisorSignals(shutdown: (reason: string, exitCode: number) 
 		process.on(signal, () => {
 			void shutdown(`signal:${signal}`, signal === "SIGHUP" ? 129 : 143);
 		});
+	}
+}
+
+/**
+ * Reuses an existing valid secret - including one ensureHost() just wrote - and
+ * creates one (with its parent directories, mode 0600) when it is missing or
+ * unusable. Reuse is required, not just an optimization: on win32 the pipe name
+ * is derived from the socket path AND the secret, so rotating it here would
+ * point this supervisor at a different endpoint than its caller published.
+ * A failure names the bootstrap step and the path it could not provision.
+ */
+async function ensurePublicSocketSecret(publicSocket: string): Promise<Buffer> {
+	const secretPath = socketSecretPath(publicSocket);
+	try {
+		return await ensureSocketSecret(secretPath);
+	} catch (cause) {
+		throw new Error(`senpi rpc host supervisor: cannot provision public socket secret ${secretPath}`, { cause });
 	}
 }
 
