@@ -125,6 +125,12 @@ import {
 	createResumeCompactionRequirement,
 	type ResumeCompactionRequirement,
 } from "./extensions/builtin/compaction/resume-admission.ts";
+import {
+	RESUME_SLICE_ORIGIN,
+	RESUME_SLICE_SCHEMA,
+	type ResumeSlicePlan,
+	resumeSliceNotice,
+} from "./extensions/builtin/compaction/resume-slice.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
@@ -422,6 +428,13 @@ export type AgentSessionEvent =
 	| {
 			type: "resume_compaction_required";
 			projection: ModelUsabilityBudgetProjection;
+			notice: string;
+	  }
+	| {
+			type: "resume_context_reduced";
+			tokensBefore: number;
+			tokensAfter: number;
+			droppedEntries: number;
 			notice: string;
 	  }
 	| { type: "continuation_error"; errorMessage: string }
@@ -1110,6 +1123,7 @@ export class AgentSession {
 	// that AgentSession initiated required-compaction recovery.
 	private _requiredCompactionTurnError: RequiredCompactionError | undefined;
 	private _resumeCompactionRequirement: ResumeCompactionRequirement | undefined;
+	private _resumeSlice: ResumeSlicePlan | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
 	private _skipNextPostRetryCompactionCheck = false;
@@ -2909,6 +2923,9 @@ export class AgentSession {
 				projection: this._resumeCompactionRequirement.projection,
 				notice: this._resumeCompactionRequirement.notice,
 			});
+		}
+		if (this._resumeSlice !== undefined) {
+			listener(this._resumeSliceEvent(this._resumeSlice));
 		}
 		for (const source of this.settingsManager.getSelectedSettingsSources()) {
 			listener({ type: "settings_source_selected", ...source });
@@ -4756,6 +4773,32 @@ export class AgentSession {
 	/** Admit an oversized restored transcript so the normal pre-provider compaction can run. */
 	admitResumeCompactionRequired(projection: ModelUsabilityBudgetProjection): void {
 		this._resumeCompactionRequirement = createResumeCompactionRequirement(projection);
+	}
+
+	/** Reduce an over-window restored context deterministically while the recorded transcript stays intact. */
+	applyResumeSlice(plan: ResumeSlicePlan): void {
+		this.sessionManager.appendCompaction(plan.summary, plan.firstKeptEntryId, plan.tokensBefore, {
+			schema: RESUME_SLICE_SCHEMA,
+			origin: RESUME_SLICE_ORIGIN,
+		});
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		this._resumeSlice = plan;
+		this._sessionLogger.info("resume_context_reduced", {
+			count: plan.droppedEntries,
+			tokensBefore: plan.tokensBefore,
+			tokensAfter: plan.tokensAfter,
+		});
+		this._emit(this._resumeSliceEvent(plan));
+	}
+
+	private _resumeSliceEvent(plan: ResumeSlicePlan): AgentSessionEvent {
+		return {
+			type: "resume_context_reduced",
+			tokensBefore: plan.tokensBefore,
+			tokensAfter: plan.tokensAfter,
+			droppedEntries: plan.droppedEntries,
+			notice: resumeSliceNotice(plan),
+		};
 	}
 
 	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
