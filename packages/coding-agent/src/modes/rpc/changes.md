@@ -1,5 +1,24 @@
 # changes
 
+## Question extension-UI wire types and client capability (2026-09-10)
+
+### What changed
+
+- `rpc-types.ts`: additive `extension_ui_request{method:"question"}` (`RpcQuestionUiRequest`), `{answers, comment}` `extension_ui_response` member, inbound `RpcExtensionUIProgress` on `RpcInboundRecord`, outbound `question_updated` / `question_resolved`, and optional `RpcSessionState.pendingQuestions`.
+- `custom-capability.ts`: export `QUESTION_CAPABILITY = "question"` next to the existing client-capability constants.
+
+### Why
+
+- The ask-user tool needs a typed RPC wire for broadcasting a multi-question prompt, receiving partial drafts and a final `{answers, comment}` reply, hydrating late-attaching clients from session state, and gating on an explicit client capability. Older clients that never advertise `question` keep today's select/input path.
+
+### Why an extension could not handle it
+
+- RPC record shapes, session-state hydration fields, and the client-capability handshake are host protocol, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcExtensionUIRequest` / `RpcExtensionUIResponse` union tails in `rpc-types.ts`, the `RpcSessionState` field list, and the capability constants in `custom-capability.ts`.
+
 ## Cut stalled socket peers before they consume the session worker credit (2026-09-10)
 
 ### What changed

@@ -324,6 +324,8 @@ export interface RpcSessionState {
 	contextUsage?: ContextUsage;
 	retryAttempt: number;
 	isBashRunning: boolean;
+	/** Open question prompts awaiting an answer. Absent when none are pending. */
+	pendingQuestions?: RpcQuestionUiRequest[];
 }
 
 // ============================================================================
@@ -595,6 +597,40 @@ export type RpcResponse =
 // Extension UI Events (stdout)
 // ============================================================================
 
+/** One question in an RPC `question` UI request. Matches canonical QuestionRequest.questions. */
+export type RpcQuestionSpec = {
+	id: string;
+	header: string;
+	question: string;
+	options: Array<{ label: string; description?: string }>;
+	multiSelect: boolean;
+};
+
+export type RpcQuestionAnswers = Record<string, { selected: string[]; text?: string }>;
+
+export type RpcQuestionOutcome =
+	| "answered"
+	| "comment-submitted"
+	| "timed_out"
+	| "cancelled"
+	| "orphaned-after-restart"
+	| "unavailable";
+
+/** Outbound `extension_ui_request` body for method `question`. */
+export type RpcQuestionUiRequest = {
+	type: "extension_ui_request";
+	id: string;
+	method: "question";
+	requestId: string;
+	toolCallId: string;
+	waitForAnswer: boolean;
+	questions: RpcQuestionSpec[];
+	timeout: number;
+	askedAtMs: number;
+	deadlineAtMs: number;
+	remainingMs: number;
+};
+
 /** Emitted when an extension needs user input */
 export type RpcExtensionUIRequest =
 	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
@@ -642,7 +678,8 @@ export type RpcExtensionUIRequest =
 	// "custom_unsupported" capability. ctx.ui.custom cannot render a third-party
 	// component in RPC mode, so a flagged client gets this notice before custom()
 	// returns undefined. Default clients never see it (byte-identical behavior).
-	| { type: "extension_ui_request"; id: string; method: "custom_unsupported"; extensionName: string };
+	| { type: "extension_ui_request"; id: string; method: "custom_unsupported"; extensionName: string }
+	| RpcQuestionUiRequest;
 
 export type RpcExtensionEvent = {
 	type: "extension_event";
@@ -658,7 +695,41 @@ export type RpcExtensionEvent = {
 export type RpcExtensionUIResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true };
+	| { type: "extension_ui_response"; id: string; cancelled: true }
+	| { type: "extension_ui_response"; id: string; answers: RpcQuestionAnswers; comment?: string };
+
+/** Inbound draft updates for an open `question` request. */
+export type RpcExtensionUIProgress = {
+	type: "extension_ui_progress";
+	id: string;
+	answers?: RpcQuestionAnswers;
+	comment?: string;
+	sessionId?: string;
+};
+
+/** Stdin records: session/host commands plus extension-UI replies and progress. */
+export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress;
+
+/** Outbound deadline refresh for an open `question` request. */
+export type RpcQuestionUpdatedEvent = {
+	type: "question_updated";
+	id: string;
+	deadlineAtMs: number;
+	remainingMs: number;
+};
+
+/** Outbound terminal outcome for a `question` request. */
+export type RpcQuestionResolvedEvent = {
+	type: "question_resolved";
+	id: string;
+	requestId: string;
+	toolCallId: string;
+	outcome: RpcQuestionOutcome;
+	answers: RpcQuestionAnswers;
+	comment?: string;
+	unanswered: string[];
+	deadlineAtMs?: number;
+};
 
 /** Emitted when the effective session thinking level changes. */
 export interface RpcThinkingLevelChangedEvent {
