@@ -15,6 +15,11 @@
 - Astra's warning policy is specific to its highest reasoning level, so showing it
   at `xhigh` was overly broad.
 
+### Why an extension could not handle it
+
+- The warning predicate is core session policy evaluated before warning events are
+  emitted.
+
 ### Expected merge conflict zones
 
 - LOW: the high-reasoning warning predicate and its focused test.
