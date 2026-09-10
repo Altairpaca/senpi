@@ -66,7 +66,7 @@
 		"generate-model-catalog": "tsx scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"generate-image-models": "tsx scripts/generate-image-models.ts --strict",
 		"check:model-data": "tsx scripts/check-model-data.ts",
-		"build": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"build:offline": "npm run check:model-data && tsc -p tsconfig.build.json && shx chmod +x dist/cli.js && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"test": "vitest --run",
 		"prepublishOnly": "shx rm -rf dist && tsx scripts/generate-models.ts && tsx scripts/generate-image-models.ts && tsc -p tsconfig.build.json && shx chmod +x dist/cli.js",
