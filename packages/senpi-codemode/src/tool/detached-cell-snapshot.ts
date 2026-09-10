@@ -15,6 +15,8 @@ export interface DetachedCellResultSource {
 	terminalResult: AgentToolResult<EvalToolDetails> | undefined;
 	hardLimited?: boolean;
 	hardLimitSeconds?: number;
+	runBudgetExhausted?: boolean;
+	runBudgetSeconds?: number;
 }
 
 export function snapshotDetachedCell(cell: DetachedCellResultSource, nowMs: number): EvalDetachedCellSnapshot {
@@ -30,6 +32,9 @@ export function snapshotDetachedCell(cell: DetachedCellResultSource, nowMs: numb
 		...(cell.interruptNote === undefined ? {} : { interruptNote: cell.interruptNote }),
 		...(cell.hardLimited === true && cell.hardLimitSeconds !== undefined
 			? { hardLimitSeconds: cell.hardLimitSeconds }
+			: {}),
+		...(cell.runBudgetExhausted === true && cell.runBudgetSeconds !== undefined
+			? { runBudgetSeconds: cell.runBudgetSeconds }
 			: {}),
 	};
 }

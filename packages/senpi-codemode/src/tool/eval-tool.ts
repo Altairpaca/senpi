@@ -34,6 +34,7 @@ export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<E
 		new EvalDetachedCellManager({
 			...(options.artifactsDir === undefined ? {} : { artifactsDir: options.artifactsDir }),
 			...(options.hardLimitSeconds === undefined ? {} : { hardLimitSeconds: options.hardLimitSeconds }),
+			...(options.runBudgetSeconds === undefined ? {} : { runBudgetSeconds: options.runBudgetSeconds }),
 		});
 	return {
 		name: "eval",

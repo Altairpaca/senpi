@@ -233,11 +233,12 @@ describe("eval detached cells", () => {
 		expect(manager.busyFor("js")).toBeUndefined();
 	});
 
-	it("uses error timeout semantics by default in print/json modes and on explicit error", async () => {
+	it("never detaches in print/json modes: the cell blocks until its run budget kills it", async () => {
 		vi.useFakeTimers();
 		const kernel = new FakeKernel([]);
 		const started = kernel.deferNextRun();
-		const tool = createTool(new EvalDetachedCellManager(), [["js", kernel]]);
+		const manager = new EvalDetachedCellManager({ runBudgetSeconds: 2 });
+		const tool = createTool(manager, [["js", kernel]]);
 		const execution = tool.execute(
 			"print-timeout",
 			{ language: "js", code: "await forever", summary: "print mode timeout" },
@@ -251,9 +252,12 @@ describe("eval detached cells", () => {
 			(error: unknown) => ({ status: "rejected" as const, error }),
 		);
 		await vi.advanceTimersByTimeAsync(1_000);
+		expect(manager.busyFor("js")).toBeUndefined();
+		expect(kernel.interrupts).toEqual([]);
 
+		await vi.advanceTimersByTimeAsync(1_000);
 		await expect(outcome).resolves.toMatchObject({ status: "rejected", error: { name: "TimeoutError" } });
-		expect(kernel.interrupts).toEqual(["Cell timed out after 1000ms"]);
+		expect(kernel.interrupts).toEqual([expect.stringContaining("2s run budget")]);
 	});
 
 	it("settles timeout-vs-completion and stop-vs-completion races once with no stranded busy marker", async () => {

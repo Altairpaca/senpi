@@ -8,6 +8,7 @@ import {
 	resolveEnabledLanguages,
 	resolveForegroundWindowSeconds,
 	resolveHardLimitSeconds,
+	resolveRunBudgetSeconds,
 } from "../src/config/settings.ts";
 
 describe("codemode settings", () => {
@@ -36,6 +37,7 @@ describe("codemode settings", () => {
 				languages: { py: false, js: true, rb: true, jl: false },
 				cellTimeoutSeconds: 30,
 				foregroundWindowSeconds: 60,
+				runBudgetSeconds: 300,
 				hardLimitSeconds: 1800,
 				parallelPoolWidth: 9,
 				taskTools: { task: "task", output: "task_output" },
@@ -66,6 +68,7 @@ describe("codemode settings", () => {
 				languages: { py: true, js: false, rb: false, jl: true },
 				cellTimeoutSeconds: 12,
 				foregroundWindowSeconds: 60,
+				runBudgetSeconds: 300,
 				hardLimitSeconds: 1800,
 				parallelPoolWidth: 4,
 				taskTools: { task: "task", output: "task_output" },
@@ -233,6 +236,39 @@ describe("codemode settings", () => {
 
 		for (const value of ["0", "-5", "abc", ""]) {
 			expect(resolveHardLimitSeconds(settings, { SENPI_CODEMODE_HARD_LIMIT_SECONDS: value })).toBe(90);
+		}
+	});
+
+	it("defaults runBudgetSeconds to five minutes of own execution time", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const loaded = await loadCodemodeSettings({ cwd: join(root, "project"), homeDir: join(root, "home") });
+
+			expect(loaded.settings.runBudgetSeconds).toBe(300);
+			expect(defaultCodemodeSettings.runBudgetSeconds).toBe(300);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reads runBudgetSeconds from the settings file and lets the environment override it", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const projectDir = join(root, "project");
+			await mkdir(join(projectDir, ".senpi"), { recursive: true });
+			await writeFile(join(projectDir, ".senpi", "codemode.json"), JSON.stringify({ runBudgetSeconds: 45 }));
+
+			const loaded = await loadCodemodeSettings({ cwd: projectDir, homeDir: join(root, "home") });
+
+			expect(loaded.warnings).toEqual([]);
+			expect(loaded.settings.runBudgetSeconds).toBe(45);
+			expect(resolveRunBudgetSeconds(loaded.settings, {})).toBe(45);
+			expect(resolveRunBudgetSeconds(loaded.settings, { SENPI_CODEMODE_RUN_BUDGET_SECONDS: "20" })).toBe(20);
+			for (const value of ["0", "-5", "abc", ""]) {
+				expect(resolveRunBudgetSeconds(loaded.settings, { SENPI_CODEMODE_RUN_BUDGET_SECONDS: value })).toBe(45);
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
 		}
 	});
 
