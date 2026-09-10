@@ -22,6 +22,26 @@
 - `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIContext` dialog methods (~select/confirm/input) and the `UIPromptKind` union.
 - `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext`.
 
+## 2026-09-10 - Expose getAskUserSettings on ExtensionContext
+
+### What changed
+
+- `types.ts`: optional `ExtensionContext.getAskUserSettings()` / `ExtensionContextActions.getAskUserSettings` return `{ enabled, timeoutMinutes }` (optional so hand-built contexts and test stubs stay valid).
+- `runner.ts`: default `{ enabled: true, timeoutMinutes: 30 }`, bindCore plumbing next to `getLookAtSettings`, and the live context accessor.
+
+### Why
+
+- Built-in question tooling (todo 7) must read the resolved ask-user enable/timeout from the same context surface as look-at settings.
+
+### Why an extension could not handle it
+
+- `types.ts` and `runner.ts` define and bind the host-owned context; extensions cannot add accessors to that contract.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` accessor declarations next to `getLookAtSettings` (todo 3 edits the UI-context region of the same file).
+- MEDIUM: `runner.ts` bindCore/createContext plumbing next to `getLookAtSettings` (todo 3 edits `wrapUIPromptContext`).
+
 ## 2026-09-09 - Expose shared-host policy during extension registration
 
 ### What changed

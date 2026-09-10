@@ -402,6 +402,10 @@ export class ExtensionRunner {
 		enabled: true,
 		models: undefined,
 	});
+	private getAskUserSettingsFn: () => { enabled: boolean; timeoutMinutes: number } = () => ({
+		enabled: true,
+		timeoutMinutes: 30,
+	});
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
 		blockImages: false,
@@ -514,6 +518,7 @@ export class ExtensionRunner {
 		if (contextActions.getPromptCacheKeepAliveSettings)
 			this.getPromptCacheKeepAliveSettingsFn = contextActions.getPromptCacheKeepAliveSettings;
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
+		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -1176,6 +1181,10 @@ export class ExtensionRunner {
 			getLookAtSettings: () => {
 				runner.assertActive();
 				return runner.getLookAtSettingsFn();
+			},
+			getAskUserSettings: () => {
+				runner.assertActive();
+				return runner.getAskUserSettingsFn();
 			},
 			getImageSettings: () => {
 				runner.assertActive();
