@@ -14,6 +14,8 @@
   normal completed-request cleanup aborts the request controller; the
   initialization cancellation listener is detached once initialization settles,
   while pending cancellation still rejects and closes the query.
+- GPT-6 Astra high-reasoning warnings now appear only at `max`; GPT-5.6 Sol
+  continues to warn at both `xhigh` and `max`.
 
 ### Removed
 
