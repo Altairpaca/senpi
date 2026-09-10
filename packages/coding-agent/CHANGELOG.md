@@ -45,6 +45,8 @@
 
 ### Removed
 
+- Built-in themes and the HTML export template are found again when `PACKAGE_DIR` points at a different install: the resolver now checks that the configured root actually ships the asset and otherwise falls back to the running install. A senpi launched from inside a Bun binary that exports its own package root (an omo memory reflection child, for example) previously died at startup with `ENOENT ... /dist/modes/interactive/theme/dark.json`, while a legitimate relocation such as a Nix/Guix store path still takes precedence ([#1547](https://github.com/code-yeongyu/senpi/pull/1547)).
+
 ## [2026.9.9-2] - 2026-09-09
 
 ### Breaking Changes
