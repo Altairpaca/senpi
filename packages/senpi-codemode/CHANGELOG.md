@@ -4,9 +4,15 @@
 
 ### Breaking Changes
 
+- The eval `timeout` argument is now the cell's run budget (a kill deadline for the cell's own execution time) instead of the interactive detach budget; interactive calls detach at `cellTimeoutSeconds` capped by `foregroundWindowSeconds` regardless of `timeout`, and print/json calls are bounded by the run budget instead of a `cellTimeoutSeconds` idle kill.
+
 ### Added
 
+- Every eval cell carries a run budget (`runBudgetSeconds`, default 300s, env `SENPI_CODEMODE_RUN_BUDGET_SECONDS`, per-call `timeout`) that charges only its own execution time, is paused while a host tool call is in flight, keeps counting after detach, and kills the cell through the cooperative interrupt path with a result or notification that names the exhausted budget and the kernel-state outcome.
+
 ### Changed
+
+- The eval tool schema and description state the configured run budget, detach point, and hard limit, and say that a killed JavaScript cell that cannot settle restarts its kernel and loses every global.
 
 ### Fixed
 

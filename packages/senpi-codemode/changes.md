@@ -1,5 +1,28 @@
 # senpi-codemode fork changes
 
+## 2026-09-10 - Every eval cell gets a run budget; `timeout` is that budget
+
+### What changed
+
+- New `src/timeouts/run-budget.ts` (`RunBudget`): a pausable, cumulative watchdog over a cell's own execution time. Unlike `IdleTimeout` it does not restart after each host tool call; it charges only un-parked time (nested pause depth), fires once with a `TimeoutError` naming the budget, and is disposable.
+- New `src/tool/cell-deadlines.ts` (`CellDeadlines`): the wall-clock hard limit timer moved here out of `detached-cell-manager.ts`, next to the run budget; first expiry wins and disarms the other. `EvalDetachedCellManager` creates one per cell at `create()` (hard limit = `max(hardLimitSeconds, timeout)`, run budget = `timeout ?? runBudgetSeconds`), exposes `pause(cell)`/`resume(cell)`, and routes both expiries through the existing foreground (`onKill` -> `CellExecution.cancel`) and detached (`#cancel` -> `kernel.interrupt`) paths. The snapshot carries `runBudgetSeconds` when the budget killed the cell and the completion notification says so.
+- `src/config/settings.ts`: `runBudgetSeconds` (default 300, `SENPI_CODEMODE_RUN_BUDGET_SECONDS`, `resolveRunBudgetSeconds`); the three env resolvers share one parser.
+- `src/tool/run-eval-cell.ts` (split out of `eval-tool.ts`, which sat at 258 pure LOC) and `cell-execution.ts`: the idle watchdog is now optional and only interactive calls get one, with `timeoutMs = min(cellTimeoutSeconds, foregroundWindowSeconds)`; `timeout` no longer feeds it. `timeout-pause`/`timeout-resume` status frames are forwarded to the manager as well as the idle watchdog.
+- `src/tool/types.ts`: the `timeout` and `on_timeout` descriptions are rendered from `EvalDeadlineSeconds` (run budget, effective detach point, hard limit) so a settings or env override shows in the tool contract. `src/prompt/eval-prompt-template.ts` (template split out of `eval-prompt.ts`) states the run budget and the kernel-loss cost of a kill; `index.ts` threads `runBudgetSeconds` into both tool registrations and both cell managers.
+
+### Why
+
+- A detached js cell had no bound on its own work short of the 1800s bash-parity hard limit, while one running cell blocks its whole language kernel and a killed js cell that cannot settle (a pending `Bun.$`, a sync call) restarts the worker with every global lost. Observed 2026-09-10: two `find` walks over a 450-node_modules volume held the js kernel for 10.5 minutes, then the same mistake in the py kernel; the model had no number to reason against because the schema named none. Five minutes of own execution time is the default now, host tool calls are exempt so `agent()` DAG cells keep working, and the contract is in the schema.
+- `timeout` carried two meanings (detach budget capped at the window, plus a hard-limit raise) that matched neither bash nor the model's intent ("let it run this long"). It is now one thing: the cell's run budget, bash's kill-deadline reading.
+- Print/json calls used to die at a 30s idle watchdog; they are now bounded by the same run budget as interactive cells, so a `timeout` means the same thing in every mode.
+
+### Tests
+
+- `test/run-budget.test.ts`: cumulative accounting, parked time not charged, nested pauses, orphan resume, dispose, single fire.
+- `test/eval-run-budget.test.ts`: detached kill and notification, parked survival with resumed counting, hard limit while parked, explicit `timeout` both directions, detach at the idle budget with a larger `timeout`, print-mode kill by the budget, kernel status frames freezing the budget, in-budget completion.
+- `test/eval-schema-deadlines.test.ts`: configured numbers reach the schema descriptions and the eval description.
+- Contract updates: `eval-detach` (print mode), `eval-foreground-window` (window caps the idle budget), `eval-hard-limit` (explicit timeout raise measured on a parked cell), `eval-tool-timeout-state` / `eval-bridge-finalization` / `eval-tool-interrupt` (budget message), `config`, `interpreter`, `extension`, prompt snapshot.
+
 ## 2026-09-09 - Eval description teaches cell mechanics; routing moved to the presets
 
 ### What changed
