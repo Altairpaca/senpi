@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-10 - Publish a Bun-compile-safe css-tree
+
+### What changed
+
+- `scripts/prepare-bun-compile-assets.mjs` splits into a module plus CLI entry and exports the single portable inliner `inlineCssTreeCompileData(nodeModulesRoot)` next to `patchJsdomBinaryLookups` and `stageImageGenSkill`; the entry check compares real paths because macOS `TMPDIR` is a symlink.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: `copyPublishDependencies` runs that inliner on the staged `packages/coding-agent/node_modules`, so `publish.mjs` and `local-release.mjs` share one compile-safe staging step and the installed source tree is never rewritten.
+
+### Why
+
+- css-tree resolves `data/patch.json`, the mdn-data dictionaries and its own `package.json` through `createRequire` at module scope, which Bun's compiled filesystem cannot serve, so any binary compiled from the published tarball died on the first webfetch HTML conversion. The inlining previously ran only in `build:binary`, and `publish.mjs` packs with `--ignore-scripts`, so the tarball shipped un-inlined. The jsdom rewrites stay binary-only: their worker path is correct only inside the standalone layout.
+
+### Why an extension could not handle it
+
+- Dependency bytes are fixed at publish time; no runtime extension can rewrite a module whose module-scope require already failed inside the compiled filesystem.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/prepare-bun-compile-assets.mjs` asset lists and the `copyPublishDependencies` tail in `scripts/prepare-senpi-bundled-workspaces.mjs`.
+
 ## 2026-09-08 - Package the shared RPC session worker
 
 ### What changed
