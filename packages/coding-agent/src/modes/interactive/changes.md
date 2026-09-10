@@ -60,7 +60,23 @@
 - LOW: `interactive-mode.ts` — `createExtensionUIContext` (`question:` entry), the `handleHostUiRequest` switch (`case "question"` after `case "editor"`), `resetExtensionUI`, and the new `showQuestionOverlay`/`hideQuestionOverlay` pair after `hideExtensionEditor`.
 - LOW: the four new `components/ask-user-question*.ts` files have no prior art to conflict with.
 
+## 2026-09-10 - Report a reduced restored context on resume
 
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: renders the new `resume_context_reduced` session event as a warning, next to the existing required-compaction notice, so a user whose restored context was reduced at admission sees it before the first prompt.
+
+### Why
+
+- Issue #1524: an over-window restored session now opens with a deterministically reduced context. Silently opening it would hide that older turns are no longer in context even though the transcript is still on disk.
+
+### Why an extension could not handle it
+
+- The event is published while the session is being constructed, before extensions are loaded, and the notice must render through interactive mode's own warning surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` session-event switch, adjacent to the `resume_compaction_required` case.
 ## 2026-09-10 - Edit assistant responses from /tree
 
 ### What changed

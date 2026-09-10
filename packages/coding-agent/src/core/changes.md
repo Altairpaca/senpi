@@ -19,11 +19,31 @@
 - LOW: `settings-shapes.ts` next to `LookAtSettings`; `settings-manager.ts` `Settings` field list and getters next to prompt-cache helpers.
 - MEDIUM: `agent-session.ts` constructor flag overrides next to `--no-model-fallback` and `bindCore` accessors next to `getLookAtSettings`.
 
+## Deterministic resume recovery when the restored context exceeds the window (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: the resume-admission catch still rethrows for fresh starts, non-budget errors and compaction-disabled sessions, and now splits the remaining case. A projection whose live context still fits the raw window keeps taking the existing compaction-required admission; a projection whose live context alone exceeds the window asks `planResumeSlice()` for a deterministic reduction and rethrows the original budget error unchanged when no safe cut fits.
+- `packages/coding-agent/src/core/agent-session.ts`: new `applyResumeSlice()` appends the reduction as a `senpi.compaction.resume-slice.v1` compaction entry that preserves the recorded transcript, rebuilds the live context, writes one `resume_context_reduced` session-log line, and publishes a `resume_context_reduced` event which `subscribe()` replays for listeners that attach after `createAgentSession()` returns.
+- `packages/coding-agent/src/core/session-manager.ts` is deliberately unchanged: `_trimMirrorAfterCompaction()` only trims the in-memory mirror, and `getEntries()`, `getEntry()` and `getBranch()` reload the full history from the session file once `mirrorTrimmed` is set, so the recorded transcript already survives an admission-time reduction.
+
+### Why
+
+- Issue #1524: a `gpt-6-astra` session whose restored transcript alone exceeded the model window (live 965,016 tokens against an 850,000-token window) could never be reopened. The compaction-eligible resume branch only relaxes admission while summarization still fits, and the compaction-required admission only covers a live context within the raw window, so this band had no recovery path and every reopen failed inside `assertModelUsable` before any extension was wired.
+
+### Why an extension could not handle it
+
+- The refusal happens inside `createAgentSession()` before extensions are loaded or bound, and the recovery must append a session entry and rebuild the live context while the session is still being constructed.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/sdk.ts` resume-admission catch block, which is also the merge zone of the earlier compaction-required admission.
+- LOW: `packages/coding-agent/src/core/agent-session.ts` event union, `subscribe()` replay and the method added beside `admitResumeCompactionRequired()`.
 ## Editable assistant responses from the session tree (2026-09-10)
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `navigateTree()` delegates to a private `_navigateTree()` that also accepts a replacement assistant message; new public `editAssistantMessage(entryId, text, options)` validates the target, treats unchanged text as a no-op (`unchanged: true`), and otherwise branches to the target's parent and appends the edited copy as the new leaf, reusing the branch-summary flow, labels, agent-state restore and `session_before_tree` / `session_tree` events. New exported `TreeNavigationOptions` and `AssistantEditResult` types.
+- `packages/coding-agent/src/core/agent-session.ts`: `navigateTree()` delegates to a private `_navigateTree()` that also accepts a replacement assistant message; new public `editAssistantMessage(entryId, text, options)` validates the target, treats unchanged text as a no-op (`unchanged: true`), and otherwise branches to the target's parent and appends the edited copy as the new leaf, reusing the branch-summary flow, labels, agent-state restore and `session_before_tree` / `session_tree` events. New exported `TreeNavigationOptions` and `AssistantEditResult` types. Guard order is streaming -> target lookup -> empty-text rejection (built first) -> unchanged no-op, so an identical-text request during a response still throws and a textless (tool-call-only) assistant cannot be "edited" to blank.
 - `packages/coding-agent/src/core/edited-assistant-message.ts` (new): `buildEditedAssistantMessage()` keeps only the trimmed text (tool calls, thinking and provider-native blocks dropped, `stopReason: "stop"`, model/provider/api/usage preserved), `assistantTextEquals()`, and `AssistantEditError`.
 - `packages/coding-agent/src/core/keybindings.ts`: new `app.tree.editMessage` action (default `ctrl+e`, legacy alias `treeEditMessage`).
 

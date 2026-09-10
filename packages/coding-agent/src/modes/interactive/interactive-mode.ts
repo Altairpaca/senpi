@@ -4803,6 +4803,10 @@ export class InteractiveMode {
 				this.showWarning(event.notice);
 				break;
 
+			case "resume_context_reduced":
+				this.showWarning(event.notice);
+				break;
+
 			case "settings_source_selected":
 				this.showSettingsSourceSelected(event);
 				break;

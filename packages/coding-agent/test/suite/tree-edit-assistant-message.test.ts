@@ -155,16 +155,33 @@ describe("AgentSession.editAssistantMessage", () => {
 		expect(harness.sessionManager.getLeafId()).toBe(leafBefore);
 	});
 
+	it("rejects an empty replacement for an assistant message that has no text", async () => {
+		const harness = await createConversation();
+		const toolOnlyId = harness.sessionManager.appendMessage(
+			fauxAssistantMessage([fauxToolCall("read", { path: "x" }, { id: "call-2" })], { stopReason: "toolUse" }),
+		);
+		const entryCountBefore = harness.sessionManager.getEntries().length;
+
+		await expect(harness.session.editAssistantMessage(toolOnlyId, "  ", { summarize: false })).rejects.toThrow(
+			/empty/,
+		);
+		expect(harness.sessionManager.getEntries().length).toBe(entryCountBefore);
+	});
+
 	it("refuses to edit while a response is streaming and keeps the leaf", async () => {
 		const harness = await createConversation();
 		const [a1] = assistantEntries(harness);
 		if (!a1) throw new Error("expected an assistant entry");
 		let editResult: unknown;
+		let unchangedEditResult: unknown;
 		let leafDuringEdit: string | null | undefined;
 		harness.setResponses([
 			async () => {
 				editResult = await harness.session
 					.editAssistantMessage(a1.id, "edited mid-stream", { summarize: false })
+					.catch((error: unknown) => error);
+				unchangedEditResult = await harness.session
+					.editAssistantMessage(a1.id, "The answer is 41.", { summarize: false })
 					.catch((error: unknown) => error);
 				leafDuringEdit = harness.sessionManager.getLeafId();
 				return fauxAssistantMessage("streamed");
@@ -175,6 +192,8 @@ describe("AgentSession.editAssistantMessage", () => {
 
 		expect(editResult).toBeInstanceOf(Error);
 		expect(String(editResult)).toMatch(/current response to finish/);
+		expect(unchangedEditResult).toBeInstanceOf(Error);
+		expect(String(unchangedEditResult)).toMatch(/current response to finish/);
 		expect(leafDuringEdit).not.toBe(a1.parentId);
 		expect(
 			assistantEntries(harness).some((entry) => getMessageText(assistantMessageOf(entry)) === "edited mid-stream"),
