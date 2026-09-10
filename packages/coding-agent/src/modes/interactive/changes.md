@@ -41,8 +41,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: `showManualInput` and `showPrompt` remount the single Input widget instead of adding it twice, so a browser-callback login no longer shows two stacked `>` prompts.
-- `packages/coding-agent/test/suite/regressions/5433-extension-oauth-prompt-input.test.ts`: covers an unsubmitted paste-code prompt followed by the account-name prompt.
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: `showManualInput` and `showPrompt` remount the single Input widget instead of adding it twice, so a browser-callback login no longer shows two stacked `>` prompts. Every `(to cancel)` / `(to close)` hint row is routed through one tracked live hint (`setLiveHint`), so `showWaiting` and `showInfo(showCloseHint)` REPLACE a previous hint instead of painting beside it, and every content-clearing path resets the tracked hint.
+- `packages/coding-agent/test/suite/regressions/5433-extension-oauth-prompt-input.test.ts`: covers an unsubmitted paste-code prompt followed by the account-name prompt - asserting exactly one live `>` row - plus an interleaved waiting step that must leave exactly one live hint row.
 
 ### Why
 

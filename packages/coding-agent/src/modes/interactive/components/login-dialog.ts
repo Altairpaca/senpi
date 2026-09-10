@@ -91,6 +91,23 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.addChild(hint);
 	}
 
+	/**
+	 * Exactly one `(to ...) ` hint row is ever live: a new one replaces the
+	 * tracked previous hint wherever the input is NOT being remounted, so an
+	 * interleaved wait/info step never leaves a stale hint beside the live one.
+	 */
+	private setLiveHint(hint: Text): void {
+		this.contentContainer.children = this.contentContainer.children.filter((child) => child !== this.liveHint);
+		this.liveHint = hint;
+		this.contentContainer.addChild(hint);
+	}
+
+	/** Content that clears the dialog also drops any tracked live hint with it. */
+	private resetContent(): void {
+		this.contentContainer.clear();
+		this.liveHint = undefined;
+	}
+
 	private cancel(): void {
 		this.abortController.abort();
 		if (this.inputRejecter) {
@@ -105,7 +122,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Called by onAuth callback - show URL and optional instructions
 	 */
 	showAuth(url: string, instructions?: string): void {
-		this.contentContainer.clear();
+		this.resetContent();
 		this.contentContainer.addChild(new Spacer(1));
 		const linkedUrl = `\x1b]8;;${url}\x07${url}\x1b]8;;\x07`;
 		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
@@ -127,7 +144,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Called by onDeviceCode callback - show URL and user code.
 	 */
 	showDeviceCode(info: OAuthDeviceCodeInfo): void {
-		this.contentContainer.clear();
+		this.resetContent();
 		this.contentContainer.addChild(new Spacer(1));
 		const linkedUrl = `\x1b]8;;${info.verificationUri}\x07${info.verificationUri}\x1b]8;;\x07`;
 		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
@@ -186,7 +203,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 
 	/** Show informational text before another login step. */
 	showDetails(lines: string[]): void {
-		this.contentContainer.clear();
+		this.resetContent();
 		this.contentContainer.addChild(new Spacer(1));
 		for (const line of lines) {
 			this.contentContainer.addChild(new Text(line, 1, 0));
@@ -205,7 +222,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		}
 		if (showCloseHint) {
 			this.contentContainer.addChild(new Spacer(1));
-			this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to close")})`, 1, 0));
+			this.setLiveHint(new Text(`(${keyHint("tui.select.cancel", "to close")})`, 1, 0));
 		}
 		this.tui.requestRender();
 	}
@@ -216,7 +233,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	showWaiting(message: string): void {
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
-		this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to cancel")})`, 1, 0));
+		this.setLiveHint(new Text(`(${keyHint("tui.select.cancel", "to cancel")})`, 1, 0));
 		this.tui.requestRender();
 	}
 
