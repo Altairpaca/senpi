@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## Scrub VENICE_API_KEY in the hermetic test environments (2026-09-10)
+
+### What changed
+
+- `pi-test.sh` and `pi-test.ps1` add `VENICE_API_KEY` to the provider credentials cleared before the suite runs, alongside the existing `CEREBRAS_API_KEY`/`XAI_API_KEY` entries. `test.sh` and `packages/coding-agent/scripts/qa-app-server/lib/env.mjs` gained the same entry.
+
+### Why
+
+- Venice is now a built-in provider, and several suites key opt-in live behavior off the mere presence of a provider API key. Leaving `VENICE_API_KEY` in the inherited environment would let a developer's real credential change test behavior or reach the network.
+
+### Why an extension could not handle it
+
+- These are the shell entry points that build the test environment before any senpi process starts.
+
+### Expected merge conflict zones
+
+- LOW: the `unset`/credential-name lists in `pi-test.sh` and `pi-test.ps1` when upstream adds providers.
+
 ## Root scripts reach workspaces only through scripts/run-workspaces.mjs (2026-09-07)
 
 ### What changed
