@@ -15,15 +15,8 @@
   initialization cancellation listener is detached once initialization settles,
   while pending cancellation still rejects and closes the query.
 - GPT-6 Astra high-reasoning warnings now appear only at `max`; GPT-5.6 Sol
-<<<<<<< HEAD
-  continues to warn at both `xhigh` and `max`.
-||||||| parent of 99a9650e5 (docs(coding-agent): clarify Sol warning levels)
-  continues to warn at `xhigh` and `max`.
-
-=======
   continues to warn at both `xhigh` and `max`.
 
->>>>>>> 99a9650e5 (docs(coding-agent): clarify Sol warning levels)
 ### Removed
 
 ## [2026.9.10] - 2026-09-10
