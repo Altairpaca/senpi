@@ -46,7 +46,7 @@ describe("askUser settings", () => {
 			enabled: false,
 			timeoutMinutes: 15,
 		});
-		expect(harness.getExtensionRunner().createContext().getAskUserSettings()).toEqual({
+		expect(harness.getExtensionRunner().createContext().getAskUserSettings?.()).toEqual({
 			enabled: false,
 			timeoutMinutes: 15,
 		});
@@ -62,7 +62,9 @@ describe("askUser settings", () => {
 		expect(SettingsManager.inMemory({ askUser: { timeoutMinutes: 121 } }).getAskUserSettings().timeoutMinutes).toBe(
 			120,
 		);
-		expect(SettingsManager.inMemory({ askUser: { timeoutMinutes: 5.9 } }).getAskUserSettings().timeoutMinutes).toBe(5);
+		expect(SettingsManager.inMemory({ askUser: { timeoutMinutes: 5.9 } }).getAskUserSettings().timeoutMinutes).toBe(
+			5,
+		);
 	});
 
 	it("ignores a wrong-typed askUser.enabled and does not fail settings load", () => {

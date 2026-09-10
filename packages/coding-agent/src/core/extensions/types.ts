@@ -484,6 +484,8 @@ export interface ExtensionContext {
 	};
 	/** Get resolved look-at settings from global/project/user overrides. */
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
+	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
+	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -2312,6 +2314,7 @@ export interface ExtensionContextActions {
 		marginSeconds: number;
 	};
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
+	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
