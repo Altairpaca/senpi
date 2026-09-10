@@ -3,7 +3,7 @@ import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.t
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
 import { WAIT_FLAG_STEER_TEXT } from "../../src/core/extensions/builtin/ask-user/schema.ts";
 import { mapSdkToolNameToPi, resolveSdkTools } from "../../src/core/extensions/builtin/claude-sdk-oauth/tools.ts";
-import type { ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const args = {
@@ -14,10 +14,13 @@ const answer: QuestionResponse = { status: "answered", answers: { q1: { selected
 const harnesses: Harness[] = [];
 async function setup(enabled = true, flag = false) {
 	const wakeEvents: unknown[] = [];
+	const deliveries: unknown[] = [];
+	let api: ExtensionAPI | undefined;
 	const h = await createHarness({
 		extensionFactories: [
 			{
 				factory: (pi) => {
+					api = pi;
 					pi.events.on("wake_source_state", (event) => wakeEvents.push(event));
 					askUserExtension(pi);
 				},
@@ -28,6 +31,11 @@ async function setup(enabled = true, flag = false) {
 	});
 	harnesses.push(h);
 	await h.session.bindExtensions({});
+	if (!api) throw new Error("extension factory never ran");
+	// Async delivery belongs to the extension; record it instead of starting a turn.
+	api.sendUserMessage = (content) => {
+		deliveries.push(content);
+	};
 	const runner = h.getExtensionRunner();
 	const ctx: ExtensionContext = {
 		...runner.createContext(),
@@ -36,7 +44,7 @@ async function setup(enabled = true, flag = false) {
 		ui: { ...runner.createContext().ui, question: vi.fn(async () => answer) },
 	};
 	const tool = runner.getAllRegisteredTools().find((t) => t.definition.name === "ask_user_question")?.definition;
-	return { h, runner, ctx, tool, wakeEvents };
+	return { h, runner, ctx, tool, wakeEvents, deliveries };
 }
 function required<T>(value: T | undefined): T {
 	if (value === undefined) throw new Error("missing tool");
@@ -84,13 +92,15 @@ describe("ask-user builtin", () => {
 		).toEqual([]);
 	});
 	it("returns blocking answers through the formatter", async () => {
-		const { tool, ctx } = await setup();
+		const { tool, ctx, deliveries } = await setup();
 		const result = await required(tool).execute("blocking", args, undefined, undefined, ctx);
 		expect(result.content).toEqual([{ type: "text", text: "Library: A" }]);
 		expect(result.details).toMatchObject({ status: "answered", answers: { "Which library?": "A" } });
+		// A blocking answer travels as the tool result only.
+		expect(deliveries).toEqual([]);
 	});
 	it("returns async acceptance before answer and tracks wake source until settlement", async () => {
-		const { tool, ctx, wakeEvents } = await setup();
+		const { tool, ctx, wakeEvents, deliveries } = await setup();
 		const completion = Promise.withResolvers<QuestionResponse>();
 		const resolved = Promise.withResolvers<void>();
 		ctx.ui.question = vi.fn(() => completion.promise);
@@ -115,6 +125,7 @@ describe("ask-user builtin", () => {
 			{ source: "ask-user", activeCount: 1, items: [{ id: "async", description: "Library" }] },
 			{ source: "ask-user", activeCount: 0, items: [] },
 		]);
+		expect(deliveries).toEqual(["[Answer to question async]\nLibrary: A"]);
 	});
 	it.each(["tui", "print", "json"])("deactivates unavailable %s calls", async (mode) => {
 		const { h, tool, ctx } = await setup();

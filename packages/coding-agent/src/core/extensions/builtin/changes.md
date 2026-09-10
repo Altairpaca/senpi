@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## 2026-09-10 - Async question delivery belongs to the ask-user builtin
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: for `waitForAnswer:false` questions `startQuestion` now attaches a delivery handler to the completion promise (it is still never awaited in `execute`, which keeps returning the acceptance result). When the question settles the new `deliverAnswer` helper sends `formatUserMessage(response, requestId, questions)` through `pi.sendUserMessage` with `deliverAs: "steer"` while a turn runs and `"followUp"` when `ctx.isIdle()` - a follow-up always triggers a turn, which is what wakes the model on the `timed_out` message. A `cancelled` response (dismissed, superseded, aborted, ask-user disabled, session closed) delivers nothing.
+
+### Why
+
+- Only the interactive TUI delivered async answers. The RPC and app-server question bridges ignore `opts.deliver`, so an answer - or the idle-timeout message - given over those surfaces was dropped and never reached the model. Owning delivery in the extension makes it surface-independent: a bridge only has to RESOLVE the question, and no surface can deliver it twice.
+
+### Why an extension could not handle it
+
+- The ask-user feature IS this builtin: the pending-question lifecycle, the framed-message formatter, and the completion promise all live in `ask-user/tool.ts`, and the delivery needs `pi.sendUserMessage` plus `ctx.isIdle()` from the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: `ask-user/tool.ts` - the new `deliverAnswer` helper above `emitWake` and the last statement of `startQuestion`.
+
 ## 2026-09-10 - Resume dangling question calls
 
 ### What changed

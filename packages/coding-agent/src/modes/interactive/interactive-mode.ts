@@ -81,7 +81,6 @@ import {
 } from "../../core/cache-stats.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { assistantTextEquals } from "../../core/edited-assistant-message.ts";
-import { formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -3570,10 +3569,11 @@ export class InteractiveMode {
 			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
+			// Async answers are delivered by the ask-user extension, not here: the
+			// widget only resolves the question, so the model sees exactly one
+			// framed user message no matter which surface answered.
 			question: (request, opts) =>
-				request.waitForAnswer
-					? this.showQuestionOverlay(request, opts)
-					: this.showAsyncQuestion(request, opts).then((response) => this.deliverAsyncAnswer(request, response)),
+				request.waitForAnswer ? this.showQuestionOverlay(request, opts) : this.showAsyncQuestion(request, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
@@ -3964,14 +3964,6 @@ export class InteractiveMode {
 		this.editor.setText("");
 		state.finish(buildCommentResponse(state.request, state.draft, text));
 		return true;
-	}
-
-	/** Deliver an async answer as a framed user message: steer mid-turn, follow-up when idle. */
-	private async deliverAsyncAnswer(request: QuestionRequest, response: QuestionResponse): Promise<QuestionResponse> {
-		if (response.status === "cancelled") return response;
-		const text = formatUserMessage(response, request.requestId, request.questions);
-		await this.session.sendUserMessage(text, { deliverAs: this.session.isStreaming ? "steer" : "followUp" });
-		return response;
 	}
 
 	/**

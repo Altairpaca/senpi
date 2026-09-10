@@ -9,8 +9,16 @@ import type { ProjectTrustContext, ReplacedSessionContext } from "../../core/ext
 import { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import type { BashOperations } from "../../core/tools/bash.ts";
+import { QUESTION_CAPABILITY, RENDERED_COMPONENTS_CAPABILITY } from "../rpc/custom-capability.ts";
 import { type EnsuredHost, ensureHost } from "../rpc/host-ensure.ts";
 import { isTransportGoneError, RpcClient, type RpcClientEvent } from "../rpc/rpc-client.ts";
+
+/**
+ * What this TUI can render for a host: host-side components and the rich
+ * multi-question overlay. Without `question` the host degrades every
+ * `ctx.ui.question` call into sequential select/input prompts.
+ */
+const HOST_CLIENT_CAPABILITIES: readonly string[] = [RENDERED_COMPONENTS_CAPABILITY, QUESTION_CAPABILITY];
 
 export const INTERACTIVE_HOST_FALLBACK_WARNING = "Warning: shared interactive host unavailable; continuing locally";
 export const INTERACTIVE_HOST_RECONNECTING_WARNING = "Warning: shared interactive host connection lost; reconnecting";
@@ -139,7 +147,7 @@ export async function createInteractiveHostRuntime(
 	try {
 		await startHost({ socket: options.socket, agentDir: options.agentDir });
 		await client.start();
-		await client.setClientInfo(80, ["rendered_components"]);
+		await client.setClientInfo(80, [...HOST_CLIENT_CAPABILITIES]);
 		const startupEvents: import("../rpc/rpc-client.ts").RpcClientEvent[] = [];
 		const stopBuffering = client.onEvent((event) => startupEvents.push(event));
 		const opened = await client.openSession({
@@ -302,12 +310,12 @@ export class RemoteInteractiveRuntime {
 	#lastClientWidth = 80;
 	setClientInfo(width: number): void {
 		this.#lastClientWidth = width;
-		const capabilities = this.#clientInfoSent ? undefined : ["rendered_components"];
+		const capabilities = this.#clientInfoSent ? undefined : [...HOST_CLIENT_CAPABILITIES];
 		this.#clientInfoSent = true;
 		void this.#client.setClientInfo(width, capabilities).catch(() => {});
 	}
 	async reRegisterClientInfo(): Promise<void> {
-		await this.#client.setClientInfo(this.#lastClientWidth, ["rendered_components"]);
+		await this.#client.setClientInfo(this.#lastClientWidth, [...HOST_CLIENT_CAPABILITIES]);
 	}
 	async dispose(): Promise<void> {
 		if (this.#state === "disposed") return;

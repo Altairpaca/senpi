@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatResultDetails, formatResultText } from "./format.ts";
+import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
 import { createPendingQuestion } from "./pending.ts";
 import { getPendingQuestions, type QuestionDialogOptions, registerPendingQuestion } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
@@ -30,6 +30,25 @@ function result(
 		content: [{ type: "text", text: text ?? formatResultText(variant, response, request.questions) }],
 		details: formatResultDetails(variant, response, request.questions),
 	};
+}
+/**
+ * Deliver a settled async answer as one framed user message. The extension owns
+ * this so every surface (interactive TUI, RPC, app-server) only has to RESOLVE
+ * the question; a surface that delivered on its own would send it twice. It
+ * steers into a running turn and follows up when idle - a follow-up always
+ * triggers a turn, which is what wakes the model after a timeout. A cancelled
+ * question stays silent: it was dismissed, superseded, or aborted.
+ */
+function deliverAnswer(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	request: QuestionRequest,
+	response: QuestionResponse,
+): void {
+	if (response.status === "cancelled") return;
+	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions), {
+		deliverAs: ctx.isIdle() ? "followUp" : "steer",
+	});
 }
 function emitWake(pi: ExtensionAPI, sessionId: string) {
 	const entries = getPendingQuestions(sessionId).filter((e) => !e.request.waitForAnswer);
@@ -121,6 +140,7 @@ function startQuestion(
 			fail(error);
 		}
 	}
+	if (!request.waitForAnswer) void completion.promise.then((response) => deliverAnswer(pi, ctx, request, response));
 	return completion.promise;
 }
 export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, state: AskUserState): ToolDefinition {

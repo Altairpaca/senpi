@@ -1,3 +1,23 @@
+## 2026-09-10 - One async answer per surface and the `question` client capability
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `ExtensionUIContext.question` routes `waitForAnswer:false` straight to `showAsyncQuestion` and no longer delivers the answer - the `deliverAsyncAnswer` helper and the `formatUserMessage` import are gone. The widget only resolves the question (submit, comment text, countdown, abort); the ask-user builtin sends the single framed user message. `handleHostUiRequest`'s `question` case is unchanged: it still answers on the `extension_ui_response` channel and the host delivers.
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts`: the new `HOST_CLIENT_CAPABILITIES` (`RENDERED_COMPONENTS_CAPABILITY`, `QUESTION_CAPABILITY` from `packages/coding-agent/src/modes/rpc/custom-capability.ts`) replaces the inline `["rendered_components"]` list in the startup handshake, `setClientInfo`, and `reRegisterClientInfo`, so a host-attached TUI advertises `question`.
+
+### Why
+
+- With delivery centralized in the builtin, the widget's own `session.sendUserMessage` would send every async answer twice. Separately, a TUI attached to a shared host never advertised `question`, so the host degraded every `ctx.ui.question` call into sequential select/input prompts even though this TUI renders the full overlay.
+
+### Why an extension could not handle it
+
+- Both seams are host-owned: `createExtensionUIContext` is built by interactive-mode, and only the host runtime performs the RPC `set_client_info` handshake that declares client capabilities.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` - `createExtensionUIContext`'s `question:` entry and the block after `submitAsyncQuestionComment` (the removed `deliverAsyncAnswer`).
+- LOW: `interactive-host-runtime.ts` - the import block, the `client.setClientInfo(80, ...)` startup call, `setClientInfo`, and `reRegisterClientInfo`.
+
 ## 2026-09-10 - Async ask-user widget and framed user-message delivery
 
 ### What changed

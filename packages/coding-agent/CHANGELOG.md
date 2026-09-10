@@ -22,6 +22,8 @@
 - Prompt presets route a user question through `request_user_input` (GPT-6 Astra, GPT-5.6) or `ask_user_question` (Claude Fable/Opus, Kimi K3, GLM 5.x) when the tool is available, instead of ending the turn on a bare question.
 ### Fixed
 
+- An unanswered-yet question asked with wait-for-answer off now delivers its answer - and its idle-timeout notice - as exactly one framed user message on every surface (interactive TUI, RPC clients, app-server clients); previously only the TUI delivered it and answers given over RPC or app-server were dropped. A TUI attached to a shared host also advertises the `question` capability, so it renders the full question overlay instead of falling back to sequential prompts.
+
 - Shared RPC hosts now cut a socket peer that stops reading (a write not accepted within 4 seconds) with an `overflow` record `stalled, resync required` instead of letting it hold the session worker's output credit until the 5-second `session_worker_credit_timeout` quarantined a healthy session mid-turn; a cut or overflowed peer no longer withholds session credit or fails the shared host writer ([#1529](https://github.com/code-yeongyu/senpi/pull/1529)).
 
 ### Removed
