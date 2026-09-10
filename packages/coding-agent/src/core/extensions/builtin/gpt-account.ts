@@ -46,6 +46,7 @@ async function addAccount(ctx: ExtensionCommandContext, deps: GptAccountExtensio
 			"oauth",
 			createExtensionLoginInteraction(ctx, {
 				providerLabel: OPENAI_CODEX_PROVIDER_LABEL,
+				providerId: OPENAI_CODEX_PROVIDER_ID,
 				openBrowser: deps.openBrowser,
 			}),
 		);
