@@ -72,14 +72,14 @@ function providerOptions(): ProviderImagesOptions | undefined {
 }
 
 describe("generate_image output options", () => {
-	it("defaults to Flare and prices the request from the static catalog", async () => {
+	it("defaults to Sunburst and prices the request from the static catalog", async () => {
 		const result = await execute({ prompt: "a red fox" });
 
 		expect(generate.mock.calls[0]?.[0]).toMatchObject({
-			id: "gpt-image-2.5-flare",
+			id: "gpt-image-2.5-sunburst",
 			cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
 		});
-		expect(result.details.model).toBe("gpt-image-2.5-flare");
+		expect(result.details.model).toBe("gpt-image-2.5-sunburst");
 	});
 
 	it("forwards background, format, compression, and moderation and labels the result with the format", async () => {
