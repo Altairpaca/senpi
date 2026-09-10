@@ -77,6 +77,28 @@
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showNewVersionNotification`.
+
+
+
+## 2026-09-10 - A cancelled /login renders as "Login cancelled", not a failure (#1542)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/login-outcome.ts` (new, extracted for the LOC ceiling): `isLoginCancellation(error)` is true for an undefined reason, any `AbortError`-named reason (the `DOMException` from `LoginDialogComponent.cancel()` whose message is "This operation was aborted", or the `AbortError` fabricated by `raceWithAbortSignal`), and the literal `"Login cancelled"`; `describeLoginFailure(error, providerName, method)` returns `{ level: "status", message: "Login cancelled" }` for those and `{ level: "error", message }` with the existing `Failed to login to ...` / `Failed to save API key for ...` / `... could not be synchronized: ...` copy otherwise.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showLoginDialog` and the API-key dialog render the outcome through the new `showLoginFailure` (`showStatus` for a cancellation, `showError` for a failure) instead of matching `errorMsg !== "Login cancelled"` inline.
+
+### Why
+
+- Issue #1542: Esc in the `/login` dialog aborts `dialog.signal` with no reason, so `ModelsImpl.login` rejected with the DOMException and the inline literal match rendered the user's own cancellation as `Failed to login to OpenAI Codex: This operation was aborted`.
+
+### Why an extension could not handle it
+
+- The dialog, its abort controller and the error rendering are all inside interactive mode's private login flow.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` catch blocks of `showLoginDialog` and the API-key dialog.
+
 ## 2026-09-10 - Report a reduced restored context on resume
 
 ### What changed
