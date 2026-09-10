@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Shared RPC hosts now cut a socket peer that stops reading (a write not accepted within 4 seconds) with an `overflow` record `stalled, resync required` instead of letting it hold the session worker's output credit until the 5-second `session_worker_credit_timeout` quarantined a healthy session mid-turn; a cut or overflowed peer no longer withholds session credit or fails the shared host writer ([#1529](https://github.com/code-yeongyu/senpi/pull/1529)).
+
 ### Removed
 
 ## [2026.9.9-2] - 2026-09-09
