@@ -30,6 +30,7 @@ import {
 	pinCredentialAccount,
 	removeCredentialAccount,
 } from "../../core/credential-accounts.ts";
+import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import {
 	emitProviderAccountsChanged,
 	subscribeProviderAccountEvents,
@@ -889,6 +890,14 @@ export function createRpcConnectionHandler(
 							});
 							return { cancelled: result.cancelled };
 						},
+						editAssistantMessage: async (entryId, text, options) => {
+							const result = await session.editAssistantMessage(entryId, text, {
+								summarize: options?.summarize,
+								customInstructions: options?.customInstructions,
+								expectedLeafId: options?.expectedLeafId,
+							});
+							return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+						},
 						switchSession: async (sessionPath, options) => {
 							return runtimeHost.switchSession(sessionPath, options);
 						},
@@ -1458,6 +1467,49 @@ export function createRpcConnectionHandler(
 				if (routingSessionId === undefined && !result.cancelled && session !== runtimeHost.session)
 					await rebindAfterLocalReplacement();
 				return success(id, "fork", { text: result.selectedText, cancelled: result.cancelled });
+			}
+
+			case "edit_assistant_message": {
+				if (
+					typeof command.entryId !== "string" ||
+					command.entryId.length === 0 ||
+					typeof command.text !== "string"
+				) {
+					return error(id, command.type, "edit_assistant_message requires a non-empty entryId and a text string");
+				}
+				try {
+					const result = await session.editAssistantMessage(command.entryId, command.text, {
+						summarize: command.summarize,
+						customInstructions: command.customInstructions,
+						expectedLeafId: command.expectedLeafId,
+					});
+					const leafId = session.sessionManager.getLeafId();
+					if (result.unchanged) {
+						return success(id, command.type, { outcome: "unchanged", leafId });
+					}
+					if (result.cancelled) {
+						return success(id, command.type, {
+							outcome: "cancelled",
+							leafId,
+							...(result.aborted ? { aborted: true } : {}),
+						});
+					}
+					const entry = result.entryId ? session.sessionManager.getEntry(result.entryId) : undefined;
+					if (entry?.type !== "message" || leafId === null) {
+						return error(id, command.type, "Edited assistant entry was not persisted");
+					}
+					return success(id, command.type, {
+						outcome: "edited",
+						entry,
+						leafId,
+						...(result.summaryEntry ? { summaryEntryId: result.summaryEntry.id } : {}),
+					});
+				} catch (err) {
+					if (err instanceof AssistantEditError || err instanceof SessionStreamingError) {
+						return error(id, command.type, err.message, err.code);
+					}
+					throw err;
+				}
 			}
 
 			case "clone": {

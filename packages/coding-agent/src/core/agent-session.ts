@@ -106,7 +106,13 @@ import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
-import { AssistantEditError, assistantTextEquals, buildEditedAssistantMessage } from "./edited-assistant-message.ts";
+import {
+	AssistantEditError,
+	assertExpectedLeaf,
+	assistantTextEquals,
+	buildEditedAssistantMessage,
+	SessionStreamingError,
+} from "./edited-assistant-message.ts";
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
@@ -803,6 +809,8 @@ export interface TreeNavigationOptions {
 	customInstructions?: string;
 	replaceInstructions?: boolean;
 	label?: string;
+	/** Leaf the caller last observed; the mutation is refused with `stale-leaf` when the session moved on. */
+	expectedLeafId?: string;
 }
 
 export interface AssistantEditResult {
@@ -8632,8 +8640,10 @@ export class AgentSession {
 		options: TreeNavigationOptions = {},
 	): Promise<AssistantEditResult> {
 		if (this.isStreaming) {
-			throw new Error("Wait for the current response to finish before navigating the session tree.");
+			throw new SessionStreamingError();
 		}
+		// Stale tokens fail before the unchanged short-circuit: a stale window never learns "unchanged".
+		assertExpectedLeaf(options.expectedLeafId, this.sessionManager.getLeafId());
 		const targetEntry = this.sessionManager.getEntry(entryId);
 		if (!targetEntry) {
 			throw new AssistantEditError("not-found", `Entry ${entryId} not found`);
@@ -8655,10 +8665,12 @@ export class AgentSession {
 		replacement?: AssistantMessage,
 	): Promise<AssistantEditResult> {
 		if (this.isStreaming) {
-			throw new Error("Wait for the current response to finish before navigating the session tree.");
+			throw new SessionStreamingError();
 		}
 
 		const oldLeafId = this.sessionManager.getLeafId();
+		// Stale tokens fail even for a would-be no-op, before any extension hears about the navigation.
+		assertExpectedLeaf(options.expectedLeafId, oldLeafId);
 
 		// No-op if already at target (a replacement of the leaf itself still has work to do)
 		if (targetId === oldLeafId && !replacement) {

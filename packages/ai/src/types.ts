@@ -89,7 +89,8 @@ export type KnownProvider =
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
-	| "xiaomi-token-plan-sgp";
+	| "xiaomi-token-plan-sgp"
+	| "venice";
 export type ProviderId = KnownProvider | string;
 
 export type KnownImagesProvider = "openai" | "openrouter";
@@ -737,6 +738,14 @@ export interface OpenAICompletionsCompat {
 	chatTemplateArgs?: Record<string, ChatTemplateKwargValue>;
 	/** OpenRouter-compatible routing preferences sent as the `provider` request field. */
 	openRouterRouting?: OpenRouterRouting;
+	/**
+	 * Sent as the top-level `venice_parameters` request field on Venice models.
+	 * Venice's request schema is `additionalProperties: false`, so the object
+	 * can only be shaped here — user-supplied `extraBody` can still override it.
+	 * `include_venice_system_prompt: false` stops Venice from prepending its
+	 * own default system prompt ahead of the caller's.
+	 */
+	veniceParameters?: { include_venice_system_prompt?: boolean };
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */
 	vercelGatewayRouting?: VercelGatewayRouting;
 	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */

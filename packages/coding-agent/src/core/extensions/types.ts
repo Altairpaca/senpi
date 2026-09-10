@@ -600,6 +600,18 @@ export interface ExtensionCommandContext extends ExtensionContext {
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	): Promise<{ cancelled: boolean }>;
 
+	/**
+	 * Replace an assistant response with an edited copy: the leaf moves to the entry's parent and the
+	 * copy (text only; tool calls and thinking are dropped) is appended as the new leaf. Pass the leaf
+	 * you last observed as `expectedLeafId` to be refused instead of overwriting a moved session.
+	 * Rejects with the same typed errors as `AgentSession.editAssistantMessage`.
+	 */
+	editAssistantMessage(
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	): Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+
 	/** Switch to a different session file. */
 	switchSession(
 		sessionPath: string,
@@ -2394,6 +2406,11 @@ export interface ExtensionCommandContextActions {
 		targetId: string,
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	) => Promise<{ cancelled: boolean }>;
+	editAssistantMessage: (
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	) => Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
 	switchSession: (
 		sessionPath: string,
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
