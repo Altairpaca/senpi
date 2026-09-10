@@ -72,9 +72,11 @@ describe("/gpt-account add", () => {
 				kind: "select",
 				title: "Select OpenAI Codex login method:",
 				options: ["Browser login (default)", "Device code login (headless)"],
-				signal: undefined,
+				// The dialog is bound to the login's own controller, never to the turn's signal (#1542).
+				signal: expect.any(AbortSignal),
 			},
 		]);
+		expect(dialogs[0]?.signal?.aborted).toBe(false);
 		expect(methods).toEqual(["device_code"]);
 		expect(notices.at(-1)).toMatchObject({ message: "OpenAI Codex OAuth account added.", type: "info" });
 	});
@@ -222,6 +224,90 @@ describe("/gpt-account add", () => {
 
 		expect(notices).toEqual([]);
 		expect(changed).toEqual([]);
+	});
+
+	// #1542: the login must never be owned by the streaming turn's abort signal.
+	it("keeps a login alive when the active turn is aborted", async () => {
+		const turn = new AbortController();
+		let loginSignal: AbortSignal | undefined;
+		let releaseLogin: (() => void) | undefined;
+		const loginGate = new Promise<void>((resolve) => {
+			releaseLogin = resolve;
+		});
+		let markLoginStarted: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			markLoginStarted = resolve;
+		});
+		const { ctx, notices } = createLoginContext(
+			async (_provider, _method, interaction) => {
+				loginSignal = interaction.signal;
+				markLoginStarted?.();
+				await loginGate;
+				if (interaction.signal?.aborted) throw interaction.signal.reason;
+			},
+			{ signal: turn.signal },
+		);
+
+		const handled = registeredGptCommand().handler("add", ctx);
+		await started;
+		turn.abort();
+
+		expect(loginSignal).toBeInstanceOf(AbortSignal);
+		expect(loginSignal?.aborted).toBe(false);
+		releaseLogin?.();
+		await handled;
+		expect(notices.at(-1)).toMatchObject({ message: "OpenAI Codex OAuth account added.", type: "info" });
+	});
+
+	// #1542: dismissing the login's own dialog is what cancels the login.
+	it("aborts the login signal with Login cancelled when the user dismisses the dialog", async () => {
+		let loginSignal: AbortSignal | undefined;
+		const { ctx, notices } = createLoginContext(
+			async (_provider, _method, interaction) => {
+				loginSignal = interaction.signal;
+				await interaction.prompt(CODEX_LOGIN_METHOD_PROMPT);
+				throw new Error("login must not continue after the selector was dismissed");
+			},
+			{ dialogs: { select: () => undefined } },
+		);
+
+		await registeredGptCommand().handler("add", ctx);
+
+		expect(loginSignal?.aborted).toBe(true);
+		expect(loginSignal?.reason).toMatchObject({ message: "Login cancelled" });
+		expect(notices).toEqual([]);
+	});
+
+	// #1542: a re-issued /gpt-account add supersedes the pending login for the same provider.
+	it("cancels a pending login when the command is re-issued", async () => {
+		const signals: AbortSignal[] = [];
+		let markStarted: (() => void) | undefined;
+		const firstStarted = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const first = createLoginContext(async (_provider, _method, interaction) => {
+			if (interaction.signal) signals.push(interaction.signal);
+			markStarted?.();
+			await new Promise<void>((_resolve, reject) => {
+				interaction.signal?.addEventListener("abort", () => reject(interaction.signal?.reason), { once: true });
+			});
+		});
+		const second = createLoginContext(async (_provider, _method, interaction) => {
+			if (interaction.signal) signals.push(interaction.signal);
+		});
+		const command = registeredGptCommand();
+
+		const pending = command.handler("add", first.ctx);
+		await firstStarted;
+		await command.handler("add", second.ctx);
+		await pending;
+
+		expect(signals).toHaveLength(2);
+		expect(signals[0]?.aborted).toBe(true);
+		expect(signals[0]?.reason).toMatchObject({ message: "Login cancelled" });
+		expect(signals[1]?.aborted).toBe(false);
+		expect(first.notices).toEqual([]);
+		expect(second.notices.at(-1)).toMatchObject({ message: "OpenAI Codex OAuth account added.", type: "info" });
 	});
 
 	it("surfaces a real login failure as an error notice", async () => {

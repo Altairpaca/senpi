@@ -23,6 +23,7 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | Path completion | Press Tab to complete paths |
 | Multi-line input | Shift+Enter, or Ctrl+Enter on Windows Terminal |
 | Copy response | Ctrl+X copies the selected message in `/tree`; otherwise it copies the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
+| Edit response | Ctrl+E on an assistant message in `/tree` opens it in the editor; submitting continues the session from the edited copy |
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
@@ -113,7 +114,7 @@ senpi --fork <path|id>    # Fork a session into a new session file
 Useful session commands:
 
 - `/session` shows the current session file and ID.
-- `/tree` navigates the in-file session tree and can summarize abandoned branches.
+- `/tree` navigates the in-file session tree and can summarize abandoned branches. Ctrl+E on an assistant entry edits that response in place of the original (the original stays in the file on an abandoned branch; tool calls in the edited response are dropped).
 - `/fork` creates a new session from an earlier user message.
 - `/clone` duplicates the current active branch into a new session file.
 - `/compact` summarizes older messages to free context.

@@ -59,7 +59,7 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 		name: "update_goal",
 		label: "Update Goal",
 		description:
-			"Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); a user resume starts a fresh blocked audit.\nPausing and resuming are user or system actions, not this tool.",
+			"Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it.\nPausing and resuming are user or system actions, not this tool.",
 		parameters: Type.Object(
 			{
 				status: Type.Union(

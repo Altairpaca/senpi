@@ -232,7 +232,12 @@ Display updates coalesce to one pending update and one latest value; UI cancella
 messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Credit
 returns after the session's destinations consume their output, not merely on IPC receipt. A five-second credit
 failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
-unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior. The default stdio
+unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior, and a socket peer that
+stops reading is cut before it can consume that credit budget: a write the peer has not accepted within 4 seconds
+(`DEFAULT_STALL_MS`, below the 5-second worker deadline) is treated like a byte overflow — that connection receives one
+`overflow` record with `error: "stalled, resync required"`, is closed, and must reconnect and resynchronize — while the
+session keeps running and its other destinations keep receiving output. A failed or cut connection never withholds a
+session's credit and never fails the shared host writer; only the stdio lane can. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
 Close admission counts both queued output and pending close replies (including their serialized bytes) before
 releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
@@ -1088,6 +1093,37 @@ If an extension cancelled the fork:
 }
 ```
 
+#### edit_assistant_message
+
+Replace an assistant response with an edited copy. The session leaf moves to the target entry's parent and the edited copy is appended there as the new leaf, so the original response and everything after it stay in the file on an abandoned branch. The copy keeps only the new text (tool calls and thinking blocks are dropped; `stopReason` is `stop`) and preserves the original's model, provider and usage. Emits `session_before_tree` (cancellable) and `session_tree` like tree navigation.
+
+```json
+{"type": "edit_assistant_message", "entryId": "abc123", "text": "The corrected answer.", "expectedLeafId": "def456"}
+```
+
+- `expectedLeafId` (optional): the leaf you last observed (from `get_tree`, `get_entries`, or the `entry_appended` stream). When the session's current leaf differs, the command fails with `errorCode: "stale_leaf"` before anything is written - this is how a client with a stale view is refused instead of overwriting a conversation another client moved. The check runs before the unchanged comparison, so identical text still reports `stale_leaf` from a stale client.
+- `summarize` / `customInstructions` (optional): summarize the abandoned branch like `navigate_tree`. With a summary, the edited copy's parent is the new `branch_summary` entry (its id is returned as `summaryEntryId`).
+
+Response:
+
+```json
+{"type": "response", "command": "edit_assistant_message", "success": true, "data": {"outcome": "edited", "entry": {"type": "message", "id": "ghi789", "parentId": "u1", "message": {"role": "assistant", "content": [{"type": "text", "text": "The corrected answer."}]}}, "leafId": "ghi789"}}
+```
+
+Other outcomes: `{"outcome": "unchanged", "leafId": "..."}` when the text matches the original (nothing written) and `{"outcome": "cancelled", "leafId": "...", "aborted": true}` when an extension cancelled the navigation or the summary was aborted.
+
+Failures carry a typed `errorCode`:
+
+| `errorCode` | Meaning |
+|-------------|---------|
+| `streaming` | A response is in flight; retry once the turn ends |
+| `not_found` | No entry with that id |
+| `not_assistant` | The entry is not an assistant message |
+| `empty` | The replacement text is blank |
+| `stale_leaf` | `expectedLeafId` no longer matches the session leaf |
+
+Message identity: RPC mode emits `entry_appended` right after every persisted `message_end`, carrying the full session entry (`entry.id`, `entry.parentId`, `entry.message`). Clients should record `entry.id` from that stream as the identity of each rendered message instead of inferring it by position, and pass it as `entryId` here.
+
 #### clone
 
 Duplicate the current active branch into a new session at the current position. Can be cancelled by a `session_before_fork` extension event handler.
@@ -1881,10 +1917,10 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 
 There are two categories of extension UI methods:
 
-- **Dialog methods** (`select`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
+- **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
 - **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
-If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
+If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
@@ -2057,6 +2093,62 @@ Set the text in the input editor. Fire-and-forget.
   "text": "prefilled text for the user"
 }
 ```
+
+#### question
+
+Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-q1",
+  "method": "question",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "waitForAnswer": true,
+  "questions": [
+    {
+      "id": "q1",
+      "header": "Database",
+      "question": "Which database should I use?",
+      "options": [
+        { "label": "PostgreSQL", "description": "Relational" },
+        { "label": "SQLite", "description": "Embedded" }
+      ],
+      "multiSelect": false
+    }
+  ],
+  "timeout": 1800000,
+  "askedAtMs": 1718000000000,
+  "deadlineAtMs": 1718001800000,
+  "remainingMs": 1799500
+}
+```
+
+Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: unanswered question ids are reported back to the model. Send `cancelled: true` to dismiss.
+
+While the question is open, the client may send `extension_ui_progress` frames with draft `answers` and `comment`. Each progress frame resets the idle timer; the host emits `question_updated` with the refreshed `deadlineAtMs` and `remainingMs`.
+
+When the question resolves (answered, comment-submitted, timed_out, or cancelled), the host broadcasts `question_resolved` to all connections:
+
+```json
+{
+  "type": "question_resolved",
+  "id": "uuid-q1",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "outcome": "answered",
+  "answers": { "q1": { "selected": ["PostgreSQL"] } },
+  "comment": "",
+  "unanswered": []
+}
+```
+
+A late answer after resolution receives a `question_already_resolved` error.
+
+`RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
+
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
 
 ### Extension UI Responses (stdin)
 

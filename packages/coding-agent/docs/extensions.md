@@ -9,7 +9,7 @@ Extensions are TypeScript modules that extend senpi's behavior. They can subscri
 **Key capabilities:**
 - **Custom tools** - Register tools the LLM can call via `pi.registerTool()`
 - **Event interception** - Block or modify tool calls, inject context, customize compaction
-- **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, notify)
+- **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, question, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
 - **Model fallback** - The bundled [`/fallback`](#bundled-fallback-command) command manages global per-model retry chains. Use `/fallback <target> <fallback1> [fallback2 ...]` for scripts, or `/fallback` in the TUI to view and edit chains. `--no-model-fallback` and `SENPI_NO_FALLBACK=1` disable it for one run.
@@ -205,6 +205,15 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Done!", "info");
     ctx.ui.setStatus("my-ext", "Processing...");  // Footer status
     ctx.ui.setWidget("my-ext", ["Line 1", "Line 2"]);  // Widget above editor (default)
+
+    // Multi-question prompt (requires a UI)
+    const result = await ctx.ui.question({
+      questions: [{ id: "db", header: "Database", question: "Which DB?",
+        options: [{ label: "Postgres" }, { label: "SQLite" }], multiSelect: false }],
+      waitForAnswer: true,
+      timeoutMs: 1800000,
+    });
+    // result.outcome is "answered", "comment-submitted", "timed_out", "cancelled", or "unavailable"
   });
 
   // Register tools, commands, shortcuts, flags
@@ -1283,6 +1292,24 @@ Options:
 - `customInstructions`: Custom instructions for the summarizer
 - `replaceInstructions`: If true, `customInstructions` replaces the default prompt instead of being appended
 - `label`: Label to attach to the branch summary entry (or target entry if not summarizing)
+
+### ctx.editAssistantMessage(entryId, text, options?)
+
+Replace an assistant response with an edited copy. The session leaf moves to the entry's parent and the copy (text only - tool calls and thinking blocks are dropped) is appended as the new leaf, so the original stays on an abandoned branch. Fires `session_before_tree` (cancellable) and `session_tree`.
+
+```typescript
+const result = await ctx.editAssistantMessage("entry-id-456", "The corrected answer.", {
+  expectedLeafId: ctx.sessionManager.getLeafId() ?? undefined,
+  summarize: false,
+});
+// result: { cancelled: boolean; unchanged?: boolean; entryId?: string }
+```
+
+Options:
+- `expectedLeafId`: the leaf you last observed; the edit rejects with an `AssistantEditError` (`reason: "stale-leaf"`) when the session moved on, before anything is written
+- `summarize` / `customInstructions`: summarize the abandoned branch like `ctx.navigateTree`
+
+Rejections are typed: `SessionStreamingError` (`code: "streaming"`) while a response streams, and `AssistantEditError` with `reason` `not-found` / `not-assistant` / `empty` / `stale-leaf` (`code` gives the wire spelling). `unchanged: true` means the text matched the original and nothing was appended.
 
 ### ctx.switchSession(sessionPath, options?)
 

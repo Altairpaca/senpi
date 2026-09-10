@@ -161,6 +161,16 @@ describe("claude-sdk-oauth stored binding anchor", () => {
 		expect(bindingFromStoredBranch(branch, stored())).toMatchObject({ sdkSessionId: "sdk-1" });
 	});
 
+	// https://github.com/code-yeongyu/senpi/issues/1526
+	// The refused-switch entry is bookkeeping the model never sees; leaving it out
+	// of the ledger-only set made recording a refusal discard the stored binding on
+	// the next resume (fresh upstream session, full context re-send).
+	it("admits a refused model switch after the committed assistant", () => {
+		const branch = [marker(), assistantEntry(), { type: "model_change_rejected" as const, id: "refused-switch" }];
+
+		expect(bindingFromStoredBranch(branch, stored())).toMatchObject({ sdkSessionId: "sdk-1", sentCount: 2 });
+	});
+
 	it("admits custom ledger metadata of any type after the committed assistant", () => {
 		const branch = [
 			marker(),

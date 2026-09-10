@@ -217,10 +217,10 @@ describe("buildEvalPrompt", () => {
 		expect(claude).toContain("<eval_first_batching>");
 		expect(claude).not.toContain("<gpt_eval_dialect>");
 		expect(gpt).toContain("<gpt_eval_dialect>");
-		expect(gpt).toContain("detach on timeout");
+		expect(gpt).toContain("detach on their own");
 		expect(gpt).not.toContain("<eval_first_batching>");
 		const gptWithMonitor = buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).description;
-		expect(gptWithMonitor.indexOf("tool.monitor(")).toBeLessThan(gptWithMonitor.indexOf("detach on timeout"));
+		expect(gptWithMonitor.indexOf("tool.monitor(")).toBeLessThan(gptWithMonitor.indexOf("detach on their own"));
 		expect(gptWithMonitor).toContain("no cell sits on the wait");
 		const kimiInstruction = kimi.slice(0, kimi.indexOf("<prelude>"));
 		expect(kimiInstruction).not.toMatch(/\b[A-Z]{5,}\b/);
@@ -243,7 +243,7 @@ describe("buildEvalPrompt", () => {
 			"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
 		);
 		expect(guideline("gpt-5.6")).toBe(
-			"Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on timeout and notify on completion, so do not poll.",
+			"Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on their own and notify on completion, so do not poll.",
 		);
 		expect(buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).promptGuidelines[0]).toBe(
 			"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.",

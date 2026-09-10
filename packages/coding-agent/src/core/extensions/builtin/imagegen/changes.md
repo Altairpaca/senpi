@@ -1,3 +1,42 @@
+## 2026-09-10 - Sunburst stays the default model
+
+### What changed
+
+- `params.ts`: `DEFAULT_IMAGE_MODEL` is `gpt-image-2.5-sunburst` again, and the `model` description leads with Sunburst as the most capable option while Flare is presented as the speed trade-off. `tool.ts` description, `skill/SKILL.md` model selection, and `packages/coding-agent/docs/skills.md` say the same. `openai-image-gen/inject.ts` pins the native server tool to the same constant, so both surfaces move together.
+
+### Why
+
+- The earlier flip to Flare followed OpenAI's "default choice for most applications" line, but the owner's standing preference is the best available model unless speed is the stated goal; Sunburst is the base model optimized for quality (higher than gpt-image-2) while Flare is the small model with quality merely comparable to gpt-image-2.
+
+### Why an extension could not handle it
+
+- The default is a constant inside the owning builtin, shared with the native injector.
+
+### Expected merge conflict zones
+
+- LOW: the single constant plus four copy blocks.
+
+## 2026-09-10 - Output options, masks, Flare default, and catalog pricing
+
+### What changed
+
+- `params.ts`: schema adds `background`, `output_format`, `output_compression`, `moderation`, and `mask_image_path`; `DEFAULT_IMAGE_MODEL` moved to `gpt-image-2.5-flare` (reverted to `gpt-image-2.5-sunburst` the same day, see the entry above); `GenerateImageDetails` gains `background`, `outputFormat`, and `transparentBackground`.
+- `paths.ts`: `resolveTargets` derives the extension from the format (`.png`, `.jpg`/`.jpeg`, `.webp`), rejects mismatches, and `withFormatExtension`/`outputFormatOf` rename a target when the provider returns a different container than requested.
+- `reference-images.ts`: `loadMaskImage` reuses the reference loader and requires at least one reference.
+- `tool.ts`: validates output options through `parseOpenAIImageOutputOptions` before any request, forwards them to pi-ai, takes `cost` from `getImageModel("openai", id)`, labels result blocks with the returned MIME, and reports the provider's background verdict.
+
+### Why
+
+- GPT Image 2.5 exposes transparency, container, compression, moderation, and inpainting controls the tool did not surface; OpenAI names Flare the default for most applications; usage cost was hard-coded to zero; and a live Quotio run returned png bytes for a webp request, which would have been saved as `.webp`.
+
+### Why an extension could not handle it
+
+- The owning builtin's schema, validation, file naming, and result shape must change together.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tool.ts` execute path; LOW: `params.ts`, `paths.ts`, `reference-images.ts`, tests, `skill/SKILL.md`.
+
 # changes
 
 ## 2026-09-09 - GPT Image 2.5 generation and reference-image editing

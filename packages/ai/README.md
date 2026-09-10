@@ -437,6 +437,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
 | Baseten | `BASETEN_API_KEY` |
+| Venice AI | `VENICE_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | OpenGateway | `OPENGATEWAY_API_KEY` |

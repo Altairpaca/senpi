@@ -18,6 +18,7 @@ export const IMAGE_MODELS = {
 				output: 30,
 				cacheRead: 1.25,
 				cacheWrite: 0,
+				imageInput: 8,
 			},
 		} satisfies ImagesModel<"openai-images">,
 		"gpt-image-2.5-flare": {
@@ -33,6 +34,7 @@ export const IMAGE_MODELS = {
 				output: 30,
 				cacheRead: 1.25,
 				cacheWrite: 0,
+				imageInput: 8,
 			},
 		} satisfies ImagesModel<"openai-images">,
 		"gpt-image-2": {
@@ -48,6 +50,7 @@ export const IMAGE_MODELS = {
 				output: 30,
 				cacheRead: 1.25,
 				cacheWrite: 0,
+				imageInput: 8,
 			},
 		} satisfies ImagesModel<"openai-images">,
 		"gpt-image-1.5": {
@@ -324,7 +327,7 @@ export const IMAGE_MODELS = {
 		} satisfies ImagesModel<"openrouter-images">,
 		"microsoft/mai-image-2.5": {
 			id: "microsoft/mai-image-2.5",
-			name: "MicrosoftAI: MAI-Image-2.5",
+			name: "Microsoft AI: MAI-Image-2.5",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",

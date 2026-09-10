@@ -4,13 +4,17 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 // Matches GPT-5.x Sol and GPT-6 Astra variants, including provider-prefixed
 // forms. The trailing lookahead excludes unrelated ids that continue with letters.
 const SENSITIVE_MODEL_ID_PATTERN = /(?:gpt-5(?:\.\d+)?-sol|gpt-6-astra)(?![a-z])/i;
+const ASTRA_MODEL_ID_PATTERN = /gpt-6-astra(?![a-z])/i;
 
 export function isSensitiveHighReasoningModel(model: Pick<Model<Api>, "id">): boolean {
 	return SENSITIVE_MODEL_ID_PATTERN.test(model.id);
 }
 
 export function shouldWarnHighReasoning(model: Pick<Model<Api>, "id">, thinkingLevel: ThinkingLevel): boolean {
-	return (thinkingLevel === "xhigh" || thinkingLevel === "max") && isSensitiveHighReasoningModel(model);
+	const isWarningLevel = ASTRA_MODEL_ID_PATTERN.test(model.id)
+		? thinkingLevel === "max"
+		: thinkingLevel === "xhigh" || thinkingLevel === "max";
+	return isWarningLevel && isSensitiveHighReasoningModel(model);
 }
 
 export interface HighReasoningWarningContent {

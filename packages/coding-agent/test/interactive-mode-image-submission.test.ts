@@ -71,6 +71,7 @@ interface FakeSession {
 	isCompacting: boolean;
 	isStreaming: boolean;
 	isBashRunning: boolean;
+	messages: unknown[];
 	prompt: MockFn;
 	reserveQueuedInputOrder: MockFn;
 	extensionRunner: { getCommand: (name: string) => unknown };
@@ -127,6 +128,7 @@ interface ModeContext {
 	buildMainLoopPromptOptions?: (userInput: UserSubmission) => unknown;
 	isExtensionCommand?: (text: string) => boolean;
 	getExpandedEditorText?: () => string;
+	beginUserEcho?: (text: string, images?: readonly ImageContent[]) => string | undefined;
 }
 
 type ModePrototype = {
@@ -148,6 +150,7 @@ type ModePrototype = {
 	buildMainLoopPromptOptions(this: ModeContext, userInput: UserSubmission): unknown;
 	isExtensionCommand(this: ModeContext, text: string): boolean;
 	getExpandedEditorText(this: ModeContext): string;
+	beginUserEcho(this: ModeContext, text: string, images?: readonly ImageContent[]): string | undefined;
 };
 
 const proto = InteractiveMode.prototype as unknown as ModePrototype;
@@ -181,6 +184,7 @@ function createModeContext(): ModeContext {
 		isCompacting: false,
 		isStreaming: false,
 		isBashRunning: false,
+		messages: [],
 		prompt: vi.fn(async () => {}),
 		reserveQueuedInputOrder: vi.fn(() => 0),
 		extensionRunner: { getCommand: vi.fn(() => undefined) },
@@ -239,6 +243,7 @@ function createModeContext(): ModeContext {
 		"getExpandedEditorText",
 		"getUserInput",
 		"buildMainLoopPromptOptions",
+		"beginUserEcho",
 	] as const) {
 		const real = proto[method] as unknown as ((this: ModeContext, ...args: never[]) => unknown) | undefined;
 		if (typeof real === "function") {

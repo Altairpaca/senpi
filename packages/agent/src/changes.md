@@ -1,4 +1,39 @@
+## 2026-09-10 - Honor an inline isError on returned tool results
 
+### What changed
+
+- packages/agent/src/types.ts: `AgentToolResult` declares `isError?: boolean` so a tool can report a failure without throwing while keeping `content` and `details` intact.
+- packages/agent/src/agent-loop.ts: `executePreparedToolCall` carries `settled.isError === true` into the executed outcome instead of hardcoding `isError: false`, so `tool_execution_end` and the `toolResult` message flag the failure.
+
+### Why
+
+- Structured-failure tools (omo's team and memory tools, the terminal tool) return `isError: true` with typed `details` for the model to branch on. The loop dropped that flag, so the TUI painted the row as success, the RPC `tool_execution_end.isError` the desktop GUI maps to "failed" stayed false, and `tool_result` hooks saw a success.
+
+### Why this lives in the fork
+
+- The error flag is decided inside the loop's execution outcome before any hook runs; extensions can only rewrite it per tool through `tool_result`, not restore the contract for every tool.
+
+### Expected merge conflict zones
+
+- `executePreparedToolCall` return in packages/agent/src/agent-loop.ts and the `AgentToolResult` interface in packages/agent/src/types.ts.
+
+## 2026-09-10 - Use native TypeScript builds for omob performance
+
+### What changed
+
+- packages/agent/package.json: build uses tsgo for the emitted workspace build.
+
+### Why
+
+- The native compiler reduces omob build time without changing runtime JavaScript.
+
+### Why this lives in the fork
+
+- The package build manifest owns the compiler used by the fork's release pipeline.
+
+### Expected merge conflict zones
+
+- The `build` script in packages/agent/package.json.
 ## 2026-09-05 - Preserve Astra reasoning effort across session changes
 
 ### What changed

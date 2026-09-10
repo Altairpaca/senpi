@@ -7,6 +7,7 @@ import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionRuntime,
 } from "../../core/agent-session-runtime.ts";
+import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { beginSessionClose, closeMarkedSession, closeSession, type SessionTeardownHost } from "./session-teardown.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
@@ -144,6 +145,14 @@ export class RpcSessionRegistry {
 		// session restores its persisted model and thinking level instead of being
 		// overridden by the new open_session request.
 		const isResume = sessionPath !== undefined && existsSync(sessionPath);
+		// Re-opening an existing session file is a resume, exactly like interactive
+		// /resume (AgentSessionRuntime.switchSession). Without the event the session
+		// starts with reason "startup" and every extension that only rebuilds state
+		// on a resume - the ask-user dangling-question hook - stays unreachable from
+		// the RPC restart path. A session created by this open stays "startup".
+		const sessionStartEvent: SessionStartEvent | undefined = isResume
+			? { type: "session_start", reason: "resume" }
+			: undefined;
 		const storedProfile = frozenProfile({ ...profile, ...(sessionPath ? { sessionPath } : {}) });
 		const runtimeProfile = isResume
 			? frozenProfile({ ...storedProfile, creationModel: undefined, initialThinkingLevel: undefined })
@@ -205,6 +214,7 @@ export class RpcSessionRegistry {
 					cwd: manager.getCwd(),
 					agentDir: this.options.agentDir,
 					sessionManager: manager,
+					sessionStartEvent,
 					launchProfile: runtimeProfile,
 				}),
 			);
@@ -247,7 +257,10 @@ export class RpcSessionRegistry {
 	getForCommand(handle: string, command: string): RpcSessionEntry {
 		const entry = this.entries.get(handle);
 		if (!entry) throw new RpcSessionRegistryError("unknown_session");
-		if (entry.state === "closing" && !["abort", "abort_bash", "extension_ui_response"].includes(command)) {
+		if (
+			entry.state === "closing" &&
+			!["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(command)
+		) {
 			throw new RpcSessionRegistryError("session_closing");
 		}
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");

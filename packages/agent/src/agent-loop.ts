@@ -1198,7 +1198,7 @@ async function executePreparedToolCall(
 		}
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
-		return { result: settled, isError: false };
+		return { result: settled, isError: settled.isError === true };
 	} catch (error) {
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);

@@ -85,6 +85,8 @@ Configuration is loaded in this order:
   },
   "cellTimeoutSeconds": 30,
   "foregroundWindowSeconds": 60,
+  "runBudgetSeconds": 300,
+  "hardLimitSeconds": 1800,
   "parallelPoolWidth": 4,
   "taskTools": {
     "task": "task",
@@ -101,8 +103,10 @@ Configuration is loaded in this order:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `languages` | `py`/`js` enabled; `rb`/`jl` disabled | Selects desired languages before interpreter detection. |
-| `cellTimeoutSeconds` | `30` | Idle timeout for one cell unless the call supplies `timeout`; interactive calls detach by default and print/json calls error. |
-| `foregroundWindowSeconds` | `60` | Longest an interactive (detach-behavior) call blocks the turn before the cell detaches, capping the `timeout` detach budget. A larger `timeout` still raises the hard limit and keeps the cell running, but the turn is freed at this window. `on_timeout: "error"` calls keep the full `timeout` as an uncapped deadline. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
+| `cellTimeoutSeconds` | `30` | Idle time an interactive call blocks the turn before the cell detaches. Print/json calls never detach. |
+| `foregroundWindowSeconds` | `60` | Caps `cellTimeoutSeconds` and the grace a bridge-parked cell gets before it detaches, so an interactive call never blocks the turn longer than this. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
+| `runBudgetSeconds` | `300` | Kill deadline for a cell's own execution time - child processes, network, timers, CPU. Time parked in host tool calls (`agent()`, `tool.*`) is not charged, and the budget keeps counting after the cell detaches. A per-call `timeout` replaces it for that cell. Env override: `SENPI_CODEMODE_RUN_BUDGET_SECONDS`. |
+| `hardLimitSeconds` | `1800` | Wall-clock kill deadline for a cell, parked or not; a per-call `timeout` above it raises it. Env override: `SENPI_CODEMODE_HARD_LIMIT_SECONDS`. |
 | `parallelPoolWidth` | `4` | Maximum concurrent `parallel()` thunks. |
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
@@ -172,6 +176,17 @@ default to `"error"` so their result is never silently detached. A detached
 cell keeps only its own language kernel busy. A new same-language call returns
 a busy error with its cell id and output tail; calls in other languages continue
 normally. Do not re-run the cell.
+
+Every cell, detached or not, is bounded by two kill deadlines. The run budget
+(`runBudgetSeconds`, or the call's `timeout`) charges only the cell's own
+execution time and is paused while a host tool call is in flight, so a cell
+waiting on `agent()` survives while a runaway child process or loop does not.
+The hard limit (`hardLimitSeconds`, raised by a larger `timeout`) is wall-clock
+and bounds parked cells too. A cell killed by either deadline reports which one
+in its result or completion notification, together with whether kernel state
+survived; the tool schema states the configured numbers. The `timeout` value
+never changes when an interactive call detaches: that is `cellTimeoutSeconds`
+capped by `foregroundWindowSeconds`.
 
 While any cell is detached, the interactive footer shows a highlighted
 `↗ <language> · <summary>` status on the extension status line (the cell id

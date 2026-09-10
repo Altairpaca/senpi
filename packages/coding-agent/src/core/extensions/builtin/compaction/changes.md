@@ -1,5 +1,23 @@
 # changes.md — builtin compaction policy
 
+## Deterministic resume slice for an over-window restored context (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/resume-slice.ts` (new, fork-only): `planResumeSlice()` derives the fixed admission overhead from the failed resume projection, then walks `findCutPoint()` from the largest keep budget downwards, measuring each candidate through `buildSessionContext()` with a preview compaction entry, and returns the first cut whose context plus overhead fits the window. It carries the previous checkpoint summary forward under a bounded character budget and returns `undefined` when the fixed overhead alone cannot fit.
+
+### Why
+
+- Issue #1524: resume admission had no recovery for a restored context larger than the window itself, and summarization cannot be the first step there because the summarization request would itself be over the window.
+
+### Why an extension could not handle it
+
+- The plan is consumed inside `createAgentSession()` before extensions are wired, so it cannot live behind an extension hook.
+
+### Expected merge conflict zones
+
+- NONE: the module is fork-only. Its callers in `sdk.ts` and `agent-session.ts` are tracked in `packages/coding-agent/src/core/changes.md`.
+
 ## Resume oversized sessions into required compaction (2026-09-09)
 
 ### What changed

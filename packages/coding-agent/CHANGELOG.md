@@ -12,7 +12,109 @@
 
 - The Windows RPC host supervisor now creates its internal socket directory recursively, so launching `--internal-rpc-host-supervisor` directly on a fresh profile no longer crashes with `ENOENT ... mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` ([#1370](https://github.com/code-yeongyu/senpi/issues/1370))
 
+- A pool slot holding a provider's managed sentinel (`claude-sdk-oauth-managed`) is healed the moment auth.json is read and the repair is written back once, so a second login on an affected build no longer leaves a dead `login-N` entry that hard-errors every request whose affinity picks it; the rotation classifier also treats an unconfigured-slot auth miss as a per-credential failure, so a single bad slot can never dead-end a healthy multi-account pool.
+- A provider-owned login pool is merged onto the stored pool at commit time instead of overwriting it with the pre-browser-flow snapshot, so a sibling account's rotated refresh token and rate-limit block survive another account's interactive login.
+- The Claude SDK lane's session-lock and bare `invalid_request` remint, and its `Provider is not configured:` fallback exclusion, are scoped to that provider: provider-agnostic stream stalls keep consuming the shared same-model retry budget and still escalate to the configured fallback chain, and another provider's auth miss or `invalid_request` still hops the chain.
+- OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted, and an interleaved waiting or info step replaces (never duplicates) the live `(to cancel)`/`(to close)` hint row.
+
 ### Removed
+
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A provider-agnostic "Provider is not configured" style refusal no longer ends a goal as a Codex policy rejection. The gate now requires the Codex responses api id, so another provider or gateway emitting the same sentence keeps provider and system recovery instead of blocking the goal; the api id is pinned against the shipped model catalog so renaming it there cannot silently disarm the guard ([#1520](https://github.com/code-yeongyu/senpi/issues/1520))
+
+- A bare `.` submitted on a session that already has messages no longer renders as a user message in the TUI. It stays the manual-continue shortcut the session delivers as a hidden continuation, so nothing is painted for it while idle or while steering an active turn; a `.` on an empty session and a `.` carrying image attachments remain ordinary user input ([#1569](https://github.com/code-yeongyu/senpi/issues/1569))
+
+- A model switch the session refuses is now recorded instead of vanishing: every
+  guard (`setModel`/`setSessionModel`, the revalidation after `model_select`, and
+  favorite cycling) appends a `model_change_rejected` session entry carrying the
+  budget projection numbers and emits a matching event, and the refusal keeps its
+  compaction remedy only when there is context to compact. A refused favorite
+  cycle no longer records a `model_change` or writes the global default for a
+  model that never ran, so the session and every new session stay on the model
+  that is actually active. The new entry is bookkeeping everywhere it is
+  consumed: it never reaches the model, keeps Claude SDK OAuth continuity across
+  resume, renders and searches in `/tree`, crosses the RPC
+  `append_session_entry` seam, and stays out of RPC status snapshots
+  ([#1528](https://github.com/code-yeongyu/senpi/pull/1528) by
+  [@rlaope](https://github.com/rlaope))
+
+- Claude SDK OAuth reattach no longer closes a healthy resumed query when
+  normal completed-request cleanup aborts the request controller; the
+  initialization cancellation listener is detached once initialization settles,
+  while pending cancellation still rejects and closes the query.
+- GPT-6 Astra high-reasoning warnings now appear only at `max`; GPT-5.6 Sol
+  continues to warn at both `xhigh` and `max`.
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+- RPC mode serves `edit_assistant_message` (`entryId`, `text`, optional `expectedLeafId`, `summarize`, `customInstructions`) so any RPC client can replace an assistant response with an edited copy; the response reports `outcome: edited | unchanged | cancelled` with the new entry and leaf, and failures carry a typed `errorCode` (`streaming`, `not_found`, `not_assistant`, `empty`, `stale_leaf`). `expectedLeafId` is an optimistic-concurrency guard on `TreeNavigationOptions` checked before any mutation and before the unchanged short-circuit, so a stale client is refused instead of rewriting a conversation another client moved. Extensions get `ctx.editAssistantMessage()`, the RPC client gets `editAssistantMessage()` (failures reject with `RpcCommandError` carrying `errorCode`), and a TUI attached to a shared host now routes `/tree` edits to the host instead of a local shadow session. `entry_appended` is documented as the identity channel for persisted messages ([#1561](https://github.com/code-yeongyu/senpi/pull/1561)).
+
+- The built-in question tool selects `request_user_input` for OpenAI GPT models and `ask_user_question` for other models, with an explicit choice to wait for an answer or keep working while the question stays open. Questions have an idle timeout and hard cap, support partial answers with a comment, and avoid re-asking after a timeout in the same turn. Session resume and reload re-present a dangling question when a UI is available, or deliver an orphaned-after-restart user message once per tool call.
+
+- Settings `askUser.enabled` (default true) and `askUser.timeoutMinutes` (default 30, clamped 1–120) control the built-in question tool; `--no-ask-user` disables it for one run and wins over saved settings.
+
+- RPC extension UI gains `method:"question"` requests with `extension_ui_progress` drafts, `question_updated` deadline refreshes, `question_resolved` broadcasts, and `pendingQuestions` on session state. Clients advertise the `question` capability; those without it get a sequential select/input fallback.
+
+- App-server emits `item/tool/requestUserInput` with replay, progress via `item/tool/userInputProgress`, and cancellation on turn end.
+
+- Venice AI (https://venice.ai) is selectable as a provider: `VENICE_API_KEY` is listed in `--help`, the provider displays as "Venice AI", and `venice` resolves to `z-ai-glm-5-3` when no model is given. Venice is OpenAI-compatible and privacy-first, and senpi suppresses Venice's default system prompt so the agent's own prompt is the only one in play ([#1551](https://github.com/code-yeongyu/senpi/issues/1551))
+
+- `/tree` can edit an assistant response: press `ctrl+e` (`app.tree.editMessage`) on an assistant entry to open it in the multi-line editor; submitting branches to that entry's parent and appends the edited copy as the new leaf, so the conversation continues from the corrected response while the original stays in the session file. Tool calls and thinking in the edited response are dropped, the branch-summary prompt appears only when messages are abandoned, and the key reopens user messages in the editor the same way `enter` does. `AgentSession.editAssistantMessage()` exposes the operation to hosts; it refuses edits while a response streams and rejects empty text before treating a request as unchanged ([#1532](https://github.com/code-yeongyu/senpi/pull/1532)).
+
+- `generate_image` gains `background` (`auto`/`transparent`/`opaque`), `output_format` (`png`/`jpeg`/`webp`), `output_compression` (0-100, jpeg/webp only), `moderation` (`auto`/`low`), and `mask_image_path` (alpha-channel inpainting mask for the first reference); invalid combinations are rejected before any request, the saved file's extension follows the container the provider actually returned, and `details` reports `background`, `outputFormat`, and the provider's `transparentBackground` verdict. The `gpt-image-gen` skill is rewritten against OpenAI's GPT Image 2.5 prompting guide: specificity policy, transparent assets, output formats, exact-text rules, reference roles, multi-turn refinement, and a result checklist.
+
+### Changed
+
+- Goal continuation prompts now treat asking through `request_user_input` / `ask_user_question` as a legal ending, audit user-only blockers before marking a goal blocked, and count materially different attempts rather than automatic wake-ups for recurrence.
+- Prompt presets route a user question through `request_user_input` (GPT-6 Astra, GPT-5.6) or `ask_user_question` (Claude Fable/Opus, Kimi K3, GLM 5.x) when the tool is available, instead of ending the turn on a bare question.
+
+- Extension tools can report a failure without throwing: a result returned with `isError: true` is now delivered as a tool error on both the agent-loop path and `pi.executeTool`, so the TUI paints the row with the error background, RPC `tool_execution_end.isError` is `true`, and `tool_result` hooks observe the failure while the tool's `content` and `details` stay intact.
+
+- `generate_image` defaults to `gpt-image-2.5-sunburst`, the most capable image model (Flare stays selectable when speed matters), prices requests from the builtin image catalog instead of zero, and the native `image_generation` server tool is injected with that same model so official OpenAI Responses sessions no longer fall back to the API default `gpt-image-1`.
+
+### Fixed
+
+- An idle question timeout is broadcast to RPC clients as `question_resolved{outcome:"timed_out"}` instead of `cancelled`, matching the timeout text the model already received in the tool result and the framed notice. The ask-user extension's idle timer is the authoritative one and now hands its outcome to the question bridge it aborts.
+
+- Re-opening an existing session file over RPC (`open_session` with a `sessionPath` that exists) now starts the session as a resume instead of a plain startup, so a question left dangling by a crashed host is re-presented once when the client has a question UI, or delivered once as an orphaned-after-restart user message when it has not - the same behaviour interactive `/resume` already had. Newly created sessions still start as `startup`.
+
+- A pending question survives the drop of the connection that opened the session: as long as another client is attached, the question stays pending, hydrates into `open_session` / `get_state`, and the surviving client's answer resolves it. Previously any owner disconnect broadcast `question_resolved{outcome:"cancelled"}` to every peer and the tool result read "The user dismissed the question."; pending extension-UI requests are now cancelled only when the last attachment tears the session down.
+
+- An unanswered-yet question asked with wait-for-answer off now delivers its answer - and its idle-timeout notice - as exactly one framed user message on every surface (interactive TUI, RPC clients, app-server clients); previously only the TUI delivered it and answers given over RPC or app-server were dropped. A TUI attached to a shared host also advertises the `question` capability, so it renders the full question overlay instead of falling back to sequential prompts.
+
+- Anthropic native tool-search results are readable in the transcript: the entry summarises as `tool_search results` and lists the tool names the search discovered (or the error code and message when the search failed), instead of dumping the raw provider block as pretty-printed JSON.
+
+- The update-available notice no longer clips a long update command into an unrunnable fragment. The command is shown on its own line and the notice box wraps to the terminal width ([#1539](https://github.com/code-yeongyu/senpi/issues/1539)).
+
+- The Claude SDK OAuth lane no longer hands the Claude Agent SDK an executable path it has not verified is spawnable. `CLAUDE_CODE_EXECUTABLE`, the compiled-Bun extraction, the platform sidecar packages (resolved from the same `@anthropic-ai/claude-agent-sdk` instance senpi imports, walking parents so a sidecar hoisted above it is found) and finally `claude` on `PATH` (honouring `PATHEXT` on Windows, files only, no shell) are each accepted only when the exact string passed to the SDK is an absolute path to a regular file in this process; on Windows that string carries the `\?\` namespace prefix so a path Explorer can see but `CreateProcess` rejects still launches. When nothing is spawnable the turn fails with senpi's own error naming every candidate tried instead of the SDK's generic `Claude Code native binary not found`, and `describeClaudeLane()` reports the same resolution plus the Bun/Node runtime for doctor surfaces ([#1541](https://github.com/code-yeongyu/senpi/issues/1541)).
+
+
+
+- OpenAI Codex multi-account: a login started with `/gpt-account add` is no longer bound to the streaming turn's abort signal, so Esc, steering or a timeout on the response cannot kill the browser or device-code login; the login is cancelled only by dismissing its own dialog or re-issuing the command. Cancelling a `/login` or API-key dialog now prints a neutral `Login cancelled` status instead of `Failed to login to <provider>: This operation was aborted`, and only a genuine provider, network or OAuth error is rendered as a failure. The `auth.json` lock is no longer held across the OAuth token exchange: the refresh runs outside the lock and is compare-and-swapped on the slot's refresh token, so several accounts refreshing at once no longer fail with `CredentialStoreBusyError`, and a catalog refresh for the same provider joins an in-flight token refresh instead of aborting it ([#1542](https://github.com/code-yeongyu/senpi/issues/1542)).
+
+- The published package is Bun-compile-safe on its own: publish staging inlines css-tree's `data/patch.json`, mdn-data dictionaries and version, which css-tree otherwise resolves through `createRequire(import.meta.url)` at module scope. A binary compiled from the tarball previously died on the first `webfetch` markdown or text conversion with `Cannot find module '../data/patch.json'`; jsdom's binary-only worker rewrite deliberately stays out of the tarball so a plain Bun consumer keeps jsdom's own lookup ([#1540](https://github.com/code-yeongyu/senpi/pull/1540)).
+
+- Resuming a session whose restored context is larger than the model's context window no longer fails with `ModelUsabilityBudgetError`. Admission now reduces the live context deterministically, without any provider request, before the session opens: it reuses the compaction cut-point selection so a retained tool result keeps its originating tool call, leaves the recorded transcript intact, and accepts a reduction only when the remaining context still leaves room for the system prompt, tool schemas, output reserve, compaction reserve and safety margin, so the first ordinary request cannot overflow. When the fixed overhead alone cannot fit, the original actionable budget error is raised and nothing is written, and sessions with compaction disabled keep the existing refusal. Interactive mode reports the reduction before the first prompt ([#1524](https://github.com/code-yeongyu/senpi/issues/1524)).
+- Shared RPC hosts now cut a socket peer that stops reading (a write not accepted within 4 seconds) with an `overflow` record `stalled, resync required` instead of letting it hold the session worker's output credit until the 5-second `session_worker_credit_timeout` quarantined a healthy session mid-turn; a cut or overflowed peer no longer withholds session credit or fails the shared host writer ([#1529](https://github.com/code-yeongyu/senpi/pull/1529)).
+
+### Removed
+
+- Built-in themes and the HTML export template are found again when `PACKAGE_DIR` points at a different install: the resolver now checks that the configured root actually ships the asset and otherwise falls back to the running install. A senpi launched from inside a Bun binary that exports its own package root (an omo memory reflection child, for example) previously died at startup with `ENOENT ... /dist/modes/interactive/theme/dark.json`, while a legitimate relocation such as a Nix/Guix store path still takes precedence ([#1547](https://github.com/code-yeongyu/senpi/pull/1547)).
 
 ## [2026.9.9-2] - 2026-09-09
 

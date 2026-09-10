@@ -20,6 +20,176 @@
 
 - LOW: the `createInternalSocketPath` signature and its win32 `mkdir` call in `host-lifecycle.ts`, and the internal launch route paragraph in `docs/rpc.md`.
 
+## The refused-switch entry crosses the RPC seam and stays bookkeeping (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `validSessionEntry` accepts `model_change_rejected` (`provider`, `modelId` and `detail` must be strings), so an `append_session_entry` carrying the entry is no longer refused as malformed.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the deferred-entry gate counts `model_change_rejected` as auto-appended bookkeeping next to `model_change`/`thinking_level_change`, so a session whose only content is a refused switch keeps shipping status snapshots without its entry list.
+
+### Why
+
+- `model_change_rejected` (#1526) is appended by the session itself on a refused switch. Without the validator branch the entry could not cross the `append_session_entry` seam `rpc-client.ts` exists for, and without the bookkeeping exclusion recording a refusal silently turned every `get_state` for that session into a full entry dump.
+
+### Why an extension could not handle it
+
+- Both are RPC-mode internals: the command validator runs before any extension sees the command, and the state snapshot is assembled by the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `validSessionEntry` switch and the `entries` spread inside the state snapshot builder.
+
+## An aborted question carries the extension's outcome (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts`: the abort listener installed for `opts.signal` no longer hard-codes `cancelled`. It reads the abort reason and resolves `timed_out` when the aborting side already settled the question that way, so the broadcast `question_resolved` outcome matches the response the model received. Every other abort (dismissal, superseded question, session close) still resolves `cancelled`.
+
+### Why
+
+- The ask-user builtin owns the authoritative idle timer and aborts the dialog controller when it fires. The bridge's own equal-length timer lost that race in RPC mode, so an idle timeout broadcast `question_resolved{outcome:"cancelled"}` while the framed notice and tool result carried the timeout text - and `docs/rpc.md` documents `timed_out` as the outcome desktop clients map onto the resolved row (probe scenario `async`).
+
+### Why an extension could not handle it
+
+- The outcome broadcast to connections is written by the bridge; an extension only sees its own `QuestionResponse`.
+
+### Expected merge conflict zones
+
+- LOW: the `cancel` closure inside `ConnectionQuestionBridge.ask`.
+
+## open_session of an existing session file starts as a resume (2026-09-10)
+
+### What changed
+
+- `session-registry.ts`: `openSession` passes `sessionStartEvent: { type: "session_start", reason: "resume" }` to `createAgentSessionRuntime` when the requested `sessionPath` already exists on disk (the same `isResume` predicate that already restores the persisted model and thinking level). A session created by the open still starts with the default `reason: "startup"`.
+
+### Why
+
+- `AgentSession` defaults to `reason: "startup"` when no event is supplied, so re-opening a session over RPC fired `session_start{startup}`. Extensions that rebuild per-session state only on a resume never ran: after a host crash the ask-user builtin's dangling-question hook (`resume.ts`, `reason` must be `resume`/`reload`) left the pending tool call hanging with nothing re-presented and no orphaned-after-restart message (probe scenario `resume`). Interactive `/resume` already emits the event through `AgentSessionRuntime.switchSession`; the RPC restart path now mirrors it.
+
+### Why an extension could not handle it
+
+- The start reason is decided by the runtime factory call inside the registry, before any extension is bound; an extension cannot observe why its session was created.
+
+### Expected merge conflict zones
+
+- LOW: the `isResume` block and the `createAgentSessionRuntime` options in `RpcSessionRegistry.openSession`.
+
+## Pending questions survive the opening connection's drop (2026-09-10)
+
+### What changed
+
+- `session-command-router.ts`: `releaseConnection` no longer calls `cancelPendingExtensionUiRequests()` for every session a dropped connection owned. The cancellation moved into `releaseOwnedSession`, on the branch where the close claim made this caller the finalizer - i.e. the attachment refcount already decided the session is being torn down. A drop that leaves other attachments alive now keeps the shared binding's pending questions pending.
+
+### Why
+
+- A question is session-owned: `docs/rpc.md` promises pending questions are broadcast to every attached connection and replayed to connections that attach later. Cancelling on any owner drop resolved the question `cancelled` for all peers, made `open_session` hydrate zero pending questions, and rejected the surviving connection's answer with `question_already_resolved` (probe scenario `owner-drop`).
+
+### Why an extension could not handle it
+
+- Connection lifecycle, attachment refcounting and binding teardown are router-private; no extension hook observes a dropped socket or the close claim that decides whether the session survives.
+
+### Expected merge conflict zones
+
+- LOW: the attachment loop in `releaseConnection` and the finalizer branch of `releaseOwnedSession`.
+
+## edit_assistant_message command and typed edit errors (2026-09-10)
+
+### What changed
+
+- `rpc-types.ts`: new command member `edit_assistant_message { entryId, text, expectedLeafId?, summarize?, customInstructions? }`, response `data: EditAssistantMessageResult` (`edited | unchanged | cancelled`), and five `RPC_ERROR_*` constants (`streaming`, `not_found`, `not_assistant`, `empty`, `stale_leaf`) folded into `RpcErrorCode`.
+- `connection-handler.ts`: `case "edit_assistant_message"` beside `fork` - validates the shape, calls `session.editAssistantMessage` on the connection's bound session (the same routed session `get_entries`/`get_tree` use), maps outcomes, and turns `AssistantEditError`/`SessionStreamingError` into `errorCode`; the extension `commandContextActions` gain `editAssistantMessage`.
+- `rpc-client.ts`: `editAssistantMessage()` plus `RpcCommandError` (an `Error` subclass carrying `errorCode`/`errorData`) now thrown by `getData()` for every failed command instead of a bare `Error` with the same message.
+
+### Why
+
+- The TUI-only edit from `/tree` (#1532) was unreachable from RPC clients such as the desktop, and clients had no typed way to learn why an edit was refused.
+
+### Why an extension could not handle it
+
+- The RPC command surface and the error envelope are owned by this directory; an extension cannot add a wire command.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` command/response unions and the `RPC_ERROR_*` block; `connection-handler.ts` switch (one new case next to `fork`); `rpc-client.ts` `getData()`.
+## Client writer for question draft progress (2026-09-10)
+
+### What changed
+
+- `rpc-client.ts`: `sendExtensionUIProgress` writes an `extension_ui_progress` stdin record fire-and-forget (no reply wait), and `send()` now preserves the host request id for progress records exactly as it already does for `extension_ui_response` (never minting `req_<n>`).
+
+### Why
+
+- A TUI attached to a shared RPC host debounces question-overlay drafts (todo 10) and needs a client-side writer to forward them so the host can reset the question's idle deadline.
+
+### Why an extension could not handle it
+
+- The record must go out on the RPC stdin stream the client owns, with the routing/id rules private to `RpcClient.send`.
+
+### Expected merge conflict zones
+
+- LOW: the new method beside `sendExtensionUIResponse` and the id-preserving branch at the top of `send`.
+
+## Session-owned question bridge (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts` implements question submission, progress-driven idle deadlines, draft-preserving timeout, cancellation, late-answer errors, and sequential select/input fallback. `connection-handler.ts` gates native questions on client capabilities and projects pending questions into session state.
+- `session-event-fanout.ts` retains pending questions independently of assistant snapshots, replays them once on attachment, refreshes deadlines, and forgets terminal questions. `session-event-writer.ts` clears retention on session close; questions remain broadcast.
+- `session-worker.ts` publishes question state changes across the existing snapshot IPC. `session-registry.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` admit progress alongside UI responses during closing.
+
+### Why
+
+- Multi-client question prompts must survive completion of the assistant message and detachment of the asking client, accept drafts without resolving, and resolve exactly once for all peers.
+
+### Why an extension could not handle it
+
+- RPC routing, socket replay, client capabilities, and worker snapshots are runtime-owned. Extensions cannot implement these transport guarantees.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts` UI binding and input dispatch; worker output snapshot selection; privileged routing allowlists; fanout snapshot retention and attachment replay.
+
+## Question extension-UI wire types and client capability (2026-09-10)
+
+### What changed
+
+- `rpc-types.ts`: additive `extension_ui_request{method:"question"}` (`RpcQuestionUiRequest`), `{answers, comment}` `extension_ui_response` member, inbound `RpcExtensionUIProgress` on `RpcInboundRecord`, outbound `question_updated` / `question_resolved`, and optional `RpcSessionState.pendingQuestions`.
+- `custom-capability.ts`: export `QUESTION_CAPABILITY = "question"` next to the existing client-capability constants.
+
+### Why
+
+- The ask-user tool needs a typed RPC wire for broadcasting a multi-question prompt, receiving partial drafts and a final `{answers, comment}` reply, hydrating late-attaching clients from session state, and gating on an explicit client capability. Older clients that never advertise `question` keep today's select/input path.
+
+### Why an extension could not handle it
+
+- RPC record shapes, session-state hydration fields, and the client-capability handshake are host protocol, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcExtensionUIRequest` / `RpcExtensionUIResponse` union tails in `rpc-types.ts`, the `RpcSessionState` field list, and the capability constants in `custom-capability.ts`.
+
+## Cut stalled socket peers before they consume the session worker credit (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: `SocketEventSinkActor` bounds each write's drain wait with `stallMs` (`DEFAULT_STALL_MS` = 4000, pinned below `SESSION_WORKER_LIMITS.controlMs`). A peer that has not accepted the write in time fails the actor exactly like a byte overflow: one best-effort `{"type":"overflow","error":"stalled, resync required"}` notice, actor closed, `onFailure(SocketEventQueueStallError)` (the fanout removes the connection and closes its socket).
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `waitForSessionBackpressure`, `flush` and `drainUntilEmpty` settle socket actors through `settleActors`, which treats a rejected actor flush as a cut peer. Previously any actor rejection (byte overflow, now also stall) propagated into `Promise.all`, rejected the writer-wide drain and called `fail()` on the shared host writer, or reached the session worker client which then killed the worker.
+- `registerConnection` accepts `stallMs` (tests use a short budget); `packages/coding-agent/docs/rpc.md` documents the stall cut and that a cut connection never withholds session credit.
+
+### Why
+
+- Live on mengmotaHost 2026-09-09 17:17 and 2026-09-10 11:07 (two runtimes): a desktop client stalled on its own downstream ack pacing, the kernel socket buffer filled during a large `eval` tool result, `waitForSessionBackpressure` never resolved, and the session worker failed itself with `session_worker_credit_timeout` after 5 s — the user's running turn was truncated (`session_closed` with no final assistant message) although the session and every other peer were healthy. One slow consumer must not kill the producer; the writer already had fail-closed overflow semantics for slow peers, they were just byte-only.
+- `test/suite/rpc-socket-stall.test.ts`: stall budget < worker deadline; a stalled actor is cut with the notice while a sibling drains; the writer returns session credit and closes only the stalled connection; the writer and its stdio lane survive a stalled peer (this last case failed the whole writer before the fix).
+
+### Why an extension could not handle it
+
+- Transport credit, socket drain and worker liveness are host infrastructure below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: `SocketEventSinkActor.drain` and the three actor-flush aggregation sites in `session-event-writer.ts`. Upstream has no socket fanout.
+
 ## Bound quarantined and joined close reply admission (2026-09-08)
 
 ### What changed

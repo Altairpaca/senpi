@@ -67,7 +67,7 @@ describe("generate_image GPT Image 2.5", () => {
 		expect(readFileSync(join(harness.tempDir, "fox.png"))).toEqual(Buffer.from(PNG_BASE64, "base64"));
 	});
 
-	it.each(["max", "xhigh"])("passes Flare, %s quality, and arbitrary size to the provider", async (quality) => {
+	it.each(["max", "xhigh"])("passes Sunburst, %s quality, and arbitrary size to the provider", async (quality) => {
 		const result = await execute({ prompt: "a red fox", model: "gpt-image-2.5-flare", quality, size: "2048x1152" });
 
 		expect(generate.mock.calls[0]?.[0]).toMatchObject({ id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare" });

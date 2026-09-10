@@ -1,5 +1,66 @@
 # Core Extensions Changes
 
+## 2026-09-10 - ctx.editAssistantMessage
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionCommandContext.editAssistantMessage(entryId, text, options?)` and the matching required member on `ExtensionCommandContextActions`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `EditAssistantMessageHandler`, the `editAssistantMessageHandler` field bound from `actions.editAssistantMessage`, and its context injection beside `navigateTree`.
+
+### Why
+
+- Extensions could navigate the tree but not replace an assistant response; the desktop and scripted clients need the same operation the TUI has.
+
+### Why an extension could not handle it
+
+- Extensions cannot add members to their own context; the runner owns the binding.
+
+### Expected merge conflict zones
+
+- LOW: the `navigateTree` neighbours in `types.ts` (two declaration sites) and `runner.ts` (field, bind, inject).
+
+## 2026-09-10 - Optional ExtensionUIContext.question prompt kind
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: exports canonical `QuestionRequest` / `QuestionResponse`, adds optional `ExtensionUIContext.question()`, and extends `UIPromptKind` with `"question"`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext` wraps `question` with `withUIPrompt("question", request.questions[0]?.header, ...)` only when the underlying UI provides it.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` is the public extension UI contract; later ask-user modes need a typed optional prompt without breaking hand-built `Pick<ExtensionUIContext, ...>` contexts.
+- `packages/coding-agent/src/core/extensions/runner.ts` already emits `ui_prompt_start` / `ui_prompt_end` around select/confirm/input/editor/custom; question prompts must use the same wrapping so the runner can pause on a blocking user-facing question.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned UI surface; extensions cannot add methods to that public contract themselves.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns prompt wrapping and event emission before any extension sees `ctx.ui`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIContext` dialog methods (~select/confirm/input) and the `UIPromptKind` union.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext`.
+
+## 2026-09-10 - Expose getAskUserSettings on ExtensionContext
+
+### What changed
+
+- `types.ts`: optional `ExtensionContext.getAskUserSettings()` / `ExtensionContextActions.getAskUserSettings` return `{ enabled, timeoutMinutes }` (optional so hand-built contexts and test stubs stay valid).
+- `runner.ts`: default `{ enabled: true, timeoutMinutes: 30 }`, bindCore plumbing next to `getLookAtSettings`, and the live context accessor.
+
+### Why
+
+- Built-in question tooling (todo 7) must read the resolved ask-user enable/timeout from the same context surface as look-at settings.
+
+### Why an extension could not handle it
+
+- `types.ts` and `runner.ts` define and bind the host-owned context; extensions cannot add accessors to that contract.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` accessor declarations next to `getLookAtSettings` (todo 3 edits the UI-context region of the same file).
+- MEDIUM: `runner.ts` bindCore/createContext plumbing next to `getLookAtSettings` (todo 3 edits `wrapUIPromptContext`).
+
 ## 2026-09-09 - Expose shared-host policy during extension registration
 
 ### What changed

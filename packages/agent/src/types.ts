@@ -443,6 +443,11 @@ export interface AgentToolResult<T> {
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
+	/**
+	 * Report a failure without throwing: `true` marks this result as a tool error while keeping
+	 * `content` and `details` intact for the model and renderers. Omitted or `false` means success.
+	 */
+	isError?: boolean;
 }
 
 /**

@@ -69,13 +69,16 @@ describe("optimistic pending user echo", () => {
 			return { replace: () => {}, remove: () => {} };
 		});
 		const defaultEditor: { onSubmit?: (text: string) => Promise<void> } = {};
+		const beginUserEcho = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "beginUserEcho");
+		if (typeof beginUserEcho !== "function") throw new Error("InteractiveMode.beginUserEcho is missing");
 		const context = {
+			beginUserEcho,
 			defaultEditor,
 			preResolvedSubmissionImages: undefined,
 			hideShortcutOverlay: () => {},
 			lastEditorText: "",
 			isExtensionCommand: () => false,
-			session: { isCompacting: false, isStreaming: false },
+			session: { isCompacting: false, isStreaming: false, messages: [] },
 			flushPendingBashComponents: () => {},
 			takeSubmissionImages: () => [],
 			optimisticUserEchoes,

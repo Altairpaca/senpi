@@ -89,10 +89,11 @@ export type KnownProvider =
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
-	| "xiaomi-token-plan-sgp";
+	| "xiaomi-token-plan-sgp"
+	| "venice";
 export type ProviderId = KnownProvider | string;
 
-export type KnownImagesProvider = "openrouter";
+export type KnownImagesProvider = "openai" | "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
 
@@ -614,6 +615,8 @@ export interface AssistantImages {
 	output: ImagesOutputContent[];
 	responseId?: string;
 	usage?: Usage;
+	/** Background the provider reports for the returned images; unset when it reports `auto` or nothing. */
+	background?: "transparent" | "opaque";
 	stopReason: ImagesStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
@@ -735,6 +738,14 @@ export interface OpenAICompletionsCompat {
 	chatTemplateArgs?: Record<string, ChatTemplateKwargValue>;
 	/** OpenRouter-compatible routing preferences sent as the `provider` request field. */
 	openRouterRouting?: OpenRouterRouting;
+	/**
+	 * Sent as the top-level `venice_parameters` request field on Venice models.
+	 * Venice's request schema is `additionalProperties: false`, so the object
+	 * can only be shaped here — user-supplied `extraBody` can still override it.
+	 * `include_venice_system_prompt: false` stops Venice from prepending its
+	 * own default system prompt ahead of the caller's.
+	 */
+	veniceParameters?: { include_venice_system_prompt?: boolean };
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */
 	vercelGatewayRouting?: VercelGatewayRouting;
 	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */
@@ -992,9 +1003,15 @@ export interface ModelCost extends ModelCostRates {
 	tiers?: ModelCostTier[];
 }
 
+export interface ImagesModelCost extends ModelCost {
+	/** $/million image input tokens (reference and edit inputs). Falls back to `input` when absent. */
+	imageInput?: number;
+}
+
 export interface ImagesModel<TApi extends ImagesApi>
-	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat"> {
+	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat" | "cost"> {
 	api: TApi;
 	provider: ImagesProviderId;
 	output: ("text" | "image")[];
+	cost: ImagesModelCost;
 }

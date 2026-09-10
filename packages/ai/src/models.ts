@@ -1,8 +1,14 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { appendLoginSlot, mergeRefreshed, removeSlot } from "./auth/pool/slots.ts";
-import { type AuthResolutionOverrides, ModelsError, resolveProviderAuth } from "./auth/resolve.ts";
+import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
+import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
+import {
+	type AuthResolutionOverrides,
+	ModelsError,
+	providerNotConfiguredMessage,
+	resolveProviderAuth,
+} from "./auth/resolve.ts";
 import type {
 	AuthCheck,
 	AuthContext,
@@ -37,7 +43,12 @@ import type {
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
 import type { RetryPolicyProfile } from "./utils/retry-profile/types.ts";
 
-export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
+export {
+	ModelsError,
+	type ModelsErrorCode,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
+	providerNotConfiguredMessage,
+} from "./auth/resolve.ts";
 
 export interface ModelsPublication {
 	/** Provider-selected persisted catalog. Omit to leave storage unchanged; null deletes it. */
@@ -417,7 +428,13 @@ class ModelsImpl implements MutableModels {
 					if (credentialError !== undefined) throw credentialError;
 					if (!allowNetwork || signal.aborted) return;
 
-					const credential = await this.resolveRefreshCredential(provider, storedCredential, signal);
+					const credential = await resolveRefreshCredential(
+						provider,
+						this.credentials,
+						this.authContext,
+						storedCredential,
+						signal,
+					);
 					if (!credential) return;
 					await this.runProviderRefreshPhase(provider, credential, true, options.force, generation, signal);
 				})();
@@ -448,36 +465,6 @@ class ModelsImpl implements MutableModels {
 		}
 
 		return { aborted: callerSignal.aborted, errors: new Map(errors) };
-	}
-
-	private async resolveRefreshCredential(
-		provider: Provider,
-		stored: Credential | undefined,
-		signal: AbortSignal,
-	): Promise<Credential | undefined> {
-		if (stored?.type === "oauth") {
-			const oauth = provider.auth.oauth;
-			if (!oauth) return undefined;
-			if (Date.now() < stored.expires) return stored;
-			if (signal.aborted) return undefined;
-			const post = await this.credentials.modify(
-				provider.id,
-				async (current) => {
-					if (current?.type !== "oauth" || Date.now() < current.expires) return undefined;
-					const refreshed = await oauth.refresh(current, signal);
-					return mergeRefreshed(current, refreshed);
-				},
-				{ signal },
-			);
-			return post?.type === "oauth" ? post : undefined;
-		}
-
-		const apiKey = provider.auth.apiKey;
-		if (!apiKey) return undefined;
-		const credential = stored?.type === "api_key" ? stored : undefined;
-		const result = await apiKey.resolve({ ctx: this.authContext, credential, signal });
-		if (!result) return undefined;
-		return { type: "api_key", key: result.auth.apiKey, env: result.env };
 	}
 
 	private async readCredential(providerId: string, signal: AbortSignal): Promise<Credential | undefined> {
@@ -678,7 +665,7 @@ class ModelsImpl implements MutableModels {
 			signal: options?.signal,
 		});
 		if (!resolution) {
-			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
+			throw new ModelsError("auth", providerNotConfiguredMessage(model.provider));
 		}
 		const auth = resolution.auth;
 

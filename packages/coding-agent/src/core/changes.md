@@ -1,3 +1,245 @@
+# changes
+
+## 2026-09-10 - Review fixes for PR #1304: scoped remint/auth-miss, pool merge, sentinel repair
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_isClaudeSdkSameModelRemintError` matches ONLY the Claude SDK lane's session-lock and bare `invalid_request` quirks (`this.model?.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID`); the provider-agnostic stream-stall watchdog class is no longer swallowed, so a stall for ANY provider consumes the ordinary shared same-model budget and escalates to the fallback chain exactly as before. The auth-miss exclusion is `_isClaudeSdkAuthMissError`, an exact-message, Claude-lane-scoped check built on the shared `providerNotConfiguredMessage()` helper, so another provider's auth miss still hops the configured fallback chain. Supersedes the 2026-09-02 "Keep Claude SDK stalls and invalid_request on the same model" entry above.
+- `packages/ai/src/auth/resolve.ts` + `packages/ai/src/models.ts`: `PROVIDER_NOT_CONFIGURED_PREFIX` / `providerNotConfiguredMessage()` export the exact auth-miss wording; `packages/coding-agent/src/core/model-runtime.ts` throws through the helper instead of its own literal, so the session-layer guard can never drift from the throw sites (the `TURN_RETRY_SUPPRESSION_PREFIX` pattern).
+- `packages/coding-agent/src/core/auth-storage.ts`: every auth.json parse drops pool slots whose `access`/`refresh` equal the provider's `<providerId>-managed` sentinel and clears a pin naming one; the mutable store writes the repair back once inside its existing lock. `packages/coding-agent/src/core/credential-pool/classify.ts` classifies that auth miss as `failover`/`auth_error` so one bad slot can never dead-end a pool. `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts` never lists a sentinel-material slot as an account.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` MERGES a provider-owned pool onto the value read under the credential lock (stored slots and their block state win; only genuinely new names are appended) instead of whole-writing a snapshot read before the browser round trip; `managedSentinelMaterial` / `isManagedSentinelSlot` / `repairManagedSentinelSlots` implement the repair algebra. A flat `current` keeps the whole-write shape because the provider's accounts already carry this login.
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: every `(to cancel)` / `(to close)` hint row routes through one tracked live hint, so `showWaiting` / `showInfo` replace a previous hint instead of painting beside it, and content-clearing paths reset the tracked hint.
+- Tests: `test/suite/retry-fallback-hard-error.test.ts` (Claude-lane tests run under a `claude-sdk-oauth` faux provider, plus new guards proving a non-Claude `invalid_request` and a non-Claude auth miss still hop the chain), `test/auth-storage.test.ts`, `test/credential-error-taxonomy.test.ts`, `test/model-runtime-credential-rotation.test.ts`, `test/claude-sdk-oauth-accounts.test.ts`, `packages/ai/test/credential-pool-mutations.test.ts`, `test/suite/regressions/5433-extension-oauth-prompt-input.test.ts` (the bare-`>` line was a tautology; it now asserts exactly one live `>` row and one live hint row).
+
+### Why
+
+- PR #1304 review (pullrequestreview-5167950734): the remint predicate ORed the provider-agnostic stall class in, so stalls never reached the fallback chain and the exhaustion event's attempt counter drifted by one - three suites that pass at the merge base failed at the branch head. The `Provider is not configured:` exclusion and the `invalid_request` remint were global, reclassifying every provider's failures. `appendLoginSlot`'s early return turned login into a blind overwrite with the pre-browser-flow snapshot, rolling a sibling account's rotated refresh token back to the consumed value and erasing its rate-limit block. Nothing repaired the sentinel `login-N` entries the already-shipped bug wrote, so those pools dead-ended deterministically. `forkBindingOrFlatten` was dropped during the rebase onto main in favor of main's `crossAccountResumeSupported` wiring, which already flattens account drift on the config-dir lane (`cross_root_unsupported`) exactly as `verifyRestoredTranscript` declares.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry eligibility, the auth.json parse/repair, the rotation classification, and the shared credential-pool write path all live below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `_isClaudeSdkSameModelRemintError` / `_isClaudeSdkAuthMissError` / `_isHardErrorFallbackEligible` in `agent-session.ts`; `repairPoisonedPoolSlots` and `parseStorageContent` in `auth-storage.ts`; `appendLoginSlot` and the sentinel helpers in `packages/ai/src/auth/pool/slots.ts`; the prefix helpers in `auth/resolve.ts`; the prefix branch in `credential-pool/classify.ts`; `storedSlots` filtering in `accounts.ts`; `setLiveHint` in `login-dialog.ts`.
+
+## 2026-09-02 - Keep Claude SDK stalls and invalid_request on the same model
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `Provider stream start timed out after Nms` and a bare `invalid_request` remint the same model. They are not hard-error provider hops.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: both recover on faux-1 and never apply a fallback chain.
+
+### Why
+
+- After a 1.7MB flatten the SDK timed out, then returned `invalid_request`. Hard-error fallback switched onto `opengateway/anthropic/claude-opus-4-8` which has no key and 401-looped until the goal continuation cap fired.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` and the `agent_end` remint branch in `agent-session.ts`.
+
+## 2026-09-02 - Retry Claude SDK session locks on the same model
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `Lock file is already being held` is same-model remint, not hard-error provider fallback.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: lock recovers on the original model and never hops after budget exhaustion.
+
+### Why
+
+- A held Claude Agent SDK session lock cannot be released by switching to OpenGateway or another provider. Immediate hard-error fallback produced 401 storms and `resume_initialization_aborted` resends.
+
+### Why an extension could not handle it
+
+- Hard-error vs same-model retry is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` and the `agent_end` retry branch in `agent-session.ts`.
+
+## Shared manual-continue submission predicate (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/manual-continue.ts`: adds `MANUAL_CONTINUE_SHORTCUT` and `isManualContinueSubmission({ text, hasMessages, hasImages })`.
+- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` classifies the bare `.` through that predicate instead of an inline condition.
+
+### Why
+
+- Interactive mode must reach the same verdict before it paints a user echo, and one predicate keeps the empty-session and image-attachment carve-outs from drifting between the two call sites.
+
+### Why this lives in the fork
+
+- The `.` manual-continue shortcut is fork behavior in `AgentSession.prompt()`.
+
+### Expected merge conflict zones
+
+- LOW: the manual-continue interception at the top of `prompt()`.
+
+## Record model switches the session refuses (2026-09-09)
+
+## Record model switches the session refuses (2026-09-10)
+
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` records every refused model switch before rethrowing. `_assertModelUsableForSwitch()` is the single guard seam: the `_setModel` pre-flight, the post-`model_select` revalidation in `_switchActiveModel`, and both `_cycleFavoriteModel` guards (the sole-alternative case and the pre/post-`model_select` pair) now funnel through it, so each appends a `model_change_rejected` session entry, emits the matching event with the budget projection numbers, and rethrows the original error unchanged. The `_setModel` auth refusal records the same entry with `reason: "auth"`. `_modelSwitchAdmission()` derives the admission from the branch (`hasContextMessages()`) instead of hardcoding `"switch"`, so a refusal only promises the compaction remedy when there is context to compact. `_cycleFavoriteModel` no longer appends its `model_change`, writes the global default, or emits `model_changed`/`service_tier_changed` before the post-`model_select` guard accepts, and its catch restores the previous service tier.
+- `packages/coding-agent/src/core/session-manager.ts` adds the `ModelChangeRejectedEntry` type (documenting that it follows the shared pre-assistant `_persist` buffering contract) and `appendModelChangeRejected()`.
+
+### Why
+
+- Every guard rejects before `_switchActiveModel` appends its `model_change`, so a refused switch left no entry, no event, and no log line; an attempted-and-rejected switch was indistinguishable from one the user never made (#1526). Recording it on one guard only would have left sibling calls of the same public API silent, and a refused *cycle* was strictly worse than silent: it appended a real `model_change` and wrote the global default before its post-`model_select` guard ran, so the session resumed - and every new session started - on a model that was refused and never answered. The `admission` default only infers `"switch"` when `liveContextTokens > 0`, so the message told the user the model "cannot start" and omitted the compaction remedy; hardcoding `"switch"` instead promised that remedy on the `session_start` caller (`recommended-models`), where there is nothing to compact.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the switch guards, the session-entry append, and the settings write; an extension observes model changes only after they are applied and never sees the rejected path.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionEvent` union, the `_setModel` guard block, and the `_cycleFavoriteModel` commit block.
+- `packages/coding-agent/src/core/session-manager.ts`: the `SessionEntry` union and the append helpers near `appendModelChange`.
+
+## 2026-09-02 - Do not hard-fallback a provider-not-configured auth miss
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_isHardErrorFallbackEligible` no longer treats `Provider is not configured:` as a model hard-error that ejects onto another provider.
+- `packages/coding-agent/test/suite/retry-fallback-hard-error.test.ts`: a configured fallback chain stays unused when the current model fails with that auth miss.
+
+### Why
+
+- Auth wiring failures were classified as hard-error and immediately switched `claude-sdk-oauth/claude-opus-5` onto a different provider (for example `opengateway/anthropic/claude-opus-5`) instead of staying on Claude SDK OAuth or its sibling accounts.
+
+### Why an extension could not handle it
+
+- Hard-error fallback eligibility is decided in `AgentSession` before extension failover runs.
+
+### Expected merge conflict zones
+
+- LOW: `_isHardErrorFallbackEligible` in `agent-session.ts`.
+
+## Leaf token and typed errors for assistant edits (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `TreeNavigationOptions.expectedLeafId`; `editAssistantMessage` checks streaming first, then the token (before the `unchanged` short-circuit), and `_navigateTree` checks the token before its no-op return; both streaming guards throw `SessionStreamingError`.
+- `packages/coding-agent/src/core/edited-assistant-message.ts`: `AssistantEditReason` gains `stale-leaf`, `AssistantEditError.code` maps reasons to wire codes, `SessionStreamingError`, and `assertExpectedLeaf()`.
+
+### Why
+
+- A client holding a stale view must be refused before any mutation, and every refusal needs a stable code a transport can forward.
+
+### Why an extension could not handle it
+
+- The guard has to run inside the core mutation, ahead of `session_before_tree`.
+
+### Expected merge conflict zones
+
+- LOW: `editAssistantMessage` / `_navigateTree` heads in `agent-session.ts`; the fork-only `edited-assistant-message.ts`.
+
+## Honor an inline isError on executeTool results (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the direct `executeTool` path sets `isError = result.isError === true` after a tool settles, so `tool_result` hooks observe the same error flag the agent loop now derives from a returned `isError: true`.
+
+### Why
+
+- A tool that reports a structured failure without throwing was delivered to `tool_result` hooks as a success on the `pi.executeTool` path, diverging from the agent-loop path fixed in `packages/agent/src/agent-loop.ts`.
+
+### Why an extension could not handle it
+
+- The flag is computed inside `AgentSession` before hooks run; a hook can only override it after the fact and per tool.
+
+### Expected merge conflict zones
+
+- LOW: the `executeTool` try block in `packages/coding-agent/src/core/agent-session.ts`.
+||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
+## askUser settings and --no-ask-user session override (2026-09-10)
+
+### What changed
+
+- `settings-shapes.ts`: adds `AskUserSettings` (`enabled`, `timeoutMinutes`) plus clamp constants (default 30, range 1–120).
+- `settings-manager.ts`: `Settings.askUser` and `getAskUserSettings()` resolve merged settings with boolean type-checks, default `enabled: true`, and clamped `timeoutMinutes`.
+- `agent-session.ts`: `--no-ask-user` in `runtime.flagValues` applies a non-persistent `askUser.enabled=false` override (same path as `--no-model-fallback`) and exposes `getAskUserSettings` on the extension context.
+
+### Why
+
+- The question tool needs a session-readable enable switch and idle timeout, plus a per-run CLI disable that wins over saved settings without writing them.
+
+### Why an extension could not handle it
+
+- Settings shapes, merged resolution, and constructor-time flag overrides live on `SettingsManager` / `AgentSession` before extension `session_start`.
+
+### Expected merge conflict zones
+
+- LOW: `settings-shapes.ts` next to `LookAtSettings`; `settings-manager.ts` `Settings` field list and getters next to prompt-cache helpers.
+- MEDIUM: `agent-session.ts` constructor flag overrides next to `--no-model-fallback` and `bindCore` accessors next to `getLookAtSettings`.
+
+## 2026-09-10 - Venice default model and display name
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts` maps `venice` to the default model `z-ai-glm-5-3`.
+- `packages/coding-agent/src/core/provider-display-names.ts` (fork-only) labels the provider "Venice AI".
+
+### Why
+
+- Selecting a provider without a model falls back to this map; Venice's GLM 5.3 is the catalog's strongest general coding model with a 1M context window, matching how `zai` and `baseten` default to the same family.
+
+### Why an extension could not handle it
+
+- Default-model resolution runs inside model selection, before the session (and its extensions) exists.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_MODELS` map when upstream adds providers.
+
+## Deterministic resume recovery when the restored context exceeds the window (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: the resume-admission catch still rethrows for fresh starts, non-budget errors and compaction-disabled sessions, and now splits the remaining case. A projection whose live context still fits the raw window keeps taking the existing compaction-required admission; a projection whose live context alone exceeds the window asks `planResumeSlice()` for a deterministic reduction and rethrows the original budget error unchanged when no safe cut fits.
+- `packages/coding-agent/src/core/agent-session.ts`: new `applyResumeSlice()` appends the reduction as a `senpi.compaction.resume-slice.v1` compaction entry that preserves the recorded transcript, rebuilds the live context, writes one `resume_context_reduced` session-log line, and publishes a `resume_context_reduced` event which `subscribe()` replays for listeners that attach after `createAgentSession()` returns.
+- `packages/coding-agent/src/core/session-manager.ts` is deliberately unchanged: `_trimMirrorAfterCompaction()` only trims the in-memory mirror, and `getEntries()`, `getEntry()` and `getBranch()` reload the full history from the session file once `mirrorTrimmed` is set, so the recorded transcript already survives an admission-time reduction.
+
+### Why
+
+- Issue #1524: a `gpt-6-astra` session whose restored transcript alone exceeded the model window (live 965,016 tokens against an 850,000-token window) could never be reopened. The compaction-eligible resume branch only relaxes admission while summarization still fits, and the compaction-required admission only covers a live context within the raw window, so this band had no recovery path and every reopen failed inside `assertModelUsable` before any extension was wired.
+
+### Why an extension could not handle it
+
+- The refusal happens inside `createAgentSession()` before extensions are loaded or bound, and the recovery must append a session entry and rebuild the live context while the session is still being constructed.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/sdk.ts` resume-admission catch block, which is also the merge zone of the earlier compaction-required admission.
+- LOW: `packages/coding-agent/src/core/agent-session.ts` event union, `subscribe()` replay and the method added beside `admitResumeCompactionRequired()`.
+## Editable assistant responses from the session tree (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `navigateTree()` delegates to a private `_navigateTree()` that also accepts a replacement assistant message; new public `editAssistantMessage(entryId, text, options)` validates the target, treats unchanged text as a no-op (`unchanged: true`), and otherwise branches to the target's parent and appends the edited copy as the new leaf, reusing the branch-summary flow, labels, agent-state restore and `session_before_tree` / `session_tree` events. New exported `TreeNavigationOptions` and `AssistantEditResult` types. Guard order is streaming -> target lookup -> empty-text rejection (built first) -> unchanged no-op, so an identical-text request during a response still throws and a textless (tool-call-only) assistant cannot be "edited" to blank.
+- `packages/coding-agent/src/core/edited-assistant-message.ts` (new): `buildEditedAssistantMessage()` keeps only the trimmed text (tool calls, thinking and provider-native blocks dropped, `stopReason: "stop"`, model/provider/api/usage preserved), `assistantTextEquals()`, and `AssistantEditError`.
+- `packages/coding-agent/src/core/keybindings.ts`: new `app.tree.editMessage` action (default `ctrl+e`, legacy alias `treeEditMessage`).
+
+### Why
+
+- `/tree` could re-open a user message for editing but offered no way to correct an assistant response; users had to fork or re-prompt to steer past a wrong answer.
+
+### Why an extension could not handle it
+
+- Extensions can replace a message only at `message_end` time; rewriting an already persisted entry needs the session leaf move plus append that only `AgentSession` owns, and the tree keybinding lives in the core keybinding registry.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `navigateTree()` body (renamed to `_navigateTree`, three small hunks for the replacement branch).
+- LOW: `keybindings.ts` tree action tables; the new module is fork-only.
+
 ## Registration-time shared-host capability (2026-09-09)
 
 ### What changed

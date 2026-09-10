@@ -123,6 +123,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Mistral
 - Groq
 - Cerebras
+- Venice AI
 - Cloudflare AI Gateway
 - Cloudflare Workers AI
 - xAI
@@ -271,6 +272,7 @@ Use `/session` in interactive mode to see the current session ID before reusing 
 - Search by typing, fold/unfold and jump between branches with Ctrl+←/Ctrl+→ or Alt+←/Alt+→, page with ←/→
 - Filter modes (Ctrl+O): default → no-tools → user-only → labeled-only → all
 - Press Ctrl+X to copy the selected message
+- Press Ctrl+E on an assistant response to edit it and continue from the edited copy
 - Press Shift+L to label entries as bookmarks and Shift+T to toggle label timestamps
 
 **`/fork`** - Create a new session file from a previous user message on the active branch. Opens a selector, copies the active path up to that point, and places the selected prompt in the editor for modification.

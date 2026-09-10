@@ -1,5 +1,66 @@
 # goal Extension Changes
 
+## 2026-09-09 - Stop automatic goal recovery after terminal policy rejection (#1520)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: distinguish terminal classifier refusals/sensitive stops and the Codex safety-block error diagnostic from infrastructure failures, only after the explicit retry owner reports `willRetry: false`. The unstructured Codex diagnostic carries no policy code, so it is trusted only on `api === "openai-codex-responses"`; another provider or gateway emitting the same sentence keeps the existing provider/system recovery path. Structured classifier refusals stay provider-independent because they carry their own policy details.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: persist the active goal as blocked before recovery routing and synchronize the monitor to clear staged recoveries and armed timers. The goal identity/objective survive; no continuation is delivered or counted. This is not a mechanical block that unrelated input automatically resumes.
+- `packages/coding-agent/test/suite/goal-policy-rejection.test.ts`: the identity gate is a literal copy of an id owned by `packages/ai`, so the suite drives the same lifecycle once per api id in the shipped Codex catalog (`OPENAI_CODEX_MODELS`). Renaming that api fails the suite instead of silently disarming the guard while the hardcoded cases stay green.
+
+### Why
+
+- `db6069f83` intentionally kept goals active after infrastructure retry exhaustion. Policy rejection was missing from that distinction, so settlement queued up to eight hidden follow-ups to an already rejected request. Non-policy provider/system recovery and explicit retry ownership remain unchanged.
+
+### Why an extension could not handle it
+
+- The builtin owns goal recovery routing, persistence, timers, and settlement admission. An external extension cannot veto its queued continuation.
+
+### Expected merge conflict zones
+
+- LOW: `agent-end-continuation.ts` routing/imports and `terminal-provider-error.ts` predicates.
+
+## 2026-09-10 - Route user-only blockers through the question tool
+
+### What changed
+
+- `prompt.ts`: goal continuation now names the question tool as a fifth legal ending, asks user-only blockers before the blocked audit, counts materially different attempts, and routes stall notices to questions.
+- `tool-registration.ts`: `update_goal` tells the model that a missing user decision is a question, not a blocked status, until the user fails to answer.
+
+### Why
+
+- A goal can be blocked by information only the user can provide; routing that case through the question tool preserves progress and makes the wait explicit.
+
+### Why an extension could not handle it
+
+- The goal continuation prompt and `update_goal` tool description define the model-facing goal protocol and must be changed at their source.
+
+### Expected merge conflict zones
+
+- LOW: `prompt.ts` continuation and stall guidance; `tool-registration.ts` update description.
+
+## 2026-09-10 - Park the continuation on a pending ask-user question
+
+### What changed
+
+- `monitor-continuation.ts`: the coordinator tracks the `ask-user` wake source the ask-user extension publishes while an async question is pending (`WAKE_SOURCE_STATE_EVENT{source:"ask-user"}`). While that source is live, `#schedule` arms ONE `monitor` timer at the question's idle deadline instead of the periodic backstop, so no continuation prompt reaches the model while the user is deciding. The deadline is recorded when the source count rises (a newly asked question restarts the window) from `ctx.getAskUserSettings().timeoutMinutes` (default 30), cleared when the count reaches zero, and clamped through `resolveGoalMonitorContinuationDelayMs` so a misconfigured setting cannot park the goal past the monitor's [1s, 1h] bounds. A deadline that has already passed - the extension restarts its idle timer whenever the user interacts - parks for one more window rather than reverting to the backstop.
+- Answer and timeout both drop the wake source, so the existing drain fire (1s after the last source reaches zero) resumes the goal exactly once; the deadline timer is only the backstop for a question whose source never drains.
+- `prompt.ts`: `buildGoalStallNotice` gains one ask-user line ("A question to the user is pending; wait for the answer or the timeout, do not ask it again, and do not treat the wait as a stall.") and excludes `ask-user` from the generic "inspect the live channel / stop or replace it" fallback, which is wrong advice for a question only the user can resolve.
+- `test/suite/goal-wake-sources.test.ts`, `test/suite/goal-monitor-continuation.test.ts`: cover the park (no prompt before the 30m deadline with the 270s backstop configured, one prompt at the deadline), the single drain wake, the stall-notice line, and the regression that a turn still awaiting a tool result queues no continuation.
+
+### Why
+
+- An async question keeps the turn's work open while the user decides. The 270s backstop would re-prompt the main model roughly every 4m30s for the whole 30-minute answer window - full-context turns the model cannot act on, and the same wait would eventually be read as a stall and audited as blocked. Parking on the question's own deadline keeps exactly one wake: the answer (drain fire) or the timeout.
+
+### Why an extension could not handle it
+
+- The wake-source ledger, the single-flight timer and the admission verdict live inside the built-in goal continuation coordinator; no extension hook can observe or replace that timer. The stall notice is built by the same package.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` around `#schedule`'s delay selection and `#setWakeSourceCount`.
+- MEDIUM in `prompt.ts`: todo 14 of the same plan edits `buildContinuationPrompt` and the closing lines of `buildGoalStallNotice`; this change only adds the ask-user advice bullet and the fallback exclusion.
+
 ## 2026-09-08 - Recover malformed empty tool-use turns
 
 ### What changed
@@ -1114,7 +1175,6 @@ surface; no core extension API change is required.
 
 - LOW in `prompt.ts` if the standalone goal continuation wording changes.
 
-
 ## Overview
 Persistent per-thread goal tracking as an in-tree builtin. Ports the standalone
 `pi-goal` extension into senpi with no dependency on it, file-based persistence,
@@ -1388,7 +1448,6 @@ codex-aligned tool naming, and budget-driven behavior removed. An optional
   recovery while upstream owns the lifecycle persistence semantics.
 - MEDIUM: `index.ts`, `tool-registration.ts`, and `ui.ts` retain senpi's split
   registration, elapsed ticker, and core abort-event integration.
-
 
 ## Reload no longer auto-starts a stopped goal; gap-abort blocks active goal (2026-07-27)
 

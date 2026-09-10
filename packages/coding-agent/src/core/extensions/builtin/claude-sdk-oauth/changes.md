@@ -1,5 +1,87 @@
 # claude-sdk-oauth
 
+## 2026-09-10 - Never list a sentinel-material stored slot as an account
+
+### What changed
+
+- `accounts.ts`: `isSentinelSlot` recognizes a stored account whose `access` and `refresh` are both the managed sentinel, and `listAccounts` filters those out.
+- `test/claude-sdk-oauth-accounts.test.ts`: a pool holding a real account plus a generated `login-2` sentinel slot lists only the real one.
+
+### Why
+
+- A shipped build stored this credential's own flat sentinel projection as a generated `login-N` slot. Selecting it fails the provider's auth check and dead-ends the request. The coding-agent auth store heals the stored entry on load (see the core tracker); this filter covers the extension's own direct reads (`readStoredCredential`) so a poisoned entry can never be selected even before that repair runs.
+
+### Why an extension could not handle it
+
+- The account listing is this provider's own pool surface.
+
+### Expected merge conflict zones
+
+- LOW: `storedSlots` filtering in `accounts.ts`.
+
+## Recording a refused model switch keeps the stored binding (2026-09-10)
+
+### What changed
+
+- `session-binding.ts`: `model_change_rejected` joins `LEDGER_ONLY_ENTRY_TYPES`.
+
+### Why
+
+- `bindingFromStoredBranch` fails closed on any entry after the committed assistant that the model could see. The new `model_change_rejected` entry (#1526) is never projected into the LLM context, but it was absent from the set, so recording a refused switch made a later resume discard the stored SDK session: fresh upstream session, full context re-send, prompt-cache loss - caused by an entry the model never sees.
+
+### Why an extension could not handle it
+
+- The set is the builtin's own resume-admission policy.
+
+### Expected merge conflict zones
+
+- LOW: `LEDGER_ONLY_ENTRY_TYPES`.
+
+## 2026-09-10 - Detach completed resume initialization abort listeners
+
+### What changed
+
+- `session-reattach.ts`: the abort listener that bounds `initializationResult`
+  is now removed in a `finally` block after initialization settles.
+- `test/claude-sdk-oauth-reattach.test.ts`: cover both successful initialization
+  followed by normal request cleanup and genuine abort during pending
+  initialization.
+
+### Why
+
+- The request controller is also aborted during normal completed-request
+  cleanup. Leaving the initialization listener attached closed a healthy
+  resumed query after initialization, forcing the next turn through another
+  resume and eventually a full-history cache write.
+- Pending and pre-aborted initialization still closes the query and rejects, so
+  cancellation remains fail-closed while completed initialization no longer
+  has a stale listener.
+
+### Expected merge conflict zones
+
+- LOW: `session-reattach.ts` initialization helper and the adjacent reattach
+  regression test; no public API or generated bundle changes.
+
+## 2026-09-10 - Validate the Claude Code executable before the SDK spawns it, fall back to PATH
+
+### What changed
+
+- `executable.ts`: `ExecutableDeps` gains `isFile`. `describeClaudeCodeExecutable` walks `CLAUDE_CODE_EXECUTABLE`, the compiled-Bun extraction, the platform sidecar package(s) resolved through `createRequire` rooted at the imported `@anthropic-ai/claude-agent-sdk` instance, then `claude` on PATH - and accepts a candidate only once its spawnable spelling (`path.resolve`, plus `path.toNamespacedPath` on win32 so it carries the `\?\` prefix) is a regular file in this process. `resolveClaudeCodeExecutable` returns that spelling or throws senpi's own error naming every candidate tried. `overrideExecutableDeps` / `resetExecutableDeps` expose the deps for tests the way `overrideSdkBoundary` does.
+- `executable-path-lookup.ts` (new): `findExecutableOnPath` - the `where claude` / `command -v claude` walk with no shell, honouring `PATHEXT` on win32 and skipping anything that is not a regular file.
+- `availability.ts`: `describeClaudeLane` reports the same resolution the query path uses (`executable`, `tried`) plus the host `runtime` (`bun` | `node`) for a doctor surface; the ambient probe already shares the resolver, so a path this process cannot stat is never spawned.
+
+### Why
+
+- code-yeongyu/senpi#1541: on a Windows npm-global `omo-ai` install the win32-x64 sidecar resolved (it was hoisted to `omo-ai/node_modules/`) but the SDK reported `Claude Code native binary not found at <that path>` although Explorer showed the file. senpi handed the SDK the first `require.resolve` hit unvalidated, honoured `CLAUDE_CODE_EXECUTABLE` unvalidated, and had no fallback to the working `claude.exe` on PATH; the SDK's generic wrapper then reported the miss.
+
+### Why an extension could not handle it
+
+- The executable string is chosen inside the builtin provider before `query()` is called; no extension hook runs between resolution and `pathToClaudeCodeExecutable`.
+
+### Expected merge conflict zones
+
+- LOW: `executable.ts` is fork-only; `availability.ts` grows an export above `createAmbientAuthStatusReader`. `executable-path-lookup.ts` is new. Tests: `test/claude-sdk-oauth-executable*.test.ts`, `test/claude-sdk-oauth-availability.test.ts`.
+
 ## 2026-09-09 - Classify multi-message cold starts as bootstrap
 
 ### What changed

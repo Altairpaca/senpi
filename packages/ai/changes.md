@@ -1,3 +1,59 @@
+## 2026-09-10 - Venice AI catalog generation
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` adds a Venice AI fetcher over the models.dev `venice` catalog (`VENICE_BASE_URL`, `VENICE_COMPAT`), emitting `openai-completions` models at `https://api.venice.ai/api/v1` under provider id `venice`. It honors the shared `tool_call !== true` and `status === "deprecated"` skips and routes reasoning metadata through `recordModelsDevReasoningOptions`, so Venice's `reasoning_effort` ladder is derived from models.dev rather than hardcoded.
+- Every generated Venice model carries `compat.veniceParameters = { include_venice_system_prompt: false }`.
+
+### Why
+
+- Venice was the one provider a user asked for that had no representation anywhere in `packages/ai`. models.dev already publishes the catalog, so generation is the maintainable source; the generated ids were cross-checked against Venice's live `GET /models` listing and all 104 exist.
+- Venice prepends its own default system prompt unless `include_venice_system_prompt` is false, which would place a second system prompt ahead of the agent's.
+
+### Why an extension could not handle it
+
+- The committed model catalog is a build-time artifact consumed by the provider registry before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the models.dev provider block ordering in `loadModelsDevData()` when upstream adds its own provider fetchers nearby.
+
+## 2026-09-10 - Image input token rate in the static OpenAI image catalog
+
+## 2026-09-10 - Use native TypeScript builds for omob performance
+
+### What changed
+
+- packages/ai/package.json: build uses tsgo for the emitted workspace build.
+
+### Why
+
+- The native compiler reduces omob build time without changing runtime JavaScript.
+
+### Why this lives in the fork
+
+- The package build manifest owns the compiler used by the fork's release pipeline.
+
+### Expected merge conflict zones
+
+- The `build` script in packages/ai/package.json.
+
+### What changed
+
+- `packages/ai/scripts/generate-image-models.ts`: `OPENAI_IMAGE_MODELS` entries for `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, and `gpt-image-2` carry `imageInput: 8` (USD per million image input tokens), regenerated into `packages/ai/src/image-models.generated.ts` with `--strict`; the OpenRouter block is unchanged.
+
+### Why
+
+- OpenAI bills image inputs (references, edit targets, masks) at $8/M against $5/M for text, so a single `input` rate under-reported every edit request.
+
+### Why an extension could not handle it
+
+- The builtin image catalog is generated data loaded before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `OPENAI_IMAGE_MODELS` array and its comment block.
+
 ## 2026-09-09 - GPT Image 2.5 entries in the static OpenAI image catalog
 
 ### What changed
