@@ -8,6 +8,10 @@
 
 - The session routes that `.` as a hidden continuation, so the echo painted at submit time showed a user bubble the transcript never receives.
 
+### Why this lives in the fork
+
+- The `.` manual-continue shortcut and the optimistic user echo are both fork behavior in `AgentSession.prompt()` and interactive mode.
+
 ### Expected merge conflict zones
 
 - LOW: `OptimisticUserEchoController`, `InteractiveUserInput`, and the echo call sites in `setupEditorSubmitHandler` / `handleFollowUp`.
