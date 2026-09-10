@@ -125,8 +125,9 @@ export function createPendingQuestion(options: PendingQuestionOptions): PendingQ
 	const createdAtMs = options.now();
 	const hardCapMs = options.hardCapMs ?? DEFAULT_HARD_CAP_MS;
 	const hardDeadlineAtMs = createdAtMs + hardCapMs;
-	const schedule = options.setTimeout ?? setTimeout;
-	const unsched = options.clearTimeout ?? clearTimeout;
+	const schedule: NonNullable<PendingQuestionOptions["setTimeout"]> =
+		options.setTimeout ?? ((handler, delayMs) => setTimeout(handler, delayMs));
+	const unsched: NonNullable<PendingQuestionOptions["clearTimeout"]> = options.clearTimeout ?? clearTimeout;
 
 	let deadlineAtMs = Math.min(createdAtMs + options.idleTimeoutMs, hardDeadlineAtMs);
 	let draftAnswers: QuestionAnswers = {};
