@@ -1,3 +1,17 @@
+## 2026-09-10 - The "." manual-continue shortcut paints no user echo
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: submissions go through `beginUserEcho()`, which skips the optimistic echo for a bare `.` on a session that already has messages (via the shared `isManualContinueSubmission`); `OptimisticUserEchoController.promptOptions/reject/remove` and `InteractiveUserInput.pendingEchoId` accept `undefined` as "nothing was painted".
+
+### Why
+
+- The session routes that `.` as a hidden continuation, so the echo painted at submit time showed a user bubble the transcript never receives.
+
+### Expected merge conflict zones
+
+- LOW: `OptimisticUserEchoController`, `InteractiveUserInput`, and the echo call sites in `setupEditorSubmitHandler` / `handleFollowUp`.
+
 ## 2026-09-10 - /tree edits carry the leaf token and reach shared hosts
 
 ### What changed
