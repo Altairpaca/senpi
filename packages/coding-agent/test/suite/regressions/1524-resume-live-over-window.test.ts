@@ -2,12 +2,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import type { AgentSession } from "../../../src/core/agent-session.ts";
 import { estimateTokens } from "../../../src/core/compaction/compaction.ts";
 import {
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
 } from "../../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
-import type { AgentSession } from "../../../src/core/agent-session.ts";
 import { createAgentSession } from "../../../src/core/sdk.ts";
 import type { CompactionEntry, SessionEntry } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
