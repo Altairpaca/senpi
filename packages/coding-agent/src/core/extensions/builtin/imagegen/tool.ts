@@ -87,7 +87,9 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		const quality = params.quality ?? "auto";
 		const requested = params.n ?? 1;
 		const modelId = params.model ?? DEFAULT_IMAGE_MODEL;
-		const context = { model: modelId, size, quality, requested, source: "none" };
+		const background = params.background ?? "auto";
+		const outputFormat = params.output_format ?? "png";
+		const context = { model: modelId, size, quality, background, outputFormat, requested, source: "none" };
 
 		const prompt = params.prompt.trim();
 		if (prompt.length === 0) {
@@ -158,6 +160,8 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			source,
 			size,
 			quality,
+			background,
+			outputFormat,
 			requested,
 			generated: generated.length,
 			revisedPrompts,

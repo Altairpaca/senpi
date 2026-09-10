@@ -56,14 +56,53 @@ export const Params = Type.Object(
 					"Local PNG/JPEG/WEBP images to edit or use as references (1-5 files, each at most 50 MB). Paths may be absolute or relative to the working directory.",
 			}),
 		),
+		mask_image_path: Type.Optional(
+			Type.String({
+				minLength: 1,
+				description:
+					"Inpainting mask (PNG with an alpha channel, same size as the first reference image): transparent areas are repainted. Requires reference_image_paths.",
+			}),
+		),
+		background: Type.Optional(
+			Type.Union([Type.Literal("auto"), Type.Literal("transparent"), Type.Literal("opaque")], {
+				default: "auto",
+				description:
+					"Output background. transparent needs output_format png or webp and keeps the alpha channel; auto lets the model decide.",
+			}),
+		),
+		output_format: Type.Optional(
+			Type.Union([Type.Literal("png"), Type.Literal("jpeg"), Type.Literal("webp")], {
+				default: "png",
+				description:
+					"File format. png (default) is lossless and supports transparency; jpeg is fastest; webp is small and supports transparency.",
+			}),
+		),
+		output_compression: Type.Optional(
+			Type.Integer({
+				minimum: 0,
+				maximum: 100,
+				description: "Compression level 0-100 for jpeg or webp output only (100 = best quality).",
+			}),
+		),
+		moderation: Type.Optional(
+			Type.Union([Type.Literal("auto"), Type.Literal("low")], {
+				default: "auto",
+				description: "Content filter strictness: auto (standard) or low (less restrictive).",
+			}),
+		),
 		n: Type.Optional(
-			Type.Integer({ minimum: 1, maximum: 10, default: 1, description: "How many images to generate." }),
+			Type.Integer({
+				minimum: 1,
+				maximum: 10,
+				default: 1,
+				description: "How many variants of this one prompt to generate; distinct assets need distinct calls.",
+			}),
 		),
 		output_path: Type.Optional(
 			Type.String({
 				minLength: 1,
 				description:
-					"Where to write the image, relative to the working directory. Must end in .png. Defaults to generated-images/.",
+					"Where to write the image, relative to the working directory. The extension must match output_format (.png, .jpg/.jpeg, .webp) or be omitted. Defaults to generated-images/.",
 			}),
 		),
 	},
@@ -76,9 +115,13 @@ export interface GenerateImageDetails {
 	source: string;
 	size: string;
 	quality: string;
+	background: string;
+	outputFormat: string;
 	requested: number;
 	generated: number;
 	revisedPrompts: string[];
+	/** Provider-reported transparency of the saved images, when it reports one. */
+	transparentBackground?: boolean;
 	error?: string;
 	reason?: "missing_config" | "provider_native_bypass" | "invalid_params" | "write_failed" | "provider_error";
 }
@@ -86,7 +129,10 @@ export interface GenerateImageDetails {
 export function failure(
 	message: string,
 	reason: NonNullable<GenerateImageDetails["reason"]>,
-	base: Pick<GenerateImageDetails, "model" | "size" | "quality" | "requested" | "source">,
+	base: Pick<
+		GenerateImageDetails,
+		"model" | "size" | "quality" | "background" | "outputFormat" | "requested" | "source"
+	>,
 ) {
 	const details: GenerateImageDetails = {
 		...base,
