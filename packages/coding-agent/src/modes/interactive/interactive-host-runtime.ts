@@ -290,6 +290,14 @@ export class RemoteInteractiveRuntime {
 	setHostUiHandler(callback?: InteractiveHostUiHandler): void {
 		this.#remoteSession.setHostUiHandler(callback);
 	}
+	/**
+	 * Forward a debounced draft of an open host `question` request. Best-effort:
+	 * the host keeps its own timer, so a lost frame only delays the deadline
+	 * refresh, and a gone transport is already reported by the event stream.
+	 */
+	sendHostUiProgress(record: import("../rpc/rpc-types.ts").RpcExtensionUIProgress): void {
+		void this.#client.sendExtensionUIProgress(record).catch(() => {});
+	}
 	#clientInfoSent = false;
 	#lastClientWidth = 80;
 	setClientInfo(width: number): void {

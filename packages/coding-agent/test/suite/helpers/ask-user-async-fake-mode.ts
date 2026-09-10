@@ -17,18 +17,21 @@ type WidgetContent = string[] | ((tui: TUI | undefined, thm: Theme) => WidgetCom
 
 export type FakeEditor = Text & { setText: Mock<(text: string) => void>; addToHistory: Mock<(text: string) => void> };
 
+export type FakeSession = {
+	isStreaming: boolean;
+	isCompacting: boolean;
+	sendUserMessage: Mock<(text: string, options?: { deliverAs?: "steer" | "followUp" }) => Promise<void>>;
+	prompt: Mock<(text: string, options?: object) => Promise<void>>;
+};
+
 export type FakeInteractiveMode = {
 	editorContainer: Container;
 	editor: FakeEditor;
 	defaultEditor: FakeEditor & { onSubmit?: (text: string) => Promise<void> | void };
 	ui: { setFocus: Mock<(component: unknown) => void>; requestRender: Mock<() => void> };
-	session: {
-		isStreaming: boolean;
-		isCompacting: boolean;
-		sendUserMessage: Mock<(text: string, options?: { deliverAs?: "steer" | "followUp" }) => Promise<void>>;
-		prompt: Mock<(text: string, options?: object) => Promise<void>>;
-	};
-	runtimeHost: object;
+	/** Read through the prototype's `session` getter from `runtimeHost.session`. */
+	readonly session: FakeSession;
+	runtimeHost: { session: FakeSession; sendHostUiProgress?: Mock<(record: unknown) => void> };
 	onInputCallback: Mock<(input: unknown) => void>;
 	handleDebugCommand: Mock<() => void>;
 	createExtensionUIContext(): ExtensionUIContext;
@@ -45,18 +48,18 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 	const editorContainer = new Container();
 	const editor: FakeEditor = Object.assign(new Text("", 0, 0), { setText: vi.fn(), addToHistory: vi.fn() });
 	editorContainer.addChild(editor);
+	const session: FakeSession = {
+		isStreaming: options.isStreaming ?? false,
+		isCompacting: false,
+		sendUserMessage: vi.fn(async () => {}),
+		prompt: vi.fn(async () => {}),
+	};
 	const fields = {
 		editorContainer,
 		editor,
 		defaultEditor: editor,
 		ui: { setFocus: vi.fn(), requestRender: vi.fn() },
-		session: {
-			isStreaming: options.isStreaming ?? false,
-			isCompacting: false,
-			sendUserMessage: vi.fn(async () => {}),
-			prompt: vi.fn(async () => {}),
-		},
-		runtimeHost: {},
+		runtimeHost: { session },
 		onInputCallback: vi.fn(),
 		handleDebugCommand: vi.fn(),
 		askUserQuestion: undefined,

@@ -81,6 +81,7 @@ import {
 } from "../../core/cache-stats.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -147,7 +148,16 @@ import {
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
+import {
+	ASK_USER_ANSWER_KEY,
+	ASK_USER_WIDGET_KEY,
+	AskUserAsyncWidget,
+	buildCommentResponse,
+	buildTimedOutResponse,
+	unansweredIds,
+} from "./components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
+import type { QuestionDraft } from "./components/ask-user-question-state.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
@@ -772,6 +782,20 @@ type HostUiCapableRuntime = {
 	}): void;
 };
 
+type QuestionOverlayOptions = ExtensionUIDialogOptions & {
+	onProgress?: (draft: QuestionDraft) => void;
+};
+
+/** A waitForAnswer=false question parked behind the collapsed editor widget. */
+type AsyncQuestionState = {
+	request: QuestionRequest;
+	timeoutMs: number;
+	onProgress?: (draft: QuestionDraft) => void;
+	/** Last draft seen from the expanded component; kept across Esc so typed comments carry it. */
+	draft: QuestionDraft;
+	finish: (response: QuestionResponse) => void;
+};
+
 function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => Component) | undefined {
 	if (lines === undefined) return undefined;
 	return () => {
@@ -1018,6 +1042,7 @@ export class InteractiveMode {
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private askUserQuestion: AskUserQuestionComponent | undefined = undefined;
+	private asyncQuestion: AsyncQuestionState | undefined = undefined;
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -2757,7 +2782,6 @@ export class InteractiveMode {
 	 */
 	private setupExtensionShortcuts(extensionRunner: ExtensionRunner): void {
 		const shortcuts = extensionRunner.getShortcuts(this.keybindings.getEffectiveConfig());
-		if (shortcuts.size === 0) return;
 
 		// Create a context for shortcut handlers
 		const createContext = (): ExtensionContext => ({
@@ -2818,6 +2842,7 @@ export class InteractiveMode {
 
 		// Set up the extension shortcut handler on the default editor
 		this.defaultEditor.onExtensionShortcut = (data: string) => {
+			if (this.handleAskUserShortcut(data)) return true;
 			for (const [shortcutStr, shortcut] of shortcuts) {
 				// Cast to KeyId - extension shortcuts use the same format
 				if (matchesKey(data, shortcutStr as KeyId)) {
@@ -2868,11 +2893,15 @@ export class InteractiveMode {
 				const hostRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
 				let progressTimer: ReturnType<typeof setTimeout> | undefined;
 				let lastDraft: { answers?: QuestionResponse["answers"]; comment?: string } | undefined;
-				const response = await this.showQuestionOverlay(
+				const waitForAnswer = request.waitForAnswer ?? true;
+				// Async questions collapse into the editor widget; the host delivers the answer.
+				const show = waitForAnswer ? this.showQuestionOverlay : this.showAsyncQuestion;
+				const response = await show.call(
+					this,
 					{
 						requestId: request.requestId ?? "",
 						questions,
-						waitForAnswer: request.waitForAnswer ?? true,
+						waitForAnswer,
 						timeoutMs: request.timeout ?? 0,
 					},
 					{
@@ -2896,6 +2925,8 @@ export class InteractiveMode {
 				if (response.status === "cancelled") {
 					return { type: "extension_ui_response", id: request.id, cancelled: true };
 				}
+				// The host owns the idle timer; a locally expired countdown sends nothing.
+				if (response.status === "timed_out") return undefined;
 				return {
 					type: "extension_ui_response",
 					id: request.id,
@@ -3354,6 +3385,11 @@ export class InteractiveMode {
 		if (this.askUserQuestion) {
 			this.hideQuestionOverlay();
 		}
+		this.asyncQuestion?.finish({
+			status: "cancelled",
+			answers: {},
+			unanswered: this.asyncQuestion.request.questions.map((question) => question.id),
+		});
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
@@ -3534,7 +3570,10 @@ export class InteractiveMode {
 			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
-			question: (request, opts) => this.showQuestionOverlay(request, opts),
+			question: (request, opts) =>
+				request.waitForAnswer
+					? this.showQuestionOverlay(request, opts)
+					: this.showAsyncQuestion(request, opts).then((response) => this.deliverAsyncAnswer(request, response)),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
@@ -3769,12 +3808,7 @@ export class InteractiveMode {
 	/**
 	 * Show the ask-user multi-question overlay in place of the editor.
 	 */
-	private showQuestionOverlay(
-		request: QuestionRequest,
-		opts?: ExtensionUIDialogOptions & {
-			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
-		},
-	): Promise<QuestionResponse> {
+	private showQuestionOverlay(request: QuestionRequest, opts?: QuestionOverlayOptions): Promise<QuestionResponse> {
 		return new Promise((resolve) => {
 			let settled = false;
 			const previousWorkingMessage = this.workingMessage;
@@ -3829,6 +3863,115 @@ export class InteractiveMode {
 		this.editorContainer.addChild(this.editor);
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
+	}
+
+	/**
+	 * Park a waitForAnswer=false question behind a one-line widget above the
+	 * editor. The turn keeps running; the promise settles when the user submits
+	 * from the expanded component, types an ordinary reply (comment), the idle
+	 * countdown expires, or the caller aborts. A newer async question supersedes
+	 * a pending one, which resolves as cancelled.
+	 */
+	private showAsyncQuestion(request: QuestionRequest, opts?: QuestionOverlayOptions): Promise<QuestionResponse> {
+		return new Promise((resolve) => {
+			const cancelled = (): QuestionResponse => ({
+				status: "cancelled",
+				answers: {},
+				unanswered: request.questions.map((question) => question.id),
+			});
+			if (opts?.signal?.aborted) {
+				resolve(cancelled());
+				return;
+			}
+			this.asyncQuestion?.finish(cancelled());
+			const onAbort = () => state.finish(cancelled());
+			const state: AsyncQuestionState = {
+				request,
+				timeoutMs: opts?.timeout ?? request.timeoutMs,
+				onProgress: opts?.onProgress,
+				draft: { answers: {} },
+				finish: (response) => {
+					if (this.asyncQuestion !== state) return;
+					this.asyncQuestion = undefined;
+					opts?.signal?.removeEventListener("abort", onAbort);
+					if (this.askUserQuestion) this.hideQuestionOverlay();
+					this.setExtensionWidget(ASK_USER_WIDGET_KEY, undefined);
+					resolve(response);
+				},
+			};
+			this.asyncQuestion = state;
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+			this.refreshAsyncWidget(state);
+		});
+	}
+
+	/** (Re)render the collapsed widget with a fresh idle countdown. */
+	private refreshAsyncWidget(state: AsyncQuestionState): void {
+		this.setExtensionWidget(ASK_USER_WIDGET_KEY, (tui) => {
+			const startedAt = Date.now();
+			return new AskUserAsyncWidget({
+				unanswered: unansweredIds(state.request, state.draft).length,
+				timeoutMs: state.timeoutMs,
+				tui,
+				onExpire: () => state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - startedAt)),
+			});
+		});
+	}
+
+	/** Editor shortcut: expand the pending async question into the full component. */
+	private handleAskUserShortcut(data: string): boolean {
+		const state = this.asyncQuestion;
+		if (!state || this.askUserQuestion || !matchesKey(data, ASK_USER_ANSWER_KEY)) return false;
+		const component = new AskUserQuestionComponent(
+			state.request,
+			(response) => {
+				if (this.asyncQuestion !== state) return;
+				if (response.status !== "cancelled") {
+					state.finish(response);
+					return;
+				}
+				// Esc collapses back to the widget; the question stays pending.
+				this.hideQuestionOverlay();
+				this.refreshAsyncWidget(state);
+			},
+			{
+				tui: this.ui,
+				timeoutMs: state.timeoutMs,
+				onProgress: (draft) => {
+					state.draft = draft;
+					state.onProgress?.(draft);
+				},
+			},
+		);
+		this.askUserQuestion = component;
+		this.disposeActiveSelector();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(component);
+		this.ui.setFocus(component);
+		this.ui.requestRender();
+		return true;
+	}
+
+	/**
+	 * Ordinary composer text while an async question is pending is the comment
+	 * answer: resolve the question with it and let the framed message replace
+	 * the raw text. Returns false when nothing is pending.
+	 */
+	private submitAsyncQuestionComment(text: string): boolean {
+		const state = this.asyncQuestion;
+		if (!state) return false;
+		this.editor.addToHistory?.(text);
+		this.editor.setText("");
+		state.finish(buildCommentResponse(state.request, state.draft, text));
+		return true;
+	}
+
+	/** Deliver an async answer as a framed user message: steer mid-turn, follow-up when idle. */
+	private async deliverAsyncAnswer(request: QuestionRequest, response: QuestionResponse): Promise<QuestionResponse> {
+		if (response.status === "cancelled") return response;
+		const text = formatUserMessage(response, request.requestId, request.questions);
+		await this.session.sendUserMessage(text, { deliverAs: this.session.isStreaming ? "steer" : "followUp" });
+		return response;
 	}
 
 	/**
@@ -4329,6 +4472,10 @@ export class InteractiveMode {
 				this.lastEditorText = "";
 				text = text.trim();
 				if (!text) return;
+
+				// A pending async question claims ordinary text as its comment answer;
+				// slash and bash commands keep their normal routing.
+				if (!text.startsWith("/") && !text.startsWith("!") && this.submitAsyncQuestionComment(text)) return;
 
 				// Handle commands
 				if (text === "/settings") {

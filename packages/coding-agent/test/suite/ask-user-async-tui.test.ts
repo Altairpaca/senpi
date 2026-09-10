@@ -225,7 +225,7 @@ describe("async ask-user question in the interactive TUI", () => {
 		vi.useFakeTimers();
 		const fake = createFakeInteractiveMode({ isStreaming: true });
 		const sendHostUiProgress = vi.fn();
-		fake.runtimeHost = { sendHostUiProgress };
+		fake.runtimeHost = { ...fake.runtimeHost, sendHostUiProgress };
 		const handler = Reflect.get(InteractiveMode.prototype, "handleHostUiRequest");
 		if (typeof handler !== "function") throw new Error("handleHostUiRequest missing");
 		const pending: Promise<unknown> = handler.call(fake, {
