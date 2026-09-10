@@ -18,7 +18,7 @@ export function buildContinuationPrompt(goal: Goal): string {
 		"- This goal persists across turns. Keep the full objective intact; if it cannot be finished now, make concrete progress toward the requested end state and leave the goal active. Do not redefine success around a smaller or easier task.",
 		"- Avoid repeating work that is already done. Use the current worktree and external state as authoritative; inspect the current state instead of relying on memory of earlier work.",
 		"- If the todo list has open tasks, they are remaining goal work: re-read the list and pick the next open task instead of narrowing to only the newest instruction.",
-		'- Every goal turn must end in exactly one of four ways: a concrete action that moves the objective forward, update_goal with status "complete" backed by the completion audit, update_goal with status "blocked" backed by the blocked audit, or ending the turn while a live resumption channel (an active monitor, scheduled continuation, or background child whose completion wakes this session) is on duty for what the objective is waiting on. Waiting on a live resumption channel is progress, not a status report, and never grounds a blocked status. Ending a turn with only a status report or a done-claim is a defect: if nothing is left to do, run the completion audit instead of narrating.',
+		'- Every goal turn must end in exactly one of five ways: a concrete action that moves the objective forward, update_goal with status "complete" backed by the completion audit, update_goal with status "blocked" backed by the blocked audit, or asking the user through the question tool (request_user_input / ask_user_question) - either paused on the answer, or continuing with the question left pending - when a decision or fact only the user can supply blocks the next step, or ending the turn while a live resumption channel (an active monitor, scheduled continuation, or background child whose completion wakes this session) is on duty for what the objective is waiting on. Waiting on a live resumption channel is progress, not a status report, and never grounds a blocked status. Ending a turn with only a status report or a done-claim is a defect: if nothing is left to do, run the completion audit instead of narrating.',
 		"",
 		"Completion audit - run this before deciding the goal is achieved:",
 		"- Restate the objective as concrete deliverables or success criteria.",
@@ -30,8 +30,9 @@ export function buildContinuationPrompt(goal: Goal): string {
 		"",
 		"Blocked audit - run this before deciding the goal is blocked:",
 		"- Confirm first that no live resumption channel exists: no active monitor, subscription, background command, or child task can still deliver the change the objective is waiting on. While any such channel is live, end the turn and let it wake the goal - a pending delivery is a wait, not an impasse, and update_goal with status blocked is always the wrong call for it.",
+		"- If the single blocking condition is a decision, approval, or fact only the user can supply, ask it with the question tool first; blocked applies only when they did not answer within the wait or the answer did not unblock the work.",
 		"- Ask yourself whether the impasse is unmistakably clear: name the single blocking condition and the evidence that no available action can move the objective without user input or an external-state change.",
-		"- Require recurrence: the same blocking condition must have repeated for at least three consecutive goal turns, counting automatic continuations. On the first or second occurrence, try a different approach instead.",
+		"- Require recurrence: the same blocking condition must have survived at least three materially different attempts to move past it; automatic wake-ups while waiting do not count as attempts.",
 		"- Never block merely because the work is hard, slow, uncertain, or would benefit from clarification.",
 		'- Once both checks hold, call update_goal with status "blocked" and a specific reason instead of reporting the impasse while leaving the goal active.',
 	].join("\n");
@@ -91,8 +92,7 @@ export function buildGoalStallNotice(
 			`System check: this is resumption-channel goal continuation #${consecutiveToollessTurns} in a row. Live channel kinds (${[...sources].join(", ")}) persisted across ${consecutiveToollessTurns} consecutive continuation turns with no new user input and no completion. The current situation is likely abnormal - a stalled or dead wait.`,
 			"Before waiting on these channels again, actively investigate:",
 			...advice,
-			"- If the goal truly cannot progress, run the blocked audit instead of waiting again.",
-			"Do not end this turn with only another passive wait.",
+			"- If the goal is waiting on a user decision, ask it with the question tool; if it truly cannot progress, run the blocked audit.",
 			"</goal_stall_check>",
 		].join("\n");
 	}
@@ -102,7 +102,7 @@ export function buildGoalStallNotice(
 		"Before continuing in the same way, change what you are doing:",
 		"- Re-read the todo list and inspect the actual worktree state; treat it as authoritative over memory of earlier turns.",
 		"- Take one concrete action that moves the goal forward: edit a file, run a command, or verify a real result.",
-		"- If the goal truly cannot progress, run the blocked audit instead of repeating the same turn.",
+		"- If the goal is waiting on a user decision, ask it with the question tool; if it truly cannot progress, run the blocked audit.",
 		"Do not end this turn with only narration about what you intend to do.",
 		"</goal_stall_check>",
 	].join("\n");

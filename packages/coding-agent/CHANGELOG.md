@@ -14,6 +14,8 @@
 
 ### Changed
 
+- Goal continuation prompts now treat asking through `request_user_input` / `ask_user_question` as a legal ending, audit user-only blockers before marking a goal blocked, and count materially different attempts rather than automatic wake-ups for recurrence.
+
 ### Fixed
 
 - Shared RPC hosts now cut a socket peer that stops reading (a write not accepted within 4 seconds) with an `overflow` record `stalled, resync required` instead of letting it hold the session worker's output credit until the 5-second `session_worker_credit_timeout` quarantined a healthy session mid-turn; a cut or overflowed peer no longer withholds session credit or fails the shared host writer ([#1529](https://github.com/code-yeongyu/senpi/pull/1529)).

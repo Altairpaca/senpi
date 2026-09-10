@@ -1,5 +1,24 @@
 # goal Extension Changes
 
+## 2026-09-10 - Route user-only blockers through the question tool
+
+### What changed
+
+- `prompt.ts`: goal continuation now names the question tool as a fifth legal ending, asks user-only blockers before the blocked audit, counts materially different attempts, and routes stall notices to questions.
+- `tool-registration.ts`: `update_goal` tells the model that a missing user decision is a question, not a blocked status, until the user fails to answer.
+
+### Why
+
+- A goal can be blocked by information only the user can provide; routing that case through the question tool preserves progress and makes the wait explicit.
+
+### Why an extension could not handle it
+
+- The goal continuation prompt and `update_goal` tool description define the model-facing goal protocol and must be changed at their source.
+
+### Expected merge conflict zones
+
+- LOW: `prompt.ts` continuation and stall guidance; `tool-registration.ts` update description.
+
 ## 2026-09-10 - Park the continuation on a pending ask-user question
 
 ### What changed
