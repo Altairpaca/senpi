@@ -7,12 +7,12 @@ import {
 } from "../../src/core/extensions/builtin/ask-user/format.ts";
 import {
 	AskUserSchemaError,
+	type AskUserVariant,
 	CLAUDE_PARAMS,
 	CODEX_PARAMS,
-	toCanonical,
-	type AskUserVariant,
 	type QuestionRequest,
 	type QuestionResponse,
+	toCanonical,
 } from "../../src/core/extensions/builtin/ask-user/schema.ts";
 
 const WAIT_FLAG_STEER_TEXT =
@@ -34,7 +34,13 @@ const CLAUDE_QUESTION = {
 	multiSelect: false,
 };
 const QUESTIONS: QuestionRequest["questions"] = [
-	{ id: "q1", header: "Auth method", question: "Which auth method should we use?", options: OPTIONS, multiSelect: false },
+	{
+		id: "q1",
+		header: "Auth method",
+		question: "Which auth method should we use?",
+		options: OPTIONS,
+		multiSelect: false,
+	},
 	{
 		id: "q2",
 		header: "Library",
@@ -48,8 +54,7 @@ const QUESTIONS: QuestionRequest["questions"] = [
 ];
 const VARIANTS: AskUserVariant[] = ["codex", "claude"];
 const TIMEOUT_KO = "(사용자가 답변을 안하고 timeout 으로 종료됨)";
-const CONTINUE =
-	"Continue the work to completion on your best judgment; do not ask this question again this turn.";
+const CONTINUE = "Continue the work to completion on your best judgment; do not ask this question again this turn.";
 
 function expectSchemaError(run: () => unknown, expected: string | RegExp): void {
 	try {
@@ -89,19 +94,30 @@ describe("ask-user schema", () => {
 		const optionB = { label: "Beta", description: "Second choice." };
 		const question = { header: "Auth method", question: "Which auth method should we use?", multiSelect: false };
 		expectSchemaError(
-			() => toCanonical("claude", claudeArgs(Array.from({ length: 5 }, () => ({ ...question, options: [option, optionB] })))),
+			() =>
+				toCanonical(
+					"claude",
+					claudeArgs(Array.from({ length: 5 }, () => ({ ...question, options: [option, optionB] }))),
+				),
 			/1 to 4/,
 		);
 		expectSchemaError(
-			() => toCanonical("claude", claudeArgs([{ ...question, options: [option, optionB, option, optionB, option] }])),
+			() =>
+				toCanonical("claude", claudeArgs([{ ...question, options: [option, optionB, option, optionB, option] }])),
 			/2 to 4/,
 		);
-		expectSchemaError(() => toCanonical("claude", claudeArgs([{ ...question, options: [option] }])), /2 to 4|at least 2/);
+		expectSchemaError(
+			() => toCanonical("claude", claudeArgs([{ ...question, options: [option] }])),
+			/2 to 4|at least 2/,
+		);
 		expectSchemaError(
 			() => toCanonical("claude", claudeArgs([{ ...question, header: "", options: [option, optionB] }])),
 			/header/,
 		);
-		const canonical = toCanonical("claude", claudeArgs([{ header: "Auth method", question: question.question, multiSelect: false }]));
+		const canonical = toCanonical(
+			"claude",
+			claudeArgs([{ header: "Auth method", question: question.question, multiSelect: false }]),
+		);
 		expect(canonical.questions[0]?.options).toEqual([]);
 	});
 
