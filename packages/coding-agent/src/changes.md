@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-10 - Print mode binds editAssistantMessage for extensions
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the extension `commandContextActions` gain `editAssistantMessage`, delegating to `session.editAssistantMessage` with `summarize` / `customInstructions` / `expectedLeafId`, beside the existing `navigateTree` binding.
+
+### Why
+
+- `ExtensionCommandContextActions.editAssistantMessage` is required, so every mode that binds command actions must provide it; print mode is one of the three binding sites.
+
+### Why an extension could not handle it
+
+- The actions object is built by the mode before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: the `navigateTree` neighbour inside `commandContextActions` in `print-mode.ts`.
+
 ## 2026-09-10 - Render Anthropic tool_search results instead of raw JSON
 
 ### What changed
@@ -50,6 +68,7 @@
 - MEDIUM: `packages/coding-agent/src/config.ts` around `getThemesDir()` / `getExportTemplateDir()` if upstream edits
   either resolver; the shared `ShippedAsset` descriptors and `resolveShippedAssetDir()` are fork-owned.
 
+||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
 ## 2026-09-09 - Forward shared-host policy to extension loading
 
 ### What changed

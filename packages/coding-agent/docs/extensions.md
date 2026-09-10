@@ -1293,6 +1293,24 @@ Options:
 - `replaceInstructions`: If true, `customInstructions` replaces the default prompt instead of being appended
 - `label`: Label to attach to the branch summary entry (or target entry if not summarizing)
 
+### ctx.editAssistantMessage(entryId, text, options?)
+
+Replace an assistant response with an edited copy. The session leaf moves to the entry's parent and the copy (text only - tool calls and thinking blocks are dropped) is appended as the new leaf, so the original stays on an abandoned branch. Fires `session_before_tree` (cancellable) and `session_tree`.
+
+```typescript
+const result = await ctx.editAssistantMessage("entry-id-456", "The corrected answer.", {
+  expectedLeafId: ctx.sessionManager.getLeafId() ?? undefined,
+  summarize: false,
+});
+// result: { cancelled: boolean; unchanged?: boolean; entryId?: string }
+```
+
+Options:
+- `expectedLeafId`: the leaf you last observed; the edit rejects with an `AssistantEditError` (`reason: "stale-leaf"`) when the session moved on, before anything is written
+- `summarize` / `customInstructions`: summarize the abandoned branch like `ctx.navigateTree`
+
+Rejections are typed: `SessionStreamingError` (`code: "streaming"`) while a response streams, and `AssistantEditError` with `reason` `not-found` / `not-assistant` / `empty` / `stale-leaf` (`code` gives the wire spelling). `unchanged: true` means the text matched the original and nothing was appended.
+
 ### ctx.switchSession(sessionPath, options?)
 
 Switch to a different session file:

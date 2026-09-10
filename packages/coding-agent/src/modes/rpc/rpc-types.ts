@@ -13,7 +13,7 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage } from "../../core/extensions/types.ts";
-import type { SessionEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
+import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 
@@ -122,6 +122,16 @@ type RpcSessionCommand =
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string; cwdOverride?: string }
 	| { id?: string; type: "fork"; entryId: string; position?: "before" | "at" }
+	| {
+			id?: string;
+			type: "edit_assistant_message";
+			entryId: string;
+			text: string;
+			/** Leaf the client last observed; the edit is refused with `stale_leaf` when the session moved on. */
+			expectedLeafId?: string;
+			summarize?: boolean;
+			customInstructions?: string;
+	  }
 	| { id?: string; type: "clone" }
 	| { id?: string; type: "get_fork_messages" }
 	| { id?: string; type: "get_entries"; since?: string }
@@ -170,6 +180,12 @@ export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
+// edit_assistant_message failures (mirror AssistantEditError.code / SessionStreamingError.code)
+export const RPC_ERROR_STREAMING = "streaming";
+export const RPC_ERROR_ENTRY_NOT_FOUND = "not_found";
+export const RPC_ERROR_NOT_ASSISTANT = "not_assistant";
+export const RPC_ERROR_EMPTY_TEXT = "empty";
+export const RPC_ERROR_STALE_LEAF = "stale_leaf";
 
 export type RpcErrorCode =
 	| typeof RPC_ERROR_UNKNOWN_SESSION
@@ -179,7 +195,12 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_MULTI_SESSION_DISABLED
 	| typeof RPC_ERROR_INVALID_PATH
 	| typeof RPC_ERROR_OPEN_FAILED
-	| typeof RPC_ERROR_MEDIA_NOT_FOUND;
+	| typeof RPC_ERROR_MEDIA_NOT_FOUND
+	| typeof RPC_ERROR_STREAMING
+	| typeof RPC_ERROR_ENTRY_NOT_FOUND
+	| typeof RPC_ERROR_NOT_ASSISTANT
+	| typeof RPC_ERROR_EMPTY_TEXT
+	| typeof RPC_ERROR_STALE_LEAF;
 
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
@@ -493,6 +514,13 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "export_jsonl"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "fork"; success: true; data: { text: string; cancelled: boolean } }
+	| {
+			id?: string;
+			type: "response";
+			command: "edit_assistant_message";
+			success: true;
+			data: EditAssistantMessageResult;
+	  }
 	| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }
 	| {
 			id?: string;
@@ -592,6 +620,12 @@ export type RpcResponse =
 			errorCode?: string;
 			errorData?: unknown;
 	  };
+
+/** Success payload of `edit_assistant_message`. `leafId` is the session leaf after the call. */
+export type EditAssistantMessageResult =
+	| { outcome: "edited"; entry: SessionMessageEntry; leafId: string; summaryEntryId?: string }
+	| { outcome: "unchanged"; leafId: string | null }
+	| { outcome: "cancelled"; leafId: string | null; aborted?: boolean };
 
 // ============================================================================
 // Extension UI Events (stdout)

@@ -13,10 +13,25 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+
+/** A command the host refused; `errorCode` carries the typed code when the command defines one. */
+export class RpcCommandError extends Error {
+	readonly errorCode: string | undefined;
+	readonly errorData: unknown;
+
+	constructor(message: string, errorCode: string | undefined, errorData: unknown) {
+		super(message);
+		this.name = "RpcCommandError";
+		this.errorCode = errorCode;
+		this.errorData = errorData;
+	}
+}
+
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
+	EditAssistantMessageResult,
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
@@ -822,6 +837,28 @@ export class RpcClient {
 	}
 
 	/**
+	 * Replace an assistant response with an edited copy (branches to the target's parent and appends
+	 * the copy as the new leaf). Pass the `leafId` you last observed as `expectedLeafId` so a stale
+	 * edit is refused with `errorCode: "stale_leaf"` instead of rewriting a conversation another client
+	 * moved. Failures reject with an {@link RpcCommandError} carrying the typed `errorCode`.
+	 */
+	async editAssistantMessage(
+		entryId: string,
+		text: string,
+		options: { expectedLeafId?: string; summarize?: boolean; customInstructions?: string } = {},
+	): Promise<EditAssistantMessageResult> {
+		const response = await this.send({
+			type: "edit_assistant_message",
+			entryId,
+			text,
+			expectedLeafId: options.expectedLeafId,
+			summarize: options.summarize,
+			customInstructions: options.customInstructions,
+		});
+		return this.getData<EditAssistantMessageResult>(response);
+	}
+
+	/**
 	 * Get text of last assistant message.
 	 */
 	async getLastAssistantText(): Promise<string | null> {
@@ -1118,7 +1155,7 @@ export class RpcClient {
 					errorResponse.errorData as ConstructorParameters<typeof MissingSessionCwdError>[0],
 				);
 			}
-			throw new Error(errorResponse.error);
+			throw new RpcCommandError(errorResponse.error, errorResponse.errorCode, errorResponse.errorData);
 		}
 		// Type assertion: we trust response.data matches T based on the command sent.
 		// This is safe because each public method specifies the correct T for its command.
