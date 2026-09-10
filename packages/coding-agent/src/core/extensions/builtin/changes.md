@@ -5,7 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/index.ts` registers ask-user immediately after gpt-apply-patch.
-- `packages/coding-agent/src/core/extensions/builtin/ask-user/{index,extension,family,tool,render,registry}.ts` adds family selection, direct tool definitions, blocking and async execution, cancellation and timeout guards, renderers, and a session-keyed pending registry. UI bridges own async user-message delivery and RPC capability decisions.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/{index,extension,family,tool,render,registry}.ts` adds family selection, direct tool definitions, blocking and async execution, cancellation and timeout guards, renderers, and a session-keyed pending registry. UI bridges own async user-message delivery and RPC capability decisions. The builtin registers `--no-ask-user` for CLI validation. Print/json and missing question bridges deactivate the tools; other modes delegate to the supplied bridge regardless of the legacy `hasUI` flag.
 
 ### Why
 

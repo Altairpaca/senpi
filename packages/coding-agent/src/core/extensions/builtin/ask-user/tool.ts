@@ -164,7 +164,6 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				pi.getFlag("no-ask-user") === true ||
 				ctx.mode === "print" ||
 				ctx.mode === "json" ||
-				(!ctx.hasUI && ctx.mode === "tui") ||
 				!ctx.ui.question
 			) {
 				state.unavailable = true;
