@@ -27,6 +27,8 @@ export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
  */
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
+/** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
+export const QUESTION_CAPABILITY = "question";
 
 /**
  * Env var carrying client capabilities to a single-connection stdio RPC host
