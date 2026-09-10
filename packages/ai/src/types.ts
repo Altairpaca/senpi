@@ -92,7 +92,7 @@ export type KnownProvider =
 	| "xiaomi-token-plan-sgp";
 export type ProviderId = KnownProvider | string;
 
-export type KnownImagesProvider = "openrouter";
+export type KnownImagesProvider = "openai" | "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
 

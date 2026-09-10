@@ -2,12 +2,17 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AssistantImages, ImagesModel } from "@earendil-works/pi-ai/compat";
-import { generateImages, parseOpenAIImageSize } from "@earendil-works/pi-ai/compat";
+import {
+	generateImages,
+	getImageModel,
+	parseOpenAIImageOutputOptions,
+	parseOpenAIImageSize,
+} from "@earendil-works/pi-ai/compat";
 import { defineTool, type ExtensionContext } from "../../types.ts";
 import { type ImageGenAuthResolution, resolveImageGenAuth } from "./auth.ts";
 import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, IMAGE_MODEL_NAMES, Params } from "./params.ts";
 import { displayPath, resolveTargets } from "./paths.ts";
-import { loadReferenceImages } from "./reference-images.ts";
+import { loadMaskImage, loadReferenceImages } from "./reference-images.ts";
 import { imageGenRegistryOverride, isNativeBypass, NATIVE_BYPASS_MESSAGE } from "./state.ts";
 
 export type { GenerateImageDetails } from "./params.ts";
@@ -30,13 +35,14 @@ function synthesizeModel(
 		baseUrl: auth.baseUrl,
 		input: ["text", "image"],
 		output: ["image"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: getImageModel("openai", id).cost,
 	};
 	return model;
 }
 
 interface GeneratedImage {
 	data: string;
+	mimeType: string;
 	revisedPrompt?: string;
 }
 
@@ -49,7 +55,11 @@ function collectImages(images: AssistantImages): GeneratedImage[] {
 			pendingText = text.length > 0 ? text : undefined;
 			continue;
 		}
-		collected.push({ data: block.data, ...(pendingText === undefined ? {} : { revisedPrompt: pendingText }) });
+		collected.push({
+			data: block.data,
+			mimeType: block.mimeType,
+			...(pendingText === undefined ? {} : { revisedPrompt: pendingText }),
+		});
 		pendingText = undefined;
 	}
 	return collected;
@@ -79,8 +89,9 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 	name: GENERATE_IMAGE_TOOL_NAME,
 	label: "Generate Image",
 	description:
-		"Generate or edit an image with OpenAI gpt-image-2.5 (Sunburst by default; Flare for speed) and save it as a PNG file. Pass reference_image_paths to edit or reference existing images. Returns the saved file paths.",
-	promptSnippet: "Generate or edit images from prompts and optional reference images, saving them as PNG files.",
+		"Generate or edit an image with OpenAI gpt-image-2.5 (Flare by default; Sunburst for precise edits and final assets) and save it as a png, jpeg, or webp file, optionally with a transparent background. Pass reference_image_paths to edit or reference existing images. Generate directly when the request is clear instead of asking for confirmation. Returns the saved file paths.",
+	promptSnippet:
+		"Generate or edit images from prompts and optional reference images, saving them as png/jpeg/webp files.",
 	parameters: Params,
 	async execute(toolCallId, params, signal, _onUpdate, ctx: ExtensionContext) {
 		const size = params.size ?? "auto";
@@ -112,7 +123,21 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		if (!references.ok) {
 			return failure(references.error, "invalid_params", { ...context, source });
 		}
-		const targets = resolveTargets(ctx.cwd, toolCallId, requested, params.output_path);
+		const mask = await loadMaskImage(ctx.cwd, params.mask_image_path, references.images.length);
+		if (mask !== undefined && !mask.ok) {
+			return failure(mask.error, "invalid_params", { ...context, source });
+		}
+		const outputOptions = parseOpenAIImageOutputOptions({
+			background,
+			outputFormat,
+			outputCompression: params.output_compression,
+			hasMask: mask !== undefined,
+			imageCount: references.images.length,
+		});
+		if (!outputOptions.ok) {
+			return failure(`Error: ${outputOptions.error}`, "invalid_params", { ...context, source });
+		}
+		const targets = resolveTargets(ctx.cwd, toolCallId, requested, params.output_path, outputFormat);
 		if (!targets.ok) {
 			return failure(targets.error, "invalid_params", { ...context, source });
 		}
@@ -136,6 +161,11 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 				size,
 				quality,
 				n: requested,
+				background,
+				outputFormat,
+				...(params.output_compression === undefined ? {} : { outputCompression: params.output_compression }),
+				...(params.moderation === undefined ? {} : { moderation: params.moderation }),
+				...(mask === undefined ? {} : { mask: mask.image }),
 			},
 		);
 		if (images.stopReason !== "stop") {
@@ -165,16 +195,19 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			requested,
 			generated: generated.length,
 			revisedPrompts,
+			...(images.background === undefined ? {} : { transparentBackground: images.background === "transparent" }),
 		};
 		const summary = [
 			`Generated ${generated.length} image${generated.length === 1 ? "" : "s"}:`,
 			...savedPaths.map((path) => `- ${path}`),
+			...(images.background === undefined ? [] : [`Background: ${images.background}`]),
 			...revisedPrompts.map((revised) => `Revised prompt: ${revised}`),
+			"The saved file is the deliverable; refer to it by path instead of re-embedding image data.",
 		].join("\n");
 		return {
 			content: [
 				{ type: "text" as const, text: summary },
-				...generated.map((image) => ({ type: "image" as const, data: image.data, mimeType: "image/png" })),
+				...generated.map((image) => ({ type: "image" as const, data: image.data, mimeType: image.mimeType })),
 			],
 			details,
 			...(images.usage === undefined ? {} : { usage: images.usage }),

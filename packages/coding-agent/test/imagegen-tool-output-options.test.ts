@@ -134,7 +134,7 @@ describe("generate_image output options", () => {
 	it.each([
 		[{ background: "transparent", output_format: "jpeg" }, /transparent.*png or webp/i],
 		[{ output_compression: 50 }, /output_compression.*jpeg or webp/i],
-		[{ output_compression: 101, output_format: "webp" }, /0 and 100/],
+		[{ output_compression: 50, output_format: "png" }, /output_compression.*jpeg or webp/i],
 	])("rejects %o before any request", async (params, message) => {
 		const result = await execute({ prompt: "a red fox", ...params });
 		expect(result.details).toMatchObject({ reason: "invalid_params", error: expect.stringMatching(message) });
