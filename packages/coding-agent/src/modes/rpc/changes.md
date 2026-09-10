@@ -1,5 +1,23 @@
 # changes
 
+## open_session of an existing session file starts as a resume (2026-09-10)
+
+### What changed
+
+- `session-registry.ts`: `openSession` passes `sessionStartEvent: { type: "session_start", reason: "resume" }` to `createAgentSessionRuntime` when the requested `sessionPath` already exists on disk (the same `isResume` predicate that already restores the persisted model and thinking level). A session created by the open still starts with the default `reason: "startup"`.
+
+### Why
+
+- `AgentSession` defaults to `reason: "startup"` when no event is supplied, so re-opening a session over RPC fired `session_start{startup}`. Extensions that rebuild per-session state only on a resume never ran: after a host crash the ask-user builtin's dangling-question hook (`resume.ts`, `reason` must be `resume`/`reload`) left the pending tool call hanging with nothing re-presented and no orphaned-after-restart message (probe scenario `resume`). Interactive `/resume` already emits the event through `AgentSessionRuntime.switchSession`; the RPC restart path now mirrors it.
+
+### Why an extension could not handle it
+
+- The start reason is decided by the runtime factory call inside the registry, before any extension is bound; an extension cannot observe why its session was created.
+
+### Expected merge conflict zones
+
+- LOW: the `isResume` block and the `createAgentSessionRuntime` options in `RpcSessionRegistry.openSession`.
+
 ## Pending questions survive the opening connection's drop (2026-09-10)
 
 ### What changed
