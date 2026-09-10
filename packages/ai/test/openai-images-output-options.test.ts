@@ -2,15 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateImages, type OpenAIImagesOptions } from "../src/api/openai-images.ts";
 import type { ImageContent, ImagesContext, ImagesModel } from "../src/types.ts";
 
-const mockState = vi.hoisted(() => ({
-	generate: vi.fn(),
-	edit: vi.fn(),
-	toFile: vi.fn(
-		async (bytes: Uint8Array, name: string, options: FilePropertyBag) =>
-			new File([Uint8Array.from(bytes)], name, options),
-	),
-	response: {} as Record<string, unknown>,
-}));
+const mockState = vi.hoisted(() => {
+	const response: Record<string, unknown> = {};
+	return {
+		generate: vi.fn(),
+		edit: vi.fn(),
+		toFile: vi.fn(
+			async (bytes: Uint8Array, name: string, options: FilePropertyBag) =>
+				new File([Uint8Array.from(bytes)], name, options),
+		),
+		response,
+	};
+});
 vi.mock("openai", () => ({
 	default: class FakeOpenAI {
 		images = { generate: mockState.generate, edit: mockState.edit };

@@ -9,7 +9,10 @@ import { createHarness, type Harness } from "./suite/harness.ts";
 
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl3T2QAAAAASUVORK5CYII=";
 const STUB_SOURCE_ID = "imagegen-tool-output-options-stub";
-const stub = { background: undefined as AssistantImages["background"], mimeType: undefined as string | undefined };
+const stub: { background: AssistantImages["background"]; mimeType: string | undefined } = {
+	background: undefined,
+	mimeType: undefined,
+};
 const generate = vi.fn(
 	async (
 		model: ImagesModel<"openai-images">,
@@ -103,7 +106,8 @@ describe("generate_image output options", () => {
 	it("keeps the png defaults on the wire and in the details", async () => {
 		const result = await execute({ prompt: "a red fox", output_path: "fox" });
 
-		expect(providerOptions()).toMatchObject({ outputFormat: "png", background: "auto" });
+		expect(providerOptions()).toMatchObject({ outputFormat: "png" });
+		expect(providerOptions()).not.toHaveProperty("background");
 		expect(providerOptions()).not.toHaveProperty("outputCompression");
 		expect(providerOptions()).not.toHaveProperty("moderation");
 		expect(result.details).toMatchObject({ outputFormat: "png", background: "auto", paths: ["fox.png"] });
@@ -192,6 +196,15 @@ describe("generate_image output options", () => {
 		expect(result.content.find((block) => block.type === "text")).toMatchObject({
 			text: expect.stringContaining("returned png instead of the requested webp"),
 		});
+	});
+
+	it("names the colliding renamed target and writes nothing when the provider changes the format", async () => {
+		stub.mimeType = "image/png";
+		writeFileSync(join(harness.tempDir, "fox-02.png"), "occupied");
+		const result = await execute({ prompt: "a red fox", output_format: "webp", output_path: "fox.webp", n: 2 });
+		expect(result.details).toMatchObject({ reason: "write_failed", error: expect.stringContaining("fox-02.png") });
+		expect(existsSync(join(harness.tempDir, "fox-01.png"))).toBe(false);
+		expect(existsSync(join(harness.tempDir, "fox-01.webp"))).toBe(false);
 	});
 
 	it("reports the provider's transparency verdict", async () => {

@@ -161,7 +161,7 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 				size,
 				quality,
 				n: requested,
-				background,
+				...(params.background === undefined ? {} : { background }),
 				outputFormat,
 				...(params.output_compression === undefined ? {} : { outputCompression: params.output_compression }),
 				...(params.moderation === undefined ? {} : { moderation: params.moderation }),
@@ -178,14 +178,16 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			return failure("Error: the provider returned no images.", "provider_error", { ...context, source });
 		}
 		// A gateway may ignore output_format; name each file after the bytes it actually holds.
-		const savedFormat = outputFormatOf(generated[0]?.mimeType ?? "") ?? outputFormat;
-		const paths =
-			savedFormat === outputFormat
-				? targets.paths
-				: targets.paths.map((target) => withFormatExtension(target, savedFormat));
-		if (savedFormat !== outputFormat && paths.some((target) => existsSync(target))) {
+		const delivered = generated.map((image) => outputFormatOf(image.mimeType) ?? outputFormat);
+		const savedFormat = delivered[0] ?? outputFormat;
+		const paths = targets.paths.map((target, index) => {
+			const format = delivered[index];
+			return format === undefined || format === outputFormat ? target : withFormatExtension(target, format);
+		});
+		const renamedCollision = paths.find((target, index) => target !== targets.paths[index] && existsSync(target));
+		if (renamedCollision !== undefined) {
 			return failure(
-				`Error: the provider returned ${savedFormat} instead of ${outputFormat} and ${displayPath(ctx.cwd, paths[0] ?? "")} already exists. Choose another output_path.`,
+				`Error: the provider returned ${savedFormat} instead of ${outputFormat} and ${displayPath(ctx.cwd, renamedCollision)} already exists. Choose another output_path.`,
 				"write_failed",
 				{ ...context, source },
 			);
