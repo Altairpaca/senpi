@@ -1,3 +1,22 @@
+## Leaf token and typed errors for assistant edits (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `TreeNavigationOptions.expectedLeafId`; `editAssistantMessage` checks streaming first, then the token (before the `unchanged` short-circuit), and `_navigateTree` checks the token before its no-op return; both streaming guards throw `SessionStreamingError`.
+- `packages/coding-agent/src/core/edited-assistant-message.ts`: `AssistantEditReason` gains `stale-leaf`, `AssistantEditError.code` maps reasons to wire codes, `SessionStreamingError`, and `assertExpectedLeaf()`.
+
+### Why
+
+- A client holding a stale view must be refused before any mutation, and every refusal needs a stable code a transport can forward.
+
+### Why an extension could not handle it
+
+- The guard has to run inside the core mutation, ahead of `session_before_tree`.
+
+### Expected merge conflict zones
+
+- LOW: `editAssistantMessage` / `_navigateTree` heads in `agent-session.ts`; the fork-only `edited-assistant-message.ts`.
+
 ## Honor an inline isError on executeTool results (2026-09-10)
 
 ### What changed
@@ -15,6 +34,7 @@
 ### Expected merge conflict zones
 
 - LOW: the `executeTool` try block in `packages/coding-agent/src/core/agent-session.ts`.
+||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
 ## askUser settings and --no-ask-user session override (2026-09-10)
 
 ### What changed

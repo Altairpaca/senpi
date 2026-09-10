@@ -6,6 +6,8 @@
 
 ### Added
 
+- RPC mode serves `edit_assistant_message` (`entryId`, `text`, optional `expectedLeafId`, `summarize`, `customInstructions`) so any RPC client can replace an assistant response with an edited copy; the response reports `outcome: edited | unchanged | cancelled` with the new entry and leaf, and failures carry a typed `errorCode` (`streaming`, `not_found`, `not_assistant`, `empty`, `stale_leaf`). `expectedLeafId` is an optimistic-concurrency guard on `TreeNavigationOptions` checked before any mutation and before the unchanged short-circuit, so a stale client is refused instead of rewriting a conversation another client moved. Extensions get `ctx.editAssistantMessage()`, the RPC client gets `editAssistantMessage()` (failures reject with `RpcCommandError` carrying `errorCode`), and a TUI attached to a shared host now routes `/tree` edits to the host instead of a local shadow session. `entry_appended` is documented as the identity channel for persisted messages.
+
 - The built-in question tool selects `request_user_input` for OpenAI GPT models and `ask_user_question` for other models, with an explicit choice to wait for an answer or keep working while the question stays open. Questions have an idle timeout and hard cap, support partial answers with a comment, and avoid re-asking after a timeout in the same turn. Session resume and reload re-present a dangling question when a UI is available, or deliver an orphaned-after-restart user message once per tool call.
 
 - Settings `askUser.enabled` (default true) and `askUser.timeoutMinutes` (default 30, clamped 1–120) control the built-in question tool; `--no-ask-user` disables it for one run and wins over saved settings.
