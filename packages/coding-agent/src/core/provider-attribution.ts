@@ -65,7 +65,7 @@ function getDefaultAttributionHeaders(
 	return undefined;
 }
 
-export function getProviderSessionHeaders(
+export function getOpenCodeSessionHeaders(
 	model: Model<Api>,
 	sessionId: string | undefined,
 ): Record<string, string> | undefined {
@@ -87,7 +87,7 @@ export function mergeProviderAttributionHeaders(
 	...headerSources: Array<ProviderHeaders | undefined>
 ): ProviderHeaders | undefined {
 	const merged: ProviderHeaders = {
-		...getProviderSessionHeaders(model, sessionId),
+		...getOpenCodeSessionHeaders(model, sessionId),
 		...getDefaultAttributionHeaders(model, settingsManager),
 	};
 
