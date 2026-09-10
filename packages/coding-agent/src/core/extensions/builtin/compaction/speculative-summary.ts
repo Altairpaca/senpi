@@ -18,6 +18,7 @@ import {
 	summarizationMaxDurationMs,
 } from "../../../compaction/stream-watchdog.ts";
 import { convertToLlm } from "../../../messages.ts";
+import { getProviderSessionHeaders } from "../../../provider-attribution.ts";
 import type { buildPrompt } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
 import type { SpeculativeCompactionContext, SpeculativeCompactionSnapshot } from "./speculative.ts";
@@ -143,9 +144,15 @@ export async function generateSummaryMessage(options: {
 			),
 			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
 		};
+		const requestHeaders: ProviderHeaders = {
+			...getProviderSessionHeaders(options.snapshot.model, options.context.sessionManager.getSessionId()),
+			...(options.auth.headers ?? {}),
+		};
 		const headers = providerRequest
-			? await providerRequest.transformHeaders(options.auth.headers ?? {})
-			: options.auth.headers;
+			? await providerRequest.transformHeaders(requestHeaders)
+			: Object.keys(requestHeaders).length > 0
+				? requestHeaders
+				: undefined;
 		const responseStream = summarizationStream(options.context, options.snapshot.model, requestContext, {
 			apiKey: options.auth.apiKey,
 			headers,
