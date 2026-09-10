@@ -95,6 +95,7 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
+import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { appendHiddenTuiStdout, appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
@@ -146,6 +147,7 @@ import {
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
+import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
@@ -738,12 +740,21 @@ type HostUiRequest = {
 	widgetPlacement?: "aboveEditor" | "belowEditor";
 	extensionName?: string;
 	text?: string;
+	requestId?: string;
+	toolCallId?: string;
+	waitForAnswer?: boolean;
+	questions?: QuestionRequest["questions"];
+	timeout?: number;
+	askedAtMs?: number;
+	deadlineAtMs?: number;
+	remainingMs?: number;
 };
 
 type HostUiResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true };
+	| { type: "extension_ui_response"; id: string; cancelled: true }
+	| { type: "extension_ui_response"; id: string; answers: QuestionResponse["answers"]; comment?: string };
 
 /**
  * Optional runtime capability: only the shared interactive host proxies extension
@@ -752,6 +763,13 @@ type HostUiResponse =
 type HostUiCapableRuntime = {
 	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
 	setClientInfo?(width: number): void;
+	/** Draft updates for an open host-side `question` request (debounced by the caller). */
+	sendHostUiProgress?(record: {
+		type: "extension_ui_progress";
+		id: string;
+		answers?: QuestionResponse["answers"];
+		comment?: string;
+	}): void;
 };
 
 function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => Component) | undefined {
@@ -999,6 +1017,7 @@ export class InteractiveMode {
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
+	private askUserQuestion: AskUserQuestionComponent | undefined = undefined;
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -2839,6 +2858,51 @@ export class InteractiveMode {
 					? { type: "extension_ui_response", id: request.id, cancelled: true }
 					: { type: "extension_ui_response", id: request.id, value };
 			}
+			case "question": {
+				const questions = request.questions ?? [];
+				if (questions.length === 0) {
+					return { type: "extension_ui_response", id: request.id, cancelled: true };
+				}
+				const remainingMs =
+					request.remainingMs !== undefined && request.remainingMs > 0 ? request.remainingMs : request.timeout;
+				const hostRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
+				let progressTimer: ReturnType<typeof setTimeout> | undefined;
+				let lastDraft: { answers?: QuestionResponse["answers"]; comment?: string } | undefined;
+				const response = await this.showQuestionOverlay(
+					{
+						requestId: request.requestId ?? "",
+						questions,
+						waitForAnswer: request.waitForAnswer ?? true,
+						timeoutMs: request.timeout ?? 0,
+					},
+					{
+						timeout: remainingMs,
+						onProgress: (draft) => {
+							lastDraft = draft;
+							if (progressTimer !== undefined) return;
+							progressTimer = setTimeout(() => {
+								progressTimer = undefined;
+								hostRuntime.sendHostUiProgress?.({
+									type: "extension_ui_progress",
+									id: request.id,
+									...(lastDraft?.answers !== undefined ? { answers: lastDraft.answers } : {}),
+									...(lastDraft?.comment !== undefined ? { comment: lastDraft.comment } : {}),
+								});
+							}, 1_000);
+						},
+					},
+				);
+				if (progressTimer !== undefined) clearTimeout(progressTimer);
+				if (response.status === "cancelled") {
+					return { type: "extension_ui_response", id: request.id, cancelled: true };
+				}
+				return {
+					type: "extension_ui_response",
+					id: request.id,
+					answers: response.answers,
+					...(response.comment !== undefined ? { comment: response.comment } : {}),
+				};
+			}
 			case "notify":
 				this.showExtensionNotify(request.message ?? "");
 				return undefined;
@@ -3287,6 +3351,9 @@ export class InteractiveMode {
 		if (this.extensionEditor) {
 			this.hideExtensionEditor();
 		}
+		if (this.askUserQuestion) {
+			this.hideQuestionOverlay();
+		}
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
@@ -3467,6 +3534,7 @@ export class InteractiveMode {
 			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
+			question: (request, opts) => this.showQuestionOverlay(request, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
@@ -3694,6 +3762,71 @@ export class InteractiveMode {
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.extensionEditor = undefined;
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Show the ask-user multi-question overlay in place of the editor.
+	 */
+	private showQuestionOverlay(
+		request: QuestionRequest,
+		opts?: ExtensionUIDialogOptions & {
+			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+		},
+	): Promise<QuestionResponse> {
+		return new Promise((resolve) => {
+			let settled = false;
+			const previousWorkingMessage = this.workingMessage;
+			const finish = (response: QuestionResponse) => {
+				if (settled) return;
+				settled = true;
+				opts?.signal?.removeEventListener("abort", onAbort);
+				this.workingMessage = previousWorkingMessage;
+				this.updateWorkingIndicatorMessage();
+				this.hideQuestionOverlay();
+				resolve(response);
+			};
+			const onAbort = () => {
+				finish({
+					status: "cancelled",
+					answers: {},
+					unanswered: request.questions.map((question) => question.id),
+				});
+			};
+			if (opts?.signal?.aborted) {
+				resolve({
+					status: "cancelled",
+					answers: {},
+					unanswered: request.questions.map((question) => question.id),
+				});
+				return;
+			}
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+			this.workingMessage = "Waiting for your answer";
+			this.updateWorkingIndicatorMessage();
+			this.askUserQuestion = new AskUserQuestionComponent(request, (response) => finish(response), {
+				tui: this.ui,
+				timeoutMs: opts?.timeout ?? request.timeoutMs,
+				onProgress: opts?.onProgress,
+			});
+			this.disposeActiveSelector();
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.askUserQuestion);
+			this.ui.setFocus(this.askUserQuestion);
+			this.ui.requestRender();
+		});
+	}
+
+	/**
+	 * Hide the ask-user question overlay and restore the editor.
+	 */
+	private hideQuestionOverlay(): void {
+		this.askUserQuestion?.dispose();
+		this.askUserQuestion = undefined;
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
 	}
