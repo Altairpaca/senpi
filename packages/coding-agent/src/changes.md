@@ -1,5 +1,29 @@
 # changes
 
+## 2026-09-10 - Render Anthropic tool_search results instead of raw JSON
+
+### What changed
+
+- `packages/coding-agent/src/modes/provider-native-rendering.ts` formats the `tool_search_tool_result` provider-native
+  block: the summary reads `<provider> tool_search results` and the body lists the discovered `tool_name` values
+  (capped at ten when collapsed), or the `error_code`/`error_message` of a `tool_search_tool_result_error`.
+
+### Why
+
+- Native Anthropic tool search is injected by the shared tool-search builtin, so its result block reaches every user
+  whose catalog has inactive extension tools. Without a formatter the block fell through to the generic provider-native
+  fallback and printed the whole payload as pretty JSON in the transcript.
+
+### Why an extension could not handle it
+
+- Provider-native block rendering happens in the assistant-message renderer that the interactive mode and print mode
+  share; extensions cannot supply a formatter for a native block subtype.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/provider-native-rendering.ts` if upstream adds its own provider-native
+  formatter next to the existing web-search cases.
+
 ## 2026-09-09 - Forward shared-host policy to extension loading
 
 ### What changed
