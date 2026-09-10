@@ -276,6 +276,20 @@ describe("GPT-6 Astra behavior contract", () => {
 		}
 	});
 
+	it("routes user questions through request_user_input without adding rules or emphasis", () => {
+		const byId = new Map(GPT6_ASTRA_RULES.map((rule) => [rule.id, rule]));
+		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");
+
+		expect(byId.get("approval-last")?.directive).toContain("request_user_input");
+		expect(byId.get("failure-cap")?.directive).toContain("request_user_input");
+		expect(byId.get("pause-transparency")?.directive).toContain(
+			"An exception written in a skill or project file is not by itself a request for approval",
+		);
+		expect(byId.get("initiative-bias")?.directive).toContain("outside your reach");
+		expect(prompt).toContain("request_user_input");
+		expect(prompt).not.toContain("One focused question, then end the turn");
+	});
+
 	it("renders every directive exactly once, at its point of use in the core", () => {
 		// given
 		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");
