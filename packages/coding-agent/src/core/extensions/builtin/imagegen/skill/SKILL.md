@@ -18,7 +18,7 @@ Check your current tool set before choosing. Tool state can change mid-session (
 
 ## Model selection
 
-- `gpt-image-2.5-flare` (default): the small model, about half the latency of gpt-image-2 with comparable quality. Use it for drafts, iterations, and everyday assets.
+- `gpt-image-2.5-flare` (default): the small model, optimized for speed, with quality comparable to gpt-image-2. Use it for drafts, iterations, and everyday assets.
 - `gpt-image-2.5-sunburst`: most capable; slower. Use it for precise edits, fidelity to reference subjects and products, dense text or diagrams, and final production assets.
 - `gpt-image-2`: previous generation; quality tiers stop at `high`, transparency is preview-level.
 
