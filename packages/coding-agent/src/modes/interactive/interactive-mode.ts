@@ -80,7 +80,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
-import { assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -7746,6 +7746,8 @@ export class InteractiveMode {
 			return;
 		}
 		const message = entry.message;
+		// The leaf seen when the editor opens is the token the edit is checked against.
+		const expectedLeafId = this.sessionManager.getLeafId() ?? undefined;
 		const dropsToolCalls = message.content.some((block) => block.type === "toolCall");
 		const title = dropsToolCalls
 			? "Edit assistant response (its tool calls will be dropped)"
@@ -7766,7 +7768,16 @@ export class InteractiveMode {
 		}
 		await this.runTreeNavigation(entryId, {
 			promptForSummary: this.treeNavigationAbandonsConversation(entryId),
-			navigate: (options) => this.session.editAssistantMessage(entryId, edited, options),
+			navigate: async (options) => {
+				try {
+					return await this.session.editAssistantMessage(entryId, edited, { ...options, expectedLeafId });
+				} catch (error) {
+					if (error instanceof AssistantEditError && error.reason === "stale-leaf") {
+						throw new Error("The session changed while you were editing; reopen /tree and try again");
+					}
+					throw error;
+				}
+			},
 			successStatus: "Replaced assistant response with your edit",
 		});
 	}
