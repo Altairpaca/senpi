@@ -6,6 +6,8 @@
 
 ### Added
 
+- The built-in question tool selects `request_user_input` for OpenAI GPT models and `ask_user_question` for other models, with an explicit choice to wait for an answer or keep working while the question stays open. Questions have an idle timeout and hard cap, support partial answers with a comment, and avoid re-asking after a timeout in the same turn.
+
 - Settings `askUser.enabled` (default true) and `askUser.timeoutMinutes` (default 30, clamped 1–120) control the built-in question tool; `--no-ask-user` disables it for one run and wins over saved settings.
 
 - `/tree` can edit an assistant response: press `ctrl+e` (`app.tree.editMessage`) on an assistant entry to open it in the multi-line editor; submitting branches to that entry's parent and appends the edited copy as the new leaf, so the conversation continues from the corrected response while the original stays in the session file. Tool calls and thinking in the edited response are dropped, the branch-summary prompt appears only when messages are abandoned, and the key reopens user messages in the editor the same way `enter` does. `AgentSession.editAssistantMessage()` exposes the operation to hosts ([#1532](https://github.com/code-yeongyu/senpi/pull/1532)).

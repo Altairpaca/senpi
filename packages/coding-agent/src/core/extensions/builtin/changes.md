@@ -1,5 +1,24 @@
 # Builtin extensions changes
 
+## 2026-09-10 - Builtin question tool
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` registers ask-user immediately after gpt-apply-patch.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/{index,extension,family,tool,render,registry}.ts` adds family selection, direct tool definitions, blocking and async execution, cancellation and timeout guards, renderers, and a session-keyed pending registry. UI bridges own async user-message delivery and RPC capability decisions.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` makes material clarification available by default with exactly one model-family variant active. The ask-user modules reuse the canonical schema, formatter, and pending state machine rather than duplicating their contracts.
+
+### Why an extension could not handle it
+
+- The feature is implemented as an extension. `packages/coding-agent/src/core/extensions/builtin/index.ts` must register it to ship by default; UI transports separately implement the existing optional question API.
+
+### Expected merge conflict zones
+
+- LOW: new ask-user modules. `packages/coding-agent/src/core/extensions/builtin/index.ts` import and ordered registry entry; no public extension type changes.
+
 ## 2026-09-08 - Shared monitor telemetry contract
 
 ### What changed
