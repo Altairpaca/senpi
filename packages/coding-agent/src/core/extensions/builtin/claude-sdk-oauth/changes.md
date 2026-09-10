@@ -1,5 +1,25 @@
 # claude-sdk-oauth
 
+## 2026-09-10 - Validate the Claude Code executable before the SDK spawns it, fall back to PATH
+
+### What changed
+
+- `executable.ts`: `ExecutableDeps` gains `isFile`. `describeClaudeCodeExecutable` walks `CLAUDE_CODE_EXECUTABLE`, the compiled-Bun extraction, the platform sidecar package(s) resolved through `createRequire` rooted at the imported `@anthropic-ai/claude-agent-sdk` instance, then `claude` on PATH - and accepts a candidate only once its spawnable spelling (`path.resolve`, plus `path.toNamespacedPath` on win32 so it carries the `\?\` prefix) is a regular file in this process. `resolveClaudeCodeExecutable` returns that spelling or throws senpi's own error naming every candidate tried. `overrideExecutableDeps` / `resetExecutableDeps` expose the deps for tests the way `overrideSdkBoundary` does.
+- `executable-path-lookup.ts` (new): `findExecutableOnPath` - the `where claude` / `command -v claude` walk with no shell, honouring `PATHEXT` on win32 and skipping anything that is not a regular file.
+- `availability.ts`: `describeClaudeLane` reports the same resolution the query path uses (`executable`, `tried`) plus the host `runtime` (`bun` | `node`) for a doctor surface; the ambient probe already shares the resolver, so a path this process cannot stat is never spawned.
+
+### Why
+
+- code-yeongyu/senpi#1541: on a Windows npm-global `omo-ai` install the win32-x64 sidecar resolved (it was hoisted to `omo-ai/node_modules/`) but the SDK reported `Claude Code native binary not found at <that path>` although Explorer showed the file. senpi handed the SDK the first `require.resolve` hit unvalidated, honoured `CLAUDE_CODE_EXECUTABLE` unvalidated, and had no fallback to the working `claude.exe` on PATH; the SDK's generic wrapper then reported the miss.
+
+### Why an extension could not handle it
+
+- The executable string is chosen inside the builtin provider before `query()` is called; no extension hook runs between resolution and `pathToClaudeCodeExecutable`.
+
+### Expected merge conflict zones
+
+- LOW: `executable.ts` is fork-only; `availability.ts` grows an export above `createAmbientAuthStatusReader`. `executable-path-lookup.ts` is new. Tests: `test/claude-sdk-oauth-executable*.test.ts`, `test/claude-sdk-oauth-availability.test.ts`.
+
 ## 2026-09-09 - Classify multi-message cold starts as bootstrap
 
 ### What changed
