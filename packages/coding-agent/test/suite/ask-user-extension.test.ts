@@ -76,6 +76,7 @@ describe("ask-user builtin", () => {
 		[true, true],
 	])("does not register when disabled (%s, flag %s)", async (enabled, flag) => {
 		const { runner } = await setup(enabled, flag);
+		expect(runner.getFlags().get("no-ask-user")).toMatchObject({ type: "boolean", default: false });
 		expect(
 			runner
 				.getAllRegisteredTools()
