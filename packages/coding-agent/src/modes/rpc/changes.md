@@ -1,5 +1,62 @@
 # changes
 
+## Client writer for question draft progress (2026-09-10)
+
+### What changed
+
+- `rpc-client.ts`: `sendExtensionUIProgress` writes an `extension_ui_progress` stdin record fire-and-forget (no reply wait), and `send()` now preserves the host request id for progress records exactly as it already does for `extension_ui_response` (never minting `req_<n>`).
+
+### Why
+
+- A TUI attached to a shared RPC host debounces question-overlay drafts (todo 10) and needs a client-side writer to forward them so the host can reset the question's idle deadline.
+
+### Why an extension could not handle it
+
+- The record must go out on the RPC stdin stream the client owns, with the routing/id rules private to `RpcClient.send`.
+
+### Expected merge conflict zones
+
+- LOW: the new method beside `sendExtensionUIResponse` and the id-preserving branch at the top of `send`.
+
+## Session-owned question bridge (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts` implements question submission, progress-driven idle deadlines, draft-preserving timeout, cancellation, late-answer errors, and sequential select/input fallback. `connection-handler.ts` gates native questions on client capabilities and projects pending questions into session state.
+- `session-event-fanout.ts` retains pending questions independently of assistant snapshots, replays them once on attachment, refreshes deadlines, and forgets terminal questions. `session-event-writer.ts` clears retention on session close; questions remain broadcast.
+- `session-worker.ts` publishes question state changes across the existing snapshot IPC. `session-registry.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` admit progress alongside UI responses during closing.
+
+### Why
+
+- Multi-client question prompts must survive completion of the assistant message and detachment of the asking client, accept drafts without resolving, and resolve exactly once for all peers.
+
+### Why an extension could not handle it
+
+- RPC routing, socket replay, client capabilities, and worker snapshots are runtime-owned. Extensions cannot implement these transport guarantees.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts` UI binding and input dispatch; worker output snapshot selection; privileged routing allowlists; fanout snapshot retention and attachment replay.
+
+## Question extension-UI wire types and client capability (2026-09-10)
+
+### What changed
+
+- `rpc-types.ts`: additive `extension_ui_request{method:"question"}` (`RpcQuestionUiRequest`), `{answers, comment}` `extension_ui_response` member, inbound `RpcExtensionUIProgress` on `RpcInboundRecord`, outbound `question_updated` / `question_resolved`, and optional `RpcSessionState.pendingQuestions`.
+- `custom-capability.ts`: export `QUESTION_CAPABILITY = "question"` next to the existing client-capability constants.
+
+### Why
+
+- The ask-user tool needs a typed RPC wire for broadcasting a multi-question prompt, receiving partial drafts and a final `{answers, comment}` reply, hydrating late-attaching clients from session state, and gating on an explicit client capability. Older clients that never advertise `question` keep today's select/input path.
+
+### Why an extension could not handle it
+
+- RPC record shapes, session-state hydration fields, and the client-capability handshake are host protocol, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcExtensionUIRequest` / `RpcExtensionUIResponse` union tails in `rpc-types.ts`, the `RpcSessionState` field list, and the capability constants in `custom-capability.ts`.
+
 ## Cut stalled socket peers before they consume the session worker credit (2026-09-10)
 
 ### What changed

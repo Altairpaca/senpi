@@ -21,6 +21,7 @@ import type {
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
 	RpcExtensionEvent,
+	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcProviderAccount,
@@ -381,6 +382,11 @@ export class RpcClient {
 
 	async sendExtensionUIResponse(response: RpcExtensionUIResponse): Promise<void> {
 		await this.send(response, true, undefined, false);
+	}
+
+	/** Draft update for an open `question` request; fire-and-forget like the response. */
+	async sendExtensionUIProgress(progress: RpcExtensionUIProgress): Promise<void> {
+		await this.send(progress, true, undefined, false);
 	}
 
 	async closeSession(sessionId = this.sessionId): Promise<void> {
@@ -1032,7 +1038,7 @@ export class RpcClient {
 	}
 
 	private async send(
-		command: RpcCommandBody | RpcExtensionUIResponse,
+		command: RpcCommandBody | RpcExtensionUIResponse | RpcExtensionUIProgress,
 		route = true,
 		hooks?: { onResponse?: (response: RpcResponse) => void; onReject?: (error: Error) => void },
 		expectResponse = true,
@@ -1056,11 +1062,14 @@ export class RpcClient {
 			throw error;
 		}
 
-		const id = "type" in command && command.type === "extension_ui_response" ? command.id : `req_${++this.requestId}`;
+		// Extension-UI replies and progress carry the host's request id; never mint one.
+		const ownId =
+			command.type === "extension_ui_response" || command.type === "extension_ui_progress" ? command.id : undefined;
+		const id = ownId ?? `req_${++this.requestId}`;
 		const fullCommand = {
 			...command,
 			...(route && this.sessionId && !("sessionId" in command) ? { sessionId: this.sessionId } : {}),
-			...(command.type === "extension_ui_response" ? {} : { id }),
+			...(ownId === undefined ? { id } : {}),
 		} as RpcCommand;
 
 		if (!expectResponse) {

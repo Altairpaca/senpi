@@ -57,12 +57,14 @@ import { FooterDataProvider } from "../../core/footer-data-provider.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
+import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	QUESTION_CAPABILITY,
 	RENDERED_COMPONENTS_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
@@ -74,6 +76,7 @@ import type {
 	RpcCommand,
 	RpcCommandInvocationEvent,
 	RpcExtensionEvent,
+	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcLoadedExtension,
@@ -195,6 +198,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 	}
 	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
 	return {
+		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		model: session.model,
 		thinkingLevel: session.thinkingLevel,
 		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
@@ -454,6 +458,7 @@ export function createRpcConnectionHandler(
 
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	const questions = new ConnectionQuestionBridge(output);
 
 	let shutdownRequested = false;
 
@@ -510,6 +515,10 @@ export function createRpcConnectionHandler(
 	 * Create an extension UI context that uses the RPC protocol.
 	 */
 	const createExtensionUIContext = (): ExtensionUIContext => ({
+		question: (request, opts) =>
+			clientCapabilities?.includes(QUESTION_CAPABILITY)
+				? questions.ask(request, opts)
+				: degradeQuestion(createExtensionUIContext(), request, opts),
 		select: (title, options, opts) =>
 			createDialogPromise(opts, undefined, { method: "select", title, options, timeout: opts?.timeout }, (r) =>
 				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
@@ -825,6 +834,7 @@ export function createRpcConnectionHandler(
 		unsubscribeExtensionEvents?.();
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
+		sessionQuestionBridges.set(session, questions);
 		if (replacedSession) {
 			lastAbortSource = undefined;
 			if (routingSessionId !== undefined || !replacementIssuedHere) {
@@ -1638,6 +1648,16 @@ export function createRpcConnectionHandler(
 			return;
 		}
 
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"type" in parsed &&
+			parsed.type === "extension_ui_progress"
+		) {
+			questions.progress(parsed as RpcExtensionUIProgress);
+			return;
+		}
+
 		// Handle extension UI responses
 		if (
 			typeof parsed === "object" &&
@@ -1646,6 +1666,9 @@ export function createRpcConnectionHandler(
 			parsed.type === "extension_ui_response"
 		) {
 			const response = parsed as RpcExtensionUIResponse;
+			const result = questions.respond(response);
+			if (typeof result === "string") output(error(response.id, "extension_ui_response", result));
+			if (result) return;
 			if (!pendingExtensionRequests.resolve(response) && routingSessionId !== undefined) {
 				// This binding owns exactly one session's request map. A response not
 				// requested here is a routed protocol error, never a cross-session match.
@@ -1686,6 +1709,7 @@ export function createRpcConnectionHandler(
 
 	const dispose = async (): Promise<void> => {
 		disposeAllRenderers();
+		questions.cancelAll();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
@@ -1723,6 +1747,7 @@ export function createRpcConnectionHandler(
 			return shutdownRequested;
 		},
 		cancelPendingExtensionUiRequests() {
+			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
 		},
 		async dispose() {

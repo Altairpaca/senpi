@@ -495,6 +495,20 @@ for matching command approvals in the same thread. If no subscriber is attached,
 no-subscriber reason. When a turn ends, pending approvals for that thread are cancelled and `serverRequest/resolved` is
 emitted.
 
+### User Input Requests
+
+When the question tool runs, the server sends `item/tool/requestUserInput` to subscribers of the thread. Fields include
+`threadId`, `turnId`, `itemId`, `questions` (each with `id`, `header`, `question`, `options`, `multiSelect`),
+`waitForAnswer`, and `timeoutMs`. `autoResolutionMs` is always `null` (deprecated). Additive fields `multiSelect`,
+`waitForAnswer`, and `timeoutMs` extend the generated `ToolRequestUserInputParams` shape.
+
+Respond with `item/tool/requestUserInput/answered` carrying `answers` (a map of question id to `{ answers: string[] }`)
+and an optional `comment`. The first responder wins; later responses are rejected.
+
+Draft updates are sent as `item/tool/userInputProgress` client notifications. Each progress frame resets the idle timer.
+The server emits `serverRequest/resolved` when the question resolves (answered, timed_out, cancelled, or
+comment-submitted). Pending requests are replayed to new subscribers and cancelled on `agent_end`.
+
 ## Multi-Session Semantics
 
 Each app-server process can keep multiple loaded threads. `thread/start`, `thread/resume`, and `thread/fork` load a

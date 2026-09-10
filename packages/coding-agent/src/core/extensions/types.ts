@@ -142,6 +142,29 @@ export interface WorkingIndicatorOptions {
 export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
 export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
 
+/** Canonical multi-question prompt shown through ExtensionUIContext.question. */
+export interface QuestionRequest {
+	requestId: string;
+	questions: Array<{
+		id: string;
+		header: string;
+		question: string;
+		options: Array<{ label: string; description?: string }>;
+		multiSelect: boolean;
+	}>;
+	waitForAnswer: boolean;
+	timeoutMs: number;
+}
+
+/** Outcome of ExtensionUIContext.question. */
+export interface QuestionResponse {
+	status: "answered" | "comment-submitted" | "timed_out" | "cancelled" | "orphaned-after-restart" | "unavailable";
+	answers: Record<string, { selected: string[]; text?: string }>;
+	comment?: string;
+	unanswered: string[];
+	autoResolvedAfterMs?: number;
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -155,6 +178,17 @@ export interface ExtensionUIContext {
 
 	/** Show a text input dialog. */
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+
+	/**
+	 * Show a multi-question prompt and resolve with the user's answers, comment, cancel, or timeout.
+	 * Optional so hand-built contexts and modes that do not implement it remain valid.
+	 */
+	question?(
+		request: QuestionRequest,
+		opts?: ExtensionUIDialogOptions & {
+			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+		},
+	): Promise<QuestionResponse>;
 
 	/** Show a notification to the user. */
 	notify(message: string, type?: "info" | "warning" | "error"): void;
@@ -484,6 +518,8 @@ export interface ExtensionContext {
 	};
 	/** Get resolved look-at settings from global/project/user overrides. */
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
+	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
+	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -1061,7 +1097,7 @@ export interface AgentSettledEvent {
 	type: "agent_settled";
 }
 
-export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom";
+export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom" | "question";
 
 /** Fired when Pi starts waiting on a blocking user-facing extension UI prompt. */
 export interface UIPromptStartEvent {
@@ -2312,6 +2348,7 @@ export interface ExtensionContextActions {
 		marginSeconds: number;
 	};
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
+	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
