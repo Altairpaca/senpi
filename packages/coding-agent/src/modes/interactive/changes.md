@@ -1,3 +1,24 @@
+## 2026-09-10 - Ask-user question overlay and host `question` bridge
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` (+ `-state.ts`, `-render.ts`, `-keys.ts` siblings): new `AskUserQuestionComponent` rendering a `QuestionRequest` — header tab bar (←/→/Tab), numbered options with descriptions (digits 1-9, Up/Down, Space toggle for multiSelect, Enter selects), a per-question `Type your own answer...` row opening an inline input, one always-visible comment editor (`Comment (sent as your reply; other questions stay unanswered)`), a `Submit (n/N answered)` footer (Ctrl+Enter anywhere, Enter in the comment editor), Esc cancel, a countdown chip that switches to `mm:ss` under five minutes, and `onProgress(draft)` emission on every selection/keystroke. An incomplete empty-comment submit shows `You have not answered all questions` and stays open.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `ExtensionUIContext.question` implemented via `showQuestionOverlay`/`hideQuestionOverlay` (editor-container replace, focus handoff, `Waiting for your answer` working message, AbortSignal → `cancelled`); `handleHostUiRequest` gained `case "question"` which renders the same component for a host-attached TUI, replies `extension_ui_response{answers, comment}` (or `{cancelled: true}`), and forwards `onProgress` drafts as `extension_ui_progress` records debounced to 1s through the optional host-runtime `sendHostUiProgress` seam; `resetExtensionUI` disposes a lingering overlay.
+
+### Why
+
+- The ask-user question tool needs one terminal surface usable both in-process (extensions calling `ctx.ui.question`) and from a TUI attached to a shared RPC host, with partial answers, a single comment, countdown and cancel parity with Claude Code / codex dialogs.
+
+### Why an extension could not handle it
+
+- The overlay replaces the editor container, takes modal key focus and suppresses the editor while open — extension `setWidget`/`custom` surfaces render around the editor and cannot steal focus or suppress it; the host `question` case must also answer on the host-UI response channel, which only interactive-mode owns.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` — `createExtensionUIContext` (`question:` entry), the `handleHostUiRequest` switch (`case "question"` after `case "editor"`), `resetExtensionUI`, and the new `showQuestionOverlay`/`hideQuestionOverlay` pair after `hideExtensionEditor`.
+- LOW: the four new `components/ask-user-question*.ts` files have no prior art to conflict with.
+
+
 ## 2026-09-10 - Edit assistant responses from /tree
 
 ### What changed

@@ -58,11 +58,10 @@ type Harness = {
 function mount(request: QuestionRequest = buildRequest(), opts: AskUserQuestionOptions = {}): Harness {
 	const doneCalls: QuestionResponse[] = [];
 	const progressCalls: Harness["progressCalls"] = [];
-	const component = new AskUserQuestionComponent(
-		request,
-		(response) => doneCalls.push(response),
-		{ ...opts, onProgress: (draft) => progressCalls.push(draft) },
-	);
+	const component = new AskUserQuestionComponent(request, (response) => doneCalls.push(response), {
+		...opts,
+		onProgress: (draft) => progressCalls.push(draft),
+	});
 	return {
 		component,
 		done: () => undefined,
@@ -153,7 +152,7 @@ describe("AskUserQuestionComponent", () => {
 		h.component.handleInput("2");
 
 		expect(h.doneCalls).toHaveLength(0);
-		expect(h.render()).toContain("Submit (0/2 answered)");
+		expect(h.render()).toContain("Submit (1/2 answered)");
 	});
 
 	it("submits answered status via ctrl+enter once every question is answered", () => {

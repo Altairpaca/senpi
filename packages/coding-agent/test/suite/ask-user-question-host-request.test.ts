@@ -53,6 +53,13 @@ function overlayResponse(status: QuestionResponse["status"], extra: Partial<Ques
 	};
 }
 
+type OverlayOptions = {
+	timeout?: number;
+	onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+};
+
+type OverlayFn = (request: QuestionRequest, opts?: OverlayOptions) => Promise<QuestionResponse>;
+
 async function callHandleHostUiRequest(
 	fakeThis: unknown,
 	request: HostQuestionRequest,
@@ -68,7 +75,7 @@ describe("handleHostUiRequest question case", () => {
 	});
 
 	it("renders the overlay and replies with answers plus comment", async () => {
-		const showQuestionOverlay = vi.fn(async () =>
+		const showQuestionOverlay = vi.fn<OverlayFn>(async () =>
 			overlayResponse("comment-submitted", { comment: "ship it", unanswered: ["auth"] }),
 		);
 		const fakeThis = { showQuestionOverlay, runtimeHost: { sendHostUiProgress: vi.fn() } };
@@ -85,7 +92,9 @@ describe("handleHostUiRequest question case", () => {
 	});
 
 	it("replies with cancelled:true when the overlay resolves cancelled", async () => {
-		const showQuestionOverlay = vi.fn(async () => overlayResponse("cancelled", { answers: {}, unanswered: ["auth"] }));
+		const showQuestionOverlay = vi.fn(async () =>
+			overlayResponse("cancelled", { answers: {}, unanswered: ["auth"] }),
+		);
 		const fakeThis = { showQuestionOverlay, runtimeHost: { sendHostUiProgress: vi.fn() } };
 
 		const response = await callHandleHostUiRequest(fakeThis, buildHostRequest());
@@ -94,27 +103,24 @@ describe("handleHostUiRequest question case", () => {
 	});
 
 	it("passes the wire fields through as a canonical question request", async () => {
-		const showQuestionOverlay = vi.fn(async () => overlayResponse("answered"));
+		const showQuestionOverlay = vi.fn<OverlayFn>(async () => overlayResponse("answered"));
 		const fakeThis = { showQuestionOverlay, runtimeHost: { sendHostUiProgress: vi.fn() } };
 
 		await callHandleHostUiRequest(fakeThis, buildHostRequest());
 
 		expect(showQuestionOverlay).toHaveBeenCalledTimes(1);
-		const [request, opts] = showQuestionOverlay.mock.calls[0] as [
-			QuestionRequest,
-			{ timeout?: number; onProgress?: (draft: unknown) => void },
-		];
+		const [request, opts] = showQuestionOverlay.mock.calls[0];
 		expect(request).toMatchObject({ requestId: "req-1", waitForAnswer: true });
 		expect(request.questions).toHaveLength(1);
 		expect(request.questions[0]).toMatchObject({ id: "auth", header: "Auth" });
-		expect(opts.timeout).toBe(1_799_000);
-		expect(typeof opts.onProgress).toBe("function");
+		expect(opts?.timeout).toBe(1_799_000);
+		expect(typeof opts?.onProgress).toBe("function");
 	});
 
 	it("debounces progress drafts into 1s-spaced extension_ui_progress records", async () => {
 		vi.useFakeTimers();
 		let resolveOverlay: ((response: QuestionResponse) => void) | undefined;
-		const showQuestionOverlay = vi.fn(
+		const showQuestionOverlay = vi.fn<OverlayFn>(
 			() =>
 				new Promise<QuestionResponse>((resolve) => {
 					resolveOverlay = resolve;
@@ -125,10 +131,8 @@ describe("handleHostUiRequest question case", () => {
 
 		try {
 			const pending = callHandleHostUiRequest(fakeThis, buildHostRequest());
-			const [, opts] = showQuestionOverlay.mock.calls[0] as [
-				QuestionRequest,
-				{ onProgress: (draft: { answers?: unknown; comment?: string }) => void },
-			];
+			const [, opts] = showQuestionOverlay.mock.calls[0];
+			if (!opts?.onProgress) throw new Error("showQuestionOverlay was not given an onProgress callback");
 
 			opts.onProgress({ answers: { auth: { selected: ["OAuth"] } }, comment: undefined });
 			opts.onProgress({ answers: { auth: { selected: ["OAuth"] } }, comment: "par" });
