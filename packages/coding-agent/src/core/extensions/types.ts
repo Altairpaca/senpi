@@ -87,6 +87,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
@@ -1643,6 +1644,8 @@ export interface ExtensionAPI {
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
+	/** Effective shared-host capability for registration-time extension decisions. */
+	readonly sharedHostEnabled: boolean;
 
 	// =========================================================================
 	// Event Subscription
@@ -1779,6 +1782,9 @@ export interface ExtensionAPI {
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+
+	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
+	registerReadClassifier(classifier: ReadClassifier): () => void;
 
 	// =========================================================================
 	// Actions

@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type AuthEvent, type AuthPrompt, modelsAreEqual } from "@earendil-works/pi-ai";
+import { type AuthEvent, type AuthPrompt, contentText, modelsAreEqual } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -63,7 +63,12 @@ import {
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import {
+	type AgentSessionEvent,
+	type AssistantEditResult,
+	parseSkillBlock,
+	type TreeNavigationOptions,
+} from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
 import { envValue } from "../../core/brand.ts";
@@ -74,6 +79,8 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
+import { assistantTextEquals } from "../../core/edited-assistant-message.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -4520,6 +4527,14 @@ export class InteractiveMode {
 				this.showHighReasoningWarning(event);
 				break;
 
+			case "resume_compaction_required":
+				this.showWarning(event.notice);
+				break;
+
+			case "resume_context_reduced":
+				this.showWarning(event.notice);
+				break;
+
 			case "settings_source_selected":
 				this.showSettingsSourceSelected(event);
 				break;
@@ -6213,8 +6228,8 @@ export class InteractiveMode {
 		this.showNoticeBox({
 			title: "Update Available",
 			tone: "warning",
-			why: `New version ${newVersion} is available. Run ${action}`,
-			extra: [{ text: `Changelog: ${changelogLink}`, tone: "accent" }],
+			why: `New version ${newVersion} is available.`,
+			extra: [{ text: action }, { text: `Changelog: ${changelogLink}`, tone: "accent" }],
 		});
 	}
 
@@ -7388,96 +7403,12 @@ export class InteractiveMode {
 						return;
 					}
 
-					// Ask about summarization
 					done(); // Close selector first
-
-					// Loop until user makes a complete choice or cancels to tree
-					let wantsSummary = false;
-					let customInstructions: string | undefined;
-
-					// Check if we should skip the prompt (user preference to always default to no summary)
-					if (!this.settingsManager.getBranchSummarySkipPrompt()) {
-						while (true) {
-							const summaryChoice = await this.showExtensionSelector("Summarize branch?", [
-								"No summary",
-								"Summarize",
-								"Summarize with custom prompt",
-							]);
-
-							if (summaryChoice === undefined) {
-								// User pressed escape - re-show tree selector with same selection
-								this.showTreeSelector(entryId);
-								return;
-							}
-
-							wantsSummary = summaryChoice !== "No summary";
-
-							if (summaryChoice === "Summarize with custom prompt") {
-								customInstructions = await this.showExtensionEditor("Custom summarization instructions");
-								if (customInstructions === undefined) {
-									// User cancelled - loop back to summary selector
-									continue;
-								}
-							}
-
-							// User made a complete choice
-							break;
-						}
-					}
-
-					// The user committed to navigating: stop the active response first.
-					if (this.session.isStreaming) {
-						this.restoreQueuedMessagesToEditor();
-						await this.session.abort();
-					}
-
-					// Set up escape handler and status indicator if summarizing
-					let showingSummaryIndicator = false;
-					const originalOnEscape = this.defaultEditor.onEscape;
-
-					if (wantsSummary) {
-						this.defaultEditor.onEscape = () => {
-							this.session.abortBranchSummary();
-						};
-						this.chatContainer.addChild(new Spacer(1));
-						this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
-						showingSummaryIndicator = true;
-						this.ui.requestRender();
-					}
-
-					try {
-						const result = await this.session.navigateTree(entryId, {
-							summarize: wantsSummary,
-							customInstructions,
-						});
-
-						if (result.aborted) {
-							// Summarization aborted - re-show tree selector with same selection
-							this.showStatus("Branch summarization cancelled");
-							this.showTreeSelector(entryId);
-							return;
-						}
-						if (result.cancelled) {
-							this.showStatus("Navigation cancelled");
-							return;
-						}
-
-						// Update UI
-						this.chatContainer.clear();
-						this.renderInitialMessages();
-						if (result.editorText && !this.editor.getText().trim()) {
-							this.editor.setText(result.editorText);
-						}
-						this.showStatus("Navigated to selected point");
-						void this.flushCompactionQueue({ willRetry: false });
-					} catch (error) {
-						this.showError(error instanceof Error ? error.message : String(error));
-					} finally {
-						if (showingSummaryIndicator) {
-							this.clearStatusIndicator("branchSummary");
-						}
-						this.defaultEditor.onEscape = originalOnEscape;
-					}
+					await this.runTreeNavigation(entryId, {
+						promptForSummary: true,
+						navigate: (options) => this.session.navigateTree(entryId, options),
+						successStatus: "Navigated to selected point",
+					});
 				},
 				() => {
 					done();
@@ -7502,8 +7433,153 @@ export class InteractiveMode {
 					this.showError(error instanceof Error ? error.message : String(error));
 				}
 			};
+			selector.onEditMessage = (entryId) => {
+				done();
+				void this.editAssistantMessageFromTree(entryId);
+			};
 			return { component: selector, focus: selector };
 		});
+	}
+
+	private async editAssistantMessageFromTree(entryId: string): Promise<void> {
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry?.type !== "message" || entry.message.role !== "assistant") {
+			this.showError("Only assistant responses can be edited here");
+			return;
+		}
+		const message = entry.message;
+		const dropsToolCalls = message.content.some((block) => block.type === "toolCall");
+		const title = dropsToolCalls
+			? "Edit assistant response (its tool calls will be dropped)"
+			: "Edit assistant response";
+		const edited = await this.showExtensionEditor(title, contentText(message.content, ""));
+		if (edited === undefined) {
+			this.showTreeSelector(entryId);
+			return;
+		}
+		if (!edited.trim()) {
+			this.showError("Assistant response cannot be empty");
+			this.showTreeSelector(entryId);
+			return;
+		}
+		if (assistantTextEquals(message, edited)) {
+			this.showStatus("Assistant response unchanged");
+			return;
+		}
+		await this.runTreeNavigation(entryId, {
+			promptForSummary: this.treeNavigationAbandonsConversation(entryId),
+			navigate: (options) => this.session.editAssistantMessage(entryId, edited, options),
+			successStatus: "Replaced assistant response with your edit",
+		});
+	}
+
+	/** Bookkeeping entries after the target (thinking level, labels, custom state) leave nothing to summarize. */
+	private treeNavigationAbandonsConversation(targetId: string): boolean {
+		const { entries } = collectEntriesForBranchSummary(
+			this.sessionManager,
+			this.sessionManager.getLeafId(),
+			targetId,
+		);
+		return entries.some(
+			(entry) =>
+				entry.type === "message" ||
+				entry.type === "custom_message" ||
+				entry.type === "compaction" ||
+				entry.type === "branch_summary",
+		);
+	}
+
+	private async promptBranchSummaryChoice(): Promise<{ summarize: boolean; customInstructions?: string } | undefined> {
+		while (true) {
+			const summaryChoice = await this.showExtensionSelector("Summarize branch?", [
+				"No summary",
+				"Summarize",
+				"Summarize with custom prompt",
+			]);
+			if (summaryChoice === undefined) {
+				return undefined;
+			}
+			if (summaryChoice !== "Summarize with custom prompt") {
+				return { summarize: summaryChoice !== "No summary" };
+			}
+			const customInstructions = await this.showExtensionEditor("Custom summarization instructions");
+			if (customInstructions !== undefined) {
+				return { summarize: true, customInstructions };
+			}
+		}
+	}
+
+	private async runTreeNavigation(
+		entryId: string,
+		flow: {
+			promptForSummary: boolean;
+			navigate: (options: TreeNavigationOptions) => Promise<AssistantEditResult>;
+			successStatus: string;
+		},
+	): Promise<void> {
+		let wantsSummary = false;
+		let customInstructions: string | undefined;
+		if (flow.promptForSummary && !this.settingsManager.getBranchSummarySkipPrompt()) {
+			const choice = await this.promptBranchSummaryChoice();
+			if (choice === undefined) {
+				// User pressed escape - re-show tree selector with same selection
+				this.showTreeSelector(entryId);
+				return;
+			}
+			wantsSummary = choice.summarize;
+			customInstructions = choice.customInstructions;
+		}
+
+		// The user committed to navigating: stop the active response first.
+		if (this.session.isStreaming) {
+			this.restoreQueuedMessagesToEditor();
+			await this.session.abort();
+		}
+
+		// Set up escape handler and status indicator if summarizing
+		let showingSummaryIndicator = false;
+		const originalOnEscape = this.defaultEditor.onEscape;
+
+		if (wantsSummary) {
+			this.defaultEditor.onEscape = () => {
+				this.session.abortBranchSummary();
+			};
+			this.chatContainer.addChild(new Spacer(1));
+			this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
+			showingSummaryIndicator = true;
+			this.ui.requestRender();
+		}
+
+		try {
+			const result = await flow.navigate({ summarize: wantsSummary, customInstructions });
+
+			if (result.aborted) {
+				// Summarization aborted - re-show tree selector with same selection
+				this.showStatus("Branch summarization cancelled");
+				this.showTreeSelector(entryId);
+				return;
+			}
+			if (result.cancelled) {
+				this.showStatus("Navigation cancelled");
+				return;
+			}
+
+			// Update UI
+			this.chatContainer.clear();
+			this.renderInitialMessages();
+			if (result.editorText && !this.editor.getText().trim()) {
+				this.editor.setText(result.editorText);
+			}
+			this.showStatus(flow.successStatus);
+			void this.flushCompactionQueue({ willRetry: false });
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		} finally {
+			if (showingSummaryIndicator) {
+				this.clearStatusIndicator("branchSummary");
+			}
+			this.defaultEditor.onEscape = originalOnEscape;
+		}
 	}
 
 	private showSessionSelector(): void {

@@ -13,20 +13,27 @@ export const defaultTimeoutFactory: EvalTimeoutFactory = {
 	},
 };
 
+export interface CellIdleWatchdogOptions {
+	readonly timeoutMs: number;
+	/** Caps how long a host-bridge pause may suspend the idle watchdog (the foreground window for a detaching cell). */
+	readonly maxPauseGraceMs: number;
+	readonly onTimeout: (error: Error) => void;
+}
+
 export interface CellExecutionOptions {
 	readonly callerSignal: AbortSignal;
 	readonly cellId: string;
-	readonly timeoutMs: number;
-	/**
-	 * Caps how long a host-bridge pause may suspend the idle watchdog. When the cell will detach on
-	 * timeout this is set to the foreground window so a bridge-parked cell still frees the turn at the
-	 * window; left undefined (error mode) it keeps the idle-timeout default grace.
-	 */
-	readonly maxPauseGraceMs?: number;
+	/** Interactive calls detach at this idle watchdog; a call that never detaches is bounded by its deadlines alone. */
+	readonly idle?: CellIdleWatchdogOptions;
 	readonly timeoutFactory: EvalTimeoutFactory;
-	readonly onTimeout: (error: Error) => void;
 	readonly onAbort: (error: Error) => void;
 }
+
+const NO_WATCHDOG: TimeoutPauseHandle & { dispose(): void } = {
+	pause(): void {},
+	resume(): void {},
+	dispose(): void {},
+};
 
 export class CellExecution {
 	readonly #callerSignal: AbortSignal;
@@ -49,12 +56,16 @@ export class CellExecution {
 		this.#detachedPromise = new Promise<void>((resolve) => {
 			this.#resolveDetached = resolve;
 		});
-		this.#watchdog = options.timeoutFactory.create({
-			cellId: options.cellId,
-			timeoutMs: options.timeoutMs,
-			...(options.maxPauseGraceMs === undefined ? {} : { maxPauseGraceMs: options.maxPauseGraceMs }),
-			onTimeout: ({ error }) => options.onTimeout(error),
-		});
+		const idle = options.idle;
+		this.#watchdog =
+			idle === undefined
+				? NO_WATCHDOG
+				: options.timeoutFactory.create({
+						cellId: options.cellId,
+						timeoutMs: idle.timeoutMs,
+						maxPauseGraceMs: idle.maxPauseGraceMs,
+						onTimeout: ({ error }) => idle.onTimeout(error),
+					});
 		this.#callerSignal.addEventListener("abort", this.#handleCallerAbort, {
 			once: true,
 		});

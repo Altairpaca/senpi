@@ -1,3 +1,98 @@
+## Deterministic resume recovery when the restored context exceeds the window (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: the resume-admission catch still rethrows for fresh starts, non-budget errors and compaction-disabled sessions, and now splits the remaining case. A projection whose live context still fits the raw window keeps taking the existing compaction-required admission; a projection whose live context alone exceeds the window asks `planResumeSlice()` for a deterministic reduction and rethrows the original budget error unchanged when no safe cut fits.
+- `packages/coding-agent/src/core/agent-session.ts`: new `applyResumeSlice()` appends the reduction as a `senpi.compaction.resume-slice.v1` compaction entry that preserves the recorded transcript, rebuilds the live context, writes one `resume_context_reduced` session-log line, and publishes a `resume_context_reduced` event which `subscribe()` replays for listeners that attach after `createAgentSession()` returns.
+- `packages/coding-agent/src/core/session-manager.ts` is deliberately unchanged: `_trimMirrorAfterCompaction()` only trims the in-memory mirror, and `getEntries()`, `getEntry()` and `getBranch()` reload the full history from the session file once `mirrorTrimmed` is set, so the recorded transcript already survives an admission-time reduction.
+
+### Why
+
+- Issue #1524: a `gpt-6-astra` session whose restored transcript alone exceeded the model window (live 965,016 tokens against an 850,000-token window) could never be reopened. The compaction-eligible resume branch only relaxes admission while summarization still fits, and the compaction-required admission only covers a live context within the raw window, so this band had no recovery path and every reopen failed inside `assertModelUsable` before any extension was wired.
+
+### Why an extension could not handle it
+
+- The refusal happens inside `createAgentSession()` before extensions are loaded or bound, and the recovery must append a session entry and rebuild the live context while the session is still being constructed.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/sdk.ts` resume-admission catch block, which is also the merge zone of the earlier compaction-required admission.
+- LOW: `packages/coding-agent/src/core/agent-session.ts` event union, `subscribe()` replay and the method added beside `admitResumeCompactionRequired()`.
+
+## Editable assistant responses from the session tree (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `navigateTree()` delegates to a private `_navigateTree()` that also accepts a replacement assistant message; new public `editAssistantMessage(entryId, text, options)` validates the target, treats unchanged text as a no-op (`unchanged: true`), and otherwise branches to the target's parent and appends the edited copy as the new leaf, reusing the branch-summary flow, labels, agent-state restore and `session_before_tree` / `session_tree` events. New exported `TreeNavigationOptions` and `AssistantEditResult` types. Guard order is streaming -> target lookup -> empty-text rejection (built first) -> unchanged no-op, so an identical-text request during a response still throws and a textless (tool-call-only) assistant cannot be "edited" to blank.
+- `packages/coding-agent/src/core/edited-assistant-message.ts` (new): `buildEditedAssistantMessage()` keeps only the trimmed text (tool calls, thinking and provider-native blocks dropped, `stopReason: "stop"`, model/provider/api/usage preserved), `assistantTextEquals()`, and `AssistantEditError`.
+- `packages/coding-agent/src/core/keybindings.ts`: new `app.tree.editMessage` action (default `ctrl+e`, legacy alias `treeEditMessage`).
+
+### Why
+
+- `/tree` could re-open a user message for editing but offered no way to correct an assistant response; users had to fork or re-prompt to steer past a wrong answer.
+
+### Why an extension could not handle it
+
+- Extensions can replace a message only at `message_end` time; rewriting an already persisted entry needs the session leaf move plus append that only `AgentSession` owns, and the tree keybinding lives in the core keybinding registry.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `navigateTree()` body (renamed to `_navigateTree`, three small hunks for the replacement branch).
+- LOW: `keybindings.ts` tree action tables; the new module is fork-only.
+
+## Registration-time shared-host capability (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` forwards the shared-host policy through extension-loading options.
+
+### Why
+
+- `packages/coding-agent/src/core/resource-loader.ts` owns the effective settings and extension discovery lifecycle needed for capability-gated tool registration.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` loads factories before extensions can access bound session actions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: resource-loader options, constructor, and extension-set assembly.
+
+## Resume oversized sessions into required compaction (2026-09-09)
+
+### What changed
+
+- `sdk.ts` admits only restored sessions whose projection remains unusable after the compaction-eligible resume branch, when compaction is enabled; `agent-session.ts` publishes that projection through the existing session event stream and forces compaction before the first provider prompt. Startup and model-switch assertions are unchanged.
+
+### Why
+
+- A restored transcript can fit the raw context window while system prompt, tool schemas, and output reserve make the first provider request fail. Deferring that admission lets the existing required-compaction route reduce the transcript instead of crashing the constructor.
+
+### Why an extension could not handle it
+
+- The projection is evaluated before extensions are wired, so only core can retain the shortfall and defer provider admission.
+
+### Expected merge conflict zones
+
+- MEDIUM in `sdk.ts` startup admission and `agent-session.ts` pre-provider compaction gate; LOW in the interactive event switch.
+## Size-adaptive summarization duration budget setting (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts`: new optional `compaction.summarizationMaxDurationMs` setting resolving to a positive finite number or `undefined` (adaptive default).
+
+### Why
+
+- Large sessions deadlock on compaction when the fixed 120s summarization watchdog outlives slow providers (#1068); the setting is the user-facing escape hatch over the size-adaptive default.
+
+### Why an extension could not handle it
+
+- The settings contract is consumed by core compaction execution before extension hooks run.
+
+### Expected merge conflict zones
+
+- LOW: the three settings files' `CompactionSettings` / `ResolvedCompactionSettings` shapes.
+
 ## Same-model recovery for a native tool-search 400 (2026-09-08)
 
 ### What changed
@@ -228,6 +323,26 @@
 - Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
 
 # changes
+
+## 2026-09-08 - Reserve session writers before opening or replacing them
+
+### What changed
+
+- `packages/coding-agent/src/core/session-write-reservation.ts` provides an isolate-local synchronous ownership-grant seam, installed only by shared-host workers.
+- `packages/coding-agent/src/core/session-manager.ts` obtains that grant before opening, normalizing, rewriting, appending, creating, or branching a durable session file.
+- `packages/coding-agent/src/core/agent-session-runtime.ts` reserves an import destination before copying into it.
+
+### Why
+
+- Alias collisions and session replacements must not open competing writers and resolve ownership afterward. A timed-out worker can still return from a syscall, so ownership remains reserved until its actual exit.
+
+### Why an extension could not handle it
+
+- Writer creation and append-side repair in `packages/coding-agent/src/core/session-manager.ts`, and copying in `packages/coding-agent/src/core/agent-session-runtime.ts`, occur below extension lifecycle hooks.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts` constructor/set-file, persistence, new/fork, and static open seams; LOW: `packages/coding-agent/src/core/agent-session-runtime.ts` import-copy ordering and the additive reservation module.
 
 ## 2026-09-06 - Preserve fallback decision logs across atomic admission
 

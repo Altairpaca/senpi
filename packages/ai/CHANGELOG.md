@@ -6,9 +6,53 @@
 
 ### Added
 
+- OpenAI images: `background`, `outputFormat`, `outputCompression`, `moderation`, and `mask` options reach the wire as `background`, `output_format`, `output_compression`, `moderation`, and a `mask` upload; transparent-with-jpeg, compression-with-png, out-of-range compression, and mask-without-image are rejected before any request. Responses report `background`, returned bytes are labeled by their magic (falling back to the requested format), image input tokens are priced with the new optional `ImagesModel.cost.imageInput` rate ($8/M for GPT Image 2 and 2.5), and `KnownImagesProvider` includes `openai`. `parseOpenAIImageOutputOptions` and the option types are exported through the compat surface.
+
 ### Changed
 
 ### Fixed
+
+### Removed
+
+## [2026.9.9-2] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+- OpenAI images: `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` join the builtin catalog; `quality` accepts `xhigh` and `max`; `size` accepts any `WIDTHxHEIGHT` (16px multiples, 1:3..3:1 aspect, edges <= 3840, 655,360..8,294,400 pixels) validated before the request; image inputs are sent to `/images/edits` with up to 16 reference uploads instead of throwing. `parseOpenAIImageSize` and the quality/size types are exported through the compat surface ([#1513](https://github.com/code-yeongyu/senpi/pull/1513)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Anthropic prompt caching no longer breaks on every tool continuation: when the model answers a tool call without a thinking block (the normal adaptive-thinking outcome), the follow-up request keeps the same `thinking`/`output_config` instead of degrading to disabled thinking, so the cached prefix is read instead of re-written ("cache misses every second prompt"). Only a budget-thinking request replaying a tool turn produced by another API still degrades, the case Anthropic has rejected.
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Anthropic OAuth login no longer dead-ends on a browser page reading "State mismatch." when another senpi/omo process on the same machine still holds the callback port 53692: the login binds an ephemeral loopback port instead and carries that port through the auth URL and the token exchange. A callback that belongs to another login now explains that the login belongs to a different session and how to continue, and a login that gets neither a browser callback nor a pasted redirect URL for 10 minutes times out and releases its port instead of holding it indefinitely.
 
 - Anthropic mid-output server fallback now follows the configured abort/continue policy instead of raising an unsupported-fallback error. Continuing responses retain their serving-model identity and do not execute abandoned pre-fallback tools, including through text-tool recovery middleware.
 

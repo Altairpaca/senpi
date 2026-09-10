@@ -1,3 +1,77 @@
+## 2026-09-10 - Keep the update command fully visible in the notice box
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showNewVersionNotification` now emits the update command on its own notice `extra` line instead of appending it to the why sentence, so a long Bun global install command is not glued to prose.
+
+### Why
+
+- Issue #1539: at 80 columns the update-available notice showed `Run bun add --cwd` and nothing runnable. The command must sit on its own line so it can wrap as one copyable unit.
+
+### Why an extension could not handle it
+
+- The update notice is assembled by interactive mode after the version check; there is no extension hook for that surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showNewVersionNotification`.
+
+## 2026-09-10 - Report a reduced restored context on resume
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: renders the new `resume_context_reduced` session event as a warning, next to the existing required-compaction notice, so a user whose restored context was reduced at admission sees it before the first prompt.
+
+### Why
+
+- Issue #1524: an over-window restored session now opens with a deterministically reduced context. Silently opening it would hide that older turns are no longer in context even though the transcript is still on disk.
+
+### Why an extension could not handle it
+
+- The event is published while the session is being constructed, before extensions are loaded, and the notice must render through interactive mode's own warning surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` session-event switch, adjacent to the `resume_compaction_required` case.
+
+## 2026-09-10 - Edit assistant responses from /tree
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tree-selector.ts`: `TreeList.editSelected()` routes `app.tree.editMessage` — assistant entries call the new `onEditMessage` callback, user/custom messages reuse `onSelect`, other entries are ignored; the help line gains an `edit` hint and `TreeSelectorComponent` exposes `onEditMessage`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the tree selector's summary prompt, streaming abort, summary indicator and post-navigation refresh moved into `runTreeNavigation()` shared by selection and the new `editAssistantMessageFromTree()` flow (extension editor prefilled with the response, empty/unchanged guards, summary prompt only when `treeNavigationAbandonsConversation()` finds abandoned messages).
+
+### Why
+
+- The session tree is where users already revisit responses; editing an assistant answer there and continuing from the edited copy avoids forking or re-prompting.
+
+### Why an extension could not handle it
+
+- The tree selector's key handling and the branch-navigation UI flow are interactive-mode internals with no extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` `showTreeSelector()` — the inline navigation body was extracted into `runTreeNavigation()`.
+- LOW: `tree-selector.ts` `handleInput` chain and `TREE_HELP_ITEMS`.
+
+
+## 2026-09-09 - Surface required compaction after oversized resume
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: renders the existing session event notice when resume admission defers an unusable restored projection to required compaction.
+
+### Why
+
+- Users must be told that the first prompt will compact instead of seeing a constructor-time model budget refusal.
+
+### Why an extension could not handle it
+
+- The notice originates in core before extension hooks bind; interactive mode is the existing session-event presentation surface.
+
+### Expected merge conflict zones
+
+- LOW: the `handleEvent` switch beside other model and session notices.
 
 ## 2026-09-08 - Shortcut context exposes the effective service tier
 

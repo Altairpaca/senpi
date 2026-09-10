@@ -13,6 +13,7 @@ import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/run
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
+import { reserveSessionWrite } from "./session-write-reservation.ts";
 
 /**
  * Result returned by runtime creation.
@@ -425,6 +426,7 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
+		reserveSessionWrite(destinationPath);
 		if (resolve(destinationPath) !== resolvedPath) {
 			copyFileSync(resolvedPath, destinationPath);
 		}
