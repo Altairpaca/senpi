@@ -1,3 +1,25 @@
+## 2026-09-10 - Async ask-user widget and framed user-message delivery
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` (new): `AskUserAsyncWidget`, the collapsed one-line `? Question pending (N unanswered) - <key> to answer, or just type your reply · <countdown>` editor widget with its own idle countdown, plus the pure response builders for the two delivery shapes interactive-mode needs (`buildCommentResponse`, `buildTimedOutResponse`, `unansweredIds`) and the `alt+a` expand key constant.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `ExtensionUIContext.question` routes `waitForAnswer:false` to the new `showAsyncQuestion` (widget above the editor, turn never blocked; a newer async question supersedes a pending one as `cancelled`); `alt+a` on the editor expands the todo-9 component pre-filled with the last draft, Esc collapses back to the widget without sending; on submit the answer is delivered exactly once as a framed user message (`formatUserMessage`) through `session.sendUserMessage` (`steer` while streaming, `followUp` when idle), then the widget clears and the `ask-user` wake source settles 1 -> 0; ordinary composer text while a question is pending (non-`/`, non-`!`) is claimed as the comment answer and replaces the raw text; `handleHostUiRequest`'s `question` case drives the same widget for a host-attached TUI and answers on the `extension_ui_response` channel (host performs delivery; a locally expired countdown sends nothing); `resetExtensionUI` cancels a pending async question.
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts` + `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the dormant writer seam is wired - `RpcClient.sendExtensionUIProgress` writes an `extension_ui_progress` record fire-and-forget (keeping the host's request id, never minting one) and `RemoteInteractiveRuntime.sendHostUiProgress` forwards the debounced drafts from interactive-mode to the host.
+
+### Why
+
+- Async questions must stay non-modal: the agent keeps working while the question sits above the editor, and the answer must reach the model as a clearly framed user turn (partial answers + one comment) instead of being lost or sent as raw composer text.
+
+### Why an extension could not handle it
+
+- Claiming ordinary editor submissions needs the `onSubmit` path inside interactive-mode, and the shortcut/widget/overlay focus dance is the same editor-container machinery extensions cannot reach; the host-attached writer must also live on the RPC client the TUI owns.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` - `createExtensionUIContext` (`question:` entry), the top of `defaultEditor.onSubmit`, `handleHostUiRequest`'s `question` case, `resetExtensionUI`, `setupExtensionShortcuts`' handler head, and the new `showAsyncQuestion`/`refreshAsyncWidget`/`handleAskUserShortcut`/`submitAsyncQuestionComment`/`deliverAsyncAnswer` block after `hideQuestionOverlay`.
+- LOW: `ask-user-async-widget.ts` (new), `interactive-host-runtime.ts` `sendHostUiProgress` next to `setHostUiHandler`, `rpc-client.ts` `sendExtensionUIProgress` next to `sendExtensionUIResponse` and the id-preserving branch in `send`.
+
+
 ## 2026-09-10 - Ask-user question overlay and host `question` bridge
 
 ### What changed

@@ -1,5 +1,23 @@
 # changes
 
+## Client writer for question draft progress (2026-09-10)
+
+### What changed
+
+- `rpc-client.ts`: `sendExtensionUIProgress` writes an `extension_ui_progress` stdin record fire-and-forget (no reply wait), and `send()` now preserves the host request id for progress records exactly as it already does for `extension_ui_response` (never minting `req_<n>`).
+
+### Why
+
+- A TUI attached to a shared RPC host debounces question-overlay drafts (todo 10) and needs a client-side writer to forward them so the host can reset the question's idle deadline.
+
+### Why an extension could not handle it
+
+- The record must go out on the RPC stdin stream the client owns, with the routing/id rules private to `RpcClient.send`.
+
+### Expected merge conflict zones
+
+- LOW: the new method beside `sendExtensionUIResponse` and the id-preserving branch at the top of `send`.
+
 ## Session-owned question bridge (2026-09-10)
 
 ### What changed
