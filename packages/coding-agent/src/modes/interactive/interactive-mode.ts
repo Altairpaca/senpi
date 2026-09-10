@@ -6228,8 +6228,8 @@ export class InteractiveMode {
 		this.showNoticeBox({
 			title: "Update Available",
 			tone: "warning",
-			why: `New version ${newVersion} is available. Run ${action}`,
-			extra: [{ text: `Changelog: ${changelogLink}`, tone: "accent" }],
+			why: `New version ${newVersion} is available.`,
+			extra: [{ text: action }, { text: `Changelog: ${changelogLink}`, tone: "accent" }],
 		});
 	}
 
