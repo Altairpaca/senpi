@@ -41,7 +41,7 @@ export class SessionWorkerRequests {
 			message.type === "command" &&
 			"type" in message.command &&
 			typeof message.command.type === "string" &&
-			["abort", "abort_bash", "extension_ui_response"].includes(message.command.type);
+			["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(message.command.type);
 		const bytes = Buffer.byteLength(JSON.stringify(message));
 		let count = 0;
 		let pendingBytes = 0;

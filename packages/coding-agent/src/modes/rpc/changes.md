@@ -1,5 +1,25 @@
 # changes
 
+## Session-owned question bridge (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts` implements question submission, progress-driven idle deadlines, draft-preserving timeout, cancellation, late-answer errors, and sequential select/input fallback. `connection-handler.ts` gates native questions on client capabilities and projects pending questions into session state.
+- `session-event-fanout.ts` retains pending questions independently of assistant snapshots, replays them once on attachment, refreshes deadlines, and forgets terminal questions. `session-event-writer.ts` clears retention on session close; questions remain broadcast.
+- `session-worker.ts` publishes question state changes across the existing snapshot IPC. `session-registry.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` admit progress alongside UI responses during closing.
+
+### Why
+
+- Multi-client question prompts must survive completion of the assistant message and detachment of the asking client, accept drafts without resolving, and resolve exactly once for all peers.
+
+### Why an extension could not handle it
+
+- RPC routing, socket replay, client capabilities, and worker snapshots are runtime-owned. Extensions cannot implement these transport guarantees.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts` UI binding and input dispatch; worker output snapshot selection; privileged routing allowlists; fanout snapshot retention and attachment replay.
+
 ## Question extension-UI wire types and client capability (2026-09-10)
 
 ### What changed
