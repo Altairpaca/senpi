@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	GOAL_CONTINUATION_RESUMED_EVENT,
 	GOAL_CONTINUATION_SCHEDULED_EVENT,
+	GOAL_CONTINUATION_TIMER_STATE_EVENT,
 	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
 	MonitorAwareGoalContinuation,
 } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
@@ -158,6 +159,11 @@ describe("goal wake sources", () => {
 
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS * 3);
 		expect(harness.sent).toHaveLength(0);
+		// The parked timer is still armed: no backstop fire consumed it on the way.
+		expect(emitted(harness.events, GOAL_CONTINUATION_TIMER_STATE_EVENT).at(-1)).toEqual({
+			armed: true,
+			kind: "monitor",
+		});
 
 		const delivered = waitForSentCount(harness, 1);
 		harness.events.emit(WAKE_SOURCE_STATE_EVENT, { source: "ask-user", activeCount: 0 });

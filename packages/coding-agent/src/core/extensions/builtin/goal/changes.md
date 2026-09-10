@@ -1,5 +1,27 @@
 # goal Extension Changes
 
+## 2026-09-10 - Park the continuation on a pending ask-user question
+
+### What changed
+
+- `monitor-continuation.ts`: the coordinator tracks the `ask-user` wake source the ask-user extension publishes while an async question is pending (`WAKE_SOURCE_STATE_EVENT{source:"ask-user"}`). While that source is live, `#schedule` arms ONE `monitor` timer at the question's idle deadline instead of the periodic backstop, so no continuation prompt reaches the model while the user is deciding. The deadline is recorded when the source count rises (a newly asked question restarts the window) from `ctx.getAskUserSettings().timeoutMinutes` (default 30), cleared when the count reaches zero, and clamped through `resolveGoalMonitorContinuationDelayMs` so a misconfigured setting cannot park the goal past the monitor's [1s, 1h] bounds. A deadline that has already passed - the extension restarts its idle timer whenever the user interacts - parks for one more window rather than reverting to the backstop.
+- Answer and timeout both drop the wake source, so the existing drain fire (1s after the last source reaches zero) resumes the goal exactly once; the deadline timer is only the backstop for a question whose source never drains.
+- `prompt.ts`: `buildGoalStallNotice` gains one ask-user line ("A question to the user is pending; wait for the answer or the timeout, do not ask it again, and do not treat the wait as a stall.") and excludes `ask-user` from the generic "inspect the live channel / stop or replace it" fallback, which is wrong advice for a question only the user can resolve.
+- `test/suite/goal-wake-sources.test.ts`, `test/suite/goal-monitor-continuation.test.ts`: cover the park (no prompt before the 30m deadline with the 270s backstop configured, one prompt at the deadline), the single drain wake, the stall-notice line, and the regression that a turn still awaiting a tool result queues no continuation.
+
+### Why
+
+- An async question keeps the turn's work open while the user decides. The 270s backstop would re-prompt the main model roughly every 4m30s for the whole 30-minute answer window - full-context turns the model cannot act on, and the same wait would eventually be read as a stall and audited as blocked. Parking on the question's own deadline keeps exactly one wake: the answer (drain fire) or the timeout.
+
+### Why an extension could not handle it
+
+- The wake-source ledger, the single-flight timer and the admission verdict live inside the built-in goal continuation coordinator; no extension hook can observe or replace that timer. The stall notice is built by the same package.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` around `#schedule`'s delay selection and `#setWakeSourceCount`.
+- MEDIUM in `prompt.ts`: todo 14 of the same plan edits `buildContinuationPrompt` and the closing lines of `buildGoalStallNotice`; this change only adds the ask-user advice bullet and the fallback exclusion.
+
 ## 2026-09-08 - Recover malformed empty tool-use turns
 
 ### What changed
