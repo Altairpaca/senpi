@@ -56,6 +56,25 @@
 
 - LOW: new ask-user modules. `packages/coding-agent/src/core/extensions/builtin/index.ts` import and ordered registry entry; no public extension type changes.
 
+## 2026-09-10 - Extension logins own their abort controller (#1542)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`: `createExtensionLoginInteraction` no longer captures `ctx.signal` (the active run's abort signal). It creates its own `AbortController`, hands `controller.signal` to `modelRuntime.login` and binds every dialog to it (combined with the per-prompt `AuthPrompt.signal`). The login is cancelled only when the user dismisses one of its own dialogs (the controller aborts with `Error("Login cancelled")`) or when a later login for the same `providerId` supersedes it via a module-level pending-login map. A dialog released by the provider's own `AuthPrompt.signal` (callback server won the race) still rejects with `Login cancelled` without cancelling the login. `ExtensionLoginInteractionOptions` gains optional `providerId`.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: `/gpt-account add` passes `providerId: "openai-codex"`.
+
+### Why
+
+- Issue #1542: a `/gpt-account add` started while a response streamed was bound to that turn's controller, so Esc/steer/timeout on the response killed the browser login and surfaced it as a login failure.
+
+### Why an extension could not handle it
+
+- The interaction is the builtin account commands' own seam into `modelRuntime.login`; the signal it captures is decided here.
+
+### Expected merge conflict zones
+
+- LOW: both files are fork-only.
+
 ## 2026-09-08 - Shared monitor telemetry contract
 
 ### What changed
