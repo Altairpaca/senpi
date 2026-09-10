@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Kimi For Coding sessions now identify themselves as a Kimi client. `api.kimi.com/coding` recognizes its clients by a product `User-Agent` plus a six-header `X-Msh-*` device set (platform, version, device name, device model, OS version, per-install device id), which the official Kimi Code client sends on device authorization, token poll, token refresh, and every managed request; senpi sent none of them, so a subscription session presented itself as an anonymous Anthropic-protocol client holding a Kimi bearer token. The OAuth subscription path now sends the full set on all four request paths. Header values are printable-ASCII sanitized (the endpoint answers 520 on raw non-ASCII bytes) and the device id persists under the agent dir, falling back to a per-process id when that directory is unwritable instead of throwing. The api-key path is unchanged and stays header-free, because it authenticates with a platform key rather than a client session ([#1504](https://github.com/code-yeongyu/senpi/issues/1504))
+
 ### Removed
 
 ## [2026.9.10] - 2026-09-10
