@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { OPENAI_CODEX_MODELS } from "../../../ai/src/providers/openai-codex.models.ts";
 import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
 import type { AgentEndEvent } from "../../src/core/extensions/types.ts";
@@ -12,6 +13,12 @@ import {
 
 const CODEX_POLICY_ERROR =
 	"Codex error: This request was blocked by our safety systems. Reason: Potentially unintended activity.";
+
+// The predicate's Codex identity is a literal copy of the api id the shipped
+// Codex catalog stamps on every message. Reading the catalog back keeps the two
+// pinned together: renaming the api in `packages/ai` fails here instead of
+// silently disarming the #1520 guard while every hardcoded case stays green.
+const CODEX_CATALOG_APIS = [...new Set(Object.values(OPENAI_CODEX_MODELS).map((model) => model.api))];
 
 // `fauxAssistantMessage` hardcodes `api`, so the Codex identity this predicate
 // now requires has to be applied to the returned message.
@@ -159,6 +166,26 @@ describe("terminal policy goal recovery", () => {
 		expect(await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd))).toMatchObject({
 			id: goal?.id,
 			status: "active",
+		});
+	});
+
+	it.each(CODEX_CATALOG_APIS)("blocks the diagnostic on the shipped Codex catalog api %s", async (api) => {
+		const { harness, ctx, goal } = await setupGoal();
+		const event: AgentEndEvent = {
+			type: "agent_end",
+			messages: [{ ...codexPolicyMessage(), api }],
+			willRetry: false,
+		};
+
+		await runGoalHandlers(harness.handlers, "agent_end", event, ctx);
+		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
+
+		expect(harness.sent).toHaveLength(0);
+		expect(await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd))).toMatchObject({
+			id: goal?.id,
+			status: "blocked",
+			consecutiveContinuations: 0,
 		});
 	});
 
