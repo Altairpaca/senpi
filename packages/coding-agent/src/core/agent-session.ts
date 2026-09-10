@@ -785,7 +785,6 @@ export interface ExtensionBindings {
 	onError?: ExtensionErrorListener;
 }
 
-/** Options for AgentSession.prompt() */
 export interface TreeNavigationOptions {
 	summarize?: boolean;
 	customInstructions?: string;
@@ -804,6 +803,7 @@ export interface AssistantEditResult {
 	entryId?: string;
 }
 
+/** Options for AgentSession.prompt() */
 export type PromptDisposition = "handled" | "queued" | "started";
 
 export type QueuedInput = {
