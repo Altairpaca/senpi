@@ -1,5 +1,59 @@
 # changes
 
+## An aborted question carries the extension's outcome (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts`: the abort listener installed for `opts.signal` no longer hard-codes `cancelled`. It reads the abort reason and resolves `timed_out` when the aborting side already settled the question that way, so the broadcast `question_resolved` outcome matches the response the model received. Every other abort (dismissal, superseded question, session close) still resolves `cancelled`.
+
+### Why
+
+- The ask-user builtin owns the authoritative idle timer and aborts the dialog controller when it fires. The bridge's own equal-length timer lost that race in RPC mode, so an idle timeout broadcast `question_resolved{outcome:"cancelled"}` while the framed notice and tool result carried the timeout text - and `docs/rpc.md` documents `timed_out` as the outcome desktop clients map onto the resolved row (probe scenario `async`).
+
+### Why an extension could not handle it
+
+- The outcome broadcast to connections is written by the bridge; an extension only sees its own `QuestionResponse`.
+
+### Expected merge conflict zones
+
+- LOW: the `cancel` closure inside `ConnectionQuestionBridge.ask`.
+
+## open_session of an existing session file starts as a resume (2026-09-10)
+
+### What changed
+
+- `session-registry.ts`: `openSession` passes `sessionStartEvent: { type: "session_start", reason: "resume" }` to `createAgentSessionRuntime` when the requested `sessionPath` already exists on disk (the same `isResume` predicate that already restores the persisted model and thinking level). A session created by the open still starts with the default `reason: "startup"`.
+
+### Why
+
+- `AgentSession` defaults to `reason: "startup"` when no event is supplied, so re-opening a session over RPC fired `session_start{startup}`. Extensions that rebuild per-session state only on a resume never ran: after a host crash the ask-user builtin's dangling-question hook (`resume.ts`, `reason` must be `resume`/`reload`) left the pending tool call hanging with nothing re-presented and no orphaned-after-restart message (probe scenario `resume`). Interactive `/resume` already emits the event through `AgentSessionRuntime.switchSession`; the RPC restart path now mirrors it.
+
+### Why an extension could not handle it
+
+- The start reason is decided by the runtime factory call inside the registry, before any extension is bound; an extension cannot observe why its session was created.
+
+### Expected merge conflict zones
+
+- LOW: the `isResume` block and the `createAgentSessionRuntime` options in `RpcSessionRegistry.openSession`.
+
+## Pending questions survive the opening connection's drop (2026-09-10)
+
+### What changed
+
+- `session-command-router.ts`: `releaseConnection` no longer calls `cancelPendingExtensionUiRequests()` for every session a dropped connection owned. The cancellation moved into `releaseOwnedSession`, on the branch where the close claim made this caller the finalizer - i.e. the attachment refcount already decided the session is being torn down. A drop that leaves other attachments alive now keeps the shared binding's pending questions pending.
+
+### Why
+
+- A question is session-owned: `docs/rpc.md` promises pending questions are broadcast to every attached connection and replayed to connections that attach later. Cancelling on any owner drop resolved the question `cancelled` for all peers, made `open_session` hydrate zero pending questions, and rejected the surviving connection's answer with `question_already_resolved` (probe scenario `owner-drop`).
+
+### Why an extension could not handle it
+
+- Connection lifecycle, attachment refcounting and binding teardown are router-private; no extension hook observes a dropped socket or the close claim that decides whether the session survives.
+
+### Expected merge conflict zones
+
+- LOW: the attachment loop in `releaseConnection` and the finalizer branch of `releaseOwnedSession`.
+
 ## edit_assistant_message command and typed edit errors (2026-09-10)
 
 ### What changed
@@ -19,7 +73,6 @@
 ### Expected merge conflict zones
 
 - LOW: `rpc-types.ts` command/response unions and the `RPC_ERROR_*` block; `connection-handler.ts` switch (one new case next to `fork`); `rpc-client.ts` `getData()`.
-
 ## Client writer for question draft progress (2026-09-10)
 
 ### What changed

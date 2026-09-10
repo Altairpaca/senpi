@@ -413,7 +413,6 @@ export class SessionCommandRouter {
 		}
 		await Promise.all(
 			[...owned].map(async ([sessionId, count]) => {
-				this.bindings.get(sessionId)?.cancelPendingExtensionUiRequests?.();
 				for (let attachment = 0; attachment < count; attachment++) {
 					// Headless completion contract: a turn survives its client's death and
 					// runs to settlement (the host lifecycle keeps the process alive on
@@ -461,17 +460,26 @@ export class SessionCommandRouter {
 	/**
 	 * One owned handle's refcounted close: the same sequence as an explicit
 	 * close_session, tolerant of races with other lifecycle paths (an entry
-	 * already closed or claimed elsewhere is simply skipped). Disposal and
-	 * binding removal happen only when this was the LAST attachment (the entry
-	 * transitioned to "closing"): surviving attachments keep the shared binding
-	 * and their event stream.
+	 * already closed or claimed elsewhere is simply skipped). Disposal, pending
+	 * extension-UI cancellation and binding removal happen only when this was the
+	 * LAST attachment (the entry transitioned to "closing"): surviving
+	 * attachments keep the shared binding and their event stream.
 	 */
 	private async releaseOwnedSession(sessionId: string): Promise<void> {
 		// A failed claim means the entry is already closed or owned by another path.
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: false });
 		if (!claim) return;
-		if (claim.finalizer) await this.finalizeClose(sessionId, this.bindings.get(sessionId));
-		else await this.finalizations.get(sessionId)?.promise;
+		if (!claim.finalizer) {
+			await this.finalizations.get(sessionId)?.promise;
+			return;
+		}
+		const binding = this.bindings.get(sessionId);
+		// Pending UI requests are session-owned, not connection-owned: a question
+		// asked through one connection stays answerable by every other attachment.
+		// Cancel them only here, where the refcount has already decided the session
+		// is being torn down, never on any owner drop.
+		binding?.cancelPendingExtensionUiRequests?.();
+		await this.finalizeClose(sessionId, binding);
 	}
 
 	/**

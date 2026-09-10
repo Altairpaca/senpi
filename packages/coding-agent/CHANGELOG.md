@@ -6,6 +6,25 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- Claude SDK OAuth reattach no longer closes a healthy resumed query when
+  normal completed-request cleanup aborts the request controller; the
+  initialization cancellation listener is detached once initialization settles,
+  while pending cancellation still rejects and closes the query.
+- GPT-6 Astra high-reasoning warnings now appear only at `max`; GPT-5.6 Sol
+  continues to warn at both `xhigh` and `max`.
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
 - RPC mode serves `edit_assistant_message` (`entryId`, `text`, optional `expectedLeafId`, `summarize`, `customInstructions`) so any RPC client can replace an assistant response with an edited copy; the response reports `outcome: edited | unchanged | cancelled` with the new entry and leaf, and failures carry a typed `errorCode` (`streaming`, `not_found`, `not_assistant`, `empty`, `stale_leaf`). `expectedLeafId` is an optimistic-concurrency guard on `TreeNavigationOptions` checked before any mutation and before the unchanged short-circuit, so a stale client is refused instead of rewriting a conversation another client moved. Extensions get `ctx.editAssistantMessage()`, the RPC client gets `editAssistantMessage()` (failures reject with `RpcCommandError` carrying `errorCode`), and a TUI attached to a shared host now routes `/tree` edits to the host instead of a local shadow session. `entry_appended` is documented as the identity channel for persisted messages ([#1561](https://github.com/code-yeongyu/senpi/pull/1561)).
 
 - The built-in question tool selects `request_user_input` for OpenAI GPT models and `ask_user_question` for other models, with an explicit choice to wait for an answer or keep working while the question stays open. Questions have an idle timeout and hard cap, support partial answers with a comment, and avoid re-asking after a timeout in the same turn. Session resume and reload re-present a dangling question when a UI is available, or deliver an orphaned-after-restart user message once per tool call.
@@ -32,6 +51,12 @@
 - `generate_image` defaults to `gpt-image-2.5-sunburst`, the most capable image model (Flare stays selectable when speed matters), prices requests from the builtin image catalog instead of zero, and the native `image_generation` server tool is injected with that same model so official OpenAI Responses sessions no longer fall back to the API default `gpt-image-1`.
 
 ### Fixed
+
+- An idle question timeout is broadcast to RPC clients as `question_resolved{outcome:"timed_out"}` instead of `cancelled`, matching the timeout text the model already received in the tool result and the framed notice. The ask-user extension's idle timer is the authoritative one and now hands its outcome to the question bridge it aborts.
+
+- Re-opening an existing session file over RPC (`open_session` with a `sessionPath` that exists) now starts the session as a resume instead of a plain startup, so a question left dangling by a crashed host is re-presented once when the client has a question UI, or delivered once as an orphaned-after-restart user message when it has not - the same behaviour interactive `/resume` already had. Newly created sessions still start as `startup`.
+
+- A pending question survives the drop of the connection that opened the session: as long as another client is attached, the question stays pending, hydrates into `open_session` / `get_state`, and the surviving client's answer resolves it. Previously any owner disconnect broadcast `question_resolved{outcome:"cancelled"}` to every peer and the tool result read "The user dismissed the question."; pending extension-UI requests are now cancelled only when the last attachment tears the session down.
 
 - An unanswered-yet question asked with wait-for-answer off now delivers its answer - and its idle-timeout notice - as exactly one framed user message on every surface (interactive TUI, RPC clients, app-server clients); previously only the TUI delivered it and answers given over RPC or app-server were dropped. A TUI attached to a shared host also advertises the `question` capability, so it renders the full question overlay instead of falling back to sequential prompts.
 
