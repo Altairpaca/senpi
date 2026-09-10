@@ -19,7 +19,14 @@ const generate = vi.fn(
 		api: "openai-images",
 		provider: model.provider,
 		model: model.id,
-		output: [{ type: "image", data: PNG_BASE64, mimeType: `image/${options?.outputFormat ?? "png"}` }],
+		output: Array.from(
+			{ length: options && "n" in options && typeof options.n === "number" ? options.n : 1 },
+			() => ({
+				type: "image" as const,
+				data: PNG_BASE64,
+				mimeType: `image/${options?.outputFormat ?? "png"}`,
+			}),
+		),
 		...(stub.background === undefined ? {} : { background: stub.background }),
 		stopReason: "stop",
 		timestamp: 0,
