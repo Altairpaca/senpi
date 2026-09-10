@@ -4867,7 +4867,7 @@ export class AgentSession {
 	}
 
 	/**
-	 * #1526: both guards below reject before `_switchActiveModel` appends its
+	 * #1526: every switch guard rejects before `_switchActiveModel` appends its
 	 * `model_change`, so a refused switch used to leave no entry, no event, and
 	 * no log line - indistinguishable from a switch the user never attempted.
 	 * Record the refusal, then rethrow the original error unchanged.
@@ -4895,19 +4895,41 @@ export class AgentSession {
 		this._emit({ type: "model_change_rejected", model, reason, detail, ...numbers });
 	}
 
+	/**
+	 * The admission only selects wording, and the switch wording's remedy
+	 * ("Compact the session, ...") is executable only when there is context to
+	 * compact. `_setModel` is also reachable from `session_start` (the
+	 * `recommended-models` builtin switches the model there), so derive the
+	 * admission from the branch instead of hardcoding a switch: with conversation
+	 * context this is a switch, on an empty session it is still a cold start.
+	 */
+	private _modelSwitchAdmission(): ModelUsabilityAdmission {
+		return this.sessionManager.hasContextMessages() ? "switch" : "start";
+	}
+
+	/**
+	 * The single guard seam for a model switch (#1526): every site that can
+	 * refuse a switch - the `_setModel` pre-flight, the post-`model_select`
+	 * revalidation in `_switchActiveModel`, and both cycle guards - records the
+	 * refusal and rethrows the original error unchanged, so no refusal is
+	 * observable on one path and invisible on its sibling.
+	 */
+	private _assertModelUsableForSwitch(model: Model<Api>, liveContextTokens: number): void {
+		try {
+			this.assertModelUsable(model, liveContextTokens, { admission: this._modelSwitchAdmission() });
+		} catch (error) {
+			this._recordRejectedModelChange(model, error);
+			throw error;
+		}
+	}
+
 	private async _setModel(
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
 	): Promise<SystemPromptChangeEvent | undefined> {
-		try {
-			// Classify as a switch, not a cold start: only the "switch" admission
-			// names the remedy ("Compact the session, then revalidate and retry the
-			// model switch"), which is the whole point of the message here.
-			this.assertModelUsable(model, this._getDownswitchLiveContextTokens(model), { admission: "switch" });
-			if (!(await this._modelRuntime.checkAuth(model.provider))) {
-				throw new Error(`No API key for ${model.provider}/${model.id}`);
-			}
-		} catch (error) {
+		this._assertModelUsableForSwitch(model, this._getDownswitchLiveContextTokens(model));
+		if (!(await this._modelRuntime.checkAuth(model.provider))) {
+			const error = new Error(`No API key for ${model.provider}/${model.id}`);
 			this._recordRejectedModelChange(model, error);
 			throw error;
 		}
@@ -5000,7 +5022,7 @@ export class AgentSession {
 			const systemPromptChange = opts.emitModelSelect
 				? await this._emitModelSelect(model, previousModel, opts.modelSelectSource)
 				: undefined;
-			this.assertModelUsable(model, liveContextTokens);
+			this._assertModelUsableForSwitch(model, liveContextTokens);
 			if (opts.appendSessionEntry) {
 				this.sessionManager.appendModelChange(
 					model.provider,
@@ -5106,7 +5128,10 @@ export class AgentSession {
 			const alternatives = favoriteModels.filter((entry) => !modelsAreEqual(entry.model, currentModel));
 			const onlyAlternative = alternatives.length === 1 ? alternatives[0] : undefined;
 			if (onlyAlternative) {
-				this.assertModelUsable(onlyAlternative.model, this._getDownswitchLiveContextTokens(onlyAlternative.model));
+				this._assertModelUsableForSwitch(
+					onlyAlternative.model,
+					this._getDownswitchLiveContextTokens(onlyAlternative.model),
+				);
 			}
 			return {
 				model: currentModel,
@@ -5117,7 +5142,7 @@ export class AgentSession {
 		}
 		const next = favoriteModels[selectedIndex];
 		const liveContextTokens = this._getDownswitchLiveContextTokens(next.model);
-		this.assertModelUsable(next.model, liveContextTokens);
+		this._assertModelUsableForSwitch(next.model, liveContextTokens);
 		const invalidatesCompaction =
 			this._modelSelectionChangesContext(currentModel, next.model) ||
 			currentModel?.provider !== next.model.provider ||
@@ -5130,8 +5155,6 @@ export class AgentSession {
 		const thinking = this._getThinkingForModelSwitch(next.model, next.thinkingLevel, next.thinkingSelection);
 
 		this.agent.state.model = next.model;
-		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
-		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
 		const previousTier = this._currentServiceTier;
 		const previousFastMode = this.isFastModeActive();
 		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
@@ -5139,19 +5162,25 @@ export class AgentSession {
 		// Apply thinking level and provenance from the favorite projection or remembered preference.
 		this._setThinkingLevel(thinking.level, false, thinking.selection);
 
-		// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
-		this._emit({
-			type: "model_changed",
-			model: next.model,
-			thinkingLevel: this.thinkingLevel,
-			source: "cycle",
-		});
-		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
-
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		try {
 			const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
-			this.assertModelUsable(next.model, liveContextTokens);
+			// #1526: the `model_select` hook may have grown the system prompt, so the
+			// switch is not decided yet. Nothing durable - no `model_change`, no global
+			// default - may be written before this guard accepts, or a refused cycle
+			// would resume on a model that never ran (the ordering `_switchActiveModel`
+			// already uses).
+			this._assertModelUsableForSwitch(next.model, liveContextTokens);
+			this.sessionManager.appendModelChange(next.model.provider, next.model.id);
+			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
+			this._emit({
+				type: "model_changed",
+				model: next.model,
+				thinkingLevel: this.thinkingLevel,
+				source: "cycle",
+			});
+			this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
 			const cycleResult: ModelCycleResult = {
 				model: next.model,
@@ -5167,6 +5196,7 @@ export class AgentSession {
 			if (currentModel) this.agent.state.model = currentModel;
 			else delete (this.agent.state as { model?: Model<Api> }).model;
 			this.agent.state.systemPrompt = previousSystemPrompt;
+			this._currentServiceTier = previousTier;
 			throw error;
 		}
 	}

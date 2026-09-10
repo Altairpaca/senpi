@@ -360,6 +360,7 @@ class TreeList implements Component {
 				entry.type === "label" ||
 				entry.type === "custom" ||
 				entry.type === "model_change" ||
+				entry.type === "model_change_rejected" ||
 				entry.type === "thinking_level_change" ||
 				entry.type === "session_info";
 
@@ -601,6 +602,9 @@ class TreeList implements Component {
 			case "model_change":
 				parts.push("model", entry.modelId);
 				break;
+			case "model_change_rejected":
+				parts.push("model rejected", entry.modelId, entry.reason);
+				break;
 			case "thinking_level_change":
 				parts.push("thinking", entry.thinkingLevel);
 				break;
@@ -841,6 +845,9 @@ class TreeList implements Component {
 				break;
 			case "model_change":
 				result = theme.fg("dim", `[model: ${entry.modelId}]`);
+				break;
+			case "model_change_rejected":
+				result = theme.fg("warning", `[model rejected: ${entry.modelId} (${entry.reason})]`);
 				break;
 			case "thinking_level_change":
 				result = theme.fg("dim", `[thinking: ${entry.thinkingLevel}]`);

@@ -1,5 +1,24 @@
 # changes
 
+## The refused-switch entry crosses the RPC seam and stays bookkeeping (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `validSessionEntry` accepts `model_change_rejected` (`provider`, `modelId` and `detail` must be strings), so an `append_session_entry` carrying the entry is no longer refused as malformed.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the deferred-entry gate counts `model_change_rejected` as auto-appended bookkeeping next to `model_change`/`thinking_level_change`, so a session whose only content is a refused switch keeps shipping status snapshots without its entry list.
+
+### Why
+
+- `model_change_rejected` (#1526) is appended by the session itself on a refused switch. Without the validator branch the entry could not cross the `append_session_entry` seam `rpc-client.ts` exists for, and without the bookkeeping exclusion recording a refusal silently turned every `get_state` for that session into a full entry dump.
+
+### Why an extension could not handle it
+
+- Both are RPC-mode internals: the command validator runs before any extension sees the command, and the state snapshot is assembled by the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `validSessionEntry` switch and the `entries` spread inside the state snapshot builder.
+
 ## An aborted question carries the extension's outcome (2026-09-10)
 
 ### What changed

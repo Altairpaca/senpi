@@ -19,22 +19,25 @@
 
 ## Record model switches the session refuses (2026-09-09)
 
+## Record model switches the session refuses (2026-09-10)
+
+
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts` records a refused model switch before rethrowing: `_setModel` wraps its usability and auth guards, appends a `model_change_rejected` session entry, and emits a matching `model_change_rejected` event carrying the budget projection numbers. The same call now classifies the check as `admission: "switch"`, so the guard produces its switch-specific remedy instead of the cold-start wording.
-- `packages/coding-agent/src/core/session-manager.ts` adds the `ModelChangeRejectedEntry` type and `appendModelChangeRejected()`.
+- `packages/coding-agent/src/core/agent-session.ts` records every refused model switch before rethrowing. `_assertModelUsableForSwitch()` is the single guard seam: the `_setModel` pre-flight, the post-`model_select` revalidation in `_switchActiveModel`, and both `_cycleFavoriteModel` guards (the sole-alternative case and the pre/post-`model_select` pair) now funnel through it, so each appends a `model_change_rejected` session entry, emits the matching event with the budget projection numbers, and rethrows the original error unchanged. The `_setModel` auth refusal records the same entry with `reason: "auth"`. `_modelSwitchAdmission()` derives the admission from the branch (`hasContextMessages()`) instead of hardcoding `"switch"`, so a refusal only promises the compaction remedy when there is context to compact. `_cycleFavoriteModel` no longer appends its `model_change`, writes the global default, or emits `model_changed`/`service_tier_changed` before the post-`model_select` guard accepts, and its catch restores the previous service tier.
+- `packages/coding-agent/src/core/session-manager.ts` adds the `ModelChangeRejectedEntry` type (documenting that it follows the shared pre-assistant `_persist` buffering contract) and `appendModelChangeRejected()`.
 
 ### Why
 
-- Both guards reject before `_switchActiveModel` appends its `model_change`, so a refused switch left no entry, no event, and no log line; an attempted-and-rejected switch was indistinguishable from one the user never made (#1526). The `admission` default only infers `"switch"` when `liveContextTokens > 0`, which is not true on this path whenever the target's usable context is not smaller than the current model's, so the message told the user the model "cannot start" and omitted the compaction remedy.
+- Every guard rejects before `_switchActiveModel` appends its `model_change`, so a refused switch left no entry, no event, and no log line; an attempted-and-rejected switch was indistinguishable from one the user never made (#1526). Recording it on one guard only would have left sibling calls of the same public API silent, and a refused *cycle* was strictly worse than silent: it appended a real `model_change` and wrote the global default before its post-`model_select` guard ran, so the session resumed - and every new session started - on a model that was refused and never answered. The `admission` default only infers `"switch"` when `liveContextTokens > 0`, so the message told the user the model "cannot start" and omitted the compaction remedy; hardcoding `"switch"` instead promised that remedy on the `session_start` caller (`recommended-models`), where there is nothing to compact.
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/core/agent-session.ts` owns the switch guards and the session-entry append; an extension observes model changes only after they are applied and never sees the rejected path.
+- `packages/coding-agent/src/core/agent-session.ts` owns the switch guards, the session-entry append, and the settings write; an extension observes model changes only after they are applied and never sees the rejected path.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionEvent` union and the `_setModel` guard block.
+- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionEvent` union, the `_setModel` guard block, and the `_cycleFavoriteModel` commit block.
 - `packages/coding-agent/src/core/session-manager.ts`: the `SessionEntry` union and the append helpers near `appendModelChange`.
 
 ## Leaf token and typed errors for assistant edits (2026-09-10)
@@ -375,6 +378,7 @@
 
 - LOW: `resource-loader.ts` around skill path assembly and the former private package-identity helpers.
 
+
 ## 2026-09-07 - Dedupe skills from duplicate copies of one package
 
 ## 2026-09-07 - Overflow recovery outlives the auto-compaction flag; session-scoped toggle (#1422)
@@ -604,6 +608,7 @@
 
 - LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
 
+
 ## 2026-09-04 - Route bare "." submissions through a hidden manual-continue directive
 
 ### What changed
@@ -627,6 +632,7 @@
 - MEDIUM: `packages/coding-agent/src/core/agent-session.ts` — the top of `prompt()`'s `try` block (before the extension input emission), where queue-admission branches frequently change.
 - LOW: `packages/coding-agent/src/core/manual-continue.ts` (new file, no conflicts).
 - LOW: `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts` — the single assertion swap in the "dot retry" case.
+
 
 ## 2026-09-04 - Failed provider turns leave the LLM context on every lane
 
@@ -677,6 +683,7 @@
 ### Expected merge conflict zones
 
 - LOW: the `model` bookkeeping inside `getSessionContextSettings()` in `session-manager.ts`.
+
 
 ## 2026-09-04 - Gate next-turn compaction on real provider admission
 
@@ -935,6 +942,7 @@
 
 - LOW: the `activeToolNamesChanged` branch in `setActiveToolsByName()`.
 
+
 ## 2026-08-30 - Drop the classic host-UI no-op stub
 
 - `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
@@ -945,6 +953,7 @@
 - `agent-session-prompt.test.ts` binds `mode: "rpc"` before asserting durable prompt entries,
   so the new-behavior test exercises the lane the contract actually covers instead of the
   default print lane.
+
 
 ## 2026-08-30 - Experimental workflow eval-only policy
 
@@ -1695,6 +1704,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - `auth-storage.ts` around `acquireLockSyncWithRetry` (line ~95).
 
+
 ## 2026-08-21 - Settings reads are lock-free; writes publish atomically via temp+rename
 
 ### What changed
@@ -1712,6 +1722,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - `settings-manager.ts` around `withLock` (line ~555) and the `fs` import list (line ~5).
+
 
 ## 2026-08-21 - Settings-lock retry sleeps instead of spinning; retry-fallback canonicalization memoized
 
@@ -1731,6 +1742,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - `settings-manager.ts` around `acquireLockSyncWithRetry` (line ~527). `retry-fallback/controller.ts` around `nextCandidate`/`hasConfiguredChain` and the new `canonicalChains` private method.
+
 
 ## 2026-08-20 - Resume picker caches exact streaming summaries
 
@@ -2107,6 +2119,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 - `core/agent-session.ts` `sendCustomMessage` wait condition, and the goal extension `session_start`
   suppressed-load branch in `core/extensions/builtin/goal/index.ts`.
 
+
 ## 2026-08-25 - Harden provider retry watchdog ownership and backoff
 
 ### What changed
@@ -2171,6 +2184,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 
 - `core/provider-timeout-retry.ts` plan construction, and the retry-bound constants in
   `test/suite/regressions/provider-idle-recovery.test.ts`.
+
 
 ## Queue typed input admitted during auto-compaction (2026-08-18)
 
@@ -5362,4 +5376,5 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 - LOW: fallback switch admission in
   packages/coding-agent/src/core/agent-session.ts and candidate reservation in
   packages/coding-agent/src/core/retry-fallback/controller.ts.
+
 
