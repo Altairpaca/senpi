@@ -1,5 +1,25 @@
 # changes
 
+## edit_assistant_message command and typed edit errors (2026-09-10)
+
+### What changed
+
+- `rpc-types.ts`: new command member `edit_assistant_message { entryId, text, expectedLeafId?, summarize?, customInstructions? }`, response `data: EditAssistantMessageResult` (`edited | unchanged | cancelled`), and five `RPC_ERROR_*` constants (`streaming`, `not_found`, `not_assistant`, `empty`, `stale_leaf`) folded into `RpcErrorCode`.
+- `connection-handler.ts`: `case "edit_assistant_message"` beside `fork` - validates the shape, calls `session.editAssistantMessage` on the connection's bound session (the same routed session `get_entries`/`get_tree` use), maps outcomes, and turns `AssistantEditError`/`SessionStreamingError` into `errorCode`; the extension `commandContextActions` gain `editAssistantMessage`.
+- `rpc-client.ts`: `editAssistantMessage()` plus `RpcCommandError` (an `Error` subclass carrying `errorCode`/`errorData`) now thrown by `getData()` for every failed command instead of a bare `Error` with the same message.
+
+### Why
+
+- The TUI-only edit from `/tree` (#1532) was unreachable from RPC clients such as the desktop, and clients had no typed way to learn why an edit was refused.
+
+### Why an extension could not handle it
+
+- The RPC command surface and the error envelope are owned by this directory; an extension cannot add a wire command.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` command/response unions and the `RPC_ERROR_*` block; `connection-handler.ts` switch (one new case next to `fork`); `rpc-client.ts` `getData()`.
+
 ## Client writer for question draft progress (2026-09-10)
 
 ### What changed

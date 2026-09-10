@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AgentSession, AgentSessionEvent, AgentSessionEventListener } from "../../core/agent-session.ts";
+import type {
+	AgentSession,
+	AgentSessionEvent,
+	AgentSessionEventListener,
+	AssistantEditResult,
+} from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
 import { executeBashWithOperations } from "../../core/bash-executor.ts";
@@ -1014,6 +1019,22 @@ export function createRemoteSessionProxy(
 					});
 					if (!result.cancelled) await refresh();
 					return result;
+				};
+			if (property === "editAssistantMessage")
+				return async (
+					entryId: string,
+					text: string,
+					options?: Parameters<AgentSession["editAssistantMessage"]>[2],
+				): Promise<AssistantEditResult> => {
+					const result = await client.editAssistantMessage(entryId, text, {
+						expectedLeafId: options?.expectedLeafId,
+						summarize: options?.summarize,
+						customInstructions: options?.customInstructions,
+					});
+					if (result.outcome === "unchanged") return { cancelled: false, unchanged: true };
+					if (result.outcome === "cancelled") return { cancelled: true, aborted: result.aborted };
+					await refresh();
+					return { cancelled: false, entryId: result.entry.id };
 				};
 			if (property === "getUserMessagesForForking")
 				return () => transportCall("getUserMessagesForForking", () => client.getForkMessages(), []);

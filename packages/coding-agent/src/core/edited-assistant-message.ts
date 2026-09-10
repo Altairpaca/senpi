@@ -1,14 +1,49 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { contentText } from "@earendil-works/pi-ai";
 
-export class AssistantEditError extends Error {
-	readonly reason: "empty" | "not-assistant" | "not-found";
+export type AssistantEditReason = "empty" | "not-assistant" | "not-found" | "stale-leaf";
 
-	constructor(reason: AssistantEditError["reason"], message: string) {
+/** Wire-level code for an assistant-edit failure; stable across transports. */
+export type AssistantEditCode = "empty" | "not_assistant" | "not_found" | "stale_leaf";
+
+const EDIT_CODES: Readonly<Record<AssistantEditReason, AssistantEditCode>> = {
+	empty: "empty",
+	"not-assistant": "not_assistant",
+	"not-found": "not_found",
+	"stale-leaf": "stale_leaf",
+};
+
+export class AssistantEditError extends Error {
+	readonly reason: AssistantEditReason;
+
+	constructor(reason: AssistantEditReason, message: string) {
 		super(message);
 		this.name = "AssistantEditError";
 		this.reason = reason;
 	}
+
+	get code(): AssistantEditCode {
+		return EDIT_CODES[this.reason];
+	}
+}
+
+/** Thrown by every tree mutation while a response is streaming; outranks the stale-leaf guard. */
+export class SessionStreamingError extends Error {
+	readonly code = "streaming" as const;
+
+	constructor() {
+		super("Wait for the current response to finish before navigating the session tree.");
+		this.name = "SessionStreamingError";
+	}
+}
+
+/** Optimistic-concurrency guard: the caller's leaf token must equal the session's current leaf. */
+export function assertExpectedLeaf(expectedLeafId: string | undefined, currentLeafId: string | null): void {
+	if (expectedLeafId === undefined || expectedLeafId === currentLeafId) return;
+	throw new AssistantEditError(
+		"stale-leaf",
+		`Session leaf moved (expected ${expectedLeafId}, now ${currentLeafId ?? "root"})`,
+	);
 }
 
 export function assistantTextEquals(original: AssistantMessage, text: string): boolean {

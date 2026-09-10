@@ -6,6 +6,8 @@
 
 ### Added
 
+- RPC mode serves `edit_assistant_message` (`entryId`, `text`, optional `expectedLeafId`, `summarize`, `customInstructions`) so any RPC client can replace an assistant response with an edited copy; the response reports `outcome: edited | unchanged | cancelled` with the new entry and leaf, and failures carry a typed `errorCode` (`streaming`, `not_found`, `not_assistant`, `empty`, `stale_leaf`). `expectedLeafId` is an optimistic-concurrency guard on `TreeNavigationOptions` checked before any mutation and before the unchanged short-circuit, so a stale client is refused instead of rewriting a conversation another client moved. Extensions get `ctx.editAssistantMessage()`, the RPC client gets `editAssistantMessage()` (failures reject with `RpcCommandError` carrying `errorCode`), and a TUI attached to a shared host now routes `/tree` edits to the host instead of a local shadow session. `entry_appended` is documented as the identity channel for persisted messages ([#1561](https://github.com/code-yeongyu/senpi/pull/1561)).
+
 - The built-in question tool selects `request_user_input` for OpenAI GPT models and `ask_user_question` for other models, with an explicit choice to wait for an answer or keep working while the question stays open. Questions have an idle timeout and hard cap, support partial answers with a comment, and avoid re-asking after a timeout in the same turn. Session resume and reload re-present a dangling question when a UI is available, or deliver an orphaned-after-restart user message once per tool call.
 
 - Settings `askUser.enabled` (default true) and `askUser.timeoutMinutes` (default 30, clamped 1–120) control the built-in question tool; `--no-ask-user` disables it for one run and wins over saved settings.
@@ -13,6 +15,8 @@
 - RPC extension UI gains `method:"question"` requests with `extension_ui_progress` drafts, `question_updated` deadline refreshes, `question_resolved` broadcasts, and `pendingQuestions` on session state. Clients advertise the `question` capability; those without it get a sequential select/input fallback.
 
 - App-server emits `item/tool/requestUserInput` with replay, progress via `item/tool/userInputProgress`, and cancellation on turn end.
+
+- Venice AI (https://venice.ai) is selectable as a provider: `VENICE_API_KEY` is listed in `--help`, the provider displays as "Venice AI", and `venice` resolves to `z-ai-glm-5-3` when no model is given. Venice is OpenAI-compatible and privacy-first, and senpi suppresses Venice's default system prompt so the agent's own prompt is the only one in play ([#1551](https://github.com/code-yeongyu/senpi/issues/1551))
 
 - `/tree` can edit an assistant response: press `ctrl+e` (`app.tree.editMessage`) on an assistant entry to open it in the multi-line editor; submitting branches to that entry's parent and appends the edited copy as the new leaf, so the conversation continues from the corrected response while the original stays in the session file. Tool calls and thinking in the edited response are dropped, the branch-summary prompt appears only when messages are abandoned, and the key reopens user messages in the editor the same way `enter` does. `AgentSession.editAssistantMessage()` exposes the operation to hosts; it refuses edits while a response streams and rejects empty text before treating a request as unchanged ([#1532](https://github.com/code-yeongyu/senpi/pull/1532)).
 
