@@ -10,6 +10,11 @@
 
 ### Fixed
 
+- A pool slot holding a provider's managed sentinel (`claude-sdk-oauth-managed`) is healed the moment auth.json is read and the repair is written back once, so a second login on an affected build no longer leaves a dead `login-N` entry that hard-errors every request whose affinity picks it; the rotation classifier also treats an unconfigured-slot auth miss as a per-credential failure, so a single bad slot can never dead-end a healthy multi-account pool.
+- A provider-owned login pool is merged onto the stored pool at commit time instead of overwriting it with the pre-browser-flow snapshot, so a sibling account's rotated refresh token and rate-limit block survive another account's interactive login.
+- The Claude SDK lane's session-lock and bare `invalid_request` remint, and its `Provider is not configured:` fallback exclusion, are scoped to that provider: provider-agnostic stream stalls keep consuming the shared same-model retry budget and still escalate to the configured fallback chain, and another provider's auth miss or `invalid_request` still hops the chain.
+- OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted, and an interleaved waiting or info step replaces (never duplicates) the live `(to cancel)`/`(to close)` hint row.
+
 ### Removed
 
 ## [2026.9.10-2] - 2026-09-10
@@ -521,7 +526,6 @@
 - Rearming a muted monitor now reports how many filter-matching output lines were dropped while it was muted; the count resets on resume.
 - `bash_output` now reports when the peeked session is a muted monitor (`details.monitorMuted`, plus `mutedDropped` and a short note) so the muted state remains in the model's textual context; non-monitor sessions are unchanged.
 
-- `Provider is not configured:` is no longer a hard-error model fallback, so an auth miss on Claude SDK OAuth does not eject the turn onto another provider.
 ### New Features
 
 ### Breaking Changes
@@ -542,10 +546,6 @@
 ### Fixed
 
 - Anthropic OAuth requests advertise `claude-cli/2.1.251` instead of the stale `2.1.75`, so Claude Fable 5.1 and Opus 5 no longer fail with `claude_code_version_too_old` (syncs upstream pi `96317e50`) ([oh-my-openagent#7650](https://github.com/code-yeongyu/oh-my-openagent/issues/7650)).
-- OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted.
-- Claude Agent SDK `Lock file is already being held` retries on the same model and no longer hard-error-falls back onto another provider.
-- Claude SDK stream-start timeouts and a bare `invalid_request` remint the same model instead of hopping to an unauthenticated OpenGateway Anthropic route.
-- A persisted Claude SDK binding whose prompt/toolset drifted after a timeout now forks at the last assistant UUID instead of flattening megabytes of transcript.
 
 ### New Features
 
