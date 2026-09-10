@@ -1,3 +1,24 @@
+## askUser settings and --no-ask-user session override (2026-09-10)
+
+### What changed
+
+- `settings-shapes.ts`: adds `AskUserSettings` (`enabled`, `timeoutMinutes`) plus clamp constants (default 30, range 1–120).
+- `settings-manager.ts`: `Settings.askUser` and `getAskUserSettings()` resolve merged settings with boolean type-checks, default `enabled: true`, and clamped `timeoutMinutes`.
+- `agent-session.ts`: `--no-ask-user` in `runtime.flagValues` applies a non-persistent `askUser.enabled=false` override (same path as `--no-model-fallback`) and exposes `getAskUserSettings` on the extension context.
+
+### Why
+
+- The question tool needs a session-readable enable switch and idle timeout, plus a per-run CLI disable that wins over saved settings without writing them.
+
+### Why an extension could not handle it
+
+- Settings shapes, merged resolution, and constructor-time flag overrides live on `SettingsManager` / `AgentSession` before extension `session_start`.
+
+### Expected merge conflict zones
+
+- LOW: `settings-shapes.ts` next to `LookAtSettings`; `settings-manager.ts` `Settings` field list and getters next to prompt-cache helpers.
+- MEDIUM: `agent-session.ts` constructor flag overrides next to `--no-model-fallback` and `bindCore` accessors next to `getLookAtSettings`.
+
 ## Deterministic resume recovery when the restored context exceeds the window (2026-09-10)
 
 ### What changed
@@ -18,7 +39,6 @@
 
 - MEDIUM: `packages/coding-agent/src/core/sdk.ts` resume-admission catch block, which is also the merge zone of the earlier compaction-required admission.
 - LOW: `packages/coding-agent/src/core/agent-session.ts` event union, `subscribe()` replay and the method added beside `admitResumeCompactionRequired()`.
-
 ## Editable assistant responses from the session tree (2026-09-10)
 
 ### What changed

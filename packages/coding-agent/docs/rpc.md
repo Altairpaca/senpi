@@ -1884,10 +1884,10 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 
 There are two categories of extension UI methods:
 
-- **Dialog methods** (`select`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
+- **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
 - **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
-If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
+If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
@@ -2060,6 +2060,62 @@ Set the text in the input editor. Fire-and-forget.
   "text": "prefilled text for the user"
 }
 ```
+
+#### question
+
+Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-q1",
+  "method": "question",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "waitForAnswer": true,
+  "questions": [
+    {
+      "id": "q1",
+      "header": "Database",
+      "question": "Which database should I use?",
+      "options": [
+        { "label": "PostgreSQL", "description": "Relational" },
+        { "label": "SQLite", "description": "Embedded" }
+      ],
+      "multiSelect": false
+    }
+  ],
+  "timeout": 1800000,
+  "askedAtMs": 1718000000000,
+  "deadlineAtMs": 1718001800000,
+  "remainingMs": 1799500
+}
+```
+
+Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: unanswered question ids are reported back to the model. Send `cancelled: true` to dismiss.
+
+While the question is open, the client may send `extension_ui_progress` frames with draft `answers` and `comment`. Each progress frame resets the idle timer; the host emits `question_updated` with the refreshed `deadlineAtMs` and `remainingMs`.
+
+When the question resolves (answered, comment-submitted, timed_out, or cancelled), the host broadcasts `question_resolved` to all connections:
+
+```json
+{
+  "type": "question_resolved",
+  "id": "uuid-q1",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "outcome": "answered",
+  "answers": { "q1": { "selected": ["PostgreSQL"] } },
+  "comment": "",
+  "unanswered": []
+}
+```
+
+A late answer after resolution receives a `question_already_resolved` error.
+
+`RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
+
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
 
 ### Extension UI Responses (stdin)
 

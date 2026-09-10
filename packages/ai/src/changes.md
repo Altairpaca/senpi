@@ -1,3 +1,44 @@
+## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: map the registered `ask_user_question` tool to `AskUserQuestion` for Anthropic Claude Code wire requests, and map it back only when the registered tools include the alias.
+
+### Why
+
+- Claude Code's Anthropic wire contract uses `AskUserQuestion`; without the explicit alias, the built-in tool name cannot round-trip through streamed `tool_use` blocks.
+
+### Why an extension could not handle it
+
+- Tool-name conversion happens inside the Anthropic provider adapter while constructing and decoding provider messages, before an extension can repair the wire name.
+
+### Expected merge conflict zones
+
+- LOW: the Claude Code tool lookup and conversion helpers in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-09-10 - OAuth refresh runs outside the credential lock and the catalog lane joins it (#1542)
+
+### What changed
+
+- `packages/ai/src/auth/oauth-refresh.ts` (new): `refreshOAuthCredential({ credentials, providerId, oauth, stale, slotName, isStale, signal, owning })` re-reads the stored credential, runs `oauth.refresh` OUTSIDE `CredentialStore.modify` under `AbortSignal.any([exchange, timeout 15s])`, then re-enters `modify` and compare-and-swaps: the rotated token is written only when the slot's refresh token still equals the one the exchange consumed; on mismatch the newer stored value is adopted and no write happens. Concurrent refreshes of the same `(store, provider, slot, refresh token)` join one in-flight exchange; owning waiters (per-request resolution) cancel the exchange once none is left waiting and a result arriving after that is not persisted; a non-owning waiter (the catalog lane) only stops waiting. The write itself is not cancellable because the exchange already consumed the refresh token. Exports `OAuthRefreshExchangeError` / `OAuthRefreshStoreError` for code mapping and `projectOAuthSlot`.
+- `packages/ai/src/auth/resolve.ts`: `resolveStoredOAuth` no longer runs the refresh inside `credentials.modify`; it calls `refreshOAuthCredential` as an owning waiter and maps failures through the new exported `oauthRefreshModelsError` (`oauth` for the exchange, `auth` for the store) so `ModelsError` codes and messages are unchanged. `DEFAULT_OAUTH_REFRESH_TIMEOUT_MS` moved to `oauth-refresh.ts`.
+- `packages/ai/src/auth/refresh-credential.ts` (new, extracted from `models.ts` for the LOC ceiling): `resolveRefreshCredential(provider, credentials, authContext, stored, signal)` is the catalog lane's effective-credential step; the expired-OAuth branch joins `refreshOAuthCredential` with `owning: false`.
+- `packages/ai/src/models.ts`: `ModelsImpl.refresh` calls the extracted `resolveRefreshCredential`. The per-provider catalog-refresh controller (`supersedeProviderRefresh` on `setProvider`/`deleteProvider`/`refresh`) therefore no longer reaches the token exchange: a superseded catalog refresh stops waiting while the exchange completes and persists.
+
+### Why
+
+- Issue #1542: with several `openai-codex` OAuth slots, one slot's refresh held the single `auth.json` lock for the whole up-to-15s HTTP exchange while every other slot, provider and login gave up after `FILE_STORAGE_LOCK_RETRY_BUDGET_MS` (5.5s) with `CredentialStoreBusyError`; and any login/logout/`setRuntimeApiKey` for the shared provider id aborted an in-flight token refresh through the catalog-refresh controller.
+
+### Why an extension could not handle it
+
+- The lock scope is inside `resolveStoredOAuth` -> `CredentialStore.modify`, below every extension hook, and the catalog-refresh controller is private to `ModelsImpl`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/src/auth/resolve.ts` `resolveStoredOAuth` (the refresh block is now a call into `oauth-refresh.ts`).
+- MEDIUM: `packages/ai/src/models.ts` `refresh()` credential step and the removed private `resolveRefreshCredential`.
+- LOW: new files `auth/oauth-refresh.ts`, `auth/refresh-credential.ts`.
+
 ## 2026-09-10 - OpenAI images output options, masks, and image-token pricing
 
 ### What changed
@@ -22,7 +63,6 @@
 
 - MEDIUM: `openai-images.ts` (helper extraction) and `openai-images-params.ts`.
 - LOW: `types.ts` additions, generator array, tests.
-
 ## 2026-09-09 - GPT Image 2.5 generation and reference-image editing
 
 ### What changed

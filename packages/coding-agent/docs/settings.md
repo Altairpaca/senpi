@@ -437,6 +437,24 @@ await tool.monitor({ description: "build", command: "bun run build", filter: "^d
 
 This is the default and has no setting. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and all four tools remain directly callable, so shell, workflow and monitor access is never lost.
 
+### Ask User
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `askUser.enabled` | boolean | `true` | Enable the built-in question tool (`request_user_input` / `ask_user_question`) |
+| `askUser.timeoutMinutes` | number | `30` | Idle minutes before an unanswered question times out, clamped to 1–120 |
+
+Disable for one run without changing settings with `--no-ask-user` (wins over `askUser.enabled: true`). `disabledBuiltinExtensions: ["ask-user"]` remains the coarse switch that skips loading the extension.
+
+```json
+{
+  "askUser": {
+    "enabled": true,
+    "timeoutMinutes": 30
+  }
+}
+```
+
 ### Sessions
 
 | Setting | Type | Default | Description |
