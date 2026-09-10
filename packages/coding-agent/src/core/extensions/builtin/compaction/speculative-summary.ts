@@ -18,7 +18,7 @@ import {
 	summarizationMaxDurationMs,
 } from "../../../compaction/stream-watchdog.ts";
 import { convertToLlm } from "../../../messages.ts";
-import { getProviderSessionHeaders } from "../../../provider-attribution.ts";
+import { getOpenCodeSessionHeaders } from "../../../provider-attribution.ts";
 import type { buildPrompt } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
 import type { SpeculativeCompactionContext, SpeculativeCompactionSnapshot } from "./speculative.ts";
@@ -144,8 +144,11 @@ export async function generateSummaryMessage(options: {
 			),
 			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
 		};
+		// Builtin compaction bypasses AgentSession's sdk.ts stream wrapper. Seed only
+		// the OpenCode routing defaults here, then keep resolved auth/configured
+		// headers and the provider-request transform authoritative as on normal turns.
 		const requestHeaders: ProviderHeaders = {
-			...getProviderSessionHeaders(options.snapshot.model, options.context.sessionManager.getSessionId()),
+			...getOpenCodeSessionHeaders(options.snapshot.model, options.context.sessionManager.getSessionId()),
 			...(options.auth.headers ?? {}),
 		};
 		const headers = providerRequest
