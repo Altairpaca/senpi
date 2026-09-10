@@ -8583,6 +8583,9 @@ export class AgentSession {
 		text: string,
 		options: TreeNavigationOptions = {},
 	): Promise<AssistantEditResult> {
+		if (this.isStreaming) {
+			throw new Error("Wait for the current response to finish before navigating the session tree.");
+		}
 		const targetEntry = this.sessionManager.getEntry(entryId);
 		if (!targetEntry) {
 			throw new AssistantEditError("not-found", `Entry ${entryId} not found`);
@@ -8590,10 +8593,12 @@ export class AgentSession {
 		if (targetEntry.type !== "message" || targetEntry.message.role !== "assistant") {
 			throw new AssistantEditError("not-assistant", `Entry ${entryId} is not an assistant message`);
 		}
+		// Build first so an empty replacement is rejected even when the original carries no text.
+		const replacement = buildEditedAssistantMessage(targetEntry.message, text);
 		if (assistantTextEquals(targetEntry.message, text)) {
 			return { cancelled: false, unchanged: true };
 		}
-		return this._navigateTree(entryId, options, buildEditedAssistantMessage(targetEntry.message, text));
+		return this._navigateTree(entryId, options, replacement);
 	}
 
 	private async _navigateTree(
