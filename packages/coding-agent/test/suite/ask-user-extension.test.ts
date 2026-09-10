@@ -121,11 +121,20 @@ describe("ask-user builtin", () => {
 		if (mode !== "tui" && mode !== "print" && mode !== "json" && mode !== "rpc") throw new Error("mode");
 		ctx.mode = mode;
 		ctx.hasUI = false;
+		const question = ctx.ui.question;
+		if (mode === "tui") ctx.ui.question = undefined;
 		expect((await required(tool).execute("none", args, undefined, undefined, ctx)).details).toMatchObject({
 			status: "unavailable",
 		});
 		expect(h.session.getActiveToolNames()).not.toContain("ask_user_question");
-		expect(ctx.ui.question).not.toHaveBeenCalled();
+		expect(question).not.toHaveBeenCalled();
+	});
+	it("calls a supplied question bridge even when hasUI is false", async () => {
+		const { tool, ctx } = await setup();
+		ctx.hasUI = false;
+		expect((await required(tool).execute("bridge", args, undefined, undefined, ctx)).details).toMatchObject({
+			status: "answered",
+		});
 	});
 	it("delegates RPC capability decisions and preserves unavailable responses", async () => {
 		const { tool, ctx } = await setup();
