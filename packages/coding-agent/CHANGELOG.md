@@ -10,6 +10,11 @@
 
 ### Fixed
 
+- Claude SDK OAuth reattach no longer closes a healthy resumed query when
+  normal completed-request cleanup aborts the request controller; the
+  initialization cancellation listener is detached once initialization settles,
+  while pending cancellation still rejects and closes the query.
+
 ### Removed
 
 ## [2026.9.10] - 2026-09-10
