@@ -8,7 +8,11 @@
 
 - `/tree` can edit an assistant response: press `ctrl+e` (`app.tree.editMessage`) on an assistant entry to open it in the multi-line editor; submitting branches to that entry's parent and appends the edited copy as the new leaf, so the conversation continues from the corrected response while the original stays in the session file. Tool calls and thinking in the edited response are dropped, the branch-summary prompt appears only when messages are abandoned, and the key reopens user messages in the editor the same way `enter` does. `AgentSession.editAssistantMessage()` exposes the operation to hosts ([#1532](https://github.com/code-yeongyu/senpi/pull/1532)).
 
+- `generate_image` gains `background` (`auto`/`transparent`/`opaque`), `output_format` (`png`/`jpeg`/`webp`), `output_compression` (0-100, jpeg/webp only), `moderation` (`auto`/`low`), and `mask_image_path` (alpha-channel inpainting mask for the first reference); invalid combinations are rejected before any request, the saved file's extension follows the container the provider actually returned, and `details` reports `background`, `outputFormat`, and the provider's `transparentBackground` verdict. The `gpt-image-gen` skill is rewritten against OpenAI's GPT Image 2.5 prompting guide: specificity policy, transparent assets, output formats, exact-text rules, reference roles, multi-turn refinement, and a result checklist.
+
 ### Changed
+
+- `generate_image` defaults to `gpt-image-2.5-flare` (Sunburst stays selectable for precise edits and final assets), prices requests from the builtin image catalog instead of zero, and the native `image_generation` server tool is injected with `model: gpt-image-2.5-flare` so official OpenAI Responses sessions no longer fall back to the API default `gpt-image-1`.
 
 ### Fixed
 

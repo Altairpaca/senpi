@@ -56,7 +56,7 @@ Put the exact string in double quotes, say how many times it appears, and descri
 
 ### Transparent assets
 
-For logos, stickers, cutouts, and UI icons set `background: "transparent"` with `output_format` `png` or `webp`, and also ask for an isolated subject in the prompt ("isolated on a transparent background, no drop shadow"). A drawn checkerboard is not transparency: after saving, confirm the file has an alpha channel (the result reports `Background: transparent` when the provider confirms it) and inspect edges, hair, glass, and shadows. Repeat the transparent requirement on every later edit of that asset. `gpt-image-2` cannot produce transparency; use a 2.5 model.
+For logos, stickers, cutouts, and UI icons set `background: "transparent"` with `output_format` `png` or `webp`, and also ask for an isolated subject in the prompt ("isolated on a transparent background, no drop shadow"). A drawn checkerboard is not transparency: after saving, confirm the file has an alpha channel (the result reports `Background: transparent` when the provider confirms it) and inspect edges, hair, glass, and shadows. Repeat the transparent requirement on every later edit of that asset. The official API does not offer transparency on `gpt-image-2`; use a 2.5 model.
 
 ## Editing with reference images
 
