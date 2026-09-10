@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { pickVariant, TOOL_NAMES } from "./family.ts";
 import { getPendingQuestions } from "./registry.ts";
+import { resumeDanglingQuestion } from "./resume.ts";
 import { type AskUserState, createAskUserTool } from "./tool.ts";
 
 export default function askUserExtension(pi: ExtensionAPI): void {
@@ -28,10 +29,11 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 		}
 		pi.setActiveTools(state.unavailable ? rest : [...rest, TOOL_NAMES[pickVariant(model)]]);
 	};
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		state.timedOut = false;
 		state.unavailable = false;
 		sync(ctx);
+		void resumeDanglingQuestion(pi, event, ctx);
 	});
 	pi.on("model_select", async (event, ctx) => {
 		sync(ctx, event.model);
