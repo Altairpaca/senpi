@@ -29,6 +29,8 @@
 
 ### Fixed
 
+- An idle question timeout is broadcast to RPC clients as `question_resolved{outcome:"timed_out"}` instead of `cancelled`, matching the timeout text the model already received in the tool result and the framed notice. The ask-user extension's idle timer is the authoritative one and now hands its outcome to the question bridge it aborts.
+
 - Re-opening an existing session file over RPC (`open_session` with a `sessionPath` that exists) now starts the session as a resume instead of a plain startup, so a question left dangling by a crashed host is re-presented once when the client has a question UI, or delivered once as an orphaned-after-restart user message when it has not - the same behaviour interactive `/resume` already had. Newly created sessions still start as `startup`.
 
 - A pending question survives the drop of the connection that opened the session: as long as another client is attached, the question stays pending, hydrates into `open_session` / `get_state`, and the surviving client's answer resolves it. Previously any owner disconnect broadcast `question_resolved{outcome:"cancelled"}` to every peer and the tool result read "The user dismissed the question."; pending extension-UI requests are now cancelled only when the last attachment tears the session down.

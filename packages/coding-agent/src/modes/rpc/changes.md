@@ -1,5 +1,23 @@
 # changes
 
+## An aborted question carries the extension's outcome (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts`: the abort listener installed for `opts.signal` no longer hard-codes `cancelled`. It reads the abort reason and resolves `timed_out` when the aborting side already settled the question that way, so the broadcast `question_resolved` outcome matches the response the model received. Every other abort (dismissal, superseded question, session close) still resolves `cancelled`.
+
+### Why
+
+- The ask-user builtin owns the authoritative idle timer and aborts the dialog controller when it fires. The bridge's own equal-length timer lost that race in RPC mode, so an idle timeout broadcast `question_resolved{outcome:"cancelled"}` while the framed notice and tool result carried the timeout text - and `docs/rpc.md` documents `timed_out` as the outcome desktop clients map onto the resolved row (probe scenario `async`).
+
+### Why an extension could not handle it
+
+- The outcome broadcast to connections is written by the bridge; an extension only sees its own `QuestionResponse`.
+
+### Expected merge conflict zones
+
+- LOW: the `cancel` closure inside `ConnectionQuestionBridge.ask`.
+
 ## open_session of an existing session file starts as a resume (2026-09-10)
 
 ### What changed

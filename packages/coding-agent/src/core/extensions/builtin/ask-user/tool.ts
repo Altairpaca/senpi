@@ -84,7 +84,12 @@ function startQuestion(
 		signal?.removeEventListener("abort", abort);
 		if (!request.waitForAnswer) emitWake(pi, sessionId);
 		completion.resolve(response);
-		controller.abort();
+		// This extension owns the authoritative idle timer (pending.ts), so a UI
+		// bridge that is still waiting learns the outcome only from this abort.
+		// Carry the resolved status as the abort reason: a bare abort reads as a
+		// dismissal, and the RPC bridge would broadcast a timeout as "cancelled".
+		const abortReason: QuestionResponse["status"] = response.status;
+		controller.abort(abortReason);
 	};
 	const pending = createPendingQuestion({
 		request,
