@@ -1,7 +1,5 @@
 import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
-import type { ToolRequestUserInputParams } from "../protocol/generated/v2/ToolRequestUserInputParams.ts";
-import type { ToolRequestUserInputResponse } from "../protocol/generated/v2/ToolRequestUserInputResponse.ts";
-import type { RequestId } from "../protocol/index.ts";
+import type { RequestId, ToolRequestUserInputParams, ToolRequestUserInputResponse } from "../protocol/index.ts";
 
 export type UserInputParams = Omit<ToolRequestUserInputParams, "questions" | "autoResolutionMs"> & {
 	questions: Array<ToolRequestUserInputParams["questions"][number] & { multiSelect: boolean }>;

@@ -4467,7 +4467,13 @@ export class InteractiveMode {
 
 				// A pending async question claims ordinary text as its comment answer;
 				// slash and bash commands keep their normal routing.
-				if (!text.startsWith("/") && !text.startsWith("!") && this.submitAsyncQuestionComment(text)) return;
+				if (
+					!text.startsWith("/") &&
+					!text.startsWith("!") &&
+					this.asyncQuestion &&
+					this.submitAsyncQuestionComment(text)
+				)
+					return;
 
 				// Handle commands
 				if (text === "/settings") {
@@ -4707,7 +4713,11 @@ export class InteractiveMode {
 				}
 				this.editor.addToHistory?.(text);
 			} catch (error) {
-				this.showError(error instanceof Error ? error.message : String(error));
+				if (typeof this.showError === "function") {
+					this.showError(error instanceof Error ? error.message : String(error));
+				} else {
+					throw error;
+				}
 			}
 		};
 	}
