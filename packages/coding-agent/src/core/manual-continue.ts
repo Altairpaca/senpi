@@ -11,7 +11,7 @@
 
 export const MANUAL_CONTINUE_CUSTOM_TYPE = "manual-continue";
 
-export const MANUAL_CONTINUE_SHORTCUT = ".";
+const MANUAL_CONTINUE_SHORTCUT = ".";
 
 /**
  * Whether a submission is the manual-continue shortcut rather than user content.

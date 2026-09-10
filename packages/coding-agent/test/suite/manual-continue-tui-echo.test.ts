@@ -1,5 +1,5 @@
 /**
- * The bare "." manual-continue shortcut must never paint a TUI user echo.
+ * The bare "." manual-continue shortcut must never paint a TUI user echo (#1569).
  *
  * `AgentSession.prompt()` routes a "." submitted on a session that already has
  * messages as a hidden continuation: no user message is created, persisted, or
