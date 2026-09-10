@@ -21,7 +21,7 @@ export type DialogAnswers = {
 		opts: ExtensionUIDialogOptions | undefined,
 	) => Promise<string | undefined>;
 };
-export type ContextOptions = { mode?: ExtensionMode; dialogs?: DialogAnswers };
+export type ContextOptions = { mode?: ExtensionMode; dialogs?: DialogAnswers; signal?: AbortSignal };
 export type LoginFn = (provider: string, method: string, interaction: AuthInteraction) => Promise<void>;
 
 export type AccountCommandContext = {
@@ -54,7 +54,7 @@ export function createAccountCommandContext(
 			hasUI: true,
 			mode: options.mode ?? "tui",
 			cwd,
-			signal: undefined,
+			signal: options.signal,
 			sessionManager: { getSessionId: () => "session-01" },
 			modelRegistry: { authStorage: storage },
 			ui: {
