@@ -1,3 +1,22 @@
+## Leaf token and typed errors for assistant edits (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `TreeNavigationOptions.expectedLeafId`; `editAssistantMessage` checks streaming first, then the token (before the `unchanged` short-circuit), and `_navigateTree` checks the token before its no-op return; both streaming guards throw `SessionStreamingError`.
+- `packages/coding-agent/src/core/edited-assistant-message.ts`: `AssistantEditReason` gains `stale-leaf`, `AssistantEditError.code` maps reasons to wire codes, `SessionStreamingError`, and `assertExpectedLeaf()`.
+
+### Why
+
+- A client holding a stale view must be refused before any mutation, and every refusal needs a stable code a transport can forward.
+
+### Why an extension could not handle it
+
+- The guard has to run inside the core mutation, ahead of `session_before_tree`.
+
+### Expected merge conflict zones
+
+- LOW: `editAssistantMessage` / `_navigateTree` heads in `agent-session.ts`; the fork-only `edited-assistant-message.ts`.
+
 ## Honor an inline isError on executeTool results (2026-09-10)
 
 ### What changed
@@ -15,6 +34,7 @@
 ### Expected merge conflict zones
 
 - LOW: the `executeTool` try block in `packages/coding-agent/src/core/agent-session.ts`.
+||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
 ## askUser settings and --no-ask-user session override (2026-09-10)
 
 ### What changed
@@ -35,6 +55,25 @@
 
 - LOW: `settings-shapes.ts` next to `LookAtSettings`; `settings-manager.ts` `Settings` field list and getters next to prompt-cache helpers.
 - MEDIUM: `agent-session.ts` constructor flag overrides next to `--no-model-fallback` and `bindCore` accessors next to `getLookAtSettings`.
+
+## 2026-09-10 - Venice default model and display name
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts` maps `venice` to the default model `z-ai-glm-5-3`.
+- `packages/coding-agent/src/core/provider-display-names.ts` (fork-only) labels the provider "Venice AI".
+
+### Why
+
+- Selecting a provider without a model falls back to this map; Venice's GLM 5.3 is the catalog's strongest general coding model with a 1M context window, matching how `zai` and `baseten` default to the same family.
+
+### Why an extension could not handle it
+
+- Default-model resolution runs inside model selection, before the session (and its extensions) exists.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_MODELS` map when upstream adds providers.
 
 ## Deterministic resume recovery when the restored context exceeds the window (2026-09-10)
 

@@ -1,3 +1,22 @@
+## 2026-09-10 - /tree edits carry the leaf token and reach shared hosts
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `editAssistantMessageFromTree` captures the leaf when the editor opens and passes it as `expectedLeafId`; a `stale-leaf` refusal is shown as a plain status; the extension `commandContextActions` gain `editAssistantMessage`.
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts`: the session proxy forwards `editAssistantMessage` to the host over `RpcClient.editAssistantMessage` and refreshes history (previously the call fell through to the local shadow session).
+
+### Why
+
+- Without the token an edit prepared before another client moved the session silently overwrote it; without the proxy the #1532 feature could not reach a shared host at all.
+
+### Why an extension could not handle it
+
+- The tree editor flow and the host proxy are interactive-mode internals.
+
+### Expected merge conflict zones
+
+- LOW: `editAssistantMessageFromTree` and the `navigateTree` proxy neighbour in `interactive-host-runtime.ts`.
+
 ## 2026-09-10 - One async answer per surface and the `question` client capability
 
 ### What changed

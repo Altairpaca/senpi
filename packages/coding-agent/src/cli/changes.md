@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-10 - VENICE_API_KEY in the help output
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts` adds a `VENICE_API_KEY` row to the Environment Variables help block.
+
+### Why
+
+- The help block is where users discover which API-key providers are supported; a provider registered in `packages/ai` but absent here reads as unsupported, which is exactly how the gap was reported.
+
+### Why an extension could not handle it
+
+- The `--help` text is emitted by the CLI arg parser before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the Environment Variables list in `args.ts` when upstream adds env rows.
+
 ## 2026-09-04 - Apply terminal capability overrides to the startup TUI
 
 ### What changed
