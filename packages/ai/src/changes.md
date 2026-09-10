@@ -39,6 +39,28 @@
 - MEDIUM: `packages/ai/src/models.ts` `refresh()` credential step and the removed private `resolveRefreshCredential`.
 - LOW: new files `auth/oauth-refresh.ts`, `auth/refresh-credential.ts`.
 
+## 2026-09-10 - Venice AI provider registration and venice_parameters
+
+### What changed
+
+- `packages/ai/src/types.ts` adds `"venice"` to `KnownProvider` and a `veniceParameters` field to `OpenAICompletionsCompat`, carrying Venice's only non-OpenAI request object (`{ include_venice_system_prompt?: boolean }`).
+- `packages/ai/src/api/openai-completions.ts` emits that object as the top-level `venice_parameters` request field, alongside the existing OpenRouter and Vercel gateway routing hooks, and declares it on `OpenAICompletionsRequestParams`. `packages/ai/src/utils/prompt-cache-ttl.ts` keeps it optional in `ResolvedOpenAICompletionsCompat` so auto-detection never has to synthesize one.
+- `packages/ai/src/env-api-keys.ts` maps `venice` to `VENICE_API_KEY`; `packages/ai/src/providers/all.ts` registers the fork-only `veniceProvider()` factory.
+
+### Why
+
+- Venice's `ChatCompletionRequest` schema is `additionalProperties: false` (`components.schemas.ChatCompletionRequest` in https://api.venice.ai/api/v1/swagger.yaml), so a Venice-only field cannot be smuggled in as an ad-hoc key and every other field senpi sends had to be checked against Venice's accepted list. It already accepts `store`, `developer` role, `reasoning_effort`, `stream_options.include_usage`, `max_completion_tokens`, `prompt_cache_key`, `prompt_cache_retention`, and `strict` tools, so the auto-detected compat defaults were left untouched.
+- Without `include_venice_system_prompt: false`, Venice prepends its own default system prompt ahead of the agent's.
+
+### Why an extension could not handle it
+
+- Provider registration, credential detection, and the outbound request body are all inside the AI adapter boundary, below the point where extension code can rewrite a provider request.
+
+### Expected merge conflict zones
+
+- LOW: the `KnownProvider` union tail and the `builtinProviders()` array in `providers/all.ts` when upstream adds providers.
+- LOW: the compat field list in `types.ts` / `prompt-cache-ttl.ts` and the request-field block in `openai-completions.ts` when upstream adds provider-specific request options.
+
 ## 2026-09-10 - OpenAI images output options, masks, and image-token pricing
 
 ### What changed
