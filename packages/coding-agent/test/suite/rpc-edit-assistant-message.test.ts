@@ -247,6 +247,40 @@ describe("RPC edit_assistant_message", () => {
 		expect(summary?.type).toBe("branch_summary");
 	});
 
+	it("(m) every persisted message is followed by entry_appended carrying its session entry id", async () => {
+		const harness = await startConversation();
+		rpcIo.outputLines = [];
+		harness.setResponses([fauxAssistantMessage("Identity check.")]);
+		await harness.session.prompt("Who are you?");
+
+		const lines = rpcIo.outputLines
+			.flatMap((line) => line.split("\n"))
+			.filter((line) => line.trim().length > 0)
+			.map(
+				(line) =>
+					JSON.parse(line) as {
+						type: string;
+						message?: { role: string };
+						entry?: { id: string; type: string; message?: { role: string } };
+					},
+			);
+		const persistedEnds = lines
+			.map((line, index) => ({ line, index }))
+			.filter(
+				({ line }) =>
+					line.type === "message_end" && (line.message?.role === "user" || line.message?.role === "assistant"),
+			);
+		expect(persistedEnds.length).toBe(2);
+		const knownIds = new Set(harness.sessionManager.getEntries().map((e) => e.id));
+		for (const { line, index } of persistedEnds) {
+			const appended = lines.slice(index + 1).find((candidate) => candidate.type === "entry_appended");
+			if (!appended?.entry) throw new Error(`no entry_appended after message_end(${line.message?.role})`);
+			expect(appended.entry.type).toBe("message");
+			expect(appended.entry.message?.role).toBe(line.message?.role);
+			expect(knownIds.has(appended.entry.id)).toBe(true);
+		}
+	});
+
 	it("(l) malformed input is refused before touching the session", async () => {
 		const harness = await startConversation();
 		const countBefore = harness.sessionManager.getEntries().length;
