@@ -33,7 +33,7 @@ export async function promptAccountDisplayName(
 	ctx: ExtensionCommandContext,
 	receipt: AccountLoginReceipt | undefined,
 ): Promise<void> {
-	if (!receipt || ctx.signal?.aborted) return;
+	if (receipt?.origin !== "generated" || ctx.signal?.aborted) return;
 	try {
 		const answer = await ctx.ui.input(
 			`Display name for account ${receipt.name} (optional)`,

@@ -146,8 +146,14 @@ export async function renameCredentialAccount(
 ): Promise<void> {
 	await storage.modify(provider, async (current) => {
 		if (!current) throw new Error(`No stored credential for provider: ${provider}`);
-		// A Claude sentinel without accounts is not a legacy flat account.
-		if (provider === "claude-sdk-oauth" && !("accounts" in current && Array.isArray(current.accounts))) {
+		// Provider-managed OAuth sentinels without an accounts array are not legacy flat accounts.
+		// Key this on the credential shape, not one provider id, so sibling managed lanes cannot be promoted.
+		if (
+			current.type === "oauth" &&
+			!Array.isArray((current as { accounts?: unknown }).accounts) &&
+			current.access === current.refresh &&
+			current.access.endsWith("-managed")
+		) {
 			throw new Error(`Stored provider account not found: ${name}`);
 		}
 		return renameSlotDisplayName(current, name, displayName);

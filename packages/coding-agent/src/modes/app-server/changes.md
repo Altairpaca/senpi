@@ -1,6 +1,6 @@
 # changes
 
-## 2026-09-08 - Optional display-name account descriptor (senpi#1495)
+## 2026-09-10 - Optional display-name account descriptor (senpi#1495)
 
 ### What changed
 
@@ -18,6 +18,28 @@
 
 - LOW: `packages/coding-agent/src/modes/app-server/protocol/account.ts` provider account descriptor.
 
+## Ask-user question transport (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/server/user-input-bridge.ts` and `packages/coding-agent/src/modes/app-server/server/user-input-types.ts` adapt canonical questions to generated-compatible `item/tool/requestUserInput` requests with namespaced IDs, first-response resolution, replay, progress-driven idle timers, and cancellation.
+- `packages/coding-agent/src/modes/app-server/server/approval-ui-context.ts` delegates `question()` directly without permission-title parsing.
+- `packages/coding-agent/src/modes/app-server/runtime.ts` wires subscription replay, active turn identity, turn-end cancellation, and disposal.
+- `packages/coding-agent/src/modes/app-server/turn-adapter.ts` routes initialized-client answers and progress, returning protocol errors for invalid answers and unknown response IDs.
+- `packages/coding-agent/src/modes/app-server/protocol/methods.ts` registers the additive `item/tool/userInputProgress` client notification outside pinned Codex arrays.
+
+### Why
+
+- App-server clients need the same blocking and asynchronous question outcomes as other UI modes without reusing approval decisions. Idle timeout and the two-hour cap remain owned by the shared pending-question state machine.
+
+### Why an extension could not handle it
+
+- Correlation IDs, inbound protocol routing, subscriber replay, and session lifecycle are app-server-owned. Answers are not logged by this bridge; diagnostics contain no answer payloads.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/app-server/server/user-input-bridge.ts`, `packages/coding-agent/src/modes/app-server/server/user-input-types.ts`, and `packages/coding-agent/src/modes/app-server/server/approval-ui-context.ts`: user-input and approval adapter contracts.
+- `packages/coding-agent/src/modes/app-server/runtime.ts`, `packages/coding-agent/src/modes/app-server/turn-adapter.ts`, and `packages/coding-agent/src/modes/app-server/protocol/methods.ts`: lifecycle wiring and additive protocol routing.
 
 ## Cross-platform daemon process identity and lightweight exit waits (2026-09-01)
 

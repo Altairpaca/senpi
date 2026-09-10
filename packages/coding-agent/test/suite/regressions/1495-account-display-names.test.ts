@@ -65,24 +65,40 @@ describe.each(["openai-codex", "claude-sdk-oauth"])("%s display names", (provide
 	it("rejects empty, unsafe, oversized, missing, and duplicate labels without a write or event", async () => {
 		const { storage, path } = fixture(provider);
 		await renameCredentialAccount(storage, provider, "second", "Work");
-		const before = readFileSync(path, "utf8");
+		let before = readFileSync(path, "utf8");
 		const events: unknown[] = [];
 		const unsubscribe = subscribeProviderAccountEvents((event) => events.push(event));
 		try {
 			for (const label of [
 				"",
 				"   ",
-				"work",
-				" Work ",
 				"bad\u001b[31m",
 				"line\nlabel",
 				"spoof\u202e",
-				"x".repeat(81),
+				"\u3164",
+				"\u2800\u2800",
+				"\u0301abc",
+				"中".repeat(33),
+				"🎉".repeat(17),
 			]) {
-				await expect(renameCredentialAccount(storage, provider, "default", label)).rejects.toThrow();
+				await expect(renameCredentialAccount(storage, provider, "default", label)).rejects.toThrow(
+					/1-32 terminal columns/,
+				);
 				expect(readFileSync(path, "utf8")).toBe(before);
 			}
-			await expect(renameCredentialAccount(storage, provider, "missing", "Valid")).rejects.toThrow();
+			// Case and whitespace duplicates of the stored "Work" label.
+			for (const label of ["work", " Work "]) {
+				await expect(renameCredentialAccount(storage, provider, "default", label)).rejects.toThrow(/already used/);
+				expect(readFileSync(path, "utf8")).toBe(before);
+			}
+			// Cyrillic \u0412 renders as Latin B: same glyph, different code point.
+			await renameCredentialAccount(storage, provider, "second", "Bork");
+			before = readFileSync(path, "utf8");
+			events.length = 0;
+			await expect(renameCredentialAccount(storage, provider, "default", "\u0412ork")).rejects.toThrow(
+				/already used/,
+			);
+			await expect(renameCredentialAccount(storage, provider, "missing", "Valid")).rejects.toThrow(/not found/);
 			expect(readFileSync(path, "utf8")).toBe(before);
 			expect(events).toEqual([]);
 		} finally {
@@ -98,6 +114,7 @@ describe.each(["openai-codex", "claude-sdk-oauth"])("%s display names", (provide
 			renameCredentialAccount(secondWriter, provider, "second", "Shared"),
 		]);
 		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+		expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
 		const saved = AuthStorage.create(path).get(provider) as PooledCredential;
 		expect(listSlots(saved).filter((slot) => slot.displayName === "Shared")).toHaveLength(1);
 	});
@@ -132,8 +149,34 @@ it("promotes a legacy saved flat slot only on rename and never materializes envi
 	await renameCredentialAccount(storage, "openai-codex", "default", "Legacy");
 	expect(listSlots(storage.get("openai-codex"))[0].displayName).toBe("Legacy");
 	const empty = AuthStorage.inMemory();
-	await expect(renameCredentialAccount(empty, "claude-sdk-oauth", "env", "Environment")).rejects.toThrow();
+	await expect(renameCredentialAccount(empty, "claude-sdk-oauth", "env", "Environment")).rejects.toThrow(
+		/not found|No stored credential/,
+	);
 	expect(empty.getAll()).toEqual({});
+});
+
+// senpi#1495 review finding 4: the sentinel guard must be keyed on the
+// credential shape, not on the literal provider id, because cursor-cli-oauth
+// defines the identical `-managed` sentinel envelope; a rename against that
+// shape must not fabricate a `default` login slot carrying the sentinel strings.
+it("refuses to promote a provider-managed sentinel flat credential for any provider lane", async () => {
+	for (const provider of ["claude-sdk-oauth", "cursor-cli-oauth"]) {
+		const storage = AuthStorage.inMemory({
+			[provider]: {
+				type: "oauth",
+				access: `${provider}-managed`,
+				refresh: `${provider}-managed`,
+				expires: 4_102_444_800_000,
+			},
+		});
+		await expect(renameCredentialAccount(storage, provider, "default", "My cursor")).rejects.toThrow(/not found/);
+		expect(storage.get(provider)).toEqual({
+			type: "oauth",
+			access: `${provider}-managed`,
+			refresh: `${provider}-managed`,
+			expires: 4_102_444_800_000,
+		});
+	}
 });
 
 it("omits unsafe hand-written metadata from labels and summaries", async () => {

@@ -47,8 +47,8 @@ describe("committed account receipts", () => {
 		await renameCredentialAccount(storage, "openai-codex", "default", "Personal");
 		await models.login("openai-codex", "oauth", interaction(receipts));
 		expect(receipts).toEqual([
-			{ providerId: "openai-codex", name: "default" },
-			{ providerId: "openai-codex", name: "login-2" },
+			{ providerId: "openai-codex", name: "default", origin: "generated" },
+			{ providerId: "openai-codex", name: "login-2", origin: "generated" },
 		]);
 		expect(listSlots(storage.get("openai-codex")).map(({ name, displayName }) => ({ name, displayName }))).toEqual([
 			{ name: "default", displayName: "Personal" },
@@ -72,9 +72,11 @@ describe("committed account receipts", () => {
 			const first = importFirst ? "imported-anthropic" : "default";
 			await renameCredentialAccount(storage, "claude-sdk-oauth", first, "Personal");
 			await models.login("claude-sdk-oauth", "oauth", interaction(receipts));
+			// The Claude envelope adapter owns slot naming end to end (it prompts
+			// for the second id itself), so both receipts are provider-origin.
 			expect(receipts).toEqual([
-				{ providerId: "claude-sdk-oauth", name: first },
-				{ providerId: "claude-sdk-oauth", name: "second" },
+				{ providerId: "claude-sdk-oauth", name: first, origin: "provider" },
+				{ providerId: "claude-sdk-oauth", name: "second", origin: "provider" },
 			]);
 			const saved = storage.get("claude-sdk-oauth") as ClaudeSdkOauthCredential;
 			expect(saved).toMatchObject(SENTINEL_OAUTH_FIELDS);
@@ -132,7 +134,7 @@ describe("committed account receipts", () => {
 		);
 		const receipts: unknown[] = [];
 		await models.login("p", "oauth", interaction(receipts));
-		expect(receipts).toEqual([{ providerId: "p", name: "new" }]);
+		expect(receipts).toEqual([{ providerId: "p", name: "new", origin: "provider" }]);
 		result = { ...fresh, accounts: [added, old, { ...added, name: "third" }, { ...added, name: "fourth" }] };
 		await models.login("p", "oauth", interaction(receipts));
 		expect(receipts).toHaveLength(1);

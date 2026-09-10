@@ -151,6 +151,7 @@ export type AuthEvent =
 export interface AccountLoginReceipt {
 	readonly providerId: string;
 	readonly name: string;
+	readonly origin: "generated" | "provider";
 }
 
 /**

@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { rendezvousOrder as genericOrder, selectSlot } from "@earendil-works/pi-ai/auth/pool/select";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { expect, it } from "vitest";
@@ -33,54 +36,59 @@ function fixture() {
 // senpi#1495: renaming must not remap affinity, health, token refresh or SDK lineage.
 it("keeps HRW, pins, sidecar health and Claude restart bindings keyed by the immutable name", async () => {
 	const { accounts, storage } = fixture();
-	const repository = new CredentialSlotRepository();
-	await repository.mutateSlotState(provider, "stored", "second", () => ({ blockReason: "auth_error" }));
-	const sources = {
-		providerId: provider,
-		credential: storage.get(provider),
-		env: () => undefined,
-		repository,
-		now: () => 1000,
-	};
-	const rotationBefore = await listRotationSlots(sources);
-	await renameCredentialAccount(storage, provider, "default", "Personal");
-	await renameCredentialAccount(storage, provider, "second", "Work");
-	const after = (storage.get(provider) as ClaudeSdkOauthCredential).accounts!;
-	for (const session of ["one", "two", "three"]) {
-		expect(rendezvousOrder(session, after).map((slot) => slot.name)).toEqual(
-			rendezvousOrder(session, accounts).map((slot) => slot.name),
-		);
-		expect(genericOrder(session, after, hasher).map((slot) => slot.name)).toEqual(
-			genericOrder(session, accounts, hasher).map((slot) => slot.name),
-		);
+	const sidecarDir = mkdtempSync(join(tmpdir(), "account-display-identity-"));
+	try {
+		const repository = new CredentialSlotRepository(join(sidecarDir, "credential-pool-state.json"));
+		await repository.mutateSlotState(provider, "stored", "second", () => ({ blockReason: "auth_error" }));
+		const sources = {
+			providerId: provider,
+			credential: storage.get(provider),
+			env: () => undefined,
+			repository,
+			now: () => 1000,
+		};
+		const rotationBefore = await listRotationSlots(sources);
+		await renameCredentialAccount(storage, provider, "default", "Personal");
+		await renameCredentialAccount(storage, provider, "second", "Work");
+		const after = (storage.get(provider) as ClaudeSdkOauthCredential).accounts!;
+		for (const session of ["one", "two", "three"]) {
+			expect(rendezvousOrder(session, after).map((slot) => slot.name)).toEqual(
+				rendezvousOrder(session, accounts).map((slot) => slot.name),
+			);
+			expect(genericOrder(session, after, hasher).map((slot) => slot.name)).toEqual(
+				genericOrder(session, accounts, hasher).map((slot) => slot.name),
+			);
+		}
+		expect(selectAccount(after, { sessionId: "one", pinnedAccount: "default" }).name).toBe("default");
+		expect(selectSlot(after, { hasher, pinnedSlot: "default" }).name).toBe("default");
+		expect(await listRotationSlots({ ...sources, credential: storage.get(provider) })).toEqual(rotationBefore);
+		const identity = {
+			accountName: selectAccount(after, { pinnedAccount: "default" }).name,
+			modelId: "claude",
+			systemPromptHash: "prompt",
+			toolsetHash: "tools",
+		};
+		const decision = decideNativeContinuity({
+			entry: undefined,
+			binding: {
+				...identity,
+				accountName: "default",
+				sdkSessionId: "sdk-session",
+				sentCount: 1,
+				sentHashes: ["first"],
+				lastAssistantUuid: "assistant",
+			},
+			currentHashes: ["first", "next"],
+			accountName: identity.accountName,
+			modelId: identity.modelId,
+			fingerprint: identity,
+			transcriptAvailable: true,
+			crossAccountResumeSupported: false,
+		});
+		expect(decision).toMatchObject({ kind: "reattach", sdkSessionId: "sdk-session", from: 1 });
+	} finally {
+		rmSync(sidecarDir, { recursive: true, force: true });
 	}
-	expect(selectAccount(after, { sessionId: "one", pinnedAccount: "default" }).name).toBe("default");
-	expect(selectSlot(after, { hasher, pinnedSlot: "default" }).name).toBe("default");
-	expect(await listRotationSlots({ ...sources, credential: storage.get(provider) })).toEqual(rotationBefore);
-	const identity = {
-		accountName: selectAccount(after, { pinnedAccount: "default" }).name,
-		modelId: "claude",
-		systemPromptHash: "prompt",
-		toolsetHash: "tools",
-	};
-	const decision = decideNativeContinuity({
-		entry: undefined,
-		binding: {
-			...identity,
-			accountName: "default",
-			sdkSessionId: "sdk-session",
-			sentCount: 1,
-			sentHashes: ["first"],
-			lastAssistantUuid: "assistant",
-		},
-		currentHashes: ["first", "next"],
-		accountName: identity.accountName,
-		modelId: identity.modelId,
-		fingerprint: identity,
-		transcriptAvailable: true,
-		crossAccountResumeSupported: false,
-	});
-	expect(decision).toMatchObject({ kind: "reattach", sdkSessionId: "sdk-session", from: 1 });
 });
 
 it("refreshes and fails over by name while preserving display metadata and slot block state", async () => {
