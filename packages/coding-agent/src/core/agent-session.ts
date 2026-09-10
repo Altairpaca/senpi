@@ -183,7 +183,11 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
-import { MANUAL_CONTINUE_CUSTOM_TYPE, MANUAL_CONTINUE_DIRECTIVE } from "./manual-continue.ts";
+import {
+	isManualContinueSubmission,
+	MANUAL_CONTINUE_CUSTOM_TYPE,
+	MANUAL_CONTINUE_DIRECTIVE,
+} from "./manual-continue.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -3759,7 +3763,13 @@ export class AgentSession {
 			// empty session, or a "." carrying image attachments (the user is sending
 			// the images, not asking to continue), falls through to ordinary prompt
 			// handling below.
-			if (text.trim() === "." && this.agent.state.messages.length > 0 && !options?.images?.length) {
+			if (
+				isManualContinueSubmission({
+					text,
+					hasMessages: this.agent.state.messages.length > 0,
+					hasImages: (options?.images?.length ?? 0) > 0,
+				})
+			) {
 				await this.sendCustomMessage(
 					{
 						customType: MANUAL_CONTINUE_CUSTOM_TYPE,

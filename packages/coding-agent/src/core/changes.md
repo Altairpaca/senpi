@@ -1,3 +1,22 @@
+## Shared manual-continue submission predicate (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/manual-continue.ts`: adds `MANUAL_CONTINUE_SHORTCUT` and `isManualContinueSubmission({ text, hasMessages, hasImages })`.
+- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` classifies the bare `.` through that predicate instead of an inline condition.
+
+### Why
+
+- Interactive mode must reach the same verdict before it paints a user echo, and one predicate keeps the empty-session and image-attachment carve-outs from drifting between the two call sites.
+
+### Why this lives in the fork
+
+- The `.` manual-continue shortcut is fork behavior in `AgentSession.prompt()`.
+
+### Expected merge conflict zones
+
+- LOW: the manual-continue interception at the top of `prompt()`.
+
 ## Leaf token and typed errors for assistant edits (2026-09-10)
 
 ### What changed
