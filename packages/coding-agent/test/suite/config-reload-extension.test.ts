@@ -109,6 +109,7 @@ function commandActions(reload: () => Promise<void>): ExtensionCommandContextAct
 		newSession: async () => ({ cancelled: false }),
 		fork: async () => ({ cancelled: false }),
 		navigateTree: async () => ({ cancelled: false }),
+		editAssistantMessage: async () => ({ cancelled: false }),
 		switchSession: async () => ({ cancelled: false }),
 		reload,
 	};

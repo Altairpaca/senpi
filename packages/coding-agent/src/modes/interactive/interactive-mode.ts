@@ -2649,6 +2649,21 @@ export class InteractiveMode {
 					void this.flushCompactionQueue({ willRetry: false });
 					return { cancelled: false };
 				},
+				editAssistantMessage: async (entryId, text, options) => {
+					const result = await this.session.editAssistantMessage(entryId, text, {
+						summarize: options?.summarize,
+						customInstructions: options?.customInstructions,
+						expectedLeafId: options?.expectedLeafId,
+					});
+					if (result.cancelled || result.unchanged) {
+						return { cancelled: result.cancelled, unchanged: result.unchanged };
+					}
+					this.chatContainer.clear();
+					this.renderInitialMessages();
+					this.showStatus("Replaced assistant response");
+					void this.flushCompactionQueue({ willRetry: false });
+					return { cancelled: false, entryId: result.entryId };
+				},
 				switchSession: async (sessionPath, options) => {
 					return this.handleResumeSession(sessionPath, options);
 				},

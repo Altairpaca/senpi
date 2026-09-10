@@ -252,6 +252,12 @@ export type NavigateTreeHandler = (
 	options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 ) => Promise<{ cancelled: boolean }>;
 
+export type EditAssistantMessageHandler = (
+	entryId: string,
+	text: string,
+	options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+) => Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+
 export type SwitchSessionHandler = (
 	sessionPath: string,
 	options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
@@ -436,6 +442,7 @@ export class ExtensionRunner {
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
+	private editAssistantMessageHandler: EditAssistantMessageHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler | undefined;
 	private reloadRequestPromise: Promise<void> | undefined;
@@ -598,6 +605,7 @@ export class ExtensionRunner {
 			this.newSessionHandler = actions.newSession;
 			this.forkHandler = actions.fork;
 			this.navigateTreeHandler = actions.navigateTree;
+			this.editAssistantMessageHandler = actions.editAssistantMessage;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
 			return;
@@ -607,6 +615,7 @@ export class ExtensionRunner {
 		this.newSessionHandler = async () => ({ cancelled: false });
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
+		this.editAssistantMessageHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = undefined;
 	}
@@ -1265,6 +1274,10 @@ export class ExtensionRunner {
 		context.navigateTree = (targetId, options) => {
 			this.assertActive();
 			return this.navigateTreeHandler(targetId, options);
+		};
+		context.editAssistantMessage = (entryId, text, options) => {
+			this.assertActive();
+			return this.editAssistantMessageHandler(entryId, text, options);
 		};
 		context.switchSession = (sessionPath, options) => {
 			this.assertActive();

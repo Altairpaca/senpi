@@ -1635,6 +1635,7 @@ describe("ExtensionRunner", () => {
 				newSession: async () => ({ cancelled: false }),
 				fork: async () => ({ cancelled: false }),
 				navigateTree: async () => ({ cancelled: false }),
+				editAssistantMessage: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
 				reload,
 			});
@@ -1701,6 +1702,7 @@ describe("ExtensionRunner", () => {
 				newSession: async () => ({ cancelled: false }),
 				fork,
 				navigateTree: async () => ({ cancelled: false }),
+				editAssistantMessage: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
 				reload: async () => {},
 			});

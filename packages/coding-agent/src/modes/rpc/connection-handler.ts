@@ -890,6 +890,14 @@ export function createRpcConnectionHandler(
 							});
 							return { cancelled: result.cancelled };
 						},
+						editAssistantMessage: async (entryId, text, options) => {
+							const result = await session.editAssistantMessage(entryId, text, {
+								summarize: options?.summarize,
+								customInstructions: options?.customInstructions,
+								expectedLeafId: options?.expectedLeafId,
+							});
+							return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+						},
 						switchSession: async (sessionPath, options) => {
 							return runtimeHost.switchSession(sessionPath, options);
 						},
