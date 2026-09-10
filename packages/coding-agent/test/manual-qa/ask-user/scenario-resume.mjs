@@ -2,8 +2,9 @@
 /**
  * Scenario `resume`: a model-driven blocking question is left dangling by
  * SIGKILLing the host mid-question; re-opening the session path on a fresh
- * host must re-present the question exactly once (or, if the declared defect
- * is live, silently leave the dangling call - which must then be recorded).
+ * host must re-present the question exactly once when a question UI exists, or
+ * deliver exactly one orphaned-after-restart user message when it does not.
+ * Re-emitting NOTHING is a HARD failure.
  */
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -31,14 +32,9 @@ const QUESTIONS = [
 		multiSelect: false,
 	},
 ];
-const RESUME_DEFECT = {
-	id: "resume-not-triggered-by-rpc-open-session",
-	expect: "re-opening an existing sessionPath on a fresh host re-presents the dangling question exactly once",
-	reference: "src/modes/rpc/session-registry.ts:204-209 (open_session passes no sessionStartEvent -> reason 'startup') gating src/core/extensions/builtin/ask-user/resume.ts:87 (reason must be 'resume'|'reload')",
-};
+const ORPHANED_TEXT = "The pending question could not be resumed after a restart";
 
 export async function runResume(report) {
-	report.declareDefect(RESUME_DEFECT);
 	const sandbox = makeSandbox("resume");
 	report.info("sandbox", { dir: sandbox.dir, socketPath: sandbox.socketPath });
 	let a;
@@ -108,15 +104,19 @@ export async function runResume(report) {
 				});
 				report.check("resumed-entry-count", { expected: 1, actual: countResumedEntries(sessionPath) });
 			} else if (outcome.kind === "orphaned") {
-				report.observeDefect(RESUME_DEFECT.id, "orphaned-after-restart message delivered instead of re-presenting");
+				report.pass("dangling-question-orphaned-after-restart", { text: messageText(outcome.message.message) });
+				report.check("orphaned-message-text", {
+					expected: { containsOrphanedText: true },
+					actual: { containsOrphanedText: messageText(outcome.message.message).includes(ORPHANED_TEXT) },
+				});
+				report.check("resumed-entry-count", { expected: 1, actual: countResumedEntries(sessionPath) });
 			} else {
-				report.check("dangling-question-re-presented", {
-					expected: "one re-presented extension_ui_request{method:question}",
+				report.fail("dangling-question-re-presented", {
+					expected: "one re-presented extension_ui_request{method:question} or one orphaned-after-restart message",
 					actual: "nothing re-emitted after open_session",
-					defect: RESUME_DEFECT,
 				});
 				const state = await a2.request({ type: "get_state", sessionId: reopened.data.sessionId });
-				report.check("reopened-state-no-pending", { expected: 0, actual: state.data.pendingQuestions?.length ?? 0 });
+				report.info("reopened-state-pending", { pendingQuestions: state.data.pendingQuestions?.length ?? 0 });
 				const messages = await a2.request({ type: "get_messages", sessionId: reopened.data.sessionId });
 				const dangling = (messages.data?.messages ?? []).some(
 					(message) =>
@@ -124,8 +124,8 @@ export async function runResume(report) {
 						Array.isArray(message.content) &&
 						message.content.some((part) => part?.type === "toolCall" && part.name === "ask_user_question"),
 				);
-				report.check("dangling-call-visible-after-restart", { expected: true, actual: dangling });
-				report.check("resumed-entry-count", { expected: 0, actual: countResumedEntries(sessionPath) });
+				report.info("dangling-call-visible-after-restart", { dangling });
+				report.info("resumed-entry-count", { count: countResumedEntries(sessionPath) });
 			}
 			return true;
 		} finally {

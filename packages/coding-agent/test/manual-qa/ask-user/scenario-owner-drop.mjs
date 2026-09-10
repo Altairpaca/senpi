@@ -3,22 +3,16 @@
  * Scenario `owner-drop`: the connection that OPENED the session is killed
  * while a blocking question is pending and other connections are attached.
  * Spec: the question is session-owned and must survive (docs/rpc.md: pending
- * questions are broadcast to all attached connections and survive the message).
- * Declared defect: the router cancels pending questions on ANY owner drop.
+ * questions are broadcast to all attached connections and survive the message),
+ * and a surviving connection can still answer it. Every criterion is a HARD
+ * assertion: pending UI requests may only be cancelled by an actual teardown.
  */
 
 import { makeSandbox, spawnSenpiHost } from "./lib/rpc-host.mjs";
 import { connect, isQuestionFrame, openSession, readFixtureLog, teardown } from "./lib/probe-support.mjs";
 import { delay } from "./lib/rpc-socket-client.mjs";
 
-const OWNER_DROP_DEFECT = {
-	id: "owner-drop-cancels-pending-questions",
-	expect: "with B still attached, dropping A leaves the question pending; C can still answer it",
-	reference: "src/modes/rpc/session-command-router.ts:416 (releaseConnection cancels the shared binding's pending UI requests unconditionally, before the refcount decides the session survives)",
-};
-
 export async function runOwnerDrop(report) {
-	report.declareDefect(OWNER_DROP_DEFECT);
 	const sandbox = makeSandbox("owner-drop");
 	report.info("sandbox", { dir: sandbox.dir, socketPath: sandbox.socketPath });
 	const host = await spawnSenpiHost({ sandbox, onLog: (line) => report.observe("host", "host", line) });
@@ -44,22 +38,17 @@ export async function runOwnerDrop(report) {
 		a.close();
 		await delay(2_000);
 		const cancelled = b.find(markDrop, (message) => message.type === "question_resolved" && message.id === frame.id);
-		if (cancelled) {
-			report.check("question-survives-owner-drop", {
-				expected: { resolvedBroadcasts: 0 },
-				actual: { resolvedBroadcasts: 1, outcome: cancelled.outcome },
-				defect: OWNER_DROP_DEFECT,
-			});
-		} else {
-			report.pass("question-survives-owner-drop", { resolvedBroadcasts: 0 });
-		}
+		if (cancelled) report.info("owner-drop-resolution", { outcome: cancelled.outcome });
+		report.check("question-survives-owner-drop", {
+			expected: { resolvedBroadcasts: 0 },
+			actual: { resolvedBroadcasts: cancelled ? 1 : 0 },
+		});
 
 		c = await connect(sandbox.socketPath, "C", report);
 		const openC = await openSession(c, { sessionPath, cwd: sandbox.work });
 		report.check("pending-question-hydrates-for-C", {
 			expected: 1,
 			actual: openC.data.state.pendingQuestions?.length ?? 0,
-			defect: OWNER_DROP_DEFECT,
 		});
 
 		const markAnswer = c.mark();
@@ -71,13 +60,12 @@ export async function runOwnerDrop(report) {
 			comment: "answered after the drop",
 		});
 		const answered = await Promise.race([
-			c.waitFor((message) => message.type === "question_resolved" && message.id === frame.id, markAnswer).then(() => true),
-			delay(5_000).then(() => false),
+			c.waitFor((message) => message.type === "question_resolved" && message.id === frame.id, markAnswer),
+			delay(5_000).then(() => undefined),
 		]);
 		report.check("C-can-answer-after-drop", {
-			expected: { resolved: true },
-			actual: { resolved: answered },
-			defect: OWNER_DROP_DEFECT,
+			expected: { resolved: true, outcome: "comment-submitted", unanswered: ["q2"] },
+			actual: { resolved: answered !== undefined, outcome: answered?.outcome, unanswered: answered?.unanswered },
 		});
 		if (!answered) {
 			const rejected = c.find(
@@ -91,9 +79,9 @@ export async function runOwnerDrop(report) {
 		const result = readFixtureLog(sandbox.fixtureLog)
 			.filter((entry) => entry.event === "result" && entry.label === "drop1")
 			.at(-1);
-		report.info("fixture-result-after-drop", {
-			status: result?.details?.status,
-			textPreview: result?.text?.split("\n")[0],
+		report.check("fixture-result-after-drop", {
+			expected: { status: "comment-submitted", textPreview: "The user responded: answered after the drop" },
+			actual: { status: result?.details?.status, textPreview: result?.text?.split("\n")[0] },
 		});
 		return true;
 	} catch (error) {

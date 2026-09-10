@@ -2,8 +2,8 @@
 /**
  * Scenario `async`: wait=false returns an accepted tool result immediately, the
  * answer arrives later as exactly ONE framed user message; with no answer the
- * 1-minute idle timeout resolves `timed_out` once and the timeout notice is
- * delivered exactly once.
+ * 1-minute idle timeout resolves `timed_out` once - the broadcast outcome
+ * included, not just the framed notice - and the notice is delivered once.
  */
 
 import { makeSandbox, spawnSenpiHost } from "./lib/rpc-host.mjs";
@@ -12,16 +12,8 @@ import { messageText } from "./lib/rpc-socket-client.mjs";
 
 const FRAMED = /^\[Answer to question /;
 const TIMEOUT_MARKER = "(사용자가 답변을 안하고 timeout 으로 종료됨)";
-const TIMEOUT_LABEL_DEFECT = {
-	id: "timeout-broadcast-labelled-cancelled",
-	soft: true,
-	expect: "an idle timeout broadcasts question_resolved{outcome:'timed_out'} (docs/rpc.md question_resolved)",
-	actual: "question_resolved{outcome:'cancelled'} while the framed notice and tool result carry the timeout text",
-	reference: "src/core/extensions/builtin/ask-user/tool.ts finish() aborts the dialog controller before the bridge's own timer resolves; src/modes/rpc/connection-question-bridge.ts maps that abort to cancel() - two equal idle timers race and the extension-side one (pending.ts, armed first) wins",
-};
 
 export async function runAsyncTimeout(report) {
-	report.declareDefect(TIMEOUT_LABEL_DEFECT);
 	const sandbox = makeSandbox("async");
 	report.info("sandbox", { dir: sandbox.dir, socketPath: sandbox.socketPath, timeoutMinutes: 1 });
 	const host = await spawnSenpiHost({
@@ -95,7 +87,6 @@ export async function runAsyncTimeout(report) {
 		report.check("timeout-resolution-outcome", {
 			expected: { outcome: "timed_out", unanswered: ["q1"] },
 			actual: { outcome: timedOut.outcome, unanswered: timedOut.unanswered },
-			...(timedOut.outcome === "cancelled" ? { defect: TIMEOUT_LABEL_DEFECT } : {}),
 		});
 		const timeoutMessage = await a.waitFor(
 			(message) =>
