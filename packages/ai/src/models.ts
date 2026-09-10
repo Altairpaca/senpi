@@ -579,8 +579,11 @@ class ModelsImpl implements MutableModels {
 		if (!method?.login) {
 			throw new ModelsError("auth", `${provider.name} does not support ${type} login`);
 		}
-		const loginOperation: Promise<Credential> = method.login({ ...interaction, signal });
+		const { onAccountCommitted, ...providerInteraction } = interaction;
+		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal });
 		const credential = await raceWithAbortSignal(loginOperation, signal);
+		let committedName: string | undefined;
+		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
 		let markMutationStarted: (() => void) | undefined;
 		const started = new Promise<void>((resolve) => {
@@ -591,7 +594,10 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(current, credential);
+				return appendLoginSlot(current, credential, (name, origin) => {
+					committedName = name;
+					committedOrigin = origin;
+				});
 			},
 			{ signal },
 		);
@@ -618,6 +624,9 @@ class ModelsImpl implements MutableModels {
 		} catch (error) {
 			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
+		}
+		if (committedName !== undefined && committedOrigin !== undefined) {
+			onAccountCommitted?.({ providerId, name: committedName, origin: committedOrigin });
 		}
 		return credential;
 	}

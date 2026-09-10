@@ -62,6 +62,34 @@
 
 ## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
 
+## 2026-09-08 - Immutable account IDs with optional display metadata (senpi#1495)
+
+## 2026-09-10 - Immutable account IDs with column-bounded, render-unique display metadata (senpi#1495)
+
+
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: adds optional `displayName`, safe single-line labels, and pure rename/clear validation. A label is stored NFC-normalized with internal whitespace runs collapsed, must contain at least one visibly advancing character, may not begin with a combining mark, and is bounded at 32 terminal columns measured per grapheme cluster (`displayNameColumns`) rather than in UTF-16 code units. Provider-local uniqueness compares a fold of case, Unicode compatibility forms (NFKC), invisible code points and Cyrillic lookalikes, so two labels that render identically cannot coexist. Slot IDs and credential material remain unchanged. Login allocation reports the allocated ID together with its origin (`generated` for an ID Senpi chose, `provider` for one a provider envelope carried); provider-owned envelopes still require exactly one new ID compared with the locked current pool, never token matching or array ordering.
+- `packages/ai/src/auth/types.ts`: adds secret-free `AccountLoginReceipt` with `providerId`, `name` and `origin`, plus optional `AuthInteraction.onAccountCommitted`; the callback is excluded from provider interactions.
+- `packages/ai/src/models.ts`: captures the allocated ID and its origin inside the serialized login write and emits the receipt only after persistence succeeds. Ambiguous provider envelopes do not produce a receipt. Existing credential return values remain compatible.
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: account labels must not remap pins, refresh, health, failover, or HRW affinity, and a documented "unique per provider" / bounded-length guarantee must hold for real Unicode input: `trim`/`toLowerCase`/`String.length` accepted double-spaced, NFC/NFD and homoglyph duplicates and let a 170-column label through while rejecting 41 emoji.
+- `packages/ai/src/auth/types.ts`: callers need a supported, secret-free committed-slot identity, including whether the ID was machine-generated, to avoid prompting for a name a provider flow already asked for.
+- `packages/ai/src/models.ts`: only the login write knows which ID was actually committed and who chose it; callers must not infer it from credentials or list order.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts`, `packages/ai/src/auth/types.ts` and `packages/ai/src/models.ts` own shared credential metadata and the locked login boundary below the extension API. The user-facing commands remain extensions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/auth/pool/slots.ts` slot type, display-name validation block and append function; `packages/ai/src/auth/types.ts` interaction types; `packages/ai/src/models.ts` login mutation and return boundary.
+
+## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
+
 ### What changed
 
 - `packages/ai/src/api/anthropic-messages.ts`: map the registered `ask_user_question` tool to `AskUserQuestion` for Anthropic Claude Code wire requests, and map it back only when the registered tools include the alias.

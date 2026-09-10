@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-10 - Atomic account display-name metadata with shape-keyed sentinel guard (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: adds `renameCredentialAccount` with a serialized latest-credential update, optional safe `displayName` in descriptors, and unchanged name-based health/pin reads. Rejected input writes nothing and emits no event; successful rename/clear emits the existing accounts-changed event. The guard that refuses to read a provider-managed sentinel as a legacy flat account is keyed on the credential shape (an OAuth credential with no `accounts` array whose identical `access`/`refresh` are a `*-managed` sentinel), not on the literal provider id `claude-sdk-oauth`, so every managed lane with that envelope is covered. Environment slots are never materialized as saved accounts.
+
+### Why
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: shared CLI/status/RPC/app-server descriptors need human-readable labels without exposing tokens or changing operational IDs; duplicate claims must be validated under the storage lock; and `cursor-cli-oauth` defines the identical sentinel envelope, so a provider-id-keyed guard would let a cosmetic rename fabricate a `default` login slot whose tokens are the literal sentinel strings.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-accounts.ts` is the shared storage and descriptor seam used by commands and transports; an extension-local mutation would bypass its concurrency and non-secret projection contracts.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/credential-accounts.ts` summary projection and the rename operation beside pin/remove.
+
 ## 2026-09-10 - Review fixes for PR #1304: scoped remint/auth-miss, pool merge, sentinel repair
 
 ### What changed

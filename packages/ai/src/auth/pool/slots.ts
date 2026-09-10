@@ -7,7 +7,10 @@ export const DEFAULT_SLOT_NAME = "default";
 export type CredentialSlotSource = "login" | "import" | "env";
 
 export type CredentialSlot = {
+	/** Immutable operational identity. */
 	name: string;
+	/** Optional presentation metadata; never used for credential selection. */
+	displayName?: string;
 	source?: CredentialSlotSource;
 	key?: string;
 	access?: string;
@@ -28,6 +31,132 @@ export function assertValidSlotName(name: string): void {
 			`Invalid account name '${name}': use letters, digits, '-' or '_', starting with a letter or digit`,
 		);
 	}
+}
+
+const UNSAFE_DISPLAY_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+/**
+ * Labels are bounded in terminal columns, not UTF-16 code units: 80 code units
+ * of CJK render ~170 columns, which no footer segment can hold, while 41 emoji
+ * render 82 columns yet count 82 code units. The bound is what the footer's
+ * parenthesised provider segment can carry alongside a provider id.
+ */
+export const DISPLAY_NAME_MAX_COLUMNS = 32;
+
+/** Code points that advance a cell without painting anything a user can see. */
+const BLANK_DISPLAY_CHARACTER = /^[\s\p{M}\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]$/u;
+/** Invisible code points that are not whitespace, so trimming never removes them. */
+const INVISIBLE_DISPLAY_CHARACTER = /^[\p{M}\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]$/u;
+const WIDE_DISPLAY_CHARACTER =
+	/^(?:[\u1100-\u115f\u2329\u232a\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6]|[\u{1f300}-\u{1faff}]|[\u{20000}-\u{3fffd}])$/u;
+
+/**
+ * Latin lookalikes for the Cyrillic letters a homoglyph label would use. Folded
+ * only for the uniqueness comparison; the stored label keeps the user's script.
+ */
+const CYRILLIC_LOOKALIKES: Record<string, string> = {
+	"\u0430": "a",
+	"\u0432": "b",
+	"\u0435": "e",
+	"\u043a": "k",
+	"\u043c": "m",
+	"\u043d": "h",
+	"\u043e": "o",
+	"\u0440": "p",
+	"\u0441": "c",
+	"\u0442": "t",
+	"\u0443": "y",
+	"\u0445": "x",
+	"\u0455": "s",
+	"\u0456": "i",
+	"\u0458": "j",
+};
+
+const displayNameGraphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Terminal columns a label occupies, measured per grapheme cluster. */
+export function displayNameColumns(value: string): number {
+	let columns = 0;
+	for (const { segment } of displayNameGraphemes.segment(value)) {
+		const codePoint = segment.codePointAt(0);
+		if (codePoint === undefined) continue;
+		const base = String.fromCodePoint(codePoint);
+		if (INVISIBLE_DISPLAY_CHARACTER.test(base)) continue;
+		columns += WIDE_DISPLAY_CHARACTER.test(base) || segment.includes("\ufe0f") ? 2 : 1;
+	}
+	return columns;
+}
+
+/** The stored form: NFC, trimmed, internal whitespace runs collapsed to one space. */
+function normalizeDisplayName(value: string): string {
+	return value.normalize("NFC").trim().replace(/\s+/gu, " ");
+}
+
+/**
+ * Comparison key for "unique per provider": compatibility-folded (fullwidth and
+ * other compatibility forms), case-folded, invisible code points dropped, and
+ * Cyrillic lookalikes mapped to Latin, so two labels that render identically
+ * cannot both be stored.
+ */
+function displayNameKey(value: string): string {
+	return [...normalizeDisplayName(value).normalize("NFKC").toLowerCase()]
+		.filter((character) => !INVISIBLE_DISPLAY_CHARACTER.test(character))
+		.map((character) => CYRILLIC_LOOKALIKES[character] ?? character)
+		.join("");
+}
+
+/** Treat persisted metadata as untrusted presentation input. */
+export function accountDisplayName(value: unknown): string | undefined {
+	if (typeof value !== "string" || UNSAFE_DISPLAY_CHARACTERS.test(value)) return undefined;
+	const normalized = normalizeDisplayName(value);
+	const characters = [...normalized];
+	// A leading combining mark glues the label onto whatever precedes it, and a
+	// label made only of blank-rendering code points is indistinguishable from none.
+	if (characters.length === 0 || /^\p{M}$/u.test(characters[0])) return undefined;
+	if (characters.every((character) => BLANK_DISPLAY_CHARACTER.test(character))) return undefined;
+	return displayNameColumns(normalized) <= DISPLAY_NAME_MAX_COLUMNS ? normalized : undefined;
+}
+
+export function accountLabel(account: { name: string; displayName?: string }): string {
+	const displayName = accountDisplayName(account.displayName);
+	return displayName === undefined ? account.name : `${displayName} (${account.name})`;
+}
+
+/** Pure metadata update; callers serialize this against the latest stored credential. */
+export function renameSlotDisplayName(
+	credential: PooledCredential,
+	name: string,
+	value: string | null,
+): PooledCredential {
+	assertValidSlotName(name);
+	const accounts = Array.isArray(credential.accounts) ? credential.accounts : listSlots(credential);
+	const target = accounts.find((slot) => slot.name === name);
+	if (!target) throw new Error(`Stored provider account not found: ${name}`);
+	if (target.source === "env") throw new Error(`Environment provider account cannot be renamed: ${name}`);
+	const displayName = value === null ? undefined : accountDisplayName(value);
+	if (value !== null && displayName === undefined) {
+		throw new Error(
+			`Display name must be 1-${DISPLAY_NAME_MAX_COLUMNS} terminal columns of visible text without control or formatting characters.`,
+		);
+	}
+	if (
+		displayName !== undefined &&
+		accounts.some(
+			(slot) =>
+				slot.name !== name &&
+				displayNameKey(accountDisplayName(slot.displayName) ?? "") === displayNameKey(displayName),
+		)
+	) {
+		throw new Error("Display name is already used by another account for this provider.");
+	}
+	return {
+		...credential,
+		accounts: accounts.map((slot) => {
+			if (slot.name !== name) return slot;
+			const { displayName: _displayName, ...unchanged } = slot;
+			return displayName === undefined ? unchanged : { ...unchanged, displayName };
+		}),
+	};
 }
 
 function storedSlots(credential: PooledCredential): CredentialSlot[] {
@@ -202,19 +331,41 @@ function mergeProvidedPool(
  * concurrent writers stored meanwhile. A flat `current` keeps the whole-write
  * shape - the provider echoes the flat fields it read, so there is nothing to
  * preserve and the login must not be dropped on a name collision.
+ *
+ * `onAllocated` reports the account this login committed, so a caller can name
+ * it in a receipt without re-reading storage.
  */
-export function appendLoginSlot(current: PooledCredential | undefined, flat: Credential): Credential {
+export function appendLoginSlot(
+	current: PooledCredential | undefined,
+	flat: Credential,
+	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+): Credential {
+	const provided = providedSlots(flat);
+	if (provided) {
+		// Provider-owned envelopes identify an addition by immutable ID, never by
+		// token equality or array position. Ambiguous envelopes have no receipt.
+		const previous = new Set(
+			(current && Array.isArray(current.accounts) ? current.accounts : listSlots(current)).map((slot) => slot.name),
+		);
+		const added = provided.filter((slot) => !previous.has(slot.name));
+		if (added.length === 1 && SLOT_NAME_PATTERN.test(added[0].name) && added[0].source !== "env") {
+			onAllocated?.(added[0].name, "provider");
+		}
+	}
 	if (!current) {
+		if (!provided) onAllocated?.(DEFAULT_SLOT_NAME, "generated");
 		return flat;
 	}
 	const storedAccounts = Array.isArray(current.accounts) ? current.accounts : undefined;
-	const provided = providedSlots(flat);
 	if (provided) {
 		// A pool merges onto the stored pool; a flat current keeps the whole-write
 		// shape because the provider's accounts already carry this login.
 		return storedAccounts ? mergeProvidedPool(current, storedAccounts, provided) : flat;
 	}
-	return upsertSlot(current, slotFromFlatCredentialNamed(flat, nextLoginSlotName(current)));
+	const name = nextLoginSlotName(current);
+	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
+	onAllocated?.(name, "generated");
+	return next;
 }
 
 /**

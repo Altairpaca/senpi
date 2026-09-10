@@ -1,5 +1,25 @@
 # claude-sdk-oauth
 
+## 2026-09-10 - Optional Claude account display names (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts`: `AccountSlot` carries optional `displayName`; immutable `name` remains the operational identity.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-management.ts`: explicitly projects safe display metadata alongside existing secret-free account descriptors.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-command.ts`: adds rename/clear-name and renders display labels for listings, the pinned-account line and the affinity pick. Post-login naming is delegated to the shared helper, which offers it only for a machine-generated slot ID, so the lane's own "Name for this account" prompt is never followed by a second name prompt. Existing slot creation names, sentinel envelope, refresh, failover, affinity and session continuity are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts`, `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-management.ts` and `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-command.ts`: readable labels must not change the account IDs responsible for Claude credentials, config roots and SDK session bindings.
+
+### Why an extension could not handle it
+
+- These three paths are the provider extension's own types and command surfaces. The shared locked metadata operation and login receipt are implemented below this extension.
+
+### Expected merge conflict zones
+
+- LOW: slot shape in `accounts.ts`; descriptor mapper in `account-management.ts`; imports, command hints and list/add handlers in `account-command.ts`.
+
 ## 2026-09-10 - Never list a sentinel-material stored slot as an account
 
 ### What changed

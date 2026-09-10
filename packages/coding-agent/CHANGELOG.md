@@ -6,6 +6,8 @@
 
 ### Added
 
+- Saved OpenAI Codex and Claude SDK OAuth accounts can receive optional display names during login or through account rename commands; account IDs remain unchanged and safe account status surfaces render `displayName (id)`.
+
 ### Changed
 
 ### Fixed

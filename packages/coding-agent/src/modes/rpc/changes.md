@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-10 - Optional display-name account descriptor (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProviderAccount` gains optional `displayName`, matching the safe shared descriptor returned by `get_provider_accounts`. `name` remains the immutable selector ID; credentials never enter this projection.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: clients need human-readable labels without changing their pin/remove selectors or existing legacy payloads.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` defines the host-owned typed response contract, not an extension-local message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts` account descriptor interface.
+
 ## win32 supervisor bootstraps its own internal directory and public secret (2026-09-10)
 
 ### What changed
