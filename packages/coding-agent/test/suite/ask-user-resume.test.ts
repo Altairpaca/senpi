@@ -116,7 +116,7 @@ function ctx(sessionManager: SessionManager, question?: ExtensionContext["ui"]["
 		getAskUserSettings: () => ({ enabled: true, timeoutMinutes: 30 }),
 		mode: "tui",
 		hasUI: question !== undefined,
-	} as ExtensionContext;
+	} as unknown as ExtensionContext;
 }
 
 async function emitStart(
@@ -153,9 +153,9 @@ describe("ask-user resume", () => {
 
 	it("delivers one orphaned-after-restart message when resume has no UI", async () => {
 		const sessionManager = await danglingSession();
-		const { userMessages, received, handlers } = install(sessionManager);
+		const { userMessages, handlers } = install(sessionManager);
 		await emitStart(handlers, "resume", ctx(sessionManager));
-		expect(await received.promise).toBe(formatUserMessage(ORPHANED, CALL_ID, CANONICAL_QUESTIONS));
+		expect(userMessages).toEqual([formatUserMessage(ORPHANED, CALL_ID, CANONICAL_QUESTIONS)]);
 		expect(resumedIds(sessionManager)).toEqual([CALL_ID]);
 		await emitStart(handlers, "resume", ctx(sessionManager));
 		expect(userMessages).toHaveLength(1);

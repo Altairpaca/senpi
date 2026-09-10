@@ -6,7 +6,7 @@
 
 ### Added
 
-- The built-in question tool selects `request_user_input` for OpenAI GPT models and `ask_user_question` for other models, with an explicit choice to wait for an answer or keep working while the question stays open. Questions have an idle timeout and hard cap, support partial answers with a comment, and avoid re-asking after a timeout in the same turn.
+- The built-in question tool selects `request_user_input` for OpenAI GPT models and `ask_user_question` for other models, with an explicit choice to wait for an answer or keep working while the question stays open. Questions have an idle timeout and hard cap, support partial answers with a comment, and avoid re-asking after a timeout in the same turn. Session resume and reload re-present a dangling question when a UI is available, or deliver an orphaned-after-restart user message once per tool call.
 
 - Settings `askUser.enabled` (default true) and `askUser.timeoutMinutes` (default 30, clamped 1–120) control the built-in question tool; `--no-ask-user` disables it for one run and wins over saved settings.
 

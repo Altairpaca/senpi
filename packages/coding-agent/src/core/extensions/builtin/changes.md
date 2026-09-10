@@ -1,5 +1,24 @@
 # Builtin extensions changes
 
+## 2026-09-10 - Resume dangling question calls
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts` walks the current branch tail on `session_start` `resume`/`reload` for the newest `ask_user_question`/`request_user_input` tool call without a matching tool result. When `ctx.ui.question` exists it re-presents the original questions with a fresh idle timeout and delivers the answer as a framed user message; otherwise it delivers the `orphaned-after-restart` text once. `pi.appendEntry("ask-user:resumed", { toolCallId })` records the call so a later resume is a no-op.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts` invokes the resume hook from the existing `session_start` handler after tool-set sync, without awaiting the UI so later session_start handlers are not blocked.
+
+### Why
+
+- Pending question timers are not persisted. A process restart leaves a dangling tool call in the session JSONL; the model needs the question re-shown or an explicit orphaned result rather than a silent hang.
+
+### Why an extension could not handle it
+
+- The dangling call lives in the session the builtin already owns. Re-presenting it requires the same `ctx.ui.question` bridge and `ask-user:resumed` custom entry as the rest of the ask-user extension.
+
+### Expected merge conflict zones
+
+- LOW: new `resume.ts`. `extension.ts` `session_start` handler body.
+
 ## 2026-09-10 - Builtin question tool
 
 ### What changed
