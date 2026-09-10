@@ -3245,6 +3245,7 @@ export class AgentSession {
 				options?.signal,
 				options?.onUpdate as AgentToolUpdateCallback<unknown> | undefined,
 			);
+			isError = result.isError === true;
 		} catch (err) {
 			result = {
 				content: [
