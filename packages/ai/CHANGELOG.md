@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- OAuth token refresh no longer holds the credential store lock across the network: `Models.getAuth()` runs the provider's token exchange outside `CredentialStore.modify`, then re-enters the store and writes only if the slot's refresh token is unchanged (a slot rotated meanwhile by another process is adopted instead of overwritten). Concurrent requests for one slot join a single exchange, and a `Models.refresh()`/`setProvider()` for the same provider joins an in-flight token refresh instead of aborting it through the per-provider catalog-refresh controller ([#1542](https://github.com/code-yeongyu/senpi/issues/1542)).
+
 ### Removed
 
 ## [2026.9.9-2] - 2026-09-09
