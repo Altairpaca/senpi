@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-10 - Print mode binds editAssistantMessage for extensions
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the extension `commandContextActions` gain `editAssistantMessage`, delegating to `session.editAssistantMessage` with `summarize` / `customInstructions` / `expectedLeafId`, beside the existing `navigateTree` binding.
+
+### Why
+
+- `ExtensionCommandContextActions.editAssistantMessage` is required, so every mode that binds command actions must provide it; print mode is one of the three binding sites.
+
+### Why an extension could not handle it
+
+- The actions object is built by the mode before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: the `navigateTree` neighbour inside `commandContextActions` in `print-mode.ts`.
+
 ## 2026-09-10 - Render Anthropic tool_search results instead of raw JSON
 
 ### What changed
@@ -24,6 +42,33 @@
 - LOW: `packages/coding-agent/src/modes/provider-native-rendering.ts` if upstream adds its own provider-native
   formatter next to the existing web-search cases.
 
+## 2026-09-10 - Fall back to the running install when PACKAGE_DIR ships no assets
+
+### What changed
+
+- `packages/coding-agent/src/config.ts` resolves `getThemesDir()` and `getExportTemplateDir()` through one
+  layout-aware helper that probes the preferred root for a marker file (`dark.json` / `template.html`) and falls back
+  to the running install's own asset tree when the `PACKAGE_DIR`-derived root does not ship it. A valid relocation
+  still wins, and a genuinely broken install still returns the preferred path so the resulting error names it.
+
+### Why
+
+- `PACKAGE_DIR` is consumed by `getPackageDir()` before any layout decision, so an inherited root belonging to a
+  DIFFERENT install silently produced an asset path that cannot exist. A Bun binary that embeds this CLI pins the
+  variable to its own root and ships themes in a flat `theme/`; a Node install inheriting that root resolved
+  `<root>/dist/modes/interactive/theme/dark.json` and died in `initTheme()` before the session started.
+
+### Why an extension could not handle it
+
+- Asset-root resolution runs inside `config.ts` during startup, before extensions load, and `theme.ts` reads the
+  returned directory synchronously while building the builtin theme table.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/config.ts` around `getThemesDir()` / `getExportTemplateDir()` if upstream edits
+  either resolver; the shared `ShippedAsset` descriptors and `resolveShippedAssetDir()` are fork-owned.
+
+||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
 ## 2026-09-09 - Forward shared-host policy to extension loading
 
 ### What changed

@@ -151,6 +151,20 @@ const COPILOT_STATIC_HEADERS = {
 	"Copilot-Integration-Id": "vscode-chat",
 } as const;
 
+const VENICE_BASE_URL = "https://api.venice.ai/api/v1";
+// Venice's ChatCompletionRequest schema is `additionalProperties: false`, so only
+// documented fields may be sent. Everything senpi sends by default for an
+// unrecognized OpenAI-compatible host is on Venice's accepted list (`store`,
+// `developer` role, `reasoning_effort`, `stream_options.include_usage`,
+// `max_completion_tokens`, `prompt_cache_key`, `prompt_cache_retention`, and
+// `strict` tools), so the auto-detected compat defaults are left alone.
+// The one behavior that must be overridden: Venice prepends its own default
+// system prompt ahead of the caller's unless told not to, which would sit in
+// front of the agent's system prompt.
+const VENICE_COMPAT: OpenAICompletionsCompat = {
+	veniceParameters: { include_venice_system_prompt: false },
+};
+
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -2173,6 +2187,35 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		models.push(...processBasetenModels(data.baseten));
+
+		// Process Venice AI models
+		if (data.venice?.models) {
+			for (const [modelId, model] of Object.entries(data.venice.models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+				if (m.status === "deprecated") continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "venice",
+					baseUrl: VENICE_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					compat: { ...VENICE_COMPAT },
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions("venice", modelId, m);
+			}
+		}
 
 		// Process OpenCode models (Zen and Go)
 		// API mapping based on provider.npm field:

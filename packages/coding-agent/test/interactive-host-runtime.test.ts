@@ -1248,6 +1248,66 @@ describe("interactive host runtime", () => {
 		}
 	});
 
+	it("routes assistant edits to the host with the caller's leaf token and refreshes proxy history", async () => {
+		const qa = scratch("edit");
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const host = spawnHost(qa);
+		await waitForHost(host, qa.socket);
+		const manager = SessionManager.create(qa.cwd, qa.sessionDir);
+		manager.appendMessage({ role: "user", content: "edit-user", timestamp: 1 });
+		manager.appendMessage(fauxAssistantMessage("edit-assistant"));
+		const assistantId = manager.getLeafId()!;
+		const local = await createAgentSessionRuntimeFixture({
+			cwd: qa.cwd,
+			agentDir: qa.agentDir,
+			sessionManager: manager,
+			settingsManager: SettingsManager.create(qa.cwd, qa.agentDir),
+		});
+		const runtime = await createInteractiveHostRuntime(local, {
+			socket: qa.socket,
+			ensureHost: async () => undefined,
+		});
+		try {
+			// The host appends its own bookkeeping entries on attach, so the only honest
+			// leaf token is the one read from the host itself (the plan's token discipline).
+			const hostLeaf = runtime.session.sessionManager.getLeafId();
+			expect(hostLeaf).toBeTruthy();
+			const result = await runtime.session.editAssistantMessage(assistantId, "edited on host", {
+				summarize: false,
+				expectedLeafId: hostLeaf ?? undefined,
+			});
+			expect(result.cancelled).toBe(false);
+			expect(result.entryId).toBeDefined();
+			expect(result.entryId).not.toBe(assistantId);
+			const texts = runtime.session.messages
+				.filter((m) => m.role === "assistant")
+				.map((m) => ("content" in m && Array.isArray(m.content) ? m.content : []))
+				.map((blocks) =>
+					blocks
+						.filter((b): b is { type: "text"; text: string } => b.type === "text")
+						.map((b) => b.text)
+						.join(""),
+				);
+			expect(texts).toEqual(["edited on host"]);
+
+			const stale = await runtime.session
+				.editAssistantMessage(assistantId, "second window", {
+					summarize: false,
+					expectedLeafId: hostLeaf ?? undefined,
+				})
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+			expect(stale).toBeInstanceOf(Error);
+			expect((stale as { errorCode?: string }).errorCode).toBe("stale_leaf");
+		} finally {
+			await runtime.dispose();
+			await fake.close();
+		}
+	});
+
 	it("routes tree navigation to the host and refreshes proxy history", async () => {
 		const qa = scratch("nav");
 		const fake = await startFakeModelServer();

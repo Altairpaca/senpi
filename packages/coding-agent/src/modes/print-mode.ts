@@ -92,6 +92,14 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					});
 					return { cancelled: result.cancelled };
 				},
+				editAssistantMessage: async (entryId, text, editOptions) => {
+					const result = await session.editAssistantMessage(entryId, text, {
+						summarize: editOptions?.summarize,
+						customInstructions: editOptions?.customInstructions,
+						expectedLeafId: editOptions?.expectedLeafId,
+					});
+					return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+				},
 				switchSession: async (sessionPath, switchOptions) => {
 					return runtimeHost.switchSession(sessionPath, switchOptions);
 				},

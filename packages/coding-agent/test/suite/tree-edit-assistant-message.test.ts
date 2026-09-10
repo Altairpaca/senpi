@@ -1,7 +1,8 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SessionTreeEvent } from "../../src/core/extensions/types.ts";
+import { AssistantEditError, SessionStreamingError } from "../../src/core/edited-assistant-message.ts";
+import type { SessionBeforeTreeEvent, SessionTreeEvent } from "../../src/core/extensions/types.ts";
 import type { SessionMessageEntry } from "../../src/core/session-manager.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
@@ -18,6 +19,13 @@ function assistantMessageOf(entry: SessionMessageEntry): AssistantMessage {
 	return entry.message;
 }
 
+async function rejectionOf(pending: Promise<unknown>): Promise<unknown> {
+	return pending.then(
+		() => undefined,
+		(error: unknown) => error,
+	);
+}
+
 describe("AgentSession.editAssistantMessage", () => {
 	const harnesses: Harness[] = [];
 
@@ -26,12 +34,17 @@ describe("AgentSession.editAssistantMessage", () => {
 	});
 
 	const treeEvents: SessionTreeEvent[] = [];
+	const beforeTreeEvents: SessionBeforeTreeEvent[] = [];
 
 	async function createConversation(): Promise<Harness> {
 		const harness = await createHarness({
 			persistSession: true,
 			extensionFactories: [
 				(pi) => {
+					pi.on("session_before_tree", (event) => {
+						beforeTreeEvents.push(event);
+						return undefined;
+					});
 					pi.on("session_tree", (event) => {
 						treeEvents.push(event);
 					});
@@ -40,6 +53,7 @@ describe("AgentSession.editAssistantMessage", () => {
 		});
 		harnesses.push(harness);
 		treeEvents.length = 0;
+		beforeTreeEvents.length = 0;
 		harness.setResponses([fauxAssistantMessage("The answer is 41."), fauxAssistantMessage("Anything else?")]);
 		await harness.session.prompt("What is the answer?");
 		await harness.session.prompt("Thanks");
@@ -168,12 +182,90 @@ describe("AgentSession.editAssistantMessage", () => {
 		expect(harness.sessionManager.getEntries().length).toBe(entryCountBefore);
 	});
 
+	it("refuses a stale edit before comparing the replacement text", async () => {
+		const harness = await createConversation();
+		const [a1] = assistantEntries(harness);
+		if (!a1) throw new Error("expected an assistant entry");
+		const leafBefore = harness.sessionManager.getLeafId();
+		const entryCountBefore = harness.sessionManager.getEntries().length;
+
+		const changed = await rejectionOf(
+			harness.session.editAssistantMessage(a1.id, "The answer is 42.", {
+				summarize: false,
+				expectedLeafId: "entry-from-another-window",
+			}),
+		);
+		const identical = await rejectionOf(
+			harness.session.editAssistantMessage(a1.id, "  The answer is 41.\n", {
+				summarize: false,
+				expectedLeafId: "entry-from-another-window",
+			}),
+		);
+
+		for (const error of [changed, identical]) {
+			expect(error).toBeInstanceOf(AssistantEditError);
+			expect((error as AssistantEditError).reason).toBe("stale-leaf");
+			expect((error as AssistantEditError).code).toBe("stale_leaf");
+		}
+		expect(harness.sessionManager.getLeafId()).toBe(leafBefore);
+		expect(harness.sessionManager.getEntries().length).toBe(entryCountBefore);
+		expect(beforeTreeEvents).toHaveLength(0);
+		expect(treeEvents).toHaveLength(0);
+	});
+
+	it("edits when the expected leaf matches and burns the token for the next edit", async () => {
+		const harness = await createConversation();
+		const [a1] = assistantEntries(harness);
+		const expectedLeafId = harness.sessionManager.getLeafId();
+		if (!a1) throw new Error("expected an assistant entry");
+		if (!expectedLeafId) throw new Error("expected a session leaf");
+
+		const result = await harness.session.editAssistantMessage(a1.id, "The answer is 42.", {
+			summarize: false,
+			expectedLeafId,
+		});
+
+		expect(result.cancelled).toBe(false);
+		if (!result.entryId) throw new Error("expected the edited entry id");
+		expect(harness.sessionManager.getLeafId()).toBe(result.entryId);
+
+		const entryCountAfterEdit = harness.sessionManager.getEntries().length;
+		const retry = await rejectionOf(
+			harness.session.editAssistantMessage(a1.id, "The answer is 43.", { summarize: false, expectedLeafId }),
+		);
+
+		expect(retry).toBeInstanceOf(AssistantEditError);
+		expect((retry as AssistantEditError).reason).toBe("stale-leaf");
+		expect(harness.sessionManager.getLeafId()).toBe(result.entryId);
+		expect(harness.sessionManager.getEntries().length).toBe(entryCountAfterEdit);
+	});
+
+	it("rejects a stale navigateTree even when the target is already the leaf", async () => {
+		const harness = await createConversation();
+		const leafBefore = harness.sessionManager.getLeafId();
+		if (!leafBefore) throw new Error("expected a session leaf");
+		const entryCountBefore = harness.sessionManager.getEntries().length;
+
+		const error = await rejectionOf(
+			harness.session.navigateTree(leafBefore, { summarize: false, expectedLeafId: "entry-from-another-window" }),
+		);
+
+		expect(error).toBeInstanceOf(AssistantEditError);
+		expect((error as AssistantEditError).reason).toBe("stale-leaf");
+		expect((error as AssistantEditError).code).toBe("stale_leaf");
+		expect(harness.sessionManager.getLeafId()).toBe(leafBefore);
+		expect(harness.sessionManager.getEntries().length).toBe(entryCountBefore);
+		expect(beforeTreeEvents).toHaveLength(0);
+		expect(treeEvents).toHaveLength(0);
+	});
+
 	it("refuses to edit while a response is streaming and keeps the leaf", async () => {
 		const harness = await createConversation();
 		const [a1] = assistantEntries(harness);
 		if (!a1) throw new Error("expected an assistant entry");
 		let editResult: unknown;
 		let unchangedEditResult: unknown;
+		let staleEditResult: unknown;
 		let leafDuringEdit: string | null | undefined;
 		harness.setResponses([
 			async () => {
@@ -183,6 +275,12 @@ describe("AgentSession.editAssistantMessage", () => {
 				unchangedEditResult = await harness.session
 					.editAssistantMessage(a1.id, "The answer is 41.", { summarize: false })
 					.catch((error: unknown) => error);
+				staleEditResult = await harness.session
+					.editAssistantMessage(a1.id, "edited mid-stream", {
+						summarize: false,
+						expectedLeafId: "entry-from-another-window",
+					})
+					.catch((error: unknown) => error);
 				leafDuringEdit = harness.sessionManager.getLeafId();
 				return fauxAssistantMessage("streamed");
 			},
@@ -190,10 +288,14 @@ describe("AgentSession.editAssistantMessage", () => {
 
 		await harness.session.prompt("third");
 
-		expect(editResult).toBeInstanceOf(Error);
-		expect(String(editResult)).toMatch(/current response to finish/);
-		expect(unchangedEditResult).toBeInstanceOf(Error);
-		expect(String(unchangedEditResult)).toMatch(/current response to finish/);
+		// Streaming outranks the stale-leaf guard: a busy session never reports a stale token.
+		for (const error of [editResult, unchangedEditResult, staleEditResult]) {
+			expect(error).toBeInstanceOf(SessionStreamingError);
+			expect((error as SessionStreamingError).code).toBe("streaming");
+			expect((error as Error).message).toBe(
+				"Wait for the current response to finish before navigating the session tree.",
+			);
+		}
 		expect(leafDuringEdit).not.toBe(a1.parentId);
 		expect(
 			assistantEntries(harness).some((entry) => getMessageText(assistantMessageOf(entry)) === "edited mid-stream"),
