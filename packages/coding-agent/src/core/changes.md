@@ -17,6 +17,29 @@
 
 - LOW: the manual-continue interception at the top of `prompt()`.
 
+## Record model switches the session refuses (2026-09-09)
+
+## Record model switches the session refuses (2026-09-10)
+
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` records every refused model switch before rethrowing. `_assertModelUsableForSwitch()` is the single guard seam: the `_setModel` pre-flight, the post-`model_select` revalidation in `_switchActiveModel`, and both `_cycleFavoriteModel` guards (the sole-alternative case and the pre/post-`model_select` pair) now funnel through it, so each appends a `model_change_rejected` session entry, emits the matching event with the budget projection numbers, and rethrows the original error unchanged. The `_setModel` auth refusal records the same entry with `reason: "auth"`. `_modelSwitchAdmission()` derives the admission from the branch (`hasContextMessages()`) instead of hardcoding `"switch"`, so a refusal only promises the compaction remedy when there is context to compact. `_cycleFavoriteModel` no longer appends its `model_change`, writes the global default, or emits `model_changed`/`service_tier_changed` before the post-`model_select` guard accepts, and its catch restores the previous service tier.
+- `packages/coding-agent/src/core/session-manager.ts` adds the `ModelChangeRejectedEntry` type (documenting that it follows the shared pre-assistant `_persist` buffering contract) and `appendModelChangeRejected()`.
+
+### Why
+
+- Every guard rejects before `_switchActiveModel` appends its `model_change`, so a refused switch left no entry, no event, and no log line; an attempted-and-rejected switch was indistinguishable from one the user never made (#1526). Recording it on one guard only would have left sibling calls of the same public API silent, and a refused *cycle* was strictly worse than silent: it appended a real `model_change` and wrote the global default before its post-`model_select` guard ran, so the session resumed - and every new session started - on a model that was refused and never answered. The `admission` default only infers `"switch"` when `liveContextTokens > 0`, so the message told the user the model "cannot start" and omitted the compaction remedy; hardcoding `"switch"` instead promised that remedy on the `session_start` caller (`recommended-models`), where there is nothing to compact.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the switch guards, the session-entry append, and the settings write; an extension observes model changes only after they are applied and never sees the rejected path.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionEvent` union, the `_setModel` guard block, and the `_cycleFavoriteModel` commit block.
+- `packages/coding-agent/src/core/session-manager.ts`: the `SessionEntry` union and the append helpers near `appendModelChange`.
+
 ## Leaf token and typed errors for assistant edits (2026-09-10)
 
 ### What changed

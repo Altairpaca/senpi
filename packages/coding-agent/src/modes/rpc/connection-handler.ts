@@ -221,7 +221,12 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		!existsSync(session.sessionFile) &&
 		session.sessionManager
 			.getEntries()
-			.some((entry) => entry.type !== "model_change" && entry.type !== "thinking_level_change")
+			.some(
+				(entry) =>
+					entry.type !== "model_change" &&
+					entry.type !== "model_change_rejected" &&
+					entry.type !== "thinking_level_change",
+			)
 			? { entries: session.sessionManager.getEntries() }
 			: {}),
 		steering: typeof session.getSteeringMessages === "function" ? [...session.getSteeringMessages()] : [],

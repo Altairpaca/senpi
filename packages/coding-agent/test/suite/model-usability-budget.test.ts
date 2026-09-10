@@ -87,6 +87,10 @@ describe("model usability budget", () => {
 		// then
 		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
 		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected model budget rejection");
+		// #1526: `setModel` derives the admission from the session instead of
+		// declaring a switch, so an empty session keeps the cold-start contract - the
+		// switch wording would promise a compaction remedy with nothing to compact.
+		expect(error.projection.admission).toBe("start");
 		expect(error.message).toBe(
 			'Model "faux/low-context" cannot start: context window 16000 tokens is 21464 tokens short of the 37464-token minimum (system prompt 1, active tool schemas 695, output reserve 4000, compaction reserve 16384, speculation lead 8192, safety margin 8192 [default]).',
 		);

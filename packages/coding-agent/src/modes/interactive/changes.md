@@ -16,6 +16,24 @@
 
 - LOW: `OptimisticUserEchoController`, `InteractiveUserInput`, and the echo call sites in `setupEditorSubmitHandler` / `handleFollowUp`.
 
+## /tree renders a refused model switch (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tree-selector.ts`: `model_change_rejected` gains a render case (`[model rejected: <id> (<reason>)]`, warning colour), search text (`model rejected <id> <reason>`), and membership in the settings/bookkeeping set hidden from the default view.
+
+### Why
+
+- Without the cases the entry fell to `default: result = ""`, so a refused switch (#1526) appeared in `/tree`'s default view as a blank, unsearchable row - the one entry browser the product ships could not reconstruct the incident the record exists for.
+
+### Why an extension could not handle it
+
+- The tree selector owns entry rendering, filtering and search text; extensions cannot contribute renderers for core entry types.
+
+### Expected merge conflict zones
+
+- LOW: the `isSettingsEntry` predicate, `entrySearchText`, and the entry render switch.
+
 ## 2026-09-10 - /tree edits carry the leaf token and reach shared hosts
 
 ### What changed

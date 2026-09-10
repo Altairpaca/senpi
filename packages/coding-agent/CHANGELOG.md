@@ -12,6 +12,20 @@
 
 - A bare `.` submitted on a session that already has messages no longer renders as a user message in the TUI. It stays the manual-continue shortcut the session delivers as a hidden continuation, so nothing is painted for it while idle or while steering an active turn; a `.` on an empty session and a `.` carrying image attachments remain ordinary user input ([#1569](https://github.com/code-yeongyu/senpi/issues/1569))
 
+- A model switch the session refuses is now recorded instead of vanishing: every
+  guard (`setModel`/`setSessionModel`, the revalidation after `model_select`, and
+  favorite cycling) appends a `model_change_rejected` session entry carrying the
+  budget projection numbers and emits a matching event, and the refusal keeps its
+  compaction remedy only when there is context to compact. A refused favorite
+  cycle no longer records a `model_change` or writes the global default for a
+  model that never ran, so the session and every new session stay on the model
+  that is actually active. The new entry is bookkeeping everywhere it is
+  consumed: it never reaches the model, keeps Claude SDK OAuth continuity across
+  resume, renders and searches in `/tree`, crosses the RPC
+  `append_session_entry` seam, and stays out of RPC status snapshots
+  ([#1528](https://github.com/code-yeongyu/senpi/pull/1528) by
+  [@rlaope](https://github.com/rlaope))
+
 - Claude SDK OAuth reattach no longer closes a healthy resumed query when
   normal completed-request cleanup aborts the request controller; the
   initialization cancellation listener is detached once initialization settles,

@@ -1,5 +1,23 @@
 # claude-sdk-oauth
 
+## Recording a refused model switch keeps the stored binding (2026-09-10)
+
+### What changed
+
+- `session-binding.ts`: `model_change_rejected` joins `LEDGER_ONLY_ENTRY_TYPES`.
+
+### Why
+
+- `bindingFromStoredBranch` fails closed on any entry after the committed assistant that the model could see. The new `model_change_rejected` entry (#1526) is never projected into the LLM context, but it was absent from the set, so recording a refused switch made a later resume discard the stored SDK session: fresh upstream session, full context re-send, prompt-cache loss - caused by an entry the model never sees.
+
+### Why an extension could not handle it
+
+- The set is the builtin's own resume-admission policy.
+
+### Expected merge conflict zones
+
+- LOW: `LEDGER_ONLY_ENTRY_TYPES`.
+
 ## 2026-09-10 - Detach completed resume initialization abort listeners
 
 ### What changed

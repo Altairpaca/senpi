@@ -141,6 +141,9 @@ const LEDGER_ONLY_ENTRY_TYPES: ReadonlySet<string> = new Set([
 	"session_info",
 	"thinking_level_change",
 	"model_change",
+	// A refused switch (#1526) is bookkeeping the model never sees; omitting it
+	// here made recording the refusal destroy the stored binding on resume.
+	"model_change_rejected",
 	"configuration_update",
 ]);
 
