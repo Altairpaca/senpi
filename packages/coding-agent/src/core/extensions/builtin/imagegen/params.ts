@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-export const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-flare";
+export const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
 export const IMAGE_MODEL_NAMES = {
 	"gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst",
 	"gpt-image-2.5-flare": "GPT Image 2.5 Flare",
@@ -20,7 +20,7 @@ export const Params = Type.Object(
 				{
 					default: DEFAULT_IMAGE_MODEL,
 					description:
-						"Flare (default) is the fast small model with quality comparable to gpt-image-2; Sunburst is the most capable for precise edits, reference fidelity, and final assets (slower); gpt-image-2 is the previous generation.",
+						"Sunburst (default) is the most capable: highest quality, precise edits, reference fidelity, best for final assets; Flare is the small model optimized for speed, with quality comparable to gpt-image-2; gpt-image-2 is the previous generation.",
 				},
 			),
 		),

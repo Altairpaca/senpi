@@ -1,3 +1,21 @@
+## 2026-09-10 - Native tool follows the Sunburst default
+
+### What changed
+
+- No code change here: `inject.ts` pins `model` to `DEFAULT_IMAGE_MODEL`, which moved back to `gpt-image-2.5-sunburst`, so the native `image_generation` server tool now requests the most capable model too.
+
+### Why
+
+- The client tool and the native server tool must not disagree about which model a session gets.
+
+### Why an extension could not handle it
+
+- The injected literal is owned by this builtin; a second injector would be stripped by the dedupe pass.
+
+### Expected merge conflict zones
+
+- LOW: none in this directory.
+
 ## 2026-09-10 - Pin the native image_generation model
 
 ### What changed

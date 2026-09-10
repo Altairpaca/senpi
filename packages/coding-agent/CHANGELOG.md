@@ -12,7 +12,7 @@
 
 ### Changed
 
-- `generate_image` defaults to `gpt-image-2.5-flare` (Sunburst stays selectable for precise edits and final assets), prices requests from the builtin image catalog instead of zero, and the native `image_generation` server tool is injected with `model: gpt-image-2.5-flare` so official OpenAI Responses sessions no longer fall back to the API default `gpt-image-1`.
+- `generate_image` defaults to `gpt-image-2.5-sunburst`, the most capable image model (Flare stays selectable when speed matters), prices requests from the builtin image catalog instead of zero, and the native `image_generation` server tool is injected with that same model so official OpenAI Responses sessions no longer fall back to the API default `gpt-image-1`.
 
 ### Fixed
 
