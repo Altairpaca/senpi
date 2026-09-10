@@ -176,6 +176,12 @@ A focused visible overlay keeps input ownership across temporary non-overlay UI.
 
 Use `handle.unfocus()` when a visible overlay should stop owning input and let TUI fall back to another visible capturing overlay or the previous focus target. Use `handle.unfocus({ target })` when a specific component should receive input while the overlay stays visible. Passing `{ target: null }` intentionally leaves no focused component until focus is set again.
 
+### Question Overlay and Async Widget
+
+When the agent asks a blocking question (`waitForAnswer: true`), a full-screen overlay appears with a tab bar for each question, numbered options (digits or arrows to select, Space to toggle multi-select), and a comment editor at the bottom. Press Enter to submit what you have. Unanswered questions are reported back as unanswered. Esc cancels.
+
+For async questions (`waitForAnswer: false`), a one-line widget appears above the editor showing the question count and a countdown. The agent keeps working while you decide. Type your reply in the editor at any time and press Enter to send it as a comment, or open the full overlay with the shortcut shown in the widget.
+
 ### Overlay Lifecycle
 
 Overlay components are disposed when closed. Don't reuse references - create fresh instances:
