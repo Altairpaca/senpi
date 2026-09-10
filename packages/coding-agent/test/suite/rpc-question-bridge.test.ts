@@ -83,6 +83,20 @@ it("progress rearms idle timeout and timeout retains the draft", async () => {
 	expect(await answer).toMatchObject({ status: "timed_out", answers: { q1: { selected: ["A"] } } });
 	expect(output.at(-1)).toMatchObject({ type: "question_resolved", outcome: "timed_out" });
 });
+it("broadcasts the timeout the extension resolved instead of a bare cancel", async () => {
+	const output: object[] = [];
+	const bridge = new ConnectionQuestionBridge((record) => output.push(record));
+	const controller = new AbortController();
+	const answer = bridge.ask(request, { signal: controller.signal });
+	// The ask-user extension owns the authoritative idle timer: it resolves the
+	// pending question `timed_out` and aborts the dialog carrying that status.
+	controller.abort("timed_out");
+	expect(await answer).toMatchObject({ status: "timed_out", unanswered: ["q1", "q2"] });
+	const resolved = output.filter((record) => "type" in record && record.type === "question_resolved");
+	expect(resolved).toHaveLength(1);
+	expect(resolved[0]).toMatchObject({ outcome: "timed_out", unanswered: ["q1", "q2"] });
+	expect(bridge.pendingQuestions()).toHaveLength(0);
+});
 it("cancels once on close and abort", async () => {
 	const output: object[] = [];
 	const bridge = new ConnectionQuestionBridge((record) => output.push(record));

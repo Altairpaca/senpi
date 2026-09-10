@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## 2026-09-10 - A settled question aborts its dialog with the resolved status
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: `startQuestion`'s `finish()` now calls `controller.abort(response.status)` instead of a bare `controller.abort()`. The dialog controller is the only channel a still-waiting UI bridge has once the extension-side idle timer (`pending.ts`) settled the question, so the abort now names the terminal status - notably `timed_out`.
+
+### Why
+
+- The RPC bridge maps a bare abort onto `cancel()`, so an idle timeout was broadcast to every connection as `question_resolved{outcome:"cancelled"}` even though the tool result and the framed notice carried the timeout text. Making the extension's timer the authoritative one requires it to hand its outcome to the surface it aborts.
+
+### Why an extension could not handle it
+
+- This IS the builtin: the pending-question state machine and the dialog controller both live in `ask-user/tool.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `finish()` in `ask-user/tool.ts`.
+
 ## 2026-09-10 - Async question delivery belongs to the ask-user builtin
 
 ### What changed

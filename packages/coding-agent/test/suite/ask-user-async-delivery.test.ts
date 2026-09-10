@@ -46,14 +46,16 @@ async function askAsync(
 }
 
 function rpcSetup(delivery: AskUserDelivery, idle = true) {
-	const bridge = new ConnectionQuestionBridge(() => {});
+	/** Everything the bridge broadcasts to attached connections, in order. */
+	const broadcasts: object[] = [];
+	const bridge = new ConnectionQuestionBridge((record) => broadcasts.push(record));
 	const ctx = delivery.context((request, opts) => bridge.ask(request, opts), idle);
 	const pendingId = () => {
 		const id = bridge.pendingQuestions()[0]?.id;
 		if (id === undefined) throw new Error("the RPC bridge has no pending question");
 		return id;
 	};
-	return { bridge, ctx, pendingId };
+	return { bridge, broadcasts, ctx, pendingId };
 }
 
 function appServerSetup(delivery: AskUserDelivery) {
@@ -119,6 +121,23 @@ describe("async ask-user delivery over the RPC bridge", () => {
 		expect(String(delivery.deliveries[0]?.content)).toContain(TIMEOUT_MARKER);
 		expect(String(delivery.deliveries[0]?.content)).toContain("[Answer to question rpc-timeout]");
 		expect(delivery.deliveries[0]?.options).toEqual({ deliverAs: "followUp" });
+	});
+
+	it("broadcasts the idle timeout as timed_out, not cancelled", async () => {
+		// The extension-side idle timer (pending.ts) and the bridge's own timer are
+		// armed for the same delay; whichever fires first, connections must see the
+		// outcome the extension resolved.
+		const delivery = await setup(1);
+		const { broadcasts, ctx } = rpcSetup(delivery);
+		vi.useFakeTimers();
+		const { settled } = await askAsync(delivery, ctx, "rpc-timeout-outcome");
+
+		await vi.advanceTimersByTimeAsync(60_000);
+		await expect(settled).resolves.toMatchObject({ status: "timed_out" });
+
+		const resolved = broadcasts.filter((record) => "type" in record && record.type === "question_resolved");
+		expect(resolved).toHaveLength(1);
+		expect(resolved[0]).toMatchObject({ outcome: "timed_out", requestId: "rpc-timeout-outcome" });
 	});
 });
 
