@@ -492,6 +492,18 @@ export type AgentSessionEvent =
 			thinkingLevel: ThinkingLevel;
 			source: ModelSelectSource;
 	  }
+	/** A switch the session refused; recorded so the attempt survives (#1526). */
+	| {
+			type: "model_change_rejected";
+			model: Model<any>;
+			reason: "context-budget" | "auth";
+			detail: string;
+			contextWindow?: number;
+			liveContextTokens?: number;
+			requiredTokens?: number;
+			shortfallTokens?: number;
+			safetyMarginProfile?: string;
+	  }
 	| {
 			type: "model_change_skipped";
 			model: Model<any>;
@@ -4854,13 +4866,50 @@ export class AgentSession {
 		return this._setModel(model, false);
 	}
 
+	/**
+	 * #1526: both guards below reject before `_switchActiveModel` appends its
+	 * `model_change`, so a refused switch used to leave no entry, no event, and
+	 * no log line - indistinguishable from a switch the user never attempted.
+	 * Record the refusal, then rethrow the original error unchanged.
+	 */
+	private _recordRejectedModelChange(model: Model<Api>, error: unknown): void {
+		const budget = error instanceof ModelUsabilityBudgetError ? error.projection : undefined;
+		const detail = error instanceof Error ? error.message : String(error);
+		const reason = budget ? "context-budget" : "auth";
+		const numbers = budget
+			? {
+					contextWindow: budget.contextWindow,
+					liveContextTokens: budget.liveContextTokens,
+					requiredTokens: budget.requiredTokens,
+					shortfallTokens: budget.shortfallTokens,
+					safetyMarginProfile: budget.safetyMarginProfile,
+				}
+			: {};
+		this.sessionManager.appendModelChangeRejected({
+			provider: model.provider,
+			modelId: model.id,
+			reason,
+			detail,
+			...numbers,
+		});
+		this._emit({ type: "model_change_rejected", model, reason, detail, ...numbers });
+	}
+
 	private async _setModel(
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
 	): Promise<SystemPromptChangeEvent | undefined> {
-		this.assertModelUsable(model, this._getDownswitchLiveContextTokens(model));
-		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			throw new Error(`No API key for ${model.provider}/${model.id}`);
+		try {
+			// Classify as a switch, not a cold start: only the "switch" admission
+			// names the remedy ("Compact the session, then revalidate and retry the
+			// model switch"), which is the whole point of the message here.
+			this.assertModelUsable(model, this._getDownswitchLiveContextTokens(model), { admission: "switch" });
+			if (!(await this._modelRuntime.checkAuth(model.provider))) {
+				throw new Error(`No API key for ${model.provider}/${model.id}`);
+			}
+		} catch (error) {
+			this._recordRejectedModelChange(model, error);
+			throw error;
 		}
 
 		// A manual model change abandons any active fallback window; if a fallback

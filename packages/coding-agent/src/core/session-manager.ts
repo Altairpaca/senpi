@@ -129,6 +129,30 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	originalModelId?: string;
 }
 
+/**
+ * A model switch the session refused. Recorded because the refusal happens
+ * before any `model_change` is appended, which left an attempted-and-rejected
+ * switch indistinguishable from one the user never made (#1526).
+ */
+export interface ModelChangeRejectedEntry extends SessionEntryBase {
+	type: "model_change_rejected";
+	provider: string;
+	modelId: string;
+	reason: "context-budget" | "auth";
+	/**
+	 * The guard's own explanation, including its remedy. Named `detail` rather
+	 * than `message` so this entry stays structurally distinct from
+	 * `SessionMessageEntry`, whose `message` is an object.
+	 */
+	detail: string;
+	/** Budget numbers; present only for the context-budget reason. */
+	contextWindow?: number;
+	liveContextTokens?: number;
+	requiredTokens?: number;
+	shortfallTokens?: number;
+	safetyMarginProfile?: string;
+}
+
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	type: "compaction";
 	summary: string;
@@ -209,6 +233,7 @@ export type SessionEntry =
 	| ThinkingLevelChangeEntry
 	| ConfigurationUpdateEntry
 	| ModelChangeEntry
+	| ModelChangeRejectedEntry
 	| CompactionEntry
 	| BranchSummaryEntry
 	| CustomEntry
@@ -1237,6 +1262,24 @@ export class SessionManager {
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			reasoning: { effort },
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/**
+	 * Append a refused model switch (#1526). The refusal happens before any
+	 * `model_change` is written, so without this the attempt leaves no trace.
+	 */
+	appendModelChangeRejected(
+		details: Omit<ModelChangeRejectedEntry, "type" | "id" | "parentId" | "timestamp">,
+	): string {
+		const entry: ModelChangeRejectedEntry = {
+			type: "model_change_rejected",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			...details,
 		};
 		this._appendEntry(entry);
 		return entry.id;

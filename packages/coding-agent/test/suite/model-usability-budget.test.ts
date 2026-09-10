@@ -87,8 +87,11 @@ describe("model usability budget", () => {
 		// then
 		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
 		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected model budget rejection");
+		// #1526: `setModel` now declares the switch admission, so the refusal keeps
+		// the switch wording (and its compaction remedy) even when the downswitch
+		// live-context probe reports 0, instead of degrading to cold-start wording.
 		expect(error.message).toBe(
-			'Model "faux/low-context" cannot start: context window 16000 tokens is 21464 tokens short of the 37464-token minimum (system prompt 1, active tool schemas 695, output reserve 4000, compaction reserve 16384, speculation lead 8192, safety margin 8192 [default]).',
+			'Model "faux/low-context" cannot switch: target context window 16000 tokens is 21464 tokens short of the 37464-token requirement (live context 0, system prompt 1, active tool schemas 695, output reserve 4000, compaction reserve 16384, speculation lead 8192, safety margin 8192 [default]). Compact the session, then revalidate and retry the model switch.',
 		);
 	});
 

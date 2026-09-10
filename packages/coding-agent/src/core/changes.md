@@ -17,6 +17,26 @@
 
 - LOW: the manual-continue interception at the top of `prompt()`.
 
+## Record model switches the session refuses (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` records a refused model switch before rethrowing: `_setModel` wraps its usability and auth guards, appends a `model_change_rejected` session entry, and emits a matching `model_change_rejected` event carrying the budget projection numbers. The same call now classifies the check as `admission: "switch"`, so the guard produces its switch-specific remedy instead of the cold-start wording.
+- `packages/coding-agent/src/core/session-manager.ts` adds the `ModelChangeRejectedEntry` type and `appendModelChangeRejected()`.
+
+### Why
+
+- Both guards reject before `_switchActiveModel` appends its `model_change`, so a refused switch left no entry, no event, and no log line; an attempted-and-rejected switch was indistinguishable from one the user never made (#1526). The `admission` default only infers `"switch"` when `liveContextTokens > 0`, which is not true on this path whenever the target's usable context is not smaller than the current model's, so the message told the user the model "cannot start" and omitted the compaction remedy.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the switch guards and the session-entry append; an extension observes model changes only after they are applied and never sees the rejected path.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionEvent` union and the `_setModel` guard block.
+- `packages/coding-agent/src/core/session-manager.ts`: the `SessionEntry` union and the append helpers near `appendModelChange`.
+
 ## Leaf token and typed errors for assistant edits (2026-09-10)
 
 ### What changed
@@ -355,7 +375,6 @@
 
 - LOW: `resource-loader.ts` around skill path assembly and the former private package-identity helpers.
 
-
 ## 2026-09-07 - Dedupe skills from duplicate copies of one package
 
 ## 2026-09-07 - Overflow recovery outlives the auto-compaction flag; session-scoped toggle (#1422)
@@ -585,7 +604,6 @@
 
 - LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
 
-
 ## 2026-09-04 - Route bare "." submissions through a hidden manual-continue directive
 
 ### What changed
@@ -609,7 +627,6 @@
 - MEDIUM: `packages/coding-agent/src/core/agent-session.ts` — the top of `prompt()`'s `try` block (before the extension input emission), where queue-admission branches frequently change.
 - LOW: `packages/coding-agent/src/core/manual-continue.ts` (new file, no conflicts).
 - LOW: `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts` — the single assertion swap in the "dot retry" case.
-
 
 ## 2026-09-04 - Failed provider turns leave the LLM context on every lane
 
@@ -660,7 +677,6 @@
 ### Expected merge conflict zones
 
 - LOW: the `model` bookkeeping inside `getSessionContextSettings()` in `session-manager.ts`.
-
 
 ## 2026-09-04 - Gate next-turn compaction on real provider admission
 
@@ -919,7 +935,6 @@
 
 - LOW: the `activeToolNamesChanged` branch in `setActiveToolsByName()`.
 
-
 ## 2026-08-30 - Drop the classic host-UI no-op stub
 
 - `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
@@ -930,7 +945,6 @@
 - `agent-session-prompt.test.ts` binds `mode: "rpc"` before asserting durable prompt entries,
   so the new-behavior test exercises the lane the contract actually covers instead of the
   default print lane.
-
 
 ## 2026-08-30 - Experimental workflow eval-only policy
 
@@ -1681,7 +1695,6 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - `auth-storage.ts` around `acquireLockSyncWithRetry` (line ~95).
 
-
 ## 2026-08-21 - Settings reads are lock-free; writes publish atomically via temp+rename
 
 ### What changed
@@ -1699,7 +1712,6 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - `settings-manager.ts` around `withLock` (line ~555) and the `fs` import list (line ~5).
-
 
 ## 2026-08-21 - Settings-lock retry sleeps instead of spinning; retry-fallback canonicalization memoized
 
@@ -1719,7 +1731,6 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - `settings-manager.ts` around `acquireLockSyncWithRetry` (line ~527). `retry-fallback/controller.ts` around `nextCandidate`/`hasConfiguredChain` and the new `canonicalChains` private method.
-
 
 ## 2026-08-20 - Resume picker caches exact streaming summaries
 
@@ -2096,7 +2107,6 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 - `core/agent-session.ts` `sendCustomMessage` wait condition, and the goal extension `session_start`
   suppressed-load branch in `core/extensions/builtin/goal/index.ts`.
 
-
 ## 2026-08-25 - Harden provider retry watchdog ownership and backoff
 
 ### What changed
@@ -2161,7 +2171,6 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 
 - `core/provider-timeout-retry.ts` plan construction, and the retry-bound constants in
   `test/suite/regressions/provider-idle-recovery.test.ts`.
-
 
 ## Queue typed input admitted during auto-compaction (2026-08-18)
 
@@ -5353,5 +5362,4 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 - LOW: fallback switch admission in
   packages/coding-agent/src/core/agent-session.ts and candidate reservation in
   packages/coding-agent/src/core/retry-fallback/controller.ts.
-
 
