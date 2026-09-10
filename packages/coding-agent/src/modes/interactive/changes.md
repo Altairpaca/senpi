@@ -1,3 +1,21 @@
+## 2026-09-10 - Keep the update command fully visible in the notice box
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showNewVersionNotification` now emits the update command on its own notice `extra` line instead of appending it to the why sentence, so a long Bun global install command is not glued to prose.
+
+### Why
+
+- Issue #1539: at 80 columns the update-available notice showed `Run bun add --cwd` and nothing runnable. The command must sit on its own line so it can wrap as one copyable unit.
+
+### Why an extension could not handle it
+
+- The update notice is assembled by interactive mode after the version check; there is no extension hook for that surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showNewVersionNotification`.
+
 ## 2026-09-10 - Report a reduced restored context on resume
 
 ### What changed

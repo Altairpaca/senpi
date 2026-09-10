@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- The update-available notice no longer clips a long update command into an unrunnable fragment. The command is shown on its own line and the notice box wraps to the terminal width ([#1539](https://github.com/code-yeongyu/senpi/issues/1539)).
+
 - The published package is Bun-compile-safe on its own: publish staging inlines css-tree's `data/patch.json`, mdn-data dictionaries and version, which css-tree otherwise resolves through `createRequire(import.meta.url)` at module scope. A binary compiled from the tarball previously died on the first `webfetch` markdown or text conversion with `Cannot find module '../data/patch.json'`; jsdom's binary-only worker rewrite deliberately stays out of the tarball so a plain Bun consumer keeps jsdom's own lookup ([#1540](https://github.com/code-yeongyu/senpi/pull/1540)).
 
 - Resuming a session whose restored context is larger than the model's context window no longer fails with `ModelUsabilityBudgetError`. Admission now reduces the live context deterministically, without any provider request, before the session opens: it reuses the compaction cut-point selection so a retained tool result keeps its originating tool call, leaves the recorded transcript intact, and accepts a reduction only when the remaining context still leaves room for the system prompt, tool schemas, output reserve, compaction reserve and safety margin, so the first ordinary request cannot overflow. When the fixed overhead alone cannot fit, the original actionable budget error is raised and nothing is written, and sessions with compaction disabled keep the existing refusal. Interactive mode reports the reduction before the first prompt ([#1524](https://github.com/code-yeongyu/senpi/issues/1524)).
