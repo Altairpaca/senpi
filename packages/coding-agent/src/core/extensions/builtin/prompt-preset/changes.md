@@ -1,5 +1,29 @@
 # prompt-preset Extension Changes
 
+## Route user questions through the question tool (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `approval-last` now routes the question through `request_user_input` (wait_for_answer true/false, proceed on no answers, never for permission requests) instead of "One focused question, then end the turn". `failure-cap` asks that precise question through `request_user_input` when it is available. `pause-transparency` adds that a skill/project exception is not itself an approval request. `initiative-bias` finishes every unblocked part when one part is outside reach. No rules added; emphasis set unchanged (the three asynchronous-execution rules).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-5.6.ts`: the narrow-question stop line names `request_user_input` when it is available.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-fable-5.ts`: the ask sentence names `ask_user_question` when it is available (`waitForAnswer` true when the next step depends on the answer).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3.ts`: the unblock question goes through `ask_user_question` when it is available.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts` (shared by `glm-5-2.ts` / `glm-5-3.ts`): the tuning paragraph asks through `ask_user_question` when only the user can settle a question.
+- Tests: `packages/coding-agent/test/suite/prompt-presets-gpt-6-astra.test.ts`, `prompt-presets-gpt-5-6.test.ts`, `prompt-presets-claude-fable-5-1.test.ts`, `prompt-presets-claude-opus-5.test.ts`, `prompt-presets-claude-fable-5.test.ts`, `prompt-presets-kimi-k3.test.ts`, `prompt-presets-glm-5-2.test.ts`, `prompt-presets-glm-5-3.test.ts` pin the tool-name sentinels. Captured RED on the test-only commit, GREEN after these edits.
+
+### Why
+
+- Category C (missing context) per the prompt-engineering skill. The presets still told the model to end the turn or ask in prose after the builtin question tool landed, so a question that should be `request_user_input` / `ask_user_question` looked like a blocked goal or a bare stop. The new clauses keep the existing ask trigger and add the route, including `when it is available` so a session without the tool still reads.
+- Token cost (o200k via gpt-tokenizer; eval, read, bash, monitor, task, todo, request_user_input, ask_user_question selected; empty snippets): gpt-6-astra 3491 -> 3586 (+95), gpt-5.6 2867 -> 2875 (+8), claude-fable-5-1 1654 -> 1676 (+22), claude-opus-5 1837 -> 1859 (+22), claude-fable-5 1690 -> 1713 (+23), kimi-k3 1901 -> 1910 (+9), glm-5.2/glm-5.3 1851 -> 1883 (+32). Astra overshoots the +60 growth gate because the four specified sentence edits land together; the other presets stay inside it. Rendered prompts with and without the question tools in `selectedTools` keep the same sentences.
+
+### Why extension system couldn't handle this differently
+
+- Content-only change inside builtin preset prose. The tool already exists; the models were not told to use it.
+
+### Expected merge conflict zones on next upstream sync
+
+- MEDIUM: `gpt-6-astra.ts` APPROVAL_LAST / FAILURE_CAP / PAUSE_TRANSPARENCY / INITIATIVE_BIAS and the Claude/Kimi/GLM/gpt-5.6 ask sentences are edited often.
+
 ## Eval rules: batch what is independent, observe what is not (2026-09-09)
 
 ### What changed

@@ -140,6 +140,14 @@ describe("GPT-5.6 execution discipline", () => {
 		expect(sections.get("Working the Task")).toContain(bridge);
 	});
 
+	it("routes a narrow question through request_user_input when it is available", () => {
+		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-sol");
+
+		expect(prompt).toContain("request_user_input");
+		expect(prompt).toContain("one narrow question through request_user_input when it is available, then stop.");
+		expect(prompt).not.toContain("one narrow question, then stop.");
+	});
+
 	it("drops the anti-test default that contradicts the test-first directive", () => {
 		// given
 		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-luna");

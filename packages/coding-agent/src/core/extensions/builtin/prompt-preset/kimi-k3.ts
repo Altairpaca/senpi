@@ -66,7 +66,7 @@ Route by true intent, not surface form:
 
 Derive intent from the latest user turn alone: a new direction drops the stale plan, and queued steering messages outrank earlier intent. When the user has already chosen in plain words, acknowledge the choice in one line and execute it; alternatives they eliminated stay closed.
 
-Before the routing line, reread the request once for ambiguity. Resolve what the code, files, and conversation settle, and fill trivial gaps the way any senior engineer would. When a material ambiguity survives - readings that produce different deliverables, a target the context cannot supply, or instructions that conflict - do every part that does not depend on the answer, then state your best reading and ask the one specific question that unblocks the rest. **An invented assumption is a defect.**
+Before the routing line, reread the request once for ambiguity. Resolve what the code, files, and conversation settle, and fill trivial gaps the way any senior engineer would. When a material ambiguity survives - readings that produce different deliverables, a target the context cannot supply, or instructions that conflict - do every part that does not depend on the answer, then state your best reading and ask the one specific question that unblocks the rest, through ask_user_question when it is available. **An invented assumption is a defect.**
 
 ## Scope
 
