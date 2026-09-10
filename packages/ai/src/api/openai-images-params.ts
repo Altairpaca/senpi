@@ -1,23 +1,36 @@
 import type { Uploadable } from "openai";
 import type { ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
-import type { ImagesContext, ImagesModel, ImagesOptions } from "../types.ts";
+import type { ImageContent, ImagesContext, ImagesModel, ImagesOptions } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 const MAX_PROMPT_CHARS = 32_000;
 
 export type OpenAIImageQuality = "auto" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAIImageSize = "auto" | "1024x1024" | "1536x1024" | "1024x1536" | `${number}x${number}`;
+export type OpenAIImageBackground = "auto" | "transparent" | "opaque";
+export type OpenAIImageOutputFormat = "png" | "jpeg" | "webp";
+export type OpenAIImageModeration = "auto" | "low";
 
 export interface OpenAIImagesOptions extends ImagesOptions {
 	size?: OpenAIImageSize;
 	quality?: OpenAIImageQuality;
 	n?: number;
+	/** Output transparency. `transparent` requires `outputFormat` png or webp. */
+	background?: OpenAIImageBackground;
+	/** Container of the returned bytes. Default png. */
+	outputFormat?: OpenAIImageOutputFormat;
+	/** 0-100 compression for jpeg/webp output only. */
+	outputCompression?: number;
+	moderation?: OpenAIImageModeration;
+	/** Inpainting mask applied to the first input image; requires at least one image input. */
+	mask?: ImageContent;
 }
 
 export type OpenAIImageParams = Omit<ImageGenerateParamsNonStreaming, "size" | "quality"> & {
 	size?: OpenAIImageSize;
 	quality?: OpenAIImageQuality;
 	image?: Uploadable[];
+	mask?: Uploadable;
 };
 
 export function parseOpenAIImageSize(size: string): { ok: true; size: string } | { ok: false; error: string } {
