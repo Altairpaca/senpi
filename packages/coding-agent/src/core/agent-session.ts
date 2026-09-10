@@ -106,6 +106,7 @@ import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
+import { AssistantEditError, assistantTextEquals, buildEditedAssistantMessage } from "./edited-assistant-message.ts";
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
@@ -782,6 +783,24 @@ export interface ExtensionBindings {
 	abortHandler?: () => void;
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
+}
+
+export interface TreeNavigationOptions {
+	summarize?: boolean;
+	customInstructions?: string;
+	replaceInstructions?: boolean;
+	label?: string;
+}
+
+export interface AssistantEditResult {
+	editorText?: string;
+	cancelled: boolean;
+	aborted?: boolean;
+	summaryEntry?: BranchSummaryEntry;
+	/** The replacement text matched the original, so nothing was appended. */
+	unchanged?: boolean;
+	/** Id of the appended edited assistant entry. */
+	entryId?: string;
 }
 
 /** Options for AgentSession.prompt() */
@@ -8543,26 +8562,53 @@ export class AgentSession {
 	 */
 	async navigateTree(
 		targetId: string,
-		options: {
-			summarize?: boolean;
-			customInstructions?: string;
-			replaceInstructions?: boolean;
-			label?: string;
-		} = {},
+		options: TreeNavigationOptions = {},
 	): Promise<{
 		editorText?: string;
 		cancelled: boolean;
 		aborted?: boolean;
 		summaryEntry?: BranchSummaryEntry;
 	}> {
+		return this._navigateTree(targetId, options);
+	}
+
+	/**
+	 * Replace an assistant response with an edited copy. The leaf moves to the target's parent and
+	 * the edited message is appended there as the new leaf, so the original and everything after it
+	 * are abandoned exactly like a tree navigation (branch summary optional, `session_before_tree`
+	 * and `session_tree` fire). Unchanged text appends nothing.
+	 */
+	async editAssistantMessage(
+		entryId: string,
+		text: string,
+		options: TreeNavigationOptions = {},
+	): Promise<AssistantEditResult> {
+		const targetEntry = this.sessionManager.getEntry(entryId);
+		if (!targetEntry) {
+			throw new AssistantEditError("not-found", `Entry ${entryId} not found`);
+		}
+		if (targetEntry.type !== "message" || targetEntry.message.role !== "assistant") {
+			throw new AssistantEditError("not-assistant", `Entry ${entryId} is not an assistant message`);
+		}
+		if (assistantTextEquals(targetEntry.message, text)) {
+			return { cancelled: false, unchanged: true };
+		}
+		return this._navigateTree(entryId, options, buildEditedAssistantMessage(targetEntry.message, text));
+	}
+
+	private async _navigateTree(
+		targetId: string,
+		options: TreeNavigationOptions,
+		replacement?: AssistantMessage,
+	): Promise<AssistantEditResult> {
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before navigating the session tree.");
 		}
 
 		const oldLeafId = this.sessionManager.getLeafId();
 
-		// No-op if already at target
-		if (targetId === oldLeafId) {
+		// No-op if already at target (a replacement of the leaf itself still has work to do)
+		if (targetId === oldLeafId && !replacement) {
 			return { cancelled: false };
 		}
 
@@ -8687,7 +8733,10 @@ export class AgentSession {
 			let newLeafId: string | null;
 			let editorText: string | undefined;
 
-			if (targetEntry.type === "message" && targetEntry.message.role === "user") {
+			if (replacement) {
+				// Edited assistant message: leaf = parent, the edited copy is appended below
+				newLeafId = targetEntry.parentId;
+			} else if (targetEntry.type === "message" && targetEntry.message.role === "user") {
 				// User message: leaf = parent (null if root), text goes to editor
 				newLeafId = targetEntry.parentId;
 				editorText = contentText(targetEntry.message.content, "");
@@ -8726,9 +8775,11 @@ export class AgentSession {
 				this.sessionManager.branch(newLeafId);
 			}
 
+			const editedEntryId = replacement ? this.sessionManager.appendMessage(replacement) : undefined;
+
 			// Attach label to target entry when not summarizing (no summary entry to label)
 			if (label && !summaryText) {
-				this.sessionManager.appendLabelChange(targetId, label);
+				this.sessionManager.appendLabelChange(editedEntryId ?? targetId, label);
 			}
 
 			// Update agent state (preserving exact messages still awaiting persistence)
@@ -8747,7 +8798,7 @@ export class AgentSession {
 
 			// Emit to custom tools
 
-			return { editorText, cancelled: false, summaryEntry };
+			return { editorText, cancelled: false, summaryEntry, entryId: editedEntryId };
 		} finally {
 			this._branchSummaryAbortController = undefined;
 		}

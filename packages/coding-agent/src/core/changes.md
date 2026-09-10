@@ -1,3 +1,24 @@
+## Editable assistant responses from the session tree (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `navigateTree()` delegates to a private `_navigateTree()` that also accepts a replacement assistant message; new public `editAssistantMessage(entryId, text, options)` validates the target, treats unchanged text as a no-op (`unchanged: true`), and otherwise branches to the target's parent and appends the edited copy as the new leaf, reusing the branch-summary flow, labels, agent-state restore and `session_before_tree` / `session_tree` events. New exported `TreeNavigationOptions` and `AssistantEditResult` types.
+- `packages/coding-agent/src/core/edited-assistant-message.ts` (new): `buildEditedAssistantMessage()` keeps only the trimmed text (tool calls, thinking and provider-native blocks dropped, `stopReason: "stop"`, model/provider/api/usage preserved), `assistantTextEquals()`, and `AssistantEditError`.
+- `packages/coding-agent/src/core/keybindings.ts`: new `app.tree.editMessage` action (default `ctrl+e`, legacy alias `treeEditMessage`).
+
+### Why
+
+- `/tree` could re-open a user message for editing but offered no way to correct an assistant response; users had to fork or re-prompt to steer past a wrong answer.
+
+### Why an extension could not handle it
+
+- Extensions can replace a message only at `message_end` time; rewriting an already persisted entry needs the session leaf move plus append that only `AgentSession` owns, and the tree keybinding lives in the core keybinding registry.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `navigateTree()` body (renamed to `_navigateTree`, three small hunks for the replacement branch).
+- LOW: `keybindings.ts` tree action tables; the new module is fork-only.
+
 ## Registration-time shared-host capability (2026-09-09)
 
 ### What changed

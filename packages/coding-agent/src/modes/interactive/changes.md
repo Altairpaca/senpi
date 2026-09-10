@@ -1,3 +1,23 @@
+## 2026-09-10 - Edit assistant responses from /tree
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tree-selector.ts`: `TreeList.editSelected()` routes `app.tree.editMessage` — assistant entries call the new `onEditMessage` callback, user/custom messages reuse `onSelect`, other entries are ignored; the help line gains an `edit` hint and `TreeSelectorComponent` exposes `onEditMessage`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the tree selector's summary prompt, streaming abort, summary indicator and post-navigation refresh moved into `runTreeNavigation()` shared by selection and the new `editAssistantMessageFromTree()` flow (extension editor prefilled with the response, empty/unchanged guards, summary prompt only when `treeNavigationAbandonsConversation()` finds abandoned messages).
+
+### Why
+
+- The session tree is where users already revisit responses; editing an assistant answer there and continuing from the edited copy avoids forking or re-prompting.
+
+### Why an extension could not handle it
+
+- The tree selector's key handling and the branch-navigation UI flow are interactive-mode internals with no extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: `interactive-mode.ts` `showTreeSelector()` — the inline navigation body was extracted into `runTreeNavigation()`.
+- LOW: `tree-selector.ts` `handleInput` chain and `TREE_HELP_ITEMS`.
+
 
 ## 2026-09-09 - Surface required compaction after oversized resume
 

@@ -123,6 +123,7 @@ class TreeList implements Component {
 	public onSelect?: (entryId: string) => void;
 	public onCancel?: () => void;
 	public onCopy?: (text: string | undefined) => void;
+	public onEditMessage?: (entryId: string) => void;
 	public onLabelEdit?: (entryId: string, currentLabel: string | undefined) => void;
 
 	constructor(
@@ -629,6 +630,17 @@ class TreeList implements Component {
 		this.onCopy?.(node ? this.getEntryCopyText(node) : undefined);
 	}
 
+	/** Assistant responses open the edit flow; user-authored messages reuse the select flow, which already edits them. */
+	editSelected(): void {
+		const entry = this.getSelectedNode()?.entry;
+		if (!entry) return;
+		if (entry.type === "message" && entry.message.role === "assistant") {
+			this.onEditMessage?.(entry.id);
+		} else if ((entry.type === "message" && entry.message.role === "user") || entry.type === "custom_message") {
+			this.onSelect?.(entry.id);
+		}
+	}
+
 	updateNodeLabel(entryId: string, label: string | undefined, labelTimestamp?: string): void {
 		for (const flatNode of this.flatNodes) {
 			if (flatNode.node.entry.id === entryId) {
@@ -1035,6 +1047,8 @@ class TreeList implements Component {
 			}
 		} else if (kb.matches(keyData, "app.message.copy")) {
 			this.copySelected();
+		} else if (kb.matches(keyData, "app.tree.editMessage")) {
+			this.editSelected();
 		} else if (kb.matches(keyData, "tui.select.cancel")) {
 			if (this.searchQuery) {
 				this.searchQuery = "";
@@ -1226,6 +1240,7 @@ const TREE_HELP_ITEMS: Array<{ keys: Keybinding[]; label: string; labelFirst?: b
 	{ keys: ["tui.editor.cursorLeft", "tui.editor.cursorRight"], label: "page" },
 	{ keys: ["app.tree.foldOrUp", "app.tree.unfoldOrDown"], label: "branch" },
 	{ keys: ["app.message.copy"], label: "copy" },
+	{ keys: ["app.tree.editMessage"], label: "edit" },
 	{ keys: ["app.tree.editLabel"], label: "label" },
 	{ keys: ["app.tree.toggleLabelTimestamp"], label: "label time" },
 	{
@@ -1339,6 +1354,7 @@ export class TreeSelectorComponent extends Container implements Focusable {
 	private treeContainer: Container;
 	private onLabelChangeCallback?: (entryId: string, label: string | undefined) => void;
 	public onCopy?: (text: string | undefined) => void;
+	public onEditMessage?: (entryId: string) => void;
 
 	// Focusable implementation - propagate to labelInput when active for IME cursor positioning
 	private _focused = false;
@@ -1372,6 +1388,7 @@ export class TreeSelectorComponent extends Container implements Focusable {
 		this.treeList.onSelect = onSelect;
 		this.treeList.onCancel = onCancel;
 		this.treeList.onCopy = (text) => this.onCopy?.(text);
+		this.treeList.onEditMessage = (entryId) => this.onEditMessage?.(entryId);
 		this.treeList.onLabelEdit = (entryId, currentLabel) => this.showLabelInput(entryId, currentLabel);
 
 		this.treeContainer = new Container();
