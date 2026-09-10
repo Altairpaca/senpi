@@ -1,5 +1,23 @@
 # changes
 
+## Pending questions survive the opening connection's drop (2026-09-10)
+
+### What changed
+
+- `session-command-router.ts`: `releaseConnection` no longer calls `cancelPendingExtensionUiRequests()` for every session a dropped connection owned. The cancellation moved into `releaseOwnedSession`, on the branch where the close claim made this caller the finalizer - i.e. the attachment refcount already decided the session is being torn down. A drop that leaves other attachments alive now keeps the shared binding's pending questions pending.
+
+### Why
+
+- A question is session-owned: `docs/rpc.md` promises pending questions are broadcast to every attached connection and replayed to connections that attach later. Cancelling on any owner drop resolved the question `cancelled` for all peers, made `open_session` hydrate zero pending questions, and rejected the surviving connection's answer with `question_already_resolved` (probe scenario `owner-drop`).
+
+### Why an extension could not handle it
+
+- Connection lifecycle, attachment refcounting and binding teardown are router-private; no extension hook observes a dropped socket or the close claim that decides whether the session survives.
+
+### Expected merge conflict zones
+
+- LOW: the attachment loop in `releaseConnection` and the finalizer branch of `releaseOwnedSession`.
+
 ## Client writer for question draft progress (2026-09-10)
 
 ### What changed
