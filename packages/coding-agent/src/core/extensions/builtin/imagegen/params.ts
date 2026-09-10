@@ -20,7 +20,7 @@ export const Params = Type.Object(
 				{
 					default: DEFAULT_IMAGE_MODEL,
 					description:
-						"Flare (default) is fast with quality above gpt-image-2; Sunburst is the most capable for precise edits, reference fidelity, and final assets (slower); gpt-image-2 is the previous generation.",
+						"Flare (default) is the fast small model with quality comparable to gpt-image-2; Sunburst is the most capable for precise edits, reference fidelity, and final assets (slower); gpt-image-2 is the previous generation.",
 				},
 			),
 		),

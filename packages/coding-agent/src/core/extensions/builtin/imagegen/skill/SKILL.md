@@ -18,9 +18,9 @@ Check your current tool set before choosing. Tool state can change mid-session (
 
 ## Model selection
 
-- `gpt-image-2.5-flare` (default): fast, quality above gpt-image-2. Use it for drafts, iterations, and everyday assets.
+- `gpt-image-2.5-flare` (default): the small model, about half the latency of gpt-image-2 with comparable quality. Use it for drafts, iterations, and everyday assets.
 - `gpt-image-2.5-sunburst`: most capable; slower. Use it for precise edits, fidelity to reference subjects and products, dense text or diagrams, and final production assets.
-- `gpt-image-2`: previous generation; no transparent backgrounds, quality tiers stop at `high`.
+- `gpt-image-2`: previous generation; quality tiers stop at `high`, transparency is preview-level.
 
 If Sunburst meets the bar, try the same prompt on Flare and keep Flare when the result still passes.
 
@@ -56,7 +56,7 @@ Put the exact string in double quotes, say how many times it appears, and descri
 
 ### Transparent assets
 
-For logos, stickers, cutouts, and UI icons set `background: "transparent"` with `output_format` `png` or `webp`, and also ask for an isolated subject in the prompt ("isolated on a transparent background, no drop shadow"). A drawn checkerboard is not transparency: after saving, confirm the file has an alpha channel (the result reports `Background: transparent` when the provider confirms it) and inspect edges, hair, glass, and shadows. Repeat the transparent requirement on every later edit of that asset. The official API does not offer transparency on `gpt-image-2`; use a 2.5 model.
+For logos, stickers, cutouts, and UI icons set `background: "transparent"` with `output_format` `png` or `webp`, and also ask for an isolated subject in the prompt ("isolated on a transparent background, no drop shadow"). A drawn checkerboard is not transparency: after saving, confirm the file has an alpha channel (the result reports `Background: transparent` when the provider confirms it) and inspect edges, hair, glass, and shadows. Repeat the transparent requirement on every later edit of that asset. On `gpt-image-2` transparency is a preview feature; prefer a 2.5 model and verify the alpha channel either way.
 
 ## Editing with reference images
 
