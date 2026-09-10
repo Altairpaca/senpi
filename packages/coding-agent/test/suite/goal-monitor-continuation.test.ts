@@ -17,6 +17,7 @@ import {
 } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
 import { GOAL_WAIT_STATUS_KEY } from "../../src/core/extensions/builtin/goal/wait-ticker.ts";
+import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
@@ -410,6 +411,31 @@ describe("goal continuation while a monitor is active", () => {
 			.filter((event) => event.channel === "goal_continuation_timer_state")
 			.map((event) => (event.data as { armed: boolean }).armed);
 		expect(timerStates.at(-1)).toBe(false);
+	});
+
+	it("queues no continuation while a turn is awaiting a tool result", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events } = harness;
+		const ctx = await makeGoalContext(notices, "thread-awaiting-tool-result");
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+
+		// The question tool is still executing, so no agent_end arrives. A blocking
+		// question registers no wake source at all; an async one registers this one
+		// mid-turn. Neither may arm a continuation while the turn is still running.
+		events.emit(WAKE_SOURCE_STATE_EVENT, {
+			source: "ask-user",
+			activeCount: 1,
+			items: [{ id: "call-1", description: "Pick a database" }],
+		});
+		await events.flush();
+		await vi.advanceTimersByTimeAsync(1_800_000 + GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS * 2);
+
+		expect(sent).toHaveLength(0);
+		expect(events.emitted.filter((event) => event.channel === "goal_continuation_scheduled")).toHaveLength(0);
 	});
 
 	it("honors the configured goal backstop ceiling", async () => {

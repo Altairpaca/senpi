@@ -70,8 +70,17 @@ export function buildGoalStallNotice(
 				"- Inspect detached eval cells now (eval peek); stop cells that are stalled, obsolete, or waiting on impossible conditions (eval stop).",
 			);
 		}
+		if (sources.has("ask-user")) {
+			advice.push(
+				"- A question to the user is pending; wait for the answer or the timeout, do not ask it again, and do not treat the wait as a stall.",
+			);
+		}
 		for (const source of sources) {
-			if (["terminal-monitors", "terminal-background-sessions", "senpi-task", "senpi-codemode"].includes(source))
+			if (
+				["terminal-monitors", "terminal-background-sessions", "senpi-task", "senpi-codemode", "ask-user"].includes(
+					source,
+				)
+			)
 				continue;
 			advice.push(
 				`- Inspect the live ${source} channel now and stop or replace it if it can no longer make progress.`,
