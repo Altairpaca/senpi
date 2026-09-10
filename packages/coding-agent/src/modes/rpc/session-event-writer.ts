@@ -309,6 +309,7 @@ export class SessionEventWriter {
 	closeSession(sessionId: string, response: object): void {
 		if (this.sealedSessions.has(sessionId)) return;
 		this.sealedSessions.add(sessionId);
+		this.fanout.forgetSession(sessionId);
 		const targetId = this.connectionContext.getStore();
 		const lifecycle = { type: "session_closed", sessionId };
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
