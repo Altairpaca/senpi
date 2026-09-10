@@ -34,7 +34,7 @@ export const defaultEvalDeadlineSeconds: EvalDeadlineSeconds = {
 };
 
 function timeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {
-	return `Run budget in seconds for this cell's own execution (default ${deadlines.runBudgetSeconds}s); time parked in host tool calls such as agent() or tool.* is not charged. When it runs out the cell is killed, and a js cell that cannot settle (a pending Bun.$ command, a synchronous call) restarts its kernel and loses every global. Raise it only for a declared long run; a value above ${deadlines.hardLimitSeconds}s also raises the wall-clock hard limit. It never changes when the call detaches.`;
+	return `Run budget in seconds for this cell's own execution (default ${deadlines.runBudgetSeconds}s); time parked in host tool calls such as agent() or tool.* is not charged. When it runs out the cell is killed, and a js cell that cannot settle (a pending Bun.$ command, a synchronous call) restarts its kernel and loses every global. Raise it only for a declared long run; a value above ${deadlines.hardLimitSeconds}s also raises the wall-clock hard limit. It does not move the detach point.`;
 }
 
 function onTimeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {

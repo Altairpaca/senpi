@@ -19,7 +19,6 @@ import { detachedStatusEntries, detachedWakeSourceState } from "./detached-cell-
 import { DetachedNotificationQueue } from "./detached-notification-queue.ts";
 import type { EvalKernel, EvalLanguage, EvalToolDetails, EvalToolInput } from "./types.ts";
 
-export { hardLimitError } from "./cell-deadlines.ts";
 export type {
 	EvalDetachedCellManagerOptions,
 	EvalDetachedCellNotification,
