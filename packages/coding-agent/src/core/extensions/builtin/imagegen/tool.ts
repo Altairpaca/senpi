@@ -11,7 +11,7 @@ import {
 import { defineTool, type ExtensionContext } from "../../types.ts";
 import { type ImageGenAuthResolution, resolveImageGenAuth } from "./auth.ts";
 import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, IMAGE_MODEL_NAMES, Params } from "./params.ts";
-import { displayPath, resolveTargets } from "./paths.ts";
+import { displayPath, outputFormatOf, resolveTargets, withFormatExtension } from "./paths.ts";
 import { loadMaskImage, loadReferenceImages } from "./reference-images.ts";
 import { imageGenRegistryOverride, isNativeBypass, NATIVE_BYPASS_MESSAGE } from "./state.ts";
 
@@ -177,12 +177,25 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		if (generated.length === 0) {
 			return failure("Error: the provider returned no images.", "provider_error", { ...context, source });
 		}
-		const writeError = await writeImages(targets.paths, generated);
+		// A gateway may ignore output_format; name each file after the bytes it actually holds.
+		const savedFormat = outputFormatOf(generated[0]?.mimeType ?? "") ?? outputFormat;
+		const paths =
+			savedFormat === outputFormat
+				? targets.paths
+				: targets.paths.map((target) => withFormatExtension(target, savedFormat));
+		if (savedFormat !== outputFormat && paths.some((target) => existsSync(target))) {
+			return failure(
+				`Error: the provider returned ${savedFormat} instead of ${outputFormat} and ${displayPath(ctx.cwd, paths[0] ?? "")} already exists. Choose another output_path.`,
+				"write_failed",
+				{ ...context, source },
+			);
+		}
+		const writeError = await writeImages(paths, generated);
 		if (writeError !== undefined) {
 			return failure(writeError, "write_failed", { ...context, source });
 		}
 
-		const savedPaths = targets.paths.slice(0, generated.length).map((target) => displayPath(ctx.cwd, target));
+		const savedPaths = paths.slice(0, generated.length).map((target) => displayPath(ctx.cwd, target));
 		const revisedPrompts = generated.flatMap((image) => (image.revisedPrompt ? [image.revisedPrompt] : []));
 		const details: GenerateImageDetails = {
 			paths: savedPaths,
@@ -191,7 +204,7 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			size,
 			quality,
 			background,
-			outputFormat,
+			outputFormat: savedFormat,
 			requested,
 			generated: generated.length,
 			revisedPrompts,
@@ -200,6 +213,11 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		const summary = [
 			`Generated ${generated.length} image${generated.length === 1 ? "" : "s"}:`,
 			...savedPaths.map((path) => `- ${path}`),
+			...(savedFormat === outputFormat
+				? []
+				: [
+						`Note: the provider returned ${savedFormat} instead of the requested ${outputFormat}; saved with the matching extension.`,
+					]),
 			...(images.background === undefined ? [] : [`Background: ${images.background}`]),
 			...revisedPrompts.map((revised) => `Revised prompt: ${revised}`),
 			"The saved file is the deliverable; refer to it by path instead of re-embedding image data.",

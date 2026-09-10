@@ -19,6 +19,7 @@ vi.mock("openai", () => ({
 }));
 
 const png: ImageContent = { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" };
+const ENCODED = { png: png.data, jpeg: "/9j/4AAQSkZJRg==", webp: "UklGRiQAAABXRUJQVlA4" } as const;
 const mask: ImageContent = { type: "image", data: "iVBORw0KGgoAAAANSUhEUg==", mimeType: "image/png" };
 const model: ImagesModel<"openai-images"> = {
 	id: "gpt-image-2.5-flare",
@@ -88,8 +89,16 @@ describe("OpenAI images output options", () => {
 		["jpeg", "image/jpeg"],
 		["webp", "image/webp"],
 	] as const)("labels b64 payloads with the %s MIME type", async (outputFormat, mimeType) => {
+		mockState.response = { ...mockState.response, data: [{ b64_json: ENCODED[outputFormat] }] };
 		const result = await run({ outputFormat });
-		expect(result.output).toEqual([{ type: "image", data: png.data, mimeType }]);
+		expect(result.output).toEqual([{ type: "image", data: ENCODED[outputFormat], mimeType }]);
+	});
+
+	it("labels b64 payloads by their magic bytes when a gateway ignores output_format", async () => {
+		const result = await run({ outputFormat: "webp" });
+		expect(result.output).toEqual([{ type: "image", data: png.data, mimeType: "image/png" }]);
+		mockState.response = { ...mockState.response, data: [{ b64_json: "AAAAAAAAAAAAAAAAAAAAAAAA" }] };
+		expect((await run({ outputFormat: "webp" })).output[0]).toMatchObject({ mimeType: "image/webp" });
 	});
 
 	it("echoes the response background and leaves it unset for auto", async () => {

@@ -14,14 +14,21 @@ export function requestedOutputFormat(value: unknown): OpenAIImageOutputFormat {
 	return value === "jpeg" || value === "webp" ? value : "png";
 }
 
-/** Decodes one response datum: inline base64 carries the requested container; URLs are hydrated and sniffed. */
+/**
+ * Decodes one response datum. Inline base64 is labeled by its magic bytes, falling back to
+ * the requested container only when the header is unrecognizable: gateways can ignore
+ * `output_format` and return png, and a wrong label would follow the file to disk.
+ */
 export async function resolveImage(
 	datum: Image,
 	outputFormat: OpenAIImageOutputFormat,
 	options?: OpenAIImagesOptions,
 ): Promise<ImageContent> {
 	const b64 = datum.b64_json?.trim();
-	if (b64) return { type: "image", mimeType: `image/${outputFormat}`, data: b64 };
+	if (b64) {
+		const detected = detectMime(Buffer.from(b64.slice(0, 24), "base64"));
+		return { type: "image", mimeType: detected ?? `image/${outputFormat}`, data: b64 };
+	}
 	const url = datum.url?.trim();
 	if (!url) throw new Error("OpenAI images response datum contained no image data");
 	if (url.startsWith("data:")) return parseDataUrl(url);

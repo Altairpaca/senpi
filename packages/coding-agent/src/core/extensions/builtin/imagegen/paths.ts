@@ -71,6 +71,23 @@ export function resolveTargets(
 	};
 }
 
+/** The output format a returned MIME type denotes, or undefined for anything outside the supported three. */
+export function outputFormatOf(mimeType: string): OutputFormat | undefined {
+	if (mimeType === "image/png") return "png";
+	if (mimeType === "image/jpeg") return "jpeg";
+	if (mimeType === "image/webp") return "webp";
+	return undefined;
+}
+
+/** Swaps a target's extension so the file name matches the bytes a provider actually returned. */
+export function withFormatExtension(path: string, outputFormat: OutputFormat): string {
+	const extension = EXTENSIONS[outputFormat][0] ?? ".png";
+	const extensionMatch = /\.[^./\\]+$/.exec(path);
+	const current = extensionMatch?.[0].toLowerCase();
+	if (current !== undefined && EXTENSIONS[outputFormat].includes(current)) return path;
+	return extensionMatch ? `${path.slice(0, -extensionMatch[0].length)}${extension}` : `${path}${extension}`;
+}
+
 /** Prefers a path relative to the working directory, falling back to absolute. */
 export function displayPath(cwd: string, absolute: string): string {
 	const relativePath = relative(cwd, absolute);

@@ -9,7 +9,7 @@ import { createHarness, type Harness } from "./suite/harness.ts";
 
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl3T2QAAAAASUVORK5CYII=";
 const STUB_SOURCE_ID = "imagegen-tool-output-options-stub";
-const stub = { background: undefined as AssistantImages["background"] };
+const stub = { background: undefined as AssistantImages["background"], mimeType: undefined as string | undefined };
 const generate = vi.fn(
 	async (
 		model: ImagesModel<"openai-images">,
@@ -24,7 +24,7 @@ const generate = vi.fn(
 			() => ({
 				type: "image" as const,
 				data: PNG_BASE64,
-				mimeType: `image/${options?.outputFormat ?? "png"}`,
+				mimeType: stub.mimeType ?? `image/${options?.outputFormat ?? "png"}`,
 			}),
 		),
 		...(stub.background === undefined ? {} : { background: stub.background }),
@@ -47,6 +47,7 @@ beforeEach(async () => {
 	});
 	generate.mockClear();
 	stub.background = undefined;
+	stub.mimeType = undefined;
 	registerImagesApiProvider({ api: "openai-images", generateImages: generate }, STUB_SOURCE_ID);
 	harness = await createHarness({ extensionFactories: [(pi) => pi.registerTool(generateImageTool)] });
 	await harness.session.bindExtensions({});
@@ -180,6 +181,17 @@ describe("generate_image output options", () => {
 		});
 		expect(result.details).toMatchObject({ reason: "invalid_params", error: expect.stringContaining("mask.png") });
 		expect(generate).not.toHaveBeenCalled();
+	});
+
+	it("renames the file when the provider returns a different format than requested", async () => {
+		stub.mimeType = "image/png";
+		const result = await execute({ prompt: "a red fox", output_format: "webp", output_path: "art/fox.webp" });
+		expect(result.details).toMatchObject({ paths: ["art/fox.png"], outputFormat: "png" });
+		expect(existsSync(join(harness.tempDir, "art/fox.png"))).toBe(true);
+		expect(existsSync(join(harness.tempDir, "art/fox.webp"))).toBe(false);
+		expect(result.content.find((block) => block.type === "text")).toMatchObject({
+			text: expect.stringContaining("returned png instead of the requested webp"),
+		});
 	});
 
 	it("reports the provider's transparency verdict", async () => {
