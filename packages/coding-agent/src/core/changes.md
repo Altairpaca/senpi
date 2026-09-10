@@ -1,3 +1,20 @@
+## Honor an inline isError on executeTool results (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the direct `executeTool` path sets `isError = result.isError === true` after a tool settles, so `tool_result` hooks observe the same error flag the agent loop now derives from a returned `isError: true`.
+
+### Why
+
+- A tool that reports a structured failure without throwing was delivered to `tool_result` hooks as a success on the `pi.executeTool` path, diverging from the agent-loop path fixed in `packages/agent/src/agent-loop.ts`.
+
+### Why an extension could not handle it
+
+- The flag is computed inside `AgentSession` before hooks run; a hook can only override it after the fact and per tool.
+
+### Expected merge conflict zones
+
+- LOW: the `executeTool` try block in `packages/coding-agent/src/core/agent-session.ts`.
 ## askUser settings and --no-ask-user session override (2026-09-10)
 
 ### What changed
