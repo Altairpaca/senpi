@@ -23,15 +23,27 @@ function isSdkOauthAccountExhaustion(
 // code/payload. Match that diagnostic, never ordinary assistant text.
 const CODEX_POLICY_ERROR_PATTERN =
 	/^(?:Codex error: )?This request was blocked by our safety systems\.(?: Reason: .+)?$/i;
+const CODEX_RESPONSES_API = "openai-codex-responses";
+
+/**
+ * The sentence above is a provider-agnostic string with no policy code, so it is
+ * only trustworthy as a terminal policy signal on the API that produces it.
+ * Another provider or gateway emitting the same text keeps the existing
+ * provider/system recovery path instead of being stranded as blocked.
+ */
+function isCodexPolicyRejection(message: { api?: string; stopReason?: string; errorMessage?: string }): boolean {
+	if (message.api !== CODEX_RESPONSES_API) return false;
+	if (message.stopReason !== "error") return false;
+	return CODEX_POLICY_ERROR_PATTERN.test(message.errorMessage ?? "");
+}
 
 export function didTerminalPolicyRejectionEndTurn(event: AgentEndEvent): boolean {
 	if (event.willRetry !== false) return false;
 	const message = lastAssistantMessage(event.messages);
 	if (message === undefined) return false;
-	return (
-		isClassifierRefusal(message) ||
-		(message.stopReason === "error" && CODEX_POLICY_ERROR_PATTERN.test(message.errorMessage ?? ""))
-	);
+	// Structured refusals carry their own provider-independent policy details;
+	// only the unstructured Codex diagnostic needs the identity check.
+	return isClassifierRefusal(message) || isCodexPolicyRejection(message);
 }
 
 export function didTerminalProviderErrorEndTurn(event: AgentEndEvent): boolean {

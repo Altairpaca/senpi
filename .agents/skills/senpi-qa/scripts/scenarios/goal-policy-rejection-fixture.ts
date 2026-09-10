@@ -7,8 +7,13 @@ import type { ExtensionAPI, ExtensionContext } from "../../../../../packages/cod
 export default function policyRecoveryFixture(pi: ExtensionAPI): void {
 	const scenario = process.env.SENPI_QA_POLICY_CASE;
 	if (scenario !== "policy" && scenario !== "infrastructure") throw new Error("Unknown policy QA scenario");
+	// The faux provider stamps its own `api` onto every response, so the policy
+	// lane must register under the Codex API id: that identity is exactly what the
+	// predicate requires before trusting the unstructured diagnostic. The
+	// infrastructure lane keeps a non-Codex api, which also proves the identity
+	// gate does not swallow ordinary provider failures.
 	const faux = fauxProvider({
-		api: "faux-policy-qa",
+		api: scenario === "policy" ? "openai-codex-responses" : "faux-policy-qa",
 		provider: "faux-policy-qa",
 		models: [{ id: "policy-qa", contextWindow: 1_000_000, maxTokens: 4_096 }],
 	});

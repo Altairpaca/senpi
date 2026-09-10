@@ -13,6 +13,15 @@ import {
 const CODEX_POLICY_ERROR =
 	"Codex error: This request was blocked by our safety systems. Reason: Potentially unintended activity.";
 
+// `fauxAssistantMessage` hardcodes `api`, so the Codex identity this predicate
+// now requires has to be applied to the returned message.
+function codexPolicyMessage() {
+	return {
+		...fauxAssistantMessage("", { stopReason: "error", errorMessage: CODEX_POLICY_ERROR }),
+		api: "openai-codex-responses" as const,
+	};
+}
+
 async function setupGoal() {
 	const harness = createGoalHarness();
 	const ctx = await makeGoalContext([], "policy-rejection");
@@ -33,10 +42,7 @@ describe("terminal policy goal recovery", () => {
 	// Regression for #1520: exercise agent_end routing through the real monitor's
 	// agent_settled admission and sendMessage, not just the error predicate.
 	it.each([
-		[
-			"Codex backend policy error",
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: CODEX_POLICY_ERROR }),
-		],
+		["Codex backend policy error", codexPolicyMessage()],
 		["structured refusal", fauxAssistantMessage("", { stopReason: "error", stopDetails: { type: "refusal" } })],
 		[
 			"structured sensitive stop",
@@ -130,6 +136,32 @@ describe("terminal policy goal recovery", () => {
 		},
 	);
 
+	// The unstructured diagnostic is Codex-specific and carries no policy code, so
+	// matching it on any provider would strand an otherwise recoverable goal on a
+	// gateway that happens to emit the same sentence.
+	it.each([
+		["anthropic-messages", "anthropic-messages"],
+		["an unknown gateway", "openai-completions"],
+	])("recovers instead of blocking when %s reports the same diagnostic", async (_name, api) => {
+		const { harness, ctx, goal } = await setupGoal();
+		const event: AgentEndEvent = {
+			type: "agent_end",
+			messages: [{ ...codexPolicyMessage(), api }],
+			willRetry: false,
+		};
+
+		await runGoalHandlers(harness.handlers, "agent_end", event, ctx);
+		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
+
+		expect(harness.sent).toHaveLength(1);
+		expect(harness.sent[0]?.message.customType).toBe("goal-continuation");
+		expect(await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd))).toMatchObject({
+			id: goal?.id,
+			status: "active",
+		});
+	});
+
 	it("does not treat ordinary assistant text about safety blocks as a policy error", async () => {
 		const { harness, ctx } = await setupGoal();
 		await runGoalHandlers(
@@ -170,7 +202,7 @@ describe("terminal policy goal recovery", () => {
 				aborted: true,
 				abortSource: "system",
 				willRetry: false,
-				messages: [fauxAssistantMessage("", { stopReason: "error", errorMessage: CODEX_POLICY_ERROR })],
+				messages: [codexPolicyMessage()],
 			},
 			ctx,
 		);
