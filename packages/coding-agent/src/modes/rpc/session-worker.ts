@@ -67,7 +67,14 @@ class WorkerEventWriter extends SessionEventWriter {
 		const session = entry?.runtime?.session;
 		if (!session) throw new Error("Session output preceded runtime creation");
 		const activity = { busy: session.isSessionBusy, streaming: session.isStreaming };
-		const replacement = "type" in record && record.type === "session_replaced" ? snapshot() : undefined;
+		const replacement =
+			"type" in record &&
+			(record.type === "session_replaced" ||
+				record.type === "question_resolved" ||
+				record.type === "question_updated" ||
+				(record.type === "extension_ui_request" && "method" in record && record.method === "question"))
+				? snapshot()
+				: undefined;
 		if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
 			failWorker("session_worker_snapshot_limit");
 		exchange((signal) => ({
@@ -203,7 +210,12 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			return;
 		}
 		case "command": {
-			if (!binding || closing) throw new Error("session_closing");
+			const privileged =
+				"type" in message.command &&
+				["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(
+					String(message.command.type),
+				);
+			if (!binding || (closing && !privileged)) throw new Error("session_closing");
 			applyDisplay(message.display);
 			const activeBinding = binding;
 			await (message.connection === undefined

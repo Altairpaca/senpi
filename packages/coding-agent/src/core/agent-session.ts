@@ -1259,6 +1259,9 @@ export class AgentSession {
 		if (noModelFallback) {
 			this.settingsManager.applyOverrides({ retry: { modelFallback: false } });
 		}
+		if (config.resourceLoader.getExtensions().runtime.flagValues.get("no-ask-user") === true) {
+			this.settingsManager.applyOverrides({ askUser: { enabled: false } });
+		}
 		this._scopedModels = config.scopedModels ?? [];
 		this._favoriteModels = config.favoriteModels ?? [];
 		this._resourceLoader = config.resourceLoader;
@@ -7254,6 +7257,7 @@ export class AgentSession {
 						models: project?.models ?? global?.models,
 					};
 				},
+				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
 				getImageSettings: () => ({
 					autoResize: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),

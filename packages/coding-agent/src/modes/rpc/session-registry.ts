@@ -247,7 +247,10 @@ export class RpcSessionRegistry {
 	getForCommand(handle: string, command: string): RpcSessionEntry {
 		const entry = this.entries.get(handle);
 		if (!entry) throw new RpcSessionRegistryError("unknown_session");
-		if (entry.state === "closing" && !["abort", "abort_bash", "extension_ui_response"].includes(command)) {
+		if (
+			entry.state === "closing" &&
+			!["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(command)
+		) {
 			throw new RpcSessionRegistryError("session_closing");
 		}
 		if (entry.state !== "open" && entry.state !== "closing") throw new RpcSessionRegistryError("unknown_session");

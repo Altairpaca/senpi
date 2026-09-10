@@ -23,6 +23,15 @@ export interface LookAtSettings {
 	models?: string[]; // default: undefined (use the default look-at chain)
 }
 
+export const ASK_USER_DEFAULT_TIMEOUT_MINUTES = 30;
+export const ASK_USER_MIN_TIMEOUT_MINUTES = 1;
+export const ASK_USER_MAX_TIMEOUT_MINUTES = 120;
+
+export interface AskUserSettings {
+	enabled?: boolean; // default: true
+	timeoutMinutes?: number; // default: 30, clamped to 1-120 when read
+}
+
 export interface ThinkingBudgetsSettings {
 	minimal?: number;
 	low?: number;

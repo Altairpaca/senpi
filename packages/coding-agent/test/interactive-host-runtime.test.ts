@@ -158,14 +158,15 @@ async function waitForHost(child: ChildProcessWithoutNullStreams, socket: string
 }
 
 describe("interactive host runtime", () => {
-	it("re-registers rendered capability and last width after reconnect", async () => {
+	it("re-registers rendered and question capabilities plus the last width after reconnect", async () => {
 		const setClientInfo = vi.fn(async () => {});
 		const runtime = new RemoteInteractiveRuntime({} as AgentSessionRuntime, {} as never, { setClientInfo } as never);
 		runtime.setClientInfo(117);
 		await Promise.resolve();
 		await runtime.reRegisterClientInfo();
-		expect(setClientInfo).toHaveBeenNthCalledWith(1, 117, ["rendered_components"]);
-		expect(setClientInfo).toHaveBeenNthCalledWith(2, 117, ["rendered_components"]);
+		// Without "question" a host-attached TUI degrades to sequential select/input prompts.
+		expect(setClientInfo).toHaveBeenNthCalledWith(1, 117, ["rendered_components", "question"]);
+		expect(setClientInfo).toHaveBeenNthCalledWith(2, 117, ["rendered_components", "question"]);
 	});
 	it("replays only own-session and untagged startup events", async () => {
 		const cwd = tmpdir();

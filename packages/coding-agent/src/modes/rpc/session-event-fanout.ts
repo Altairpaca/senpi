@@ -61,6 +61,7 @@ function snapshotPlaceholderLine(record: SnapshotRecord): string {
 export class SessionEventFanout {
 	private readonly connections = new Map<string, RegisteredConnection>();
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
+	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
 	private readonly connectionCapabilities = new Map<string, Set<string>>();
 	private readonly connectionSessions = new Map<string, Set<string>>();
 	private readonly registeredCapabilityConnections = new Set<string>();
@@ -109,6 +110,14 @@ export class SessionEventFanout {
 		sessions.add(sessionId);
 		this.connectionSessions.set(id, sessions);
 		this.replaySnapshot(id, sessionId);
+		for (const frame of this.pendingQuestions.get(sessionId)?.values() ?? []) {
+			this.connections.get(id)?.actor.enqueue(
+				serializeJsonLine({
+					...frame,
+					remainingMs: typeof frame.deadlineAtMs === "number" ? Math.max(0, frame.deadlineAtMs - Date.now()) : 0,
+				}),
+			);
+		}
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
@@ -200,6 +209,21 @@ export class SessionEventFanout {
 		placeholderLine?: string,
 		source?: Record<string, unknown>,
 	): void {
+		if (value.type === "extension_ui_request" && value.method === "question" && typeof value.id === "string") {
+			const pending = this.pendingQuestions.get(sessionId) ?? new Map<string, Record<string, unknown>>();
+			pending.set(value.id, { ...value });
+			this.pendingQuestions.set(sessionId, pending);
+			return;
+		}
+		if (value.type === "question_resolved" && typeof value.id === "string") {
+			this.pendingQuestions.get(sessionId)?.delete(value.id);
+			return;
+		}
+		if (value.type === "question_updated" && typeof value.id === "string") {
+			const frame = this.pendingQuestions.get(sessionId)?.get(value.id);
+			if (frame) Object.assign(frame, { deadlineAtMs: value.deadlineAtMs, remainingMs: value.remainingMs });
+			return;
+		}
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
 		const record: SnapshotRecord = {
 			line,
@@ -216,6 +240,7 @@ export class SessionEventFanout {
 	}
 
 	forgetSession(sessionId: string): void {
+		this.pendingQuestions.delete(sessionId);
 		this.sessionSnapshots.delete(sessionId);
 	}
 
