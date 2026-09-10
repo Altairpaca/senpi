@@ -89,7 +89,7 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 	name: GENERATE_IMAGE_TOOL_NAME,
 	label: "Generate Image",
 	description:
-		"Generate or edit an image with OpenAI gpt-image-2.5 (Flare by default; Sunburst for precise edits and final assets) and save it as a png, jpeg, or webp file, optionally with a transparent background. Pass reference_image_paths to edit or reference existing images. Generate directly when the request is clear instead of asking for confirmation. Returns the saved file paths.",
+		"Generate or edit an image with OpenAI gpt-image-2.5 (Sunburst by default, the most capable; Flare when speed matters more than quality) and save it as a png, jpeg, or webp file, optionally with a transparent background. Pass reference_image_paths to edit or reference existing images. Generate directly when the request is clear instead of asking for confirmation. Returns the saved file paths.",
 	promptSnippet:
 		"Generate or edit images from prompts and optional reference images, saving them as png/jpeg/webp files.",
 	parameters: Params,

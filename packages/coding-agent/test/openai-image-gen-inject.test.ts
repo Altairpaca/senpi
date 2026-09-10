@@ -16,7 +16,7 @@ describe("native image_generation injection", () => {
 	it("injects the server tool pinned to the default image model", () => {
 		const payload = applyImageGenerationTools({ tools: [GENERATE_IMAGE, READ] }, "native");
 		expect(tools(payload)).toEqual([READ, { type: "image_generation", model: DEFAULT_IMAGE_MODEL }]);
-		expect(DEFAULT_IMAGE_MODEL).toBe("gpt-image-2.5-flare");
+		expect(DEFAULT_IMAGE_MODEL).toBe("gpt-image-2.5-sunburst");
 	});
 
 	it("replaces pre-existing native entries so exactly one pinned entry remains", () => {

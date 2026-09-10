@@ -18,11 +18,11 @@ Check your current tool set before choosing. Tool state can change mid-session (
 
 ## Model selection
 
-- `gpt-image-2.5-flare` (default): the small model, optimized for speed, with quality comparable to gpt-image-2. Use it for drafts, iterations, and everyday assets.
-- `gpt-image-2.5-sunburst`: most capable; slower. Use it for precise edits, fidelity to reference subjects and products, dense text or diagrams, and final production assets.
+- `gpt-image-2.5-sunburst` (default): the base model, optimized for quality, above gpt-image-2. Use it for precise edits, fidelity to reference subjects and products, dense text or diagrams, and final production assets.
+- `gpt-image-2.5-flare`: the small model, optimized for speed, with quality comparable to gpt-image-2. Reach for it when latency or volume matters more than the last increment of quality.
 - `gpt-image-2`: previous generation; quality tiers stop at `high`, transparency is preview-level.
 
-If Sunburst meets the bar, try the same prompt on Flare and keep Flare when the result still passes.
+The default is the better model on purpose. When a workflow turns out to be latency-sensitive, run the same prompt and inputs on Flare and switch only if the result still meets the bar.
 
 ## Prompt crafting
 
