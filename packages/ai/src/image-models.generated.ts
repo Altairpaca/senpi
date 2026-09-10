@@ -18,6 +18,7 @@ export const IMAGE_MODELS = {
 				output: 30,
 				cacheRead: 1.25,
 				cacheWrite: 0,
+				imageInput: 8,
 			},
 		} satisfies ImagesModel<"openai-images">,
 		"gpt-image-2.5-flare": {
@@ -33,6 +34,7 @@ export const IMAGE_MODELS = {
 				output: 30,
 				cacheRead: 1.25,
 				cacheWrite: 0,
+				imageInput: 8,
 			},
 		} satisfies ImagesModel<"openai-images">,
 		"gpt-image-2": {
@@ -48,6 +50,7 @@ export const IMAGE_MODELS = {
 				output: 30,
 				cacheRead: 1.25,
 				cacheWrite: 0,
+				imageInput: 8,
 			},
 		} satisfies ImagesModel<"openai-images">,
 		"gpt-image-1.5": {

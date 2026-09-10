@@ -1,3 +1,21 @@
+## 2026-09-10 - Image input token rate in the static OpenAI image catalog
+
+### What changed
+
+- `packages/ai/scripts/generate-image-models.ts`: `OPENAI_IMAGE_MODELS` entries for `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, and `gpt-image-2` carry `imageInput: 8` (USD per million image input tokens), regenerated into `packages/ai/src/image-models.generated.ts` with `--strict`; the OpenRouter block is unchanged.
+
+### Why
+
+- OpenAI bills image inputs (references, edit targets, masks) at $8/M against $5/M for text, so a single `input` rate under-reported every edit request.
+
+### Why an extension could not handle it
+
+- The builtin image catalog is generated data loaded before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `OPENAI_IMAGE_MODELS` array and its comment block.
+
 ## 2026-09-09 - GPT Image 2.5 entries in the static OpenAI image catalog
 
 ### What changed

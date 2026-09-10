@@ -96,8 +96,8 @@ export function parseOpenRouterImageModels(
 // https://platform.openai.com/docs/models/gpt-image-2.5-sunburst
 // https://platform.openai.com/docs/models/gpt-image-2.5-flare
 // https://platform.openai.com/docs/models/gpt-image-2
-// GPT Image 2/2.5: $5 text input / $30 image output / $1.25 cache-read per
-// 1M tokens ($8 image input, not separately represented by ImagesModel.cost).
+// GPT Image 2/2.5: $5 text input / $8 image input / $30 image output / $1.25
+// cache-read per 1M tokens (`imageInput` prices reference and edit inputs).
 // Keep the existing gpt-image-1.5 zero-filled pricing unchanged.
 // GPT Image 2/2.5 accept text generation and reference images via /images/edits.
 const OPENAI_IMAGE_MODELS: ImagesModel<"openai-images">[] = [
@@ -109,7 +109,7 @@ const OPENAI_IMAGE_MODELS: ImagesModel<"openai-images">[] = [
 		baseUrl: "https://api.openai.com/v1",
 		input: ["text", "image"],
 		output: ["image"],
-		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0 },
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
 	},
 	{
 		id: "gpt-image-2.5-flare",
@@ -119,7 +119,7 @@ const OPENAI_IMAGE_MODELS: ImagesModel<"openai-images">[] = [
 		baseUrl: "https://api.openai.com/v1",
 		input: ["text", "image"],
 		output: ["image"],
-		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0 },
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
 	},
 	{
 		id: "gpt-image-2",
@@ -129,7 +129,7 @@ const OPENAI_IMAGE_MODELS: ImagesModel<"openai-images">[] = [
 		baseUrl: "https://api.openai.com/v1",
 		input: ["text", "image"],
 		output: ["image"],
-		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0 },
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
 	},
 	{
 		id: "gpt-image-1.5",

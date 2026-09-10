@@ -1,23 +1,36 @@
 import type { Uploadable } from "openai";
 import type { ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
-import type { ImagesContext, ImagesModel, ImagesOptions } from "../types.ts";
+import type { ImageContent, ImagesContext, ImagesModel, ImagesOptions } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 const MAX_PROMPT_CHARS = 32_000;
 
 export type OpenAIImageQuality = "auto" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAIImageSize = "auto" | "1024x1024" | "1536x1024" | "1024x1536" | `${number}x${number}`;
+export type OpenAIImageBackground = "auto" | "transparent" | "opaque";
+export type OpenAIImageOutputFormat = "png" | "jpeg" | "webp";
+export type OpenAIImageModeration = "auto" | "low";
 
 export interface OpenAIImagesOptions extends ImagesOptions {
 	size?: OpenAIImageSize;
 	quality?: OpenAIImageQuality;
 	n?: number;
+	/** Output transparency. `transparent` requires `outputFormat` png or webp. */
+	background?: OpenAIImageBackground;
+	/** Container of the returned bytes. Default png. */
+	outputFormat?: OpenAIImageOutputFormat;
+	/** 0-100 compression for jpeg/webp output only. */
+	outputCompression?: number;
+	moderation?: OpenAIImageModeration;
+	/** Inpainting mask applied to the first input image; requires at least one image input. */
+	mask?: ImageContent;
 }
 
 export type OpenAIImageParams = Omit<ImageGenerateParamsNonStreaming, "size" | "quality"> & {
 	size?: OpenAIImageSize;
 	quality?: OpenAIImageQuality;
 	image?: Uploadable[];
+	mask?: Uploadable;
 };
 
 export function parseOpenAIImageSize(size: string): { ok: true; size: string } | { ok: false; error: string } {
@@ -43,6 +56,44 @@ export function parseOpenAIImageSize(size: string): { ok: true; size: string } |
 	return { ok: true, size };
 }
 
+export interface OpenAIImageOutputOptionsInput {
+	background?: OpenAIImageBackground | undefined;
+	outputFormat?: OpenAIImageOutputFormat | undefined;
+	outputCompression?: number | undefined;
+	/** Whether an inpainting mask accompanies the request. */
+	hasMask: boolean;
+	/** Number of image inputs (references or edit targets) in the request. */
+	imageCount: number;
+}
+
+export type OpenAIImageOutputOptions =
+	| { ok: true; outputFormat: OpenAIImageOutputFormat }
+	| { ok: false; error: string };
+
+/**
+ * Validates the output-shaping options before any request leaves the process.
+ * Mirrors the Images API contract: transparency needs an alpha-capable container,
+ * compression is a jpeg/webp-only integer percentage, and a mask edits an image.
+ */
+export function parseOpenAIImageOutputOptions(input: OpenAIImageOutputOptionsInput): OpenAIImageOutputOptions {
+	const outputFormat = input.outputFormat ?? "png";
+	if (input.background === "transparent" && outputFormat === "jpeg") {
+		return { ok: false, error: "OpenAI image background transparent requires output_format png or webp" };
+	}
+	if (input.outputCompression !== undefined) {
+		if (outputFormat === "png") {
+			return { ok: false, error: "OpenAI image output_compression requires output_format jpeg or webp" };
+		}
+		if (!Number.isInteger(input.outputCompression) || input.outputCompression < 0 || input.outputCompression > 100) {
+			return { ok: false, error: "OpenAI image output_compression must be an integer between 0 and 100" };
+		}
+	}
+	if (input.hasMask && input.imageCount === 0) {
+		return { ok: false, error: "OpenAI image mask requires at least one input image" };
+	}
+	return { ok: true, outputFormat };
+}
+
 export function buildParams(
 	model: ImagesModel<"openai-images">,
 	context: ImagesContext,
@@ -62,14 +113,25 @@ export function buildParams(
 	const size = options?.size ?? "auto";
 	const parsedSize = parseOpenAIImageSize(size);
 	if (!parsedSize.ok) throw new Error(parsedSize.error);
+	const output = parseOpenAIImageOutputOptions({
+		background: options?.background,
+		outputFormat: options?.outputFormat,
+		outputCompression: options?.outputCompression,
+		hasMask: options?.mask !== undefined,
+		imageCount: context.input.filter((item) => item.type === "image").length,
+	});
+	if (!output.ok) throw new Error(output.error);
 	return {
 		model: model.id,
 		prompt,
 		size,
 		quality: options?.quality ?? "auto",
 		n: options?.n ?? 1,
-		output_format: "png",
+		output_format: output.outputFormat,
 		stream: false,
+		...(options?.background === undefined ? {} : { background: options.background }),
+		...(options?.outputCompression === undefined ? {} : { output_compression: options.outputCompression }),
+		...(options?.moderation === undefined ? {} : { moderation: options.moderation }),
 	};
 }
 

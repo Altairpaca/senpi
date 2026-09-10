@@ -1,3 +1,24 @@
+## 2026-09-10 - Output options, masks, Flare default, and catalog pricing
+
+### What changed
+
+- `params.ts`: schema adds `background`, `output_format`, `output_compression`, `moderation`, and `mask_image_path`; `DEFAULT_IMAGE_MODEL` is `gpt-image-2.5-flare`; `GenerateImageDetails` gains `background`, `outputFormat`, and `transparentBackground`.
+- `paths.ts`: `resolveTargets` derives the extension from the format (`.png`, `.jpg`/`.jpeg`, `.webp`), rejects mismatches, and `withFormatExtension`/`outputFormatOf` rename a target when the provider returns a different container than requested.
+- `reference-images.ts`: `loadMaskImage` reuses the reference loader and requires at least one reference.
+- `tool.ts`: validates output options through `parseOpenAIImageOutputOptions` before any request, forwards them to pi-ai, takes `cost` from `getImageModel("openai", id)`, labels result blocks with the returned MIME, and reports the provider's background verdict.
+
+### Why
+
+- GPT Image 2.5 exposes transparency, container, compression, moderation, and inpainting controls the tool did not surface; OpenAI names Flare the default for most applications; usage cost was hard-coded to zero; and a live Quotio run returned png bytes for a webp request, which would have been saved as `.webp`.
+
+### Why an extension could not handle it
+
+- The owning builtin's schema, validation, file naming, and result shape must change together.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tool.ts` execute path; LOW: `params.ts`, `paths.ts`, `reference-images.ts`, tests, `skill/SKILL.md`.
+
 # changes
 
 ## 2026-09-09 - GPT Image 2.5 generation and reference-image editing

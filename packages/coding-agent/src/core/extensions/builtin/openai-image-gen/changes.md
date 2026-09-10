@@ -1,3 +1,21 @@
+## 2026-09-10 - Pin the native image_generation model
+
+### What changed
+
+- `inject.ts`: the injected server tool is `{ type: "image_generation", model: DEFAULT_IMAGE_MODEL }` instead of a bare `{ type: "image_generation" }`; dedupe and strip semantics are unchanged.
+
+### Why
+
+- The OpenAI Responses tool defaults `model` to `gpt-image-1` when omitted, so official-endpoint sessions rendered with a first-generation model while the client tool used 2.5.
+
+### Why an extension could not handle it
+
+- The injector is the single owner of the native tool entry; a second injector would be stripped by the dedupe pass.
+
+### Expected merge conflict zones
+
+- LOW: the single injected literal in `inject.ts`.
+
 # openai-image-gen builtin — changes
 
 ## message_end externalization of native image results (2026-08-11)

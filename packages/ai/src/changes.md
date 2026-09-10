@@ -1,3 +1,28 @@
+## 2026-09-10 - OpenAI images output options, masks, and image-token pricing
+
+### What changed
+
+- `packages/ai/src/api/openai-images-params.ts`: `OpenAIImagesOptions` gains `background`, `outputFormat`, `outputCompression`, `moderation`, and `mask`; `buildParams` forwards them and `parseOpenAIImageOutputOptions` (exported through compat) rejects transparent+jpeg, compression on png, non-integer or out-of-range compression, and a mask without an input image before any request.
+- `packages/ai/src/api/openai-images-edit.ts`: uploads the mask as `mask.<ext>` next to the reference images.
+- `packages/ai/src/images.ts`: re-exports `parseOpenAIImageOutputOptions`, `OpenAIImageBackground`, `OpenAIImageOutputFormat`, `OpenAIImageModeration`, and `OpenAIImageOutputOptions` through the compat surface.
+- `packages/ai/src/api/openai-images-result.ts` (moved out of `openai-images.ts` for the LOC ceiling): b64 payloads are labeled by their magic bytes, falling back to the requested container; URL hydration is unchanged.
+- `packages/ai/src/api/openai-images.ts`: echoes the response `background`, and `parseUsage` prices `input_tokens_details.image_tokens` with `cost.imageInput ?? cost.input`.
+- `packages/ai/src/types.ts`: `ImagesModelCost.imageInput`, `AssistantImages.background`, and `KnownImagesProvider` now includes `openai` so `getImageModel("openai", id)` type-checks.
+- `packages/ai/scripts/generate-image-models.ts` + regenerated `image-models.generated.ts`: `imageInput: 8` on gpt-image-2 and both 2.5 entries.
+
+### Why
+
+- GPT Image 2.5 supports transparent backgrounds, jpeg/webp containers, compression, moderation, and inpainting masks that the adapter could not request; image input tokens are billed at $8/M, not the $5/M text rate; and a gateway that ignores `output_format` returned png bytes labeled `image/webp`.
+
+### Why an extension could not handle it
+
+- The wire payload, response decoding, and usage pricing live inside the provider adapter behind the compat surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: `openai-images.ts` (helper extraction) and `openai-images-params.ts`.
+- LOW: `types.ts` additions, generator array, tests.
+
 ## 2026-09-09 - GPT Image 2.5 generation and reference-image editing
 
 ### What changed

@@ -55,15 +55,15 @@ function execute(params: Record<string, unknown>) {
 }
 
 describe("generate_image GPT Image 2.5", () => {
-	it("defaults to Sunburst and saves the returned PNG", async () => {
+	it("defaults to Flare and saves the returned PNG", async () => {
 		const result = await execute({ prompt: "a red fox", output_path: "fox.png" });
 
 		expect(generate.mock.calls[0]?.[0]).toMatchObject({
-			id: "gpt-image-2.5-sunburst",
-			name: "GPT Image 2.5 Sunburst",
+			id: "gpt-image-2.5-flare",
+			name: "GPT Image 2.5 Flare",
 			input: ["text", "image"],
 		});
-		expect(result.details.model).toBe("gpt-image-2.5-sunburst");
+		expect(result.details.model).toBe("gpt-image-2.5-flare");
 		expect(readFileSync(join(harness.tempDir, "fox.png"))).toEqual(Buffer.from(PNG_BASE64, "base64"));
 	});
 

@@ -92,7 +92,7 @@ export type KnownProvider =
 	| "xiaomi-token-plan-sgp";
 export type ProviderId = KnownProvider | string;
 
-export type KnownImagesProvider = "openrouter";
+export type KnownImagesProvider = "openai" | "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
 
@@ -614,6 +614,8 @@ export interface AssistantImages {
 	output: ImagesOutputContent[];
 	responseId?: string;
 	usage?: Usage;
+	/** Background the provider reports for the returned images; unset when it reports `auto` or nothing. */
+	background?: "transparent" | "opaque";
 	stopReason: ImagesStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
@@ -992,9 +994,15 @@ export interface ModelCost extends ModelCostRates {
 	tiers?: ModelCostTier[];
 }
 
+export interface ImagesModelCost extends ModelCost {
+	/** $/million image input tokens (reference and edit inputs). Falls back to `input` when absent. */
+	imageInput?: number;
+}
+
 export interface ImagesModel<TApi extends ImagesApi>
-	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat"> {
+	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat" | "cost"> {
 	api: TApi;
 	provider: ImagesProviderId;
 	output: ("text" | "image")[];
+	cost: ImagesModelCost;
 }

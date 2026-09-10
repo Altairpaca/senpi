@@ -6,6 +6,8 @@
 
 ### Added
 
+- OpenAI images: `background`, `outputFormat`, `outputCompression`, `moderation`, and `mask` options reach the wire as `background`, `output_format`, `output_compression`, `moderation`, and a `mask` upload; transparent-with-jpeg, compression-with-png, out-of-range compression, and mask-without-image are rejected before any request. Responses report `background`, returned bytes are labeled by their magic (falling back to the requested format), image input tokens are priced with the new optional `ImagesModel.cost.imageInput` rate ($8/M for GPT Image 2 and 2.5), and `KnownImagesProvider` includes `openai`. `parseOpenAIImageOutputOptions` and the option types are exported through the compat surface.
+
 ### Changed
 
 ### Fixed
