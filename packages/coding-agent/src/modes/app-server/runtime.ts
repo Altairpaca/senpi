@@ -67,14 +67,14 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		agentDir: getAgentDir(),
 		sessionDir: process.env[ENV_SESSION_DIR],
 		createSession: (options) =>
-			createBoundAppServerSession(
-				options,
-				approvals,
-				notifications,
-				requestShutdown,
-				userInput,
-				(threadId) => threads.listLoaded().find((thread) => thread.id === threadId)?.activeTurn?.turnId ?? "turn-user-input",
-			),
+			createBoundAppServerSession(options, approvals, notifications, requestShutdown, userInput, (threadId) => {
+				try {
+					return threads.getLoadedThread(threadId).activeTurn?.turnId ?? "turn-user-input";
+				} catch (error) {
+					if (error instanceof ThreadNotFoundError) return "turn-user-input";
+					throw error;
+				}
+			}),
 		mcpWireStatusAdapter: processMcpWireStatusAdapter,
 	});
 	registerExtensionRequestMethod(registry, (threadId) => threads.getLoadedThread(threadId).session);
