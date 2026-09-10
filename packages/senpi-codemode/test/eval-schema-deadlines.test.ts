@@ -14,12 +14,14 @@ describe("eval schema renders the configured deadlines", () => {
 		const schema = createEvalInputSchema(enabled, {
 			runBudgetSeconds: 45,
 			detachAfterSeconds: 7,
+			foregroundWindowSeconds: 9,
 			hardLimitSeconds: 900,
 		});
 
 		expect(descriptionOf(schema.properties.timeout)).toContain("45s");
 		expect(descriptionOf(schema.properties.timeout)).toContain("900s");
 		expect(descriptionOf(schema.properties.on_timeout)).toContain("7s");
+		expect(descriptionOf(schema.properties.on_timeout)).toContain("9s");
 	});
 
 	it("falls back to the package defaults when no deadlines are given", () => {
@@ -28,6 +30,7 @@ describe("eval schema renders the configured deadlines", () => {
 		expect(descriptionOf(schema.properties.timeout)).toContain("300s");
 		expect(descriptionOf(schema.properties.timeout)).toContain("1800s");
 		expect(descriptionOf(schema.properties.on_timeout)).toContain("30s");
+		expect(descriptionOf(schema.properties.on_timeout)).toContain("60s");
 	});
 });
 

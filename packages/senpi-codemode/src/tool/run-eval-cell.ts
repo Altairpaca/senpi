@@ -46,9 +46,9 @@ export async function runEvalCell(
 		durationMs: 0,
 		status: "pending",
 	};
-	const cell = cellManager.create(invocation.cellId, invocation.input);
 	let detached = false;
 	let execution: CellExecution;
+	const cell = cellManager.create(invocation.cellId, invocation.input, (error) => execution.cancel(error));
 	execution = new CellExecution({
 		callerSignal: invocation.signal,
 		cellId: invocation.cellId,

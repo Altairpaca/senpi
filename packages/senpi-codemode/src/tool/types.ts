@@ -24,21 +24,24 @@ export interface EvalDeadlineSeconds {
 	readonly runBudgetSeconds: number;
 	/** Effective interactive detach point: `cellTimeoutSeconds` capped by the foreground window. */
 	readonly detachAfterSeconds: number;
+	/** Longest a host tool call can hold an interactive call before it detaches anyway. */
+	readonly foregroundWindowSeconds: number;
 	readonly hardLimitSeconds: number;
 }
 
 export const defaultEvalDeadlineSeconds: EvalDeadlineSeconds = {
 	runBudgetSeconds: DEFAULT_RUN_BUDGET_SECONDS,
 	detachAfterSeconds: Math.min(defaultCodemodeSettings.cellTimeoutSeconds, DEFAULT_FOREGROUND_WINDOW_SECONDS),
+	foregroundWindowSeconds: DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
 };
 
 function timeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {
-	return `Run budget in seconds for this cell's own execution (default ${deadlines.runBudgetSeconds}s); time parked in host tool calls such as agent() or tool.* is not charged. When it runs out the cell is killed, and a js cell that cannot settle (a pending Bun.$ command, a synchronous call) restarts its kernel and loses every global. Raise it only for a declared long run; a value above ${deadlines.hardLimitSeconds}s also raises the wall-clock hard limit. It does not move the detach point.`;
+	return `Run budget in seconds for this cell's own execution (default ${deadlines.runBudgetSeconds}s); time parked in host tool calls such as agent() or tool.* is not charged. When it runs out the cell is killed, and a js cell that cannot settle (a pending timer or Bun.$ command, a synchronous call) restarts its kernel and loses every global. Raise it only for a declared long run; a value above ${deadlines.hardLimitSeconds}s also raises the wall-clock hard limit. It does not move the detach point.`;
 }
 
 function onTimeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {
-	return `'detach' (interactive default): the call returns after ${deadlines.detachAfterSeconds}s while the cell keeps running; completion arrives as a notification. 'error' (print/json default): the call blocks until the cell settles or a deadline kills it.`;
+	return `'detach' (interactive default): the call returns after ${deadlines.detachAfterSeconds}s of the cell's own work (a host tool call in flight can hold it up to the ${deadlines.foregroundWindowSeconds}s foreground window) while the cell keeps running; completion arrives as a notification. 'error' (print/json default): the call blocks until the cell settles or a deadline kills it.`;
 }
 
 export interface EvalToolInput {

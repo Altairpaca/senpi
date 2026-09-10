@@ -195,7 +195,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	);
 	pi.registerRemovedToolHint(
 		"exec",
-		'exec was removed; use eval({ language: "js", code }) instead. Long eval cells detach on timeout and notify when complete.',
+		'exec was removed; use eval({ language: "js", code }) instead. Long eval cells detach on their own and notify when complete.',
 	);
 	pi.registerRemovedToolHint(
 		"wait",

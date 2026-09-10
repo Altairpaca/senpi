@@ -9,7 +9,7 @@ Batch a step's independent calls in one cell with \`parallel(thunks)\`; write re
 </eval_first_batching>{{/if}}{{#if styleGpt}}<gpt_eval_dialect>
 GPT eval: batch a step's independent tool calls in one cell with \`tool.<name>(args)\` and \`parallel(thunks)\` and inspect every result.
 {{#if monitor}}- A wait or a long run (build, test run, deploy, watch) starts through \`tool.monitor({ command, filter })\` in that same cell with the decisive-line filter; its event wakes the turn, so no cell sits on the wait and no child is spawned for it.
-{{/if}}- Long cells detach on timeout and notify on completion; do not poll or re-run them.
+{{/if}}- Long cells detach on their own and notify on completion; do not poll or re-run them.
 - Keep every failed or missing item in the result verbatim and re-read truncated output before deciding.
 </gpt_eval_dialect>{{/if}}{{#if styleCodex}}Route a step's independent lookups through one eval cell via \`parallel(thunks)\` and inspect every result.
 - Loop or comprehend over file sets with \`read()\`/stdlib instead of reading files one call at a time; post-process \`tool.<name>()\` results programmatically.

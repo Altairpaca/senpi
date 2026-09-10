@@ -310,7 +310,7 @@ describe("senpi-codemode extension factory", () => {
 				wait: expect.stringContaining("eval"),
 			});
 			expect(tool.description).toContain("<gpt_eval_dialect>");
-			expect(tool.description).toContain("detach on timeout");
+			expect(tool.description).toContain("detach on their own");
 		} finally {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });

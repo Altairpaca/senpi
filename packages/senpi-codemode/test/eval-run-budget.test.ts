@@ -251,6 +251,31 @@ describe("eval run budget through the tool path", () => {
 		expect(result.reason?.message).toContain("2s run budget");
 	});
 
+	it("still ends a print-mode call whose kernel is booting when the budget expires", async () => {
+		vi.useFakeTimers();
+		const manager = new EvalDetachedCellManager({ runBudgetSeconds: 1, hardLimitSeconds: 100 });
+		const tool = createEvalTool({
+			enabledLanguages: { js: true, py: false, rb: false, jl: false },
+			kernelManager: { getKernel: () => new Promise(() => {}) },
+			cellTimeoutSeconds: 30,
+			executeTool: vi.fn(),
+			cellManager: manager,
+		});
+		let settledResult: { status: string; reason?: Error } | undefined;
+		void settled(tool.execute("booting-cell", input(), undefined, undefined, fakeExtensionContext())).then(
+			(value) => {
+				settledResult = value;
+			},
+		);
+
+		await vi.advanceTimersByTimeAsync(1_000);
+
+		expect(settledResult?.status).toBe("rejected");
+		expect(settledResult?.reason?.name).toBe("TimeoutError");
+		expect(settledResult?.reason?.message).toContain("1s run budget");
+		expect(manager.peek("booting-cell").state).toBe("cancelled");
+	});
+
 	it("lets a print-mode cell that finishes within the budget return its value", async () => {
 		vi.useFakeTimers();
 		const manager = new EvalDetachedCellManager({ runBudgetSeconds: 2, hardLimitSeconds: 100 });

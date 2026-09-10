@@ -20,12 +20,11 @@ export type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 export type { EnabledEvalLanguages, EvalKernel, EvalKernelManager } from "./types.ts";
 
 export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<EvalInputSchema, EvalToolDetails> {
+	const foregroundWindowSeconds = options.foregroundWindowSeconds ?? DEFAULT_FOREGROUND_WINDOW_SECONDS;
 	const deadlines = {
 		runBudgetSeconds: options.runBudgetSeconds ?? defaultEvalDeadlineSeconds.runBudgetSeconds,
-		detachAfterSeconds: Math.min(
-			options.cellTimeoutSeconds,
-			options.foregroundWindowSeconds ?? DEFAULT_FOREGROUND_WINDOW_SECONDS,
-		),
+		detachAfterSeconds: Math.min(options.cellTimeoutSeconds, foregroundWindowSeconds),
+		foregroundWindowSeconds,
 		hardLimitSeconds: options.hardLimitSeconds ?? defaultEvalDeadlineSeconds.hardLimitSeconds,
 	};
 	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines);

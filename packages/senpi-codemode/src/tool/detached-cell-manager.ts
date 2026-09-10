@@ -52,7 +52,7 @@ type ManagedCell = {
 	readonly runBudgetSeconds: number;
 	hardLimited: boolean;
 	runBudgetExhausted: boolean;
-	/** Foreground killer: the still-awaited CellExecution owns interrupting and rejecting its own call. */
+	/** Foreground killer: the still-awaited CellExecution owns interrupting and rejecting its own call; bound from creation so a deadline firing during kernel boot still ends it. */
 	onKill: ((error: Error) => void) | undefined;
 };
 
@@ -77,12 +77,15 @@ export class EvalDetachedCellManager {
 		this.#runBudgetSeconds = options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS;
 	}
 
-	create(cellId: string, input: EvalToolInput): ManagedCell {
+	create(cellId: string, input: EvalToolInput, onKill?: (error: Error) => void): ManagedCell {
 		const existing = this.#cells.get(cellId);
 		if (existing !== undefined) {
 			if (detachedCellIsActive(existing.state)) throw activeDetachedCellReuseError(existing);
 			this.#cells.delete(cellId);
 		}
+		// An explicit longer per-call timeout raises the deadline, mirroring bash keeping explicit timeouts.
+		const hardLimitSeconds = Math.max(this.#hardLimitSeconds, input.timeout ?? 0);
+		const runBudgetSeconds = input.timeout ?? this.#runBudgetSeconds;
 		const cell: ManagedCell = {
 			cellId,
 			input,
@@ -100,19 +103,18 @@ export class EvalDetachedCellManager {
 			notificationQueued: false,
 			deadlines: new CellDeadlines({
 				cellId,
-				// An explicit longer per-call timeout raises the deadline, mirroring bash keeping explicit timeouts.
-				hardLimitSeconds: Math.max(this.#hardLimitSeconds, input.timeout ?? 0),
-				runBudgetSeconds: input.timeout ?? this.#runBudgetSeconds,
+				hardLimitSeconds,
+				runBudgetSeconds,
 				onExpire: (expiry) => {
 					const managed = this.#cells.get(cellId);
 					if (managed !== undefined) void this.#expireDeadline(managed, expiry);
 				},
 			}),
-			hardLimitSeconds: Math.max(this.#hardLimitSeconds, input.timeout ?? 0),
-			runBudgetSeconds: input.timeout ?? this.#runBudgetSeconds,
+			hardLimitSeconds,
+			runBudgetSeconds,
 			hardLimited: false,
 			runBudgetExhausted: false,
-			onKill: undefined,
+			onKill,
 			terminal: Promise.withResolvers<EvalDetachedCellSnapshot>(),
 		};
 		this.#cells.set(cellId, cell);
@@ -126,7 +128,7 @@ export class EvalDetachedCellManager {
 		onKill?: (error: Error) => void,
 	): void {
 		if (cell.state !== "running") return;
-		cell.onKill = onKill;
+		cell.onKill = onKill ?? cell.onKill;
 		cell.kernel = kernel;
 		cell.liveResult = liveResult;
 		cell.canDetach = true;

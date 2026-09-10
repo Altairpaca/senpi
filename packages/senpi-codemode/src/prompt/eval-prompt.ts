@@ -126,7 +126,7 @@ const BATCHING_GUIDELINES: Record<EvalEmphasisStyle, string> = {
 	claude:
 		"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
 	codex: "Route a step's independent calls through one eval cell and inspect every result; a direct tool call is right when one call is sufficient.",
-	gpt: "Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on timeout and notify on completion, so do not poll.",
+	gpt: "Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on their own and notify on completion, so do not poll.",
 	kimi: "Put a step's independent calls into one eval cell with parallel(thunks) and keep every failed item in the result.",
 };
 
