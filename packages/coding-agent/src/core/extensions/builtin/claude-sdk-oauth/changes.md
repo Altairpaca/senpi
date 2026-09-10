@@ -1,5 +1,30 @@
 # claude-sdk-oauth
 
+## 2026-09-10 - Detach completed resume initialization abort listeners
+
+### What changed
+
+- `session-reattach.ts`: the abort listener that bounds `initializationResult`
+  is now removed in a `finally` block after initialization settles.
+- `test/claude-sdk-oauth-reattach.test.ts`: cover both successful initialization
+  followed by normal request cleanup and genuine abort during pending
+  initialization.
+
+### Why
+
+- The request controller is also aborted during normal completed-request
+  cleanup. Leaving the initialization listener attached closed a healthy
+  resumed query after initialization, forcing the next turn through another
+  resume and eventually a full-history cache write.
+- Pending and pre-aborted initialization still closes the query and rejects, so
+  cancellation remains fail-closed while completed initialization no longer
+  has a stale listener.
+
+### Expected merge conflict zones
+
+- LOW: `session-reattach.ts` initialization helper and the adjacent reattach
+  regression test; no public API or generated bundle changes.
+
 ## 2026-09-10 - Validate the Claude Code executable before the SDK spawns it, fall back to PATH
 
 ### What changed

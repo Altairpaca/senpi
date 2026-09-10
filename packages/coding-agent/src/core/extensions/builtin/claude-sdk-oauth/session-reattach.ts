@@ -132,15 +132,24 @@ async function awaitInitialization(entry: ClaudeSdkOauthSessionEntry, signal?: A
 		await initialize.call(entry.query);
 		return;
 	}
-	const aborted = new Promise<never>((_resolve, reject) => {
-		const onAbort = (): void => {
-			closeSession(entry.senpiSessionId, "resume_initialization_aborted");
-			reject(new Error("Claude SDK OAuth reattach aborted"));
-		};
-		if (signal.aborted) onAbort();
-		else signal.addEventListener("abort", onAbort, { once: true });
+	let rejectAborted: (reason?: unknown) => void = () => {};
+	const aborted = new Promise<never>((_, reject) => {
+		rejectAborted = reject;
 	});
-	await Promise.race([initialize.call(entry.query), aborted]);
+	const onAbort = (): void => {
+		closeSession(entry.senpiSessionId, "resume_initialization_aborted");
+		rejectAborted(new Error("Claude SDK OAuth reattach aborted"));
+	};
+	if (signal.aborted) {
+		onAbort();
+	} else {
+		signal.addEventListener("abort", onAbort, { once: true });
+	}
+	try {
+		await Promise.race([initialize.call(entry.query), aborted]);
+	} finally {
+		signal.removeEventListener("abort", onAbort);
+	}
 }
 
 /**
