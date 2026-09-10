@@ -1,5 +1,27 @@
 # Core Extensions Changes
 
+## 2026-09-10 - Optional ExtensionUIContext.question prompt kind
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: exports canonical `QuestionRequest` / `QuestionResponse`, adds optional `ExtensionUIContext.question()`, and extends `UIPromptKind` with `"question"`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext` wraps `question` with `withUIPrompt("question", request.questions[0]?.header, ...)` only when the underlying UI provides it.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` is the public extension UI contract; later ask-user modes need a typed optional prompt without breaking hand-built `Pick<ExtensionUIContext, ...>` contexts.
+- `packages/coding-agent/src/core/extensions/runner.ts` already emits `ui_prompt_start` / `ui_prompt_end` around select/confirm/input/editor/custom; question prompts must use the same wrapping so the runner can pause on a blocking user-facing question.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned UI surface; extensions cannot add methods to that public contract themselves.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns prompt wrapping and event emission before any extension sees `ctx.ui`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIContext` dialog methods (~select/confirm/input) and the `UIPromptKind` union.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext`.
+
 ## 2026-09-09 - Expose shared-host policy during extension registration
 
 ### What changed

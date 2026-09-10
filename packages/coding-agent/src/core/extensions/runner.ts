@@ -626,6 +626,7 @@ export class ExtensionRunner {
 	}
 
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
+		const questionFn = ui.question;
 		return {
 			...ui,
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
@@ -634,6 +635,12 @@ export class ExtensionRunner {
 				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
+			...(questionFn
+				? {
+						question: (request, opts) =>
+							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts)),
+					}
+				: {}),
 		};
 	}
 
