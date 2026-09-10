@@ -1,3 +1,21 @@
+## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: map the registered `ask_user_question` tool to `AskUserQuestion` for Anthropic Claude Code wire requests, and map it back only when the registered tools include the alias.
+
+### Why
+
+- Claude Code's Anthropic wire contract uses `AskUserQuestion`; without the explicit alias, the built-in tool name cannot round-trip through streamed `tool_use` blocks.
+
+### Why an extension could not handle it
+
+- Tool-name conversion happens inside the Anthropic provider adapter while constructing and decoding provider messages, before an extension can repair the wire name.
+
+### Expected merge conflict zones
+
+- LOW: the Claude Code tool lookup and conversion helpers in `packages/ai/src/api/anthropic-messages.ts`.
+
 ## 2026-09-09 - GPT Image 2.5 generation and reference-image editing
 
 ### What changed
