@@ -10,6 +10,11 @@
 
 ### Fixed
 
+- A pool slot holding a provider's managed sentinel (`claude-sdk-oauth-managed`) is healed the moment auth.json is read and the repair is written back once, so a second login on an affected build no longer leaves a dead `login-N` entry that hard-errors every request whose affinity picks it; the rotation classifier also treats an unconfigured-slot auth miss as a per-credential failure, so a single bad slot can never dead-end a healthy multi-account pool.
+- A provider-owned login pool is merged onto the stored pool at commit time instead of overwriting it with the pre-browser-flow snapshot, so a sibling account's rotated refresh token and rate-limit block survive another account's interactive login.
+- The Claude SDK lane's session-lock and bare `invalid_request` remint, and its `Provider is not configured:` fallback exclusion, are scoped to that provider: provider-agnostic stream stalls keep consuming the shared same-model retry budget and still escalate to the configured fallback chain, and another provider's auth miss or `invalid_request` still hops the chain.
+- OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted, and an interleaved waiting or info step replaces (never duplicates) the live `(to cancel)`/`(to close)` hint row.
+
 ### Removed
 
 ## [2026.9.10-2] - 2026-09-10

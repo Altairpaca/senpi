@@ -1,3 +1,43 @@
+## PR #1304 review fixes: shared auth-miss prefix, login merge, sentinel repair (2026-09-10)
+
+### What changed
+
+- `packages/ai/src/auth/resolve.ts`: `PROVIDER_NOT_CONFIGURED_PREFIX` / `providerNotConfiguredMessage()` export the exact auth-miss wording every resolution site throws; `packages/ai/src/models.ts` re-exports both and throws through the helper. Consumers keying recovery decisions off that message (the coding-agent session layer and the credential-pool classifier) can never drift from the throw sites.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` MERGES a provider-owned pool onto the value read under the credential lock - stored slots and their block state win for names that already exist, only genuinely new names are appended - instead of whole-writing a snapshot the provider built before the interactive browser round trip. `managedSentinelMaterial` / `isManagedSentinelSlot` / `repairManagedSentinelSlots` recognize and drop pool slots whose `access` and `refresh` both equal the provider's `<providerId>-managed` marker (clearing a pin that pointed at one), reporting whether a repair happened so callers rewrite storage only when bytes change.
+- `packages/ai/test/credential-pool-mutations.test.ts`: a pre-login snapshot never rewinds a sibling that rotated or earned a block; a provider-owned pool onto a flat current keeps the whole-write shape; sentinel slots are recognized, dropped, un-pinned, and a clean pool is a no-op.
+
+### Why
+
+- The provider builds its returned pool from a snapshot read BEFORE the browser flow, tens of seconds before the commit under the lock: writing it verbatim rolled a sibling's rotated refresh token back to the consumed value (a forced re-login, since Anthropic rotates refresh tokens on use) and erased its rate-limit block. Separately, a shipped build stored the provider pool's flat sentinel as a generated `login-N` slot; such a slot can never authenticate and dead-ends every request whose affinity picks it, so the coding-agent store now heals those entries on load.
+
+### Why an extension could not handle it
+
+- Both the merge and the repair algebra run inside the shared credential-pool read/write path the runtime owns; providers cannot intercept what the runtime stores after login returns or what every reader parses from auth.json.
+
+### Expected merge conflict zones
+
+- LOW: `appendLoginSlot` and the sentinel helpers in `auth/pool/slots.ts`; the prefix helpers in `auth/resolve.ts` and their re-export in `models.ts`.
+
+## Classify Claude SDK session lock contention as retryable (2026-09-02)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` matches `Lock file is already being held`.
+- `packages/ai/test/retry.test.ts`: pins that wording as a retryable assistant error.
+
+### Why
+
+- Claude Agent SDK session resume/stream hits proper-lockfile while a previous subprocess still holds `session.json`. The failure is local and transient; treating it as unknown/terminal made the coding-agent hard-error fallback hop providers.
+
+### Why an extension could not handle it
+
+- Retry classification lives in the shared `pi-ai` regexes used by every caller of `isRetryableAssistantError`.
+
+### Expected merge conflict zones
+
+- LOW: `RETRYABLE_PROVIDER_ERROR_PATTERN` in `retry.ts`.
+
+## Preserve provider-owned credential pools during login (2026-09-02)
 ## 2026-09-10 - Kimi Code client identity headers on the subscription path (#1504)
 
 ### What changed

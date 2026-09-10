@@ -32,11 +32,21 @@ function storedSlots(credential: ClaudeSdkOauthCredential): AccountSlot[] {
 	return credential.accounts ?? [];
 }
 
+/**
+ * A stored account whose material is the managed sentinel holds no token at
+ * all: it was written by a build that stored this credential's own flat
+ * projection as a generated `login-N` slot. Selecting it fails the provider's
+ * auth check and dead-ends the request, so it is never listed as an account.
+ */
+export function isSentinelSlot(slot: Pick<AccountSlot, "access" | "refresh">): boolean {
+	return slot.access === SENTINEL_OAUTH_FIELDS.access && slot.refresh === SENTINEL_OAUTH_FIELDS.refresh;
+}
+
 export function listAccounts(
 	credential: ClaudeSdkOauthCredential,
 	env?: (name: string) => string | undefined,
 ): AccountSlot[] {
-	const slots = [...storedSlots(credential)];
+	const slots = storedSlots(credential).filter((slot) => !isSentinelSlot(slot));
 	if (env) {
 		const state = credential.slotState ?? {};
 		for (const slot of envSlots(env)) {
