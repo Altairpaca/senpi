@@ -265,6 +265,7 @@ describe("TreeSelectorComponent", () => {
 			const plain = plainLines.join("\n");
 			expect(plain).toContain("branch");
 			expect(plain).toContain("copy");
+			expect(plain).toContain("edit");
 			expect(plain).toContain("filters");
 			expect(plain).toContain("cycle");
 			expect(plain).toContain("label time");
@@ -292,6 +293,79 @@ describe("TreeSelectorComponent", () => {
 			selector.handleInput("\x18");
 
 			expect(copied).toBe(message);
+		});
+	});
+
+	describe("edit message", () => {
+		function createEditSelector(entries: SessionEntry[], currentLeafId: string) {
+			const selected: string[] = [];
+			const edited: string[] = [];
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				currentLeafId,
+				24,
+				(entryId) => selected.push(entryId),
+				() => {},
+			);
+			selector.onEditMessage = (entryId) => edited.push(entryId);
+			return { selector, selected, edited };
+		}
+
+		test("requests an assistant edit with ctrl+e instead of navigating", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "The answer is 41.")],
+				"asst-1",
+			);
+
+			selector.handleInput("\x05");
+
+			expect(edited).toEqual(["asst-1"]);
+			expect(selected).toEqual([]);
+		});
+
+		test("falls back to the select flow when ctrl+e targets a user message", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "hi")],
+				"asst-1",
+			);
+			selector.handleInput("\x1b[A"); // up: select user-1
+			expect(selector.getTreeList().getSelectedNode()?.entry.id).toBe("user-1");
+
+			selector.handleInput("\x05");
+
+			expect(selected).toEqual(["user-1"]);
+			expect(edited).toEqual([]);
+		});
+
+		test("ignores ctrl+e on entries that are not messages", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[
+					userMessage("user-1", null, "hello"),
+					modelChange("model-1", "user-1"),
+					assistantMessage("asst-1", "model-1", "hi"),
+				],
+				"asst-1",
+			);
+			selector.handleInput("\x01"); // ctrl+a: show all entries
+			selector.handleInput("\x1b[A"); // up: select model-1
+			expect(selector.getTreeList().getSelectedNode()?.entry.id).toBe("model-1");
+
+			selector.handleInput("\x05");
+
+			expect(selected).toEqual([]);
+			expect(edited).toEqual([]);
+		});
+
+		test("keeps enter on an assistant message as plain navigation", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "hi")],
+				"asst-1",
+			);
+
+			selector.handleInput("\r");
+
+			expect(selected).toEqual(["asst-1"]);
+			expect(edited).toEqual([]);
 		});
 	});
 
