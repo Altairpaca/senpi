@@ -4,6 +4,11 @@ import { getPendingQuestions } from "./registry.ts";
 import { type AskUserState, createAskUserTool } from "./tool.ts";
 
 export default function askUserExtension(pi: ExtensionAPI): void {
+	pi.registerFlag("no-ask-user", {
+		description: "Disable the built-in question tool.",
+		type: "boolean",
+		default: false,
+	});
 	const state: AskUserState = { timedOut: false, unavailable: false };
 	let registered = false;
 	const cancelPending = (ctx: ExtensionContext, message: string) => {
