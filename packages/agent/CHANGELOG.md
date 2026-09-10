@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A tool result returned with `isError: true` is now treated as a tool error: `tool_execution_end.isError` and the `toolResult` message carry the flag while `content` and `details` stay intact, so structured failures (team, memory, terminal tools) render and report as failures instead of successes. `AgentToolResult` declares the optional `isError` field.
+
 ### Removed
 
 ## [2026.9.9-2] - 2026-09-09
