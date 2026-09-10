@@ -481,13 +481,13 @@ describe("senpi-codemode extension lifecycle", () => {
 		const notification = pi.nextMessage();
 		const run = tool.execute(
 			"notified-detached",
-			{ language: "js", code: "await pending()", timeout: 1, on_timeout: "detach", summary: "notified detached" },
+			{ language: "js", code: "await pending()", on_timeout: "detach", summary: "notified detached" },
 			undefined,
 			undefined,
 			ctx,
 		);
 		await manager.runStarted.promise;
-		await vi.advanceTimersByTimeAsync(1_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 		await run;
 
 		manager.runControllers[0]?.abort(new Error("kernel crashed"));

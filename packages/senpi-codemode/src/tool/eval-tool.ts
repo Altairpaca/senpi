@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "@code-yeongyu/senpi";
+import { DEFAULT_FOREGROUND_WINDOW_SECONDS } from "../config/settings.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import { detachedKernelBusyError, executeEvalControl } from "./detached-eval-result.ts";
@@ -7,6 +8,7 @@ import type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 import { runEvalCell } from "./run-eval-cell.ts";
 import {
 	createEvalInputSchema,
+	defaultEvalDeadlineSeconds,
 	type EvalInputSchema,
 	type EvalToolDetails,
 	type EvalToolRequest,
@@ -18,10 +20,19 @@ export type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 export type { EnabledEvalLanguages, EvalKernel, EvalKernelManager } from "./types.ts";
 
 export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<EvalInputSchema, EvalToolDetails> {
-	const parameters = createEvalInputSchema(options.enabledLanguages);
+	const deadlines = {
+		runBudgetSeconds: options.runBudgetSeconds ?? defaultEvalDeadlineSeconds.runBudgetSeconds,
+		detachAfterSeconds: Math.min(
+			options.cellTimeoutSeconds,
+			options.foregroundWindowSeconds ?? DEFAULT_FOREGROUND_WINDOW_SECONDS,
+		),
+		hardLimitSeconds: options.hardLimitSeconds ?? defaultEvalDeadlineSeconds.hardLimitSeconds,
+	};
+	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines);
 	const prompt = buildEvalPrompt(options.enabledLanguages, {
 		spawns: options.spawns ?? false,
 		monitor: options.monitor,
+		runBudgetSeconds: deadlines.runBudgetSeconds,
 		...(options.spawnDefaultAgent === undefined ? {} : { spawnDefaultAgent: options.spawnDefaultAgent }),
 		...(options.modelId === undefined ? {} : { modelId: options.modelId }),
 		...(options.hostLine === undefined ? {} : { hostLine: options.hostLine }),

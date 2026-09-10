@@ -3,7 +3,12 @@ import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
-import { defaultCodemodeSettings, resolveForegroundWindowSeconds, resolveHardLimitSeconds } from "./config/settings.ts";
+import {
+	defaultCodemodeSettings,
+	resolveForegroundWindowSeconds,
+	resolveHardLimitSeconds,
+	resolveRunBudgetSeconds,
+} from "./config/settings.ts";
 import { EvalNotifier } from "./extension/eval-notifier.ts";
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
@@ -128,6 +133,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				kernelManager: manager,
 				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
 				foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
+				runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
+				hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
 				executeTool: runtime.executeTool,
 				listTools: () => pi.getAllTools(),
 				complete,
@@ -163,6 +170,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			kernelManager: manager,
 			cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
 			foregroundWindowSeconds: resolveForegroundWindowSeconds(defaultCodemodeSettings),
+			runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
+			hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
 			executeTool: createExecuteTool(pi),
 			listTools: () => pi.getAllTools(),
 			complete,
@@ -170,6 +179,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			cellManager: new EvalDetachedCellManager({
 				notifier,
 				hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
+				runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
 				onStatusChange: showDetachedCells,
 				onWakeSourceState: emitWakeSourceState,
 				...(options.now === undefined ? {} : { now: options.now }),
@@ -207,6 +217,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			artifactsDir: runtime.artifactsDir,
 			notifier,
 			hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
+			runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
 			onStatusChange: showDetachedCells,
 			onWakeSourceState: emitWakeSourceState,
 			...(options.now === undefined ? {} : { now: options.now }),

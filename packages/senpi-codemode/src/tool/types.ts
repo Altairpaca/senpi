@@ -1,6 +1,12 @@
 import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
-import { type TUnsafe, Type } from "typebox";
+import { type TSchema, type TUnsafe, Type } from "typebox";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
+import {
+	DEFAULT_FOREGROUND_WINDOW_SECONDS,
+	DEFAULT_HARD_LIMIT_SECONDS,
+	DEFAULT_RUN_BUDGET_SECONDS,
+	defaultCodemodeSettings,
+} from "../config/settings.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
 
 export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
@@ -13,11 +19,27 @@ export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage
 
 export const EVAL_SUMMARY_MAX_LENGTH = 80;
 
-const TIMEOUT_FIELD_DESCRIPTION =
-	"Seconds the cell may block the turn before it detaches, and the amount by which it raises the wall-clock hard limit. In interactive sessions the detach point is capped at the foreground window (default 60s), so a large value frees the turn at the window while the cell keeps running; on_timeout:'error' (and print/json) keep the full value as the uncapped deadline.";
+/** The deadlines the schema teaches the model; every number comes from the resolved settings. */
+export interface EvalDeadlineSeconds {
+	readonly runBudgetSeconds: number;
+	/** Effective interactive detach point: `cellTimeoutSeconds` capped by the foreground window. */
+	readonly detachAfterSeconds: number;
+	readonly hardLimitSeconds: number;
+}
 
-const ON_TIMEOUT_FIELD_DESCRIPTION =
-	"Timeout behavior. Interactive sessions detach by default (at the foreground window); print/json sessions error by default. 'error' uses the full timeout as an uncapped deadline.";
+export const defaultEvalDeadlineSeconds: EvalDeadlineSeconds = {
+	runBudgetSeconds: DEFAULT_RUN_BUDGET_SECONDS,
+	detachAfterSeconds: Math.min(defaultCodemodeSettings.cellTimeoutSeconds, DEFAULT_FOREGROUND_WINDOW_SECONDS),
+	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
+};
+
+function timeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {
+	return `Run budget in seconds for this cell's own execution (default ${deadlines.runBudgetSeconds}s); time parked in host tool calls such as agent() or tool.* is not charged. When it runs out the cell is killed, and a js cell that cannot settle (a pending Bun.$ command, a synchronous call) restarts its kernel and loses every global. Raise it only for a declared long run; a value above ${deadlines.hardLimitSeconds}s also raises the wall-clock hard limit. It never changes when the call detaches.`;
+}
+
+function onTimeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {
+	return `'detach' (interactive default): the call returns after ${deadlines.detachAfterSeconds}s while the cell keeps running; completion arrives as a notification. 'error' (print/json default): the call blocks until the cell settles or a deadline kills it.`;
+}
 
 export interface EvalToolInput {
 	readonly language: EvalLanguage;
@@ -36,69 +58,54 @@ export interface EvalControlInput {
 
 export type EvalToolRequest = EvalToolInput | EvalControlInput;
 
-const fullEvalInputSchema = Type.Object({
-	action: Type.Optional(
-		Type.Union([Type.Literal("run"), Type.Literal("peek"), Type.Literal("stop")], {
-			description: "Defaults to run. peek and stop require cell_id.",
-		}),
-	),
-	language: Type.Optional(
+function evalInputProperties<Language extends TSchema>(languageSchema: Language, deadlines: EvalDeadlineSeconds) {
+	return {
+		action: Type.Optional(
+			Type.Union([Type.Literal("run"), Type.Literal("peek"), Type.Literal("stop")], {
+				description: "Defaults to run. peek and stop require cell_id.",
+			}),
+		),
+		language: Type.Optional(languageSchema),
+		code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
+		summary: Type.Optional(
+			Type.String({
+				maxLength: EVAL_SUMMARY_MAX_LENGTH,
+				description:
+					"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
+			}),
+		),
+		timeout: Type.Optional(Type.Number({ minimum: 1, description: timeoutFieldDescription(deadlines) })),
+		on_timeout: Type.Optional(
+			Type.Union([Type.Literal("detach"), Type.Literal("error")], {
+				description: onTimeoutFieldDescription(deadlines),
+			}),
+		),
+		reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
+		cell_id: Type.Optional(Type.String({ description: "Detached eval cell id for peek or stop." })),
+	};
+}
+
+const fullEvalInputSchema = Type.Object(
+	evalInputProperties(
 		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
+		defaultEvalDeadlineSeconds,
 	),
-	code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
-	summary: Type.Optional(
-		Type.String({
-			maxLength: EVAL_SUMMARY_MAX_LENGTH,
-			description:
-				"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
-		}),
-	),
-	timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
-	on_timeout: Type.Optional(
-		Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-			description: ON_TIMEOUT_FIELD_DESCRIPTION,
-		}),
-	),
-	reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
-	cell_id: Type.Optional(Type.String({ description: "Detached eval cell id for peek or stop." })),
-});
+);
 
 /** Runtime accepts a discriminated run/control union. */
 export type EvalInputSchema = TUnsafe<EvalToolRequest> & Pick<typeof fullEvalInputSchema, "properties">;
 
-export function createEvalInputSchema(enabled: EnabledEvalLanguages): EvalInputSchema {
+export function createEvalInputSchema(
+	enabled: EnabledEvalLanguages,
+	deadlines: EvalDeadlineSeconds = defaultEvalDeadlineSeconds,
+): EvalInputSchema {
 	const languages = enabledLanguageList(enabled);
 	if (languages.length === 0) throw new Error("eval requires at least one enabled language");
 	const languageSchema =
 		languages.length === 1
 			? Type.Union([Type.Literal(languages[0])])
 			: Type.Union(languages.map((item) => Type.Literal(item)));
-	return Type.Unsafe<EvalToolRequest>(
-		Type.Object({
-			action: Type.Optional(
-				Type.Union([Type.Literal("run"), Type.Literal("peek"), Type.Literal("stop")], {
-					description: "Defaults to run. peek and stop require cell_id.",
-				}),
-			),
-			language: Type.Optional(languageSchema),
-			code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
-			summary: Type.Optional(
-				Type.String({
-					maxLength: EVAL_SUMMARY_MAX_LENGTH,
-					description:
-						"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
-				}),
-			),
-			timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
-			on_timeout: Type.Optional(
-				Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-					description: ON_TIMEOUT_FIELD_DESCRIPTION,
-				}),
-			),
-			reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
-			cell_id: Type.Optional(Type.String({ description: "Detached eval cell id for peek or stop." })),
-		}),
-	) as EvalInputSchema;
+	return Type.Unsafe<EvalToolRequest>(Type.Object(evalInputProperties(languageSchema, deadlines))) as EvalInputSchema;
 }
 export type EvalKernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 export type EvalToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;

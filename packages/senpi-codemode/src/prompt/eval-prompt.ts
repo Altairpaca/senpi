@@ -1,3 +1,4 @@
+import { DEFAULT_RUN_BUDGET_SECONDS } from "../config/settings.ts";
 import type { EvalRuntimeInfo } from "../tool/types.ts";
 import { EVAL_PROMPT_TEMPLATE } from "./eval-prompt-template.ts";
 
@@ -27,6 +28,8 @@ export interface EvalPromptOptions {
 	readonly jsRuntime?: EvalRuntimeInfo;
 	/** Absolute path of the active bun-1-4 skill; rendered as a MUST READ pointer only on a bun kernel. */
 	readonly bunSkillPath?: string;
+	/** Kill deadline for a cell's own execution time, as configured; the description states it. */
+	readonly runBudgetSeconds?: number;
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -92,6 +95,7 @@ export function buildEvalPrompt(
 		jsBun: options.jsRuntime?.name === "bun",
 		jsVersion: options.jsRuntime?.version ?? "",
 		bunSkillPath: options.bunSkillPath ?? "",
+		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 	};
 	const description = renderTemplate(EVAL_PROMPT_TEMPLATE, context)
 		.replace(/\n{3,}/g, "\n\n")
