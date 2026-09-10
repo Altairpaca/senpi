@@ -20,6 +20,25 @@
 
 - LOW: slot shape in `accounts.ts`; descriptor mapper in `account-management.ts`; imports, command hints and list/add handlers in `account-command.ts`.
 
+## 2026-09-10 - Never list a sentinel-material stored slot as an account
+
+### What changed
+
+- `accounts.ts`: `isSentinelSlot` recognizes a stored account whose `access` and `refresh` are both the managed sentinel, and `listAccounts` filters those out.
+- `test/claude-sdk-oauth-accounts.test.ts`: a pool holding a real account plus a generated `login-2` sentinel slot lists only the real one.
+
+### Why
+
+- A shipped build stored this credential's own flat sentinel projection as a generated `login-N` slot. Selecting it fails the provider's auth check and dead-ends the request. The coding-agent auth store heals the stored entry on load (see the core tracker); this filter covers the extension's own direct reads (`readStoredCredential`) so a poisoned entry can never be selected even before that repair runs.
+
+### Why an extension could not handle it
+
+- The account listing is this provider's own pool surface.
+
+### Expected merge conflict zones
+
+- LOW: `storedSlots` filtering in `accounts.ts`.
+
 ## Recording a refused model switch keeps the stored binding (2026-09-10)
 
 ### What changed

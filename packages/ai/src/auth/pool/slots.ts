@@ -295,6 +295,29 @@ function nextLoginSlotName(credential: PooledCredential): string {
 	throw new Error("Credential pool is full");
 }
 
+function providedSlots(credential: Credential): CredentialSlot[] | undefined {
+	const accounts = (credential as PooledCredential).accounts;
+	return Array.isArray(accounts) && accounts.length > 0 ? accounts : undefined;
+}
+
+/**
+ * Unions a provider-owned pool onto the value read under the credential lock.
+ * `current` wins for every name it already holds: the provider built its
+ * object from a snapshot taken BEFORE the interactive browser round trip, so a
+ * sibling account that rotated its refresh token or earned a rate-limit block
+ * during that window must not be rewound to the snapshot. Only names that do
+ * not exist yet are appended.
+ */
+function mergeProvidedPool(
+	current: PooledCredential,
+	existing: readonly CredentialSlot[],
+	provided: readonly CredentialSlot[],
+): PooledCredential {
+	const known = new Set(existing.map((slot) => slot.name));
+	const added = provided.filter((slot) => !known.has(slot.name));
+	return added.length === 0 ? current : { ...current, accounts: [...existing, ...added] };
+}
+
 /**
  * Appends an unnamed flat credential to a pool as a generated `login-N` slot.
  * An absent current entry keeps today's whole-write shape; a flat current entry
@@ -302,35 +325,84 @@ function nextLoginSlotName(credential: PooledCredential): string {
  * instead of being overwritten by the second login.
  *
  * A login result that already carries its own populated `accounts` array is a
- * provider-owned pool: it IS the complete post-login credential, so it is
- * written through untouched. Reading its top-level fields as a flat credential
- * would append the provider's placeholder material as a second slot.
+ * provider-owned pool, and a provider that already holds a POOL names the
+ * account this login created itself. That pool is MERGED onto `current` rather
+ * than written through: a pre-browser-flow snapshot must never overwrite what
+ * concurrent writers stored meanwhile. A flat `current` keeps the whole-write
+ * shape - the provider echoes the flat fields it read, so there is nothing to
+ * preserve and the login must not be dropped on a name collision.
+ *
+ * `onAllocated` reports the account this login committed, so a caller can name
+ * it in a receipt without re-reading storage.
  */
 export function appendLoginSlot(
 	current: PooledCredential | undefined,
 	flat: Credential,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
 ): Credential {
-	if ("accounts" in flat && Array.isArray(flat.accounts) && flat.accounts.length > 0) {
+	const provided = providedSlots(flat);
+	if (provided) {
 		// Provider-owned envelopes identify an addition by immutable ID, never by
 		// token equality or array position. Ambiguous envelopes have no receipt.
 		const previous = new Set(
 			(current && Array.isArray(current.accounts) ? current.accounts : listSlots(current)).map((slot) => slot.name),
 		);
-		const added = (flat.accounts as CredentialSlot[]).filter((slot) => !previous.has(slot.name));
+		const added = provided.filter((slot) => !previous.has(slot.name));
 		if (added.length === 1 && SLOT_NAME_PATTERN.test(added[0].name) && added[0].source !== "env") {
 			onAllocated?.(added[0].name, "provider");
 		}
-		return flat;
 	}
 	if (!current) {
-		onAllocated?.(DEFAULT_SLOT_NAME, "generated");
+		if (!provided) onAllocated?.(DEFAULT_SLOT_NAME, "generated");
 		return flat;
+	}
+	const storedAccounts = Array.isArray(current.accounts) ? current.accounts : undefined;
+	if (provided) {
+		// A pool merges onto the stored pool; a flat current keeps the whole-write
+		// shape because the provider's accounts already carry this login.
+		return storedAccounts ? mergeProvidedPool(current, storedAccounts, provided) : flat;
 	}
 	const name = nextLoginSlotName(current);
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
 	onAllocated?.(name, "generated");
 	return next;
+}
+
+/**
+ * Material a provider writes into the flat credential when the real token lives
+ * outside auth.json (an SDK subprocess or a vendor CLI owns it): the literal
+ * `<providerId>-managed` in both OAuth fields. It is a marker, never a token.
+ */
+export function managedSentinelMaterial(providerId: string): string {
+	return `${providerId}-managed`;
+}
+
+/**
+ * A POOL SLOT carrying that marker can never authenticate: `projectSlot` hands
+ * it to the provider's `check`, which rejects it, and the request dies with
+ * "Provider is not configured". Slots like that exist only because a shipped
+ * build appended a provider-owned pool's flat sentinel as a generated `login-N`
+ * slot.
+ */
+export function isManagedSentinelSlot(providerId: string, slot: CredentialSlot): boolean {
+	const sentinel = managedSentinelMaterial(providerId);
+	return slot.access === sentinel && slot.refresh === sentinel;
+}
+
+/**
+ * Drops those poisoned slots from a stored credential, clearing a pin that
+ * named one. Returns `undefined` when the credential holds none, so a caller
+ * can tell a repair from a no-op and only rewrite storage when the bytes
+ * actually change.
+ */
+export function repairManagedSentinelSlots(providerId: string, credential: Credential): PooledCredential | undefined {
+	const pooled = credential as PooledCredential;
+	if (!Array.isArray(pooled.accounts)) return undefined;
+	const kept = pooled.accounts.filter((slot) => !isManagedSentinelSlot(providerId, slot));
+	if (kept.length === pooled.accounts.length) return undefined;
+	const repaired: PooledCredential = { ...pooled, accounts: kept };
+	if (repaired.pinned !== undefined && !kept.some((slot) => slot.name === repaired.pinned)) delete repaired.pinned;
+	return repaired;
 }
 
 /**
