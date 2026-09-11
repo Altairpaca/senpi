@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type {
 	ModelChangeEntry,
+	ModelChangeRejectedEntry,
 	SessionEntry,
 	SessionMessageEntry,
 	SessionTreeNode,
@@ -94,6 +95,20 @@ function modelChange(id: string, parentId: string | null): ModelChangeEntry {
 		timestamp: new Date().toISOString(),
 		provider: "anthropic",
 		modelId: "claude-sonnet-4",
+	};
+}
+
+function modelChangeRejected(id: string, parentId: string | null): ModelChangeRejectedEntry {
+	return {
+		type: "model_change_rejected",
+		id,
+		parentId,
+		timestamp: new Date().toISOString(),
+		provider: "faux",
+		modelId: "too-small",
+		reason: "context-budget",
+		detail:
+			'Model "faux/too-small" cannot switch: ... Compact the session, then revalidate and retry the model switch.',
 	};
 }
 
@@ -771,6 +786,70 @@ describe("TreeSelectorComponent", () => {
 
 			selector.handleInput(DOWN); // user-3a → asst-3a (not user-3b)
 			expect(list.getSelectedNode()?.entry.id).toBe("asst-3a");
+		});
+	});
+
+	// https://github.com/code-yeongyu/senpi/issues/1526
+	describe("refused model switch entries", () => {
+		const DOWN = "\x1b[B";
+		const entries = [
+			userMessage("user-1", null, "hello"),
+			assistantMessage("asst-1", "user-1", "hi"),
+			modelChangeRejected("refused-1", "asst-1"),
+		];
+
+		test("renders the refusal with its model and reason instead of a blank row", () => {
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+				undefined,
+				undefined,
+				"all",
+			);
+
+			const rendered = stripVTControlCharacters(selector.getTreeList().render(200).join("\n"));
+
+			expect(rendered).toContain("[model rejected: too-small (context-budget)]");
+		});
+
+		test("keeps the refusal out of the default view like every other bookkeeping entry", () => {
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+			);
+			const list = selector.getTreeList();
+
+			const visible = new Set<string>();
+			for (let i = 0; i < entries.length + 2; i++) {
+				visible.add(list.getSelectedNode()?.entry.id ?? "");
+				selector.handleInput(DOWN);
+			}
+
+			expect([...visible].sort()).toEqual(["asst-1", "user-1"]);
+		});
+
+		test("finds the refusal by search text", () => {
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+				undefined,
+				undefined,
+				"all",
+			);
+			const list = selector.getTreeList();
+
+			selector.handleInput("rejected");
+
+			expect(list.getSelectedNode()?.entry.id).toBe("refused-1");
 		});
 	});
 });

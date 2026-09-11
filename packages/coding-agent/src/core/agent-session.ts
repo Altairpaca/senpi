@@ -36,6 +36,7 @@ import { ProviderRetryWatchdogAbortError, prepareAgentToolCall } from "@earendil
 import {
 	contentText,
 	measureCursorHistorySerializedBytes,
+	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
 	type ThinkingSelection,
 } from "@earendil-works/pi-ai";
@@ -116,6 +117,7 @@ import {
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./extensions/builtin/claude-sdk-oauth/account-management.ts";
 import {
 	type ModelUsabilityAdmission,
 	ModelUsabilityBudgetError,
@@ -183,7 +185,11 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
-import { MANUAL_CONTINUE_CUSTOM_TYPE, MANUAL_CONTINUE_DIRECTIVE } from "./manual-continue.ts";
+import {
+	isManualContinueSubmission,
+	MANUAL_CONTINUE_CUSTOM_TYPE,
+	MANUAL_CONTINUE_DIRECTIVE,
+} from "./manual-continue.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -487,6 +493,18 @@ export type AgentSessionEvent =
 			model: Model<any>;
 			thinkingLevel: ThinkingLevel;
 			source: ModelSelectSource;
+	  }
+	/** A switch the session refused; recorded so the attempt survives (#1526). */
+	| {
+			type: "model_change_rejected";
+			model: Model<any>;
+			reason: "context-budget" | "auth";
+			detail: string;
+			contextWindow?: number;
+			liveContextTokens?: number;
+			requiredTokens?: number;
+			shortfallTokens?: number;
+			safetyMarginProfile?: string;
 	  }
 	| {
 			type: "model_change_skipped";
@@ -2539,10 +2557,15 @@ export class AgentSession {
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
+			const claudeSdkSameModelRemint = this._isClaudeSdkSameModelRemintError(msg);
 			const retryCanAdmitProvider =
 				!userAbortSuppressedQueuedContinuation &&
 				this.settingsManager.getRetrySettings().enabled &&
-				(retryableError || hardErrorFallbackEligible || cursorZeroTokenRe || cursorQuotaRe);
+				(retryableError ||
+					hardErrorFallbackEligible ||
+					cursorZeroTokenRe ||
+					cursorQuotaRe ||
+					claudeSdkSameModelRemint);
 			let compactedBeforeRetry = false;
 			if (
 				retryCanAdmitProvider &&
@@ -2566,6 +2589,8 @@ export class AgentSession {
 					// failed assistant before provider fallback so replay stays valid.
 					this._retireFailedRetryAssistant(msg);
 					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
+				} else if (claudeSdkSameModelRemint) {
+					retryOutcome = await this._handleRetryableError(msg, { sameModelRemint: true });
 				} else if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
 				} else if (hardErrorFallbackEligible) {
@@ -3759,7 +3784,13 @@ export class AgentSession {
 			// empty session, or a "." carrying image attachments (the user is sending
 			// the images, not asking to continue), falls through to ordinary prompt
 			// handling below.
-			if (text.trim() === "." && this.agent.state.messages.length > 0 && !options?.images?.length) {
+			if (
+				isManualContinueSubmission({
+					text,
+					hasMessages: this.agent.state.messages.length > 0,
+					hasImages: (options?.images?.length ?? 0) > 0,
+				})
+			) {
 				await this.sendCustomMessage(
 					{
 						customType: MANUAL_CONTINUE_CUSTOM_TYPE,
@@ -4844,13 +4875,72 @@ export class AgentSession {
 		return this._setModel(model, false);
 	}
 
+	/**
+	 * #1526: every switch guard rejects before `_switchActiveModel` appends its
+	 * `model_change`, so a refused switch used to leave no entry, no event, and
+	 * no log line - indistinguishable from a switch the user never attempted.
+	 * Record the refusal, then rethrow the original error unchanged.
+	 */
+	private _recordRejectedModelChange(model: Model<Api>, error: unknown): void {
+		const budget = error instanceof ModelUsabilityBudgetError ? error.projection : undefined;
+		const detail = error instanceof Error ? error.message : String(error);
+		const reason = budget ? "context-budget" : "auth";
+		const numbers = budget
+			? {
+					contextWindow: budget.contextWindow,
+					liveContextTokens: budget.liveContextTokens,
+					requiredTokens: budget.requiredTokens,
+					shortfallTokens: budget.shortfallTokens,
+					safetyMarginProfile: budget.safetyMarginProfile,
+				}
+			: {};
+		this.sessionManager.appendModelChangeRejected({
+			provider: model.provider,
+			modelId: model.id,
+			reason,
+			detail,
+			...numbers,
+		});
+		this._emit({ type: "model_change_rejected", model, reason, detail, ...numbers });
+	}
+
+	/**
+	 * The admission only selects wording, and the switch wording's remedy
+	 * ("Compact the session, ...") is executable only when there is context to
+	 * compact. `_setModel` is also reachable from `session_start` (the
+	 * `recommended-models` builtin switches the model there), so derive the
+	 * admission from the branch instead of hardcoding a switch: with conversation
+	 * context this is a switch, on an empty session it is still a cold start.
+	 */
+	private _modelSwitchAdmission(): ModelUsabilityAdmission {
+		return this.sessionManager.hasContextMessages() ? "switch" : "start";
+	}
+
+	/**
+	 * The single guard seam for a model switch (#1526): every site that can
+	 * refuse a switch - the `_setModel` pre-flight, the post-`model_select`
+	 * revalidation in `_switchActiveModel`, and both cycle guards - records the
+	 * refusal and rethrows the original error unchanged, so no refusal is
+	 * observable on one path and invisible on its sibling.
+	 */
+	private _assertModelUsableForSwitch(model: Model<Api>, liveContextTokens: number): void {
+		try {
+			this.assertModelUsable(model, liveContextTokens, { admission: this._modelSwitchAdmission() });
+		} catch (error) {
+			this._recordRejectedModelChange(model, error);
+			throw error;
+		}
+	}
+
 	private async _setModel(
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
 	): Promise<SystemPromptChangeEvent | undefined> {
-		this.assertModelUsable(model, this._getDownswitchLiveContextTokens(model));
+		this._assertModelUsableForSwitch(model, this._getDownswitchLiveContextTokens(model));
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			throw new Error(`No API key for ${model.provider}/${model.id}`);
+			const error = new Error(`No API key for ${model.provider}/${model.id}`);
+			this._recordRejectedModelChange(model, error);
+			throw error;
 		}
 
 		// A manual model change abandons any active fallback window; if a fallback
@@ -4941,7 +5031,7 @@ export class AgentSession {
 			const systemPromptChange = opts.emitModelSelect
 				? await this._emitModelSelect(model, previousModel, opts.modelSelectSource)
 				: undefined;
-			this.assertModelUsable(model, liveContextTokens);
+			this._assertModelUsableForSwitch(model, liveContextTokens);
 			if (opts.appendSessionEntry) {
 				this.sessionManager.appendModelChange(
 					model.provider,
@@ -5047,7 +5137,10 @@ export class AgentSession {
 			const alternatives = favoriteModels.filter((entry) => !modelsAreEqual(entry.model, currentModel));
 			const onlyAlternative = alternatives.length === 1 ? alternatives[0] : undefined;
 			if (onlyAlternative) {
-				this.assertModelUsable(onlyAlternative.model, this._getDownswitchLiveContextTokens(onlyAlternative.model));
+				this._assertModelUsableForSwitch(
+					onlyAlternative.model,
+					this._getDownswitchLiveContextTokens(onlyAlternative.model),
+				);
 			}
 			return {
 				model: currentModel,
@@ -5058,7 +5151,7 @@ export class AgentSession {
 		}
 		const next = favoriteModels[selectedIndex];
 		const liveContextTokens = this._getDownswitchLiveContextTokens(next.model);
-		this.assertModelUsable(next.model, liveContextTokens);
+		this._assertModelUsableForSwitch(next.model, liveContextTokens);
 		const invalidatesCompaction =
 			this._modelSelectionChangesContext(currentModel, next.model) ||
 			currentModel?.provider !== next.model.provider ||
@@ -5071,8 +5164,6 @@ export class AgentSession {
 		const thinking = this._getThinkingForModelSwitch(next.model, next.thinkingLevel, next.thinkingSelection);
 
 		this.agent.state.model = next.model;
-		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
-		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
 		const previousTier = this._currentServiceTier;
 		const previousFastMode = this.isFastModeActive();
 		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
@@ -5080,19 +5171,25 @@ export class AgentSession {
 		// Apply thinking level and provenance from the favorite projection or remembered preference.
 		this._setThinkingLevel(thinking.level, false, thinking.selection);
 
-		// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
-		this._emit({
-			type: "model_changed",
-			model: next.model,
-			thinkingLevel: this.thinkingLevel,
-			source: "cycle",
-		});
-		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
-
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		try {
 			const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
-			this.assertModelUsable(next.model, liveContextTokens);
+			// #1526: the `model_select` hook may have grown the system prompt, so the
+			// switch is not decided yet. Nothing durable - no `model_change`, no global
+			// default - may be written before this guard accepts, or a refused cycle
+			// would resume on a model that never ran (the ordering `_switchActiveModel`
+			// already uses).
+			this._assertModelUsableForSwitch(next.model, liveContextTokens);
+			this.sessionManager.appendModelChange(next.model.provider, next.model.id);
+			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
+			this._emit({
+				type: "model_changed",
+				model: next.model,
+				thinkingLevel: this.thinkingLevel,
+				source: "cycle",
+			});
+			this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
 			const cycleResult: ModelCycleResult = {
 				model: next.model,
@@ -5108,6 +5205,7 @@ export class AgentSession {
 			if (currentModel) this.agent.state.model = currentModel;
 			else delete (this.agent.state as { model?: Model<Api> }).model;
 			this.agent.state.systemPrompt = previousSystemPrompt;
+			this._currentServiceTier = previousTier;
 			throw error;
 		}
 	}
@@ -7795,9 +7893,48 @@ export class AgentSession {
 		return true;
 	}
 
+	private _isClaudeSdkSessionLockError(message: AssistantMessage): boolean {
+		return (message.errorMessage ?? "").includes("Lock file is already being held");
+	}
+
+	private _isClaudeSdkInvalidRequestError(message: AssistantMessage): boolean {
+		return message.errorMessage === "invalid_request";
+	}
+
+	/**
+	 * Claude-SDK-only quirks that a provider hop cannot fix: the session.json
+	 * lock is held by this session's own subprocess, and a bare `invalid_request`
+	 * from the SDK boundary carries no provider-neutral meaning. Both are scoped
+	 * to the Claude SDK lane, because the SAME wording from another provider is
+	 * an ordinary failure whose classification (transient retry, or hard-error
+	 * fallback) must not change. Provider-agnostic classes - the stream-stall
+	 * watchdog above all - stay out of this predicate: they already consume the
+	 * shared same-model budget through `isRetryableAssistantError` and must still
+	 * escalate to the fallback chain when that budget runs out.
+	 */
+	private _isClaudeSdkSameModelRemintError(message: AssistantMessage): boolean {
+		if (this.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+		return this._isClaudeSdkSessionLockError(message) || this._isClaudeSdkInvalidRequestError(message);
+	}
+
+	/**
+	 * The Claude SDK lane owns its own account pool: an auth miss there is
+	 * repaired or failed over inside the pool, so hopping to another provider
+	 * would abandon the user's Claude subscription on a recoverable miss. Every
+	 * other provider keeps the configured fallback-chain hop.
+	 */
+	private _isClaudeSdkAuthMissError(message: AssistantMessage): boolean {
+		return (
+			this.model?.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID &&
+			message.errorMessage === providerNotConfiguredMessage(CLAUDE_SDK_OAUTH_PROVIDER_ID)
+		);
+	}
+
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
+			!this._isClaudeSdkAuthMissError(message) &&
+			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
 			!this._isCursorPayloadOverflow(message) &&

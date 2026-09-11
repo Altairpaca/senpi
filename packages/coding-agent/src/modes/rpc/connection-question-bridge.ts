@@ -76,7 +76,14 @@ export class ConnectionQuestionBridge {
 				});
 				resolve(result);
 			};
-			const cancel = () => finish("cancelled");
+			// An aborted dialog is a cancellation unless the aborting side resolved a
+			// terminal status of its own: the ask-user extension's idle timer settles
+			// the question `timed_out` and aborts with that status, and connections
+			// must see the outcome the extension resolved (docs/rpc.md question).
+			const cancel = () => {
+				const reason: unknown = opts?.signal?.reason;
+				finish(reason === "timed_out" ? "timed_out" : "cancelled");
+			};
 			const arm = () => {
 				clearTimeout(timer);
 				frame.deadlineAtMs = Date.now() + timeout;

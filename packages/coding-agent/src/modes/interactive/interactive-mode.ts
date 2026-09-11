@@ -101,6 +101,7 @@ import { appendHiddenTuiStdout, appendUncaughtCrashLog } from "../../core/hidden
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
+import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
@@ -573,7 +574,8 @@ export class OptimisticUserEchoController {
 		return id;
 	}
 
-	promptOptions(id: string): {
+	/** `undefined` means nothing was painted for this submission; every callback then resolves to a no-op. */
+	promptOptions(id: string | undefined): {
 		preflightResult: (success: boolean) => void;
 		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
 	} {
@@ -594,14 +596,15 @@ export class OptimisticUserEchoController {
 		};
 	}
 
-	reject(id: string): void {
+	reject(id: string | undefined): void {
+		if (id === undefined) return;
 		const index = this.pending.findIndex((record) => record.id === id);
 		if (index === -1) return;
 		const [record] = this.pending.splice(index, 1);
 		record?.handle.remove();
 	}
 
-	remove(id: string): void {
+	remove(id: string | undefined): void {
 		this.reject(id);
 	}
 
@@ -619,7 +622,8 @@ export class OptimisticUserEchoController {
 interface InteractiveUserInput {
 	text: string;
 	images?: ImageContent[];
-	pendingEchoId: string;
+	/** `undefined` for a submission that paints no echo, such as the manual-continue shortcut. */
+	pendingEchoId: string | undefined;
 }
 
 /** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
@@ -4465,6 +4469,25 @@ export class InteractiveMode {
 		this.showStatus("Startup is still in progress");
 	}
 
+	/**
+	 * Paint the render-only echo for a submission, unless it is the bare "."
+	 * manual-continue shortcut. The session routes that "." as a hidden
+	 * continuation, so painting it would leave a user bubble the transcript never
+	 * receives; `undefined` tells the echo callbacks nothing was painted.
+	 */
+	private beginUserEcho(text: string, images?: readonly ImageContent[]): string | undefined {
+		if (
+			isManualContinueSubmission({
+				text,
+				hasMessages: this.session.messages.length > 0,
+				hasImages: (images?.length ?? 0) > 0,
+			})
+		) {
+			return undefined;
+		}
+		return this.optimisticUserEchoes.begin(text);
+	}
+
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			try {
@@ -4698,7 +4721,7 @@ export class InteractiveMode {
 					const images = preResolvedImages ?? this.takeSubmissionImages(text);
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
-					const pendingEchoId = this.optimisticUserEchoes.begin(text);
+					const pendingEchoId = this.beginUserEcho(text, images);
 					try {
 						await this.session.prompt(text, {
 							streamingBehavior: "steer",
@@ -4719,7 +4742,7 @@ export class InteractiveMode {
 				this.flushPendingBashComponents();
 
 				const images = preResolvedImages ?? this.takeSubmissionImages(text);
-				const pendingEchoId = this.optimisticUserEchoes.begin(text);
+				const pendingEchoId = this.beginUserEcho(text, images);
 				const submission: InteractiveUserInput =
 					images.length > 0 ? { text, images, pendingEchoId } : { text, pendingEchoId };
 				if (this.onInputCallback) {
@@ -6319,7 +6342,7 @@ export class InteractiveMode {
 		if (this.session.isStreaming) {
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
-			const pendingEchoId = this.optimisticUserEchoes.begin(text);
+			const pendingEchoId = this.beginUserEcho(text, images);
 			try {
 				await this.session.prompt(text, {
 					streamingBehavior: "followUp",

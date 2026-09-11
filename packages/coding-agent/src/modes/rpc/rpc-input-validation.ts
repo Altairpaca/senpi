@@ -42,6 +42,10 @@ function validSessionEntry(entry: unknown): boolean {
 			return typeof value.thinkingLevel === "string";
 		case "model_change":
 			return typeof value.provider === "string" && typeof value.modelId === "string";
+		case "model_change_rejected":
+			return (
+				typeof value.provider === "string" && typeof value.modelId === "string" && typeof value.detail === "string"
+			);
 		case "compaction":
 			return (
 				typeof value.summary === "string" &&

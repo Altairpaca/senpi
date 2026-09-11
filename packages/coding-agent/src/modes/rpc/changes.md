@@ -1,5 +1,117 @@
 # changes
 
+## 2026-09-10 - Optional display-name account descriptor (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProviderAccount` gains optional `displayName`, matching the safe shared descriptor returned by `get_provider_accounts`. `name` remains the immutable selector ID; credentials never enter this projection.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: clients need human-readable labels without changing their pin/remove selectors or existing legacy payloads.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` defines the host-owned typed response contract, not an extension-local message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts` account descriptor interface.
+
+## win32 supervisor bootstraps its own internal directory and public secret (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the win32 branch of `createInternalSocketPath()` now creates `<baseDir>/internal-<uuid>` with `recursive: true` instead of `recursive: false`. The function is exported and takes an injectable `platform`, mirroring `spawnableChildLaunch(launch, platform)` in the same module, so the win32 bootstrap is coverable from any host. The posix branch is unchanged. `runHostSupervisor()` now provisions the public socket secret through the new `ensurePublicSocketSecret()` helper (`ensureSocketSecret` instead of `readSocketSecret`) before it allocates the internal hop or spawns the child, so the direct launch route owns the secret its own listener authenticates with; a provisioning failure is rethrown naming the bootstrap step and the secret path.
+- `packages/coding-agent/docs/rpc.md`: the shared-host lifecycle section records that the win32 internal hop directory is created recursively and that the supervisor self-provisions `<publicSocket>.secret`, reusing an existing valid secret.
+- `packages/coding-agent/test/suite/regressions/1370-rpc-internal-socket-mkdir.test.ts`: a subprocess regression drives the real `--internal-rpc-host-supervisor` CLI route on a fresh profile through readiness, connection and a `get_protocol_info` response; two cases drive `runHostSupervisor()` itself with `process.platform` stubbed to win32 to prove a missing secret is created and an existing one preserved; the `createInternalSocketPath()` cases remain as supplemental unit coverage.
+
+### Why
+
+- `runHostSupervisor()` passes `paths.dir` (`<agentDir>/rpc-host-daemon`) as the base directory. `ensureHost()` creates that parent before spawning, but the hidden `--internal-rpc-host-supervisor` launch route does not, so on a fresh Windows profile the supervisor died during bootstrap with `ENOENT: no such file or directory, mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` (#1370). The posix branch never hit this because it roots the directory in `tmpdir()`, which always exists.
+- The same fresh profile then died on the second failure reported in #1370: `readSocketSecret()` requires `<publicSocket>.secret`, which only `ensureHost()` wrote, so the direct route never reached `listen()`. Reuse (not rotation) is mandatory because `resolveSocketTransportAddress()` derives the win32 pipe name from the socket path AND the secret, so a fresh secret would move the endpoint away from the one the caller published.
+
+### Why an extension could not handle it
+
+- The failure happens inside the supervisor's own bootstrap, before any session, runtime, or extension surface exists.
+
+### Expected merge conflict zones
+
+- LOW: the `createInternalSocketPath` signature and its win32 `mkdir` call, the secret provisioning at the top of `runHostSupervisor` and the `ensurePublicSocketSecret` helper in `host-lifecycle.ts`, and the internal launch route paragraph in `docs/rpc.md`.
+
+## The refused-switch entry crosses the RPC seam and stays bookkeeping (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `validSessionEntry` accepts `model_change_rejected` (`provider`, `modelId` and `detail` must be strings), so an `append_session_entry` carrying the entry is no longer refused as malformed.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the deferred-entry gate counts `model_change_rejected` as auto-appended bookkeeping next to `model_change`/`thinking_level_change`, so a session whose only content is a refused switch keeps shipping status snapshots without its entry list.
+
+### Why
+
+- `model_change_rejected` (#1526) is appended by the session itself on a refused switch. Without the validator branch the entry could not cross the `append_session_entry` seam `rpc-client.ts` exists for, and without the bookkeeping exclusion recording a refusal silently turned every `get_state` for that session into a full entry dump.
+
+### Why an extension could not handle it
+
+- Both are RPC-mode internals: the command validator runs before any extension sees the command, and the state snapshot is assembled by the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `validSessionEntry` switch and the `entries` spread inside the state snapshot builder.
+
+## An aborted question carries the extension's outcome (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts`: the abort listener installed for `opts.signal` no longer hard-codes `cancelled`. It reads the abort reason and resolves `timed_out` when the aborting side already settled the question that way, so the broadcast `question_resolved` outcome matches the response the model received. Every other abort (dismissal, superseded question, session close) still resolves `cancelled`.
+
+### Why
+
+- The ask-user builtin owns the authoritative idle timer and aborts the dialog controller when it fires. The bridge's own equal-length timer lost that race in RPC mode, so an idle timeout broadcast `question_resolved{outcome:"cancelled"}` while the framed notice and tool result carried the timeout text - and `docs/rpc.md` documents `timed_out` as the outcome desktop clients map onto the resolved row (probe scenario `async`).
+
+### Why an extension could not handle it
+
+- The outcome broadcast to connections is written by the bridge; an extension only sees its own `QuestionResponse`.
+
+### Expected merge conflict zones
+
+- LOW: the `cancel` closure inside `ConnectionQuestionBridge.ask`.
+
+## open_session of an existing session file starts as a resume (2026-09-10)
+
+### What changed
+
+- `session-registry.ts`: `openSession` passes `sessionStartEvent: { type: "session_start", reason: "resume" }` to `createAgentSessionRuntime` when the requested `sessionPath` already exists on disk (the same `isResume` predicate that already restores the persisted model and thinking level). A session created by the open still starts with the default `reason: "startup"`.
+
+### Why
+
+- `AgentSession` defaults to `reason: "startup"` when no event is supplied, so re-opening a session over RPC fired `session_start{startup}`. Extensions that rebuild per-session state only on a resume never ran: after a host crash the ask-user builtin's dangling-question hook (`resume.ts`, `reason` must be `resume`/`reload`) left the pending tool call hanging with nothing re-presented and no orphaned-after-restart message (probe scenario `resume`). Interactive `/resume` already emits the event through `AgentSessionRuntime.switchSession`; the RPC restart path now mirrors it.
+
+### Why an extension could not handle it
+
+- The start reason is decided by the runtime factory call inside the registry, before any extension is bound; an extension cannot observe why its session was created.
+
+### Expected merge conflict zones
+
+- LOW: the `isResume` block and the `createAgentSessionRuntime` options in `RpcSessionRegistry.openSession`.
+
+## Pending questions survive the opening connection's drop (2026-09-10)
+
+### What changed
+
+- `session-command-router.ts`: `releaseConnection` no longer calls `cancelPendingExtensionUiRequests()` for every session a dropped connection owned. The cancellation moved into `releaseOwnedSession`, on the branch where the close claim made this caller the finalizer - i.e. the attachment refcount already decided the session is being torn down. A drop that leaves other attachments alive now keeps the shared binding's pending questions pending.
+
+### Why
+
+- A question is session-owned: `docs/rpc.md` promises pending questions are broadcast to every attached connection and replayed to connections that attach later. Cancelling on any owner drop resolved the question `cancelled` for all peers, made `open_session` hydrate zero pending questions, and rejected the surviving connection's answer with `question_already_resolved` (probe scenario `owner-drop`).
+
+### Why an extension could not handle it
+
+- Connection lifecycle, attachment refcounting and binding teardown are router-private; no extension hook observes a dropped socket or the close claim that decides whether the session survives.
+
+### Expected merge conflict zones
+
+- LOW: the attachment loop in `releaseConnection` and the finalizer branch of `releaseOwnedSession`.
+
 ## edit_assistant_message command and typed edit errors (2026-09-10)
 
 ### What changed
@@ -19,7 +131,6 @@
 ### Expected merge conflict zones
 
 - LOW: `rpc-types.ts` command/response unions and the `RPC_ERROR_*` block; `connection-handler.ts` switch (one new case next to `fork`); `rpc-client.ts` `getData()`.
-
 ## Client writer for question draft progress (2026-09-10)
 
 ### What changed
