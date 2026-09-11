@@ -1,0 +1,85 @@
+name: track-1558-changes-md
+
+on:
+  push:
+    branches:
+      - automation/track-1558-changes-md
+
+permissions:
+  contents: write
+
+jobs:
+  update-trackers:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Add exact-nearest tracker coverage
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          entries = {
+              Path('packages/coding-agent/src/core/changes.md'): '''## 2026-09-11 - Preserve OpenCode session attribution for direct compaction summaries
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-attribution.ts`: exports the existing OpenCode session-header predicate as `getOpenCodeSessionHeaders()` so non-AgentSession request paths can reuse the provider/host test without duplicating it. `mergeProviderAttributionHeaders()` continues to apply the same generated defaults and caller override order.
+
+### Why
+
+- Builtin compaction dispatches its summary directly through `ModelRuntime.stream()` and therefore cannot reuse the AgentSession wrapper that normally attaches `x-opencode-session`; exposing the narrow helper lets that alternate request boundary preserve the same routing identity.
+
+### Why an extension could not handle it
+
+- The session-attribution predicate is core provider request policy used before or beneath extension header transforms; duplicating it in an extension would allow the provider/host rules to drift from normal AgentSession traffic.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/provider-attribution.ts` around the OpenCode session-header helper and `mergeProviderAttributionHeaders()`.
+''',
+              Path('packages/coding-agent/src/core/extensions/builtin/compaction/changes.md'): '''## 2026-09-11 - Preserve OpenCode session routing on builtin summary requests
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: seeds the current `SessionManager` id through `getOpenCodeSessionHeaders()` before resolved auth/configured headers and the existing provider-request header transform.
+- `packages/coding-agent/test/suite/regressions/issue-1523-opencode-session-attribution.test.ts`: pins provider-id and host routing, configured-header precedence, extension-transform precedence, and non-OpenCode neutrality.
+
+### Why
+
+- Issue #1523: the compaction summarizer bypasses `sdk.ts`'s normal AgentSession stream wrapper, so OpenCode Go requests could omit `x-opencode-session` and fail with `400 MissingSessionID` while ordinary turns succeeded.
+
+### Why an extension could not handle it
+
+- The omission occurs at the builtin compaction request-construction boundary before `ModelRuntime.stream()`. The fix must seed the normal routing defaults before the already-supported provider header transform, which remains authoritative.
+
+### Expected merge conflict zones
+
+- LOW: `speculative-summary.ts` at request-header construction immediately before `summarizationStream()`.
+''',
+          }
+
+          for path, entry in entries.items():
+              text = path.read_text(encoding='utf-8')
+              marker = entry.splitlines()[0]
+              if marker in text:
+                  continue
+              first_newline = text.find('\n')
+              if first_newline < 0:
+                  raise RuntimeError(f'no heading line in {path}')
+              updated = text[:first_newline + 1] + '\n' + entry.rstrip() + '\n\n' + text[first_newline + 1:].lstrip('\n')
+              path.write_text(updated, encoding='utf-8')
+          PY
+      - name: Commit tracker coverage
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/coding-agent/src/core/changes.md packages/coding-agent/src/core/extensions/builtin/compaction/changes.md
+          if git diff --cached --quiet; then
+            echo "trackers already current"
+            exit 0
+          fi
+          git commit -m "docs(changes): track OpenCode compaction attribution"
+          git push origin HEAD:automation/track-1558-changes-md
