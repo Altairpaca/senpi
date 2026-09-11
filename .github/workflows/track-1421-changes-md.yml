@@ -1,0 +1,48 @@
+name: track-1421-changes-md
+
+on:
+  push:
+    branches:
+      - automation/track-1421-changes-md
+
+permissions:
+  contents: write
+
+jobs:
+  update-tracker:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Add exact-nearest tracker coverage
+        shell: bash
+        env:
+          ENTRY_B64: IyMgMjAyNi0wOS0xMSAtIE5vcm1hbGl6ZSBjYW5vbmljYWwgdG9vbC1yZXN1bHQgaW1hZ2UgZGF0YSBVUkxzIGJlZm9yZSBwcm92aWRlciBzZXJpYWxpemF0aW9uCgojIyMgV2hhdCBjaGFuZ2VkCgotIGBhcGkvdHJhbnNmb3JtLW1lc3NhZ2VzLnRzYDogY2Fub25pY2FsIGBkYXRhOiR7bWltZVR5cGV9O2Jhc2U2NCxgIHByZWZpeGVzIG9uIHRvb2wtcmVzdWx0IGltYWdlIGJsb2NrcyBhcmUgc3RyaXBwZWQgYmFjayB0byByYXcgYmFzZTY0IGF0IHRoZSBzaGFyZWQgbWVzc2FnZS1ub3JtYWxpemF0aW9uIGJvdW5kYXJ5LiBSYXcgYmFzZTY0IGFuZCBtaXNtYXRjaGVkL2FyYml0cmFyeSBkYXRhIFVSTHMgcmVtYWluIHVuY2hhbmdlZC4KLSBgdGVzdC9pc3N1ZS0xMjYwLXRvb2wtcmVzdWx0LWltYWdlLWRhdGEtdXJsLnRlc3QudHNgOiBjb3ZlcnMgcmF3IGJhc2U2NCBhbmQgYWxyZWFkeS1wcmVmaXhlZCBjYW5vbmljYWwgaW1hZ2UgZGF0YSB0aHJvdWdoIHRoZSBSZXNwb25zZXMgc2VyaWFsaXplciBhbmQgcGlucyBleGFjdGx5IG9uZSB3aXJlIHByZWZpeC4KCiMjIyBXaHkKCi0gSXNzdWUgIzEyNjA6IGBJbWFnZUNvbnRlbnQuZGF0YWAgaXMgYW4gaW50ZXJuYWwgcmF3LWJhc2U2NCBjb250cmFjdCwgYnV0IHRvb2wgcmVzdWx0cyBjYW4gYXJyaXZlIGFscmVhZHkgcHJlZml4ZWQuIFBhc3NpbmcgdGhhdCB2YWx1ZSB0aHJvdWdoIG1hZGUgUmVzcG9uc2VzIGFkYXB0ZXJzIHByZXBlbmQgYSBzZWNvbmQgZGF0YS1VUkwgcHJlZml4IGFuZCBlbWl0IGFuIGludmFsaWQgYGltYWdlX3VybGAuCgojIyMgV2h5IGFuIGV4dGVuc2lvbiBjb3VsZCBub3QgaGFuZGxlIGl0CgotIFRoaXMgaXMgdGhlIHNoYXJlZCBwcm92aWRlci1ub3JtYWxpemF0aW9uIGJvdW5kYXJ5IHVzZWQgYmVmb3JlIHByb3RvY29sIHNlcmlhbGl6ZXJzLiBGaXhpbmcgb25lIHByb3ZpZGVyIG9yIGV4dGVuc2lvbiB3b3VsZCBsZWF2ZSB0aGUgbWFsZm9ybWVkIGludGVybmFsIHJlcHJlc2VudGF0aW9uIHZpc2libGUgdG8gb3RoZXIgYWRhcHRlcnMuCgojIyMgRXhwZWN0ZWQgbWVyZ2UgY29uZmxpY3Qgem9uZXMKCi0gTE9XOiBgYXBpL3RyYW5zZm9ybS1tZXNzYWdlcy50c2AgYXJvdW5kIHRvb2wtcmVzdWx0IG1lZGlhIG5vcm1hbGl6YXRpb24gYW5kIGBkb3duZ3JhZGVVbnN1cHBvcnRlZEltYWdlcygpYC4K
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          path = Path('packages/ai/src/changes.md')
+          entry = base64.b64decode(os.environ['ENTRY_B64']).decode()
+          text = path.read_text(encoding='utf-8')
+          marker = entry.splitlines()[0]
+          if marker not in text:
+              first_newline = text.find('\n')
+              if first_newline < 0:
+                  raise RuntimeError(f'no heading line in {path}')
+              updated = text[:first_newline + 1] + '\n' + entry.rstrip() + '\n\n' + text[first_newline + 1:].lstrip('\n')
+              path.write_text(updated, encoding='utf-8')
+          PY
+      - name: Commit tracker coverage
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/ai/src/changes.md
+          if git diff --cached --quiet; then
+            echo "tracker already current"
+            exit 0
+          fi
+          git commit -m "docs(changes): track tool-result image normalization"
+          git push origin HEAD:automation/track-1421-changes-md
