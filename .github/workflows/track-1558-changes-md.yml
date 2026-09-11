@@ -16,50 +16,18 @@ jobs:
       - uses: actions/checkout@v7
       - name: Add exact-nearest tracker coverage
         shell: bash
+        env:
+          CORE_ENTRY_B64: IyMgMjAyNi0wOS0xMSAtIFByZXNlcnZlIE9wZW5Db2RlIHNlc3Npb24gYXR0cmlidXRpb24gZm9yIGRpcmVjdCBjb21wYWN0aW9uIHN1bW1hcmllcwoKIyMjIFdoYXQgY2hhbmdlZAoKLSBgcGFja2FnZXMvY29kaW5nLWFnZW50L3NyYy9jb3JlL3Byb3ZpZGVyLWF0dHJpYnV0aW9uLnRzYDogZXhwb3J0cyB0aGUgZXhpc3RpbmcgT3BlbkNvZGUgc2Vzc2lvbi1oZWFkZXIgcHJlZGljYXRlIGFzIGBnZXRPcGVuQ29kZVNlc3Npb25IZWFkZXJzKClgIHNvIG5vbi1BZ2VudFNlc3Npb24gcmVxdWVzdCBwYXRocyBjYW4gcmV1c2UgdGhlIHByb3ZpZGVyL2hvc3QgdGVzdCB3aXRob3V0IGR1cGxpY2F0aW5nIGl0LiBgbWVyZ2VQcm92aWRlckF0dHJpYnV0aW9uSGVhZGVycygpYCBjb250aW51ZXMgdG8gYXBwbHkgdGhlIHNhbWUgZ2VuZXJhdGVkIGRlZmF1bHRzIGFuZCBjYWxsZXIgb3ZlcnJpZGUgb3JkZXIuCgojIyMgV2h5CgotIEJ1aWx0aW4gY29tcGFjdGlvbiBkaXNwYXRjaGVzIGl0cyBzdW1tYXJ5IGRpcmVjdGx5IHRocm91Z2ggYE1vZGVsUnVudGltZS5zdHJlYW0oKWAgYW5kIHRoZXJlZm9yZSBjYW5ub3QgcmV1c2UgdGhlIEFnZW50U2Vzc2lvbiB3cmFwcGVyIHRoYXQgbm9ybWFsbHkgYXR0YWNoZXMgYHgtb3BlbmNvZGUtc2Vzc2lvbmA7IGV4cG9zaW5nIHRoZSBuYXJyb3cgaGVscGVyIGxldHMgdGhhdCBhbHRlcm5hdGUgcmVxdWVzdCBib3VuZGFyeSBwcmVzZXJ2ZSB0aGUgc2FtZSByb3V0aW5nIGlkZW50aXR5LgoKIyMjIFdoeSBhbiBleHRlbnNpb24gY291bGQgbm90IGhhbmRsZSBpdAoKLSBUaGUgc2Vzc2lvbi1hdHRyaWJ1dGlvbiBwcmVkaWNhdGUgaXMgY29yZSBwcm92aWRlciByZXF1ZXN0IHBvbGljeSB1c2VkIGJlZm9yZSBvciBiZW5lYXRoIGV4dGVuc2lvbiBoZWFkZXIgdHJhbnNmb3JtczsgZHVwbGljYXRpbmcgaXQgaW4gYW4gZXh0ZW5zaW9uIHdvdWxkIGFsbG93IHRoZSBwcm92aWRlci9ob3N0IHJ1bGVzIHRvIGRyaWZ0IGZyb20gbm9ybWFsIEFnZW50U2Vzc2lvbiB0cmFmZmljLgoKIyMjIEV4cGVjdGVkIG1lcmdlIGNvbmZsaWN0IHpvbmVzCgotIExPVzogYHBhY2thZ2VzL2NvZGluZy1hZ2VudC9zcmMvY29yZS9wcm92aWRlci1hdHRyaWJ1dGlvbi50c2AgYXJvdW5kIHRoZSBPcGVuQ29kZSBzZXNzaW9uLWhlYWRlciBoZWxwZXIgYW5kIGBtZXJnZVByb3ZpZGVyQXR0cmlidXRpb25IZWFkZXJzKClgLgo=
+          COMPACTION_ENTRY_B64: IyMgMjAyNi0wOS0xMSAtIFByZXNlcnZlIE9wZW5Db2RlIHNlc3Npb24gcm91dGluZyBvbiBidWlsdGluIHN1bW1hcnkgcmVxdWVzdHMKCiMjIyBXaGF0IGNoYW5nZWQKCi0gYHBhY2thZ2VzL2NvZGluZy1hZ2VudC9zcmMvY29yZS9leHRlbnNpb25zL2J1aWx0aW4vY29tcGFjdGlvbi9zcGVjdWxhdGl2ZS1zdW1tYXJ5LnRzYDogc2VlZHMgdGhlIGN1cnJlbnQgYFNlc3Npb25NYW5hZ2VyYCBpZCB0aHJvdWdoIGBnZXRPcGVuQ29kZVNlc3Npb25IZWFkZXJzKClgIGJlZm9yZSByZXNvbHZlZCBhdXRoL2NvbmZpZ3VyZWQgaGVhZGVycyBhbmQgdGhlIGV4aXN0aW5nIHByb3ZpZGVyLXJlcXVlc3QgaGVhZGVyIHRyYW5zZm9ybS4KLSBgcGFja2FnZXMvY29kaW5nLWFnZW50L3Rlc3Qvc3VpdGUvcmVncmVzc2lvbnMvaXNzdWUtMTUyMy1vcGVuY29kZS1zZXNzaW9uLWF0dHJpYnV0aW9uLnRlc3QudHNgOiBwaW5zIHByb3ZpZGVyLWlkIGFuZCBob3N0IHJvdXRpbmcsIGNvbmZpZ3VyZWQtaGVhZGVyIHByZWNlZGVuY2UsIGV4dGVuc2lvbi10cmFuc2Zvcm0gcHJlY2VkZW5jZSwgYW5kIG5vbi1PcGVuQ29kZSBuZXV0cmFsaXR5LgoKIyMjIFdoeQoKLSBJc3N1ZSAjMTUyMzogdGhlIGNvbXBhY3Rpb24gc3VtbWFyaXplciBieXBhc3NlcyBgc2RrLnRzYCdzIG5vcm1hbCBBZ2VudFNlc3Npb24gc3RyZWFtIHdyYXBwZXIsIHNvIE9wZW5Db2RlIEdvIHJlcXVlc3RzIGNvdWxkIG9taXQgYHgtb3BlbmNvZGUtc2Vzc2lvbmAgYW5kIGZhaWwgd2l0aCBgNDAwIE1pc3NpbmdTZXNzaW9uSURgIHdoaWxlIG9yZGluYXJ5IHR1cm5zIHN1Y2NlZWRlZC4KCiMjIyBXaHkgYW4gZXh0ZW5zaW9uIGNvdWxkIG5vdCBoYW5kbGUgaXQKCi0gVGhlIG9taXNzaW9uIG9jY3VycyBhdCB0aGUgYnVpbHRpbiBjb21wYWN0aW9uIHJlcXVlc3QtY29uc3RydWN0aW9uIGJvdW5kYXJ5IGJlZm9yZSBgTW9kZWxSdW50aW1lLnN0cmVhbSgpYC4gVGhlIGZpeCBtdXN0IHNlZWQgdGhlIG5vcm1hbCByb3V0aW5nIGRlZmF1bHRzIGJlZm9yZSB0aGUgYWxyZWFkeS1zdXBwb3J0ZWQgcHJvdmlkZXIgaGVhZGVyIHRyYW5zZm9ybSwgd2hpY2ggcmVtYWlucyBhdXRob3JpdGF0aXZlLgoKIyMjIEV4cGVjdGVkIG1lcmdlIGNvbmZsaWN0IHpvbmVzCgotIExPVzogYHNwZWN1bGF0aXZlLXN1bW1hcnkudHNgIGF0IHJlcXVlc3QtaGVhZGVyIGNvbnN0cnVjdGlvbiBpbW1lZGlhdGVseSBiZWZvcmUgYHN1bW1hcml6YXRpb25TdHJlYW0oKWAuCg==
         run: |
           python3 - <<'PY'
+          import base64
+          import os
           from pathlib import Path
-
           entries = {
-              Path('packages/coding-agent/src/core/changes.md'): '''## 2026-09-11 - Preserve OpenCode session attribution for direct compaction summaries
-
-### What changed
-
-- `packages/coding-agent/src/core/provider-attribution.ts`: exports the existing OpenCode session-header predicate as `getOpenCodeSessionHeaders()` so non-AgentSession request paths can reuse the provider/host test without duplicating it. `mergeProviderAttributionHeaders()` continues to apply the same generated defaults and caller override order.
-
-### Why
-
-- Builtin compaction dispatches its summary directly through `ModelRuntime.stream()` and therefore cannot reuse the AgentSession wrapper that normally attaches `x-opencode-session`; exposing the narrow helper lets that alternate request boundary preserve the same routing identity.
-
-### Why an extension could not handle it
-
-- The session-attribution predicate is core provider request policy used before or beneath extension header transforms; duplicating it in an extension would allow the provider/host rules to drift from normal AgentSession traffic.
-
-### Expected merge conflict zones
-
-- LOW: `packages/coding-agent/src/core/provider-attribution.ts` around the OpenCode session-header helper and `mergeProviderAttributionHeaders()`.
-''',
-              Path('packages/coding-agent/src/core/extensions/builtin/compaction/changes.md'): '''## 2026-09-11 - Preserve OpenCode session routing on builtin summary requests
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: seeds the current `SessionManager` id through `getOpenCodeSessionHeaders()` before resolved auth/configured headers and the existing provider-request header transform.
-- `packages/coding-agent/test/suite/regressions/issue-1523-opencode-session-attribution.test.ts`: pins provider-id and host routing, configured-header precedence, extension-transform precedence, and non-OpenCode neutrality.
-
-### Why
-
-- Issue #1523: the compaction summarizer bypasses `sdk.ts`'s normal AgentSession stream wrapper, so OpenCode Go requests could omit `x-opencode-session` and fail with `400 MissingSessionID` while ordinary turns succeeded.
-
-### Why an extension could not handle it
-
-- The omission occurs at the builtin compaction request-construction boundary before `ModelRuntime.stream()`. The fix must seed the normal routing defaults before the already-supported provider header transform, which remains authoritative.
-
-### Expected merge conflict zones
-
-- LOW: `speculative-summary.ts` at request-header construction immediately before `summarizationStream()`.
-''',
+              Path('packages/coding-agent/src/core/changes.md'): base64.b64decode(os.environ['CORE_ENTRY_B64']).decode(),
+              Path('packages/coding-agent/src/core/extensions/builtin/compaction/changes.md'): base64.b64decode(os.environ['COMPACTION_ENTRY_B64']).decode(),
           }
-
           for path, entry in entries.items():
               text = path.read_text(encoding='utf-8')
               marker = entry.splitlines()[0]
