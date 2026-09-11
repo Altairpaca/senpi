@@ -43,15 +43,19 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
-import type {
-	ImageSettings,
-	LookAtSettings,
-	MarkdownSettings,
-	MermaidRenderingMode,
-	OpenAISettings,
-	PromptCacheKeepAliveSettings,
-	PromptCacheSettings,
-	ThinkingBudgetsSettings,
+import {
+	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
+	ASK_USER_MAX_TIMEOUT_MINUTES,
+	ASK_USER_MIN_TIMEOUT_MINUTES,
+	type AskUserSettings,
+	type ImageSettings,
+	type LookAtSettings,
+	type MarkdownSettings,
+	type MermaidRenderingMode,
+	type OpenAISettings,
+	type PromptCacheKeepAliveSettings,
+	type PromptCacheSettings,
+	type ThinkingBudgetsSettings,
 } from "./settings-shapes.ts";
 import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
 
@@ -164,6 +168,7 @@ export interface Settings {
 	promptCache?: PromptCacheSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
+	askUser?: AskUserSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
@@ -222,6 +227,13 @@ function deepMergeSettings(base: Settings, overrides: Settings): Settings {
 		};
 	}
 	return result;
+}
+
+function resolveAskUserTimeoutMinutes(value: unknown): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return ASK_USER_DEFAULT_TIMEOUT_MINUTES;
+	}
+	return Math.min(ASK_USER_MAX_TIMEOUT_MINUTES, Math.max(ASK_USER_MIN_TIMEOUT_MINUTES, Math.floor(value)));
 }
 
 function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
@@ -778,7 +790,7 @@ export class SettingsManager {
 		return (
 			this.projectSettings.promptCache?.goalBackstopMaxSeconds ??
 			this.globalSettings.promptCache?.goalBackstopMaxSeconds ??
-			3570
+			270
 		);
 	}
 
@@ -789,6 +801,14 @@ export class SettingsManager {
 			maxRequestsPerSession: configured?.maxRequestsPerSession ?? 3,
 			maxCostUsdPerSession: configured?.maxCostUsdPerSession ?? 0.05,
 			marginSeconds: configured?.marginSeconds ?? 60,
+		};
+	}
+
+	getAskUserSettings(): { enabled: boolean; timeoutMinutes: number } {
+		const configured = this.settings.askUser;
+		return {
+			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
+			timeoutMinutes: resolveAskUserTimeoutMinutes(configured?.timeoutMinutes),
 		};
 	}
 

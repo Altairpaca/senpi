@@ -1,5 +1,41 @@
 # changes — senpi-monorepo root
 
+## Scrub VENICE_API_KEY in the hermetic test environments (2026-09-10)
+
+### What changed
+
+- `pi-test.sh` and `pi-test.ps1` add `VENICE_API_KEY` to the provider credentials cleared before the suite runs, alongside the existing `CEREBRAS_API_KEY`/`XAI_API_KEY` entries. `test.sh` and `packages/coding-agent/scripts/qa-app-server/lib/env.mjs` gained the same entry.
+
+### Why
+
+- Venice is now a built-in provider, and several suites key opt-in live behavior off the mere presence of a provider API key. Leaving `VENICE_API_KEY` in the inherited environment would let a developer's real credential change test behavior or reach the network.
+
+### Why an extension could not handle it
+
+- These are the shell entry points that build the test environment before any senpi process starts.
+
+### Expected merge conflict zones
+
+- LOW: the `unset`/credential-name lists in `pi-test.sh` and `pi-test.ps1` when upstream adds providers.
+
+## Root scripts reach workspaces only through scripts/run-workspaces.mjs (2026-09-07)
+
+### What changed
+
+- `package.json`: `test`, `clean`, `eval`, `dev`, `dev:tsc`, `generate:models`, `generate:model-catalog`, `hydrate:model-data`, and `check:model-data` delegate into workspaces through `node scripts/run-workspaces.mjs [--if-present] [--workspace <path>] <script>` instead of `npm run --workspaces --if-present <script>`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` lanes inside concurrently. `dev` keeps only the `packages/ai` and `packages/coding-agent` lanes, the two workspaces that define a `dev` script. `version:*` keep `npm version --workspaces` (npm's version bookkeeping, not a script delegation); `refresh-lock`, `publish*`, and `release*` are untouched.
+
+### Why
+
+- Under bun the old shapes worked only where bun happened to rewrite `npm run` to `bun run`, and bun's `--workspaces` fans out in parallel while npm runs sequentially; `--prefix`, `--workspace=`, and `cd <dir> && npm run` never reach bun or pnpm and always execute real npm, against the `scripts/AGENTS.md` rule of not hardcoding the child package manager. The runner executes every workspace script with the manager that launched the root script, sequentially and in path order, with one PASS / SKIP / FAIL summary, so `bun run test`, `npm run test`, and `pnpm run test` behave identically. The `packages/agent` and `packages/tui` dev lanes pointed at scripts that do not exist.
+
+### Why an extension could not handle it
+
+- Root manifest scripts run before any Senpi runtime starts; the package manager is the only surface above them.
+
+### Expected merge conflict zones
+
+- LOW: the nine script lines in the root `package.json` `scripts` block. Upstream still spells these in npm's dialect; keep the runner form on sync.
+
 ## bun.lock refreshed wherever package-lock.json is refreshed (2026-09-04)
 
 ### What changed

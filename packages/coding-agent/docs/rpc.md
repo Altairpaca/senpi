@@ -8,6 +8,14 @@ RPC mode enables headless operation of the coding agent via a JSON protocol over
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
 
+## Account display names
+
+`get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
+
+Use `/account <provider> rename <id> <display name...>` or the corresponding `/gpt-account` and `/claude-account` commands to name saved accounts; `clear-name <id>` removes only the label. `/gpt-account add` offers optional naming after login is saved, and only when Senpi generated the account ID itself; the Claude lane names accounts through its own login prompt and never asks twice. Blank input or cancellation keeps that login usable. Environment accounts cannot be renamed.
+
+A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
+
 ## Starting RPC Mode
 
 ### RPC client lifecycle
@@ -147,6 +155,8 @@ The command response reports only `{ cancelled }`, so this event is the only pus
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
 
+On win32 the supervisor's internal hop lives under `<agentDir>/rpc-host-daemon/internal-<uuid>`, and that directory is created recursively. Before allocating the internal hop or spawning a child, the supervisor ensures `<publicSocket>.secret` exists, creating its parent directories and a 32-byte secret with mode `0600` when needed. An existing valid secret, including one written by `ensureHost()`, is reused unchanged. Direct launch therefore works on a fresh profile without caller-side secret provisioning. Provisioning failures identify the bootstrap step and secret path; the public endpoint still requires the secret handshake before forwarding RPC traffic.
+
 Hosts started through `ensureHost()` are wrapped by a lifecycle supervisor that owns the public socket and spawns the
 real RPC host on a private internal hop. The policy lives in `<agentDir>/rpc-host-daemon/settings.json`:
 
@@ -177,8 +187,8 @@ hosts) sees neither variable and is unaffected. A host whose supervisor is alive
 
 ### Shared host occupancy (idle eviction, session cap, empty-host exit)
 
-Every open session owns a complete runtime (a lone idle session measures 340-510 MB RSS), so the host enforces three
-occupancy bounds itself, independent of the supervisor and of client cooperation:
+Every CLI shared-host session owns a worker isolate and a complete runtime. Memory depends on its extensions and
+session contents; isolates do not provide process-fatal OOM containment. The host enforces these occupancy bounds:
 
 - **Idle eviction**: a session with no routed command and no session-owned work for
   `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
@@ -188,9 +198,13 @@ occupancy bounds itself, independent of the supervisor and of client cooperation
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
   and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
   session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
-- **Logical sessions**: `open_session` has no session-count admission limit. Every logical session remains isolated
-  by its routing handle and provider scope inside this one shared daemon; idle eviction and empty-host shutdown
-  reclaim resident resources without rejecting a new session.
+- **Worker capacity**: at most 20 workers may be preparing, open, closing, or quarantined together. Admission beyond
+  this bound fails explicitly with `open_failed: too_many_sessions`; it never evicts another session or starts an OS
+  process as a fallback. This is a new externally visible bound for CLI shared mode, which previously admitted
+  unlimited logical sessions. It applies to new worker allocation, not attachments: a known canonical path or
+  original opening spelling joins its already-bound owner without allocating a worker, even at capacity. An
+  unknown path/alias still needs a preparation worker slot. In-process SDK registries using an injected runtime
+  factory retain their existing behavior.
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
@@ -200,14 +214,76 @@ occupancy bounds itself, independent of the supervisor and of client cooperation
 Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
 so they hold even for embedders and hand-started hosts that have no supervisor.
 
+### Worker ownership and flow control
+
+The main host owns transport, attachments and canonical reservations. Workers canonicalize caller-supplied paths;
+main does not synchronously traverse those paths. An open prepares a path, obtains the main host's exclusive grant,
+and only then constructs its session writer and runtime. A conflicting alias attaches to an open owner or fails
+explicitly before opening another writer.
+
+SessionManager writes, switches, forks, new sessions and imports obtain the same grant before writer creation or
+append-side normalization. Acquired paths are conservatively retained for that worker's entire lifetime, including
+superseded paths after a switch. Each worker may reserve at most 64 paths; an exhausted reservation budget fails
+explicitly. Close or an opening deadline requests worker termination, but does not release reservations or worker
+capacity until the actual exit event. A syscall that cannot yet be interrupted can therefore keep an entry
+internally quarantined after the routing handle has closed. `list_sessions` continues to publish `closing`, not a
+new status: existing clients must not mistake a quarantined worker for a live reattach target. Retry the path only
+after that entry disappears.
+
+Each worker accepts at most 64 ordinary pending requests totaling 16 MiB, plus four reserved interrupt/UI-response
+slots totaling 1 MiB. Prepare, commit and bind share one 30-second opening budget starting with worker allocation;
+they do not each reset that budget. Interrupt requests have a five-second deadline. Ordinary commands remain bounded
+by count and bytes without imposing a new timeout on long-running commands. The desktop's 60-second open/readmission
+window is a separate client-side wait: the host normally reports its earlier 30-second failure within that window,
+but a slow transport can delay delivery. Neither timeout proves worker exit or permits concurrent reopening.
+Display updates coalesce to one pending update and one latest value; UI cancellation and close have separate control
+messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Credit
+returns after the session's destinations consume their output, not merely on IPC receipt. A five-second credit
+failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
+unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior, and a socket peer that
+stops reading is cut before it can consume that credit budget: a write the peer has not accepted within 4 seconds
+(`DEFAULT_STALL_MS`, below the 5-second worker deadline) is treated like a byte overflow — that connection receives one
+`overflow` record with `error: "stalled, resync required"`, is closed, and must reconnect and resynchronize — while the
+session keeps running and its other destinations keep receiving output. A failed or cut connection never withholds a
+session's credit and never fails the shared host writer; only the stdio lane can. The default stdio
+queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
+Close admission counts both queued output and pending close replies (including their serialized bytes) before
+releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
+admitted joiners follow those records in FIFO order. Excess closes are not admitted and do not release ownership.
+One bounded `overflow` record with `command: "close_session"` and
+`error: "rpc_close_output_overflow, resync required"` reports the saturation episode instead of retaining a reply
+or promise for each rejected request. Over sockets, this notice goes only to the requester whose close was rejected;
+each connection may have at most one outstanding notice, released when its sink consumes it. After socket-only drain,
+a subsequent saturation episode on the same connection can report a new notice without reconnecting. A healthy peer is not
+told to resynchronize, and a newly affected or reconnected peer receives its own notice. Stdio retains one notice per
+episode. Clients receiving a notice must stop issuing closes, drain output, and resynchronize unacknowledged requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
+Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
+
+The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
+plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
+file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
+`src/modes/rpc/session-worker.ts` as an explicit entrypoint; Node bundles must ship `session-worker.js` beside the
+chunk containing its worker client. Third-party/rebranded Bun wrappers must pass the published
+`dist/modes/rpc/session-worker.js` as an additional compile entry, set an explicit `--root`, and set
+`--define=SENPI_RPC_SESSION_WORKER_ENTRY='"./<worker-path-relative-to-root>"'`. The define is a build-time
+contract, not an environment variable. Its path must match Bun's embedded entry name, not the source machine's
+absolute path or the runtime working directory. The client resolves it against its compiled `import.meta.url`
+before constructing the Worker: Bun 1.4.0 resolves a bare relative Worker string against the real cwd instead
+of the embedded filesystem. Verify the relocated wrapper on the wrapper's supported Bun version and platform
+by opening two shared sessions;
+a standalone Senpi smoke does not verify a wrapper's different compile graph.
+
+Workers isolate JavaScript event loops, not OS processes: they do not promise syscall cancellation, process-fatal OOM
+containment, or containment of arbitrary native code. They are not an extension sandbox.
+
 ### D1 normative table (multi-session mode)
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session` plus the negotiated launch capabilities. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. |
-| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then force-releases the session; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). A concurrent close joins the same teardown and receives its own successful response. |
-| `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
+| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
+| `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 
 ### Identities (D6)
@@ -220,7 +296,7 @@ In the response `error` field, machine-matchable:
 
 - `unknown_session`
 - `session_closing`
-- `session_path_in_use` (path held by a session still `opening` or already `closing`; a fully-open session is attached instead)
+- `session_path_in_use` (path held by an opening, closing, quarantined, or superseded owner; a fully-open current owner is attached instead)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
 - `invalid_path` (relative `sessionPath`/`cwd`)
@@ -237,7 +313,7 @@ Strict FIFO per session; one total stdout order; cross-session order unspecified
 
 ### Duplicate/idempotency
 
-Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry → `session_path_in_use`. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
+Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry (including internal quarantine) → `session_path_in_use`. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
 
 ## Protocol Overview
 
@@ -795,7 +871,7 @@ Response:
 
 #### set_auto_compaction
 
-Enable or disable automatic compaction when context is nearly full.
+Enable or disable automatic compaction when context is nearly full for this session only. The persisted `compaction.enabled` setting is left untouched, and `get_state` reports the effective value. Disabling it stops proactive threshold compaction; a provider-rejected context overflow still triggers the one-shot compact-and-retry recovery.
 
 ```json
 {"type": "set_auto_compaction", "enabled": true}
@@ -1024,6 +1100,37 @@ If an extension cancelled the fork:
   "data": {"text": "The original prompt text...", "cancelled": true}
 }
 ```
+
+#### edit_assistant_message
+
+Replace an assistant response with an edited copy. The session leaf moves to the target entry's parent and the edited copy is appended there as the new leaf, so the original response and everything after it stay in the file on an abandoned branch. The copy keeps only the new text (tool calls and thinking blocks are dropped; `stopReason` is `stop`) and preserves the original's model, provider and usage. Emits `session_before_tree` (cancellable) and `session_tree` like tree navigation.
+
+```json
+{"type": "edit_assistant_message", "entryId": "abc123", "text": "The corrected answer.", "expectedLeafId": "def456"}
+```
+
+- `expectedLeafId` (optional): the leaf you last observed (from `get_tree`, `get_entries`, or the `entry_appended` stream). When the session's current leaf differs, the command fails with `errorCode: "stale_leaf"` before anything is written - this is how a client with a stale view is refused instead of overwriting a conversation another client moved. The check runs before the unchanged comparison, so identical text still reports `stale_leaf` from a stale client.
+- `summarize` / `customInstructions` (optional): summarize the abandoned branch like `navigate_tree`. With a summary, the edited copy's parent is the new `branch_summary` entry (its id is returned as `summaryEntryId`).
+
+Response:
+
+```json
+{"type": "response", "command": "edit_assistant_message", "success": true, "data": {"outcome": "edited", "entry": {"type": "message", "id": "ghi789", "parentId": "u1", "message": {"role": "assistant", "content": [{"type": "text", "text": "The corrected answer."}]}}, "leafId": "ghi789"}}
+```
+
+Other outcomes: `{"outcome": "unchanged", "leafId": "..."}` when the text matches the original (nothing written) and `{"outcome": "cancelled", "leafId": "...", "aborted": true}` when an extension cancelled the navigation or the summary was aborted.
+
+Failures carry a typed `errorCode`:
+
+| `errorCode` | Meaning |
+|-------------|---------|
+| `streaming` | A response is in flight; retry once the turn ends |
+| `not_found` | No entry with that id |
+| `not_assistant` | The entry is not an assistant message |
+| `empty` | The replacement text is blank |
+| `stale_leaf` | `expectedLeafId` no longer matches the session leaf |
+
+Message identity: RPC mode emits `entry_appended` right after every persisted `message_end`, carrying the full session entry (`entry.id`, `entry.parentId`, `entry.message`). Clients should record `entry.id` from that stream as the identity of each rendered message instead of inferring it by position, and pass it as `entryId` here.
 
 #### clone
 
@@ -1818,10 +1925,10 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 
 There are two categories of extension UI methods:
 
-- **Dialog methods** (`select`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
+- **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
 - **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
-If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
+If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
@@ -1994,6 +2101,62 @@ Set the text in the input editor. Fire-and-forget.
   "text": "prefilled text for the user"
 }
 ```
+
+#### question
+
+Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-q1",
+  "method": "question",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "waitForAnswer": true,
+  "questions": [
+    {
+      "id": "q1",
+      "header": "Database",
+      "question": "Which database should I use?",
+      "options": [
+        { "label": "PostgreSQL", "description": "Relational" },
+        { "label": "SQLite", "description": "Embedded" }
+      ],
+      "multiSelect": false
+    }
+  ],
+  "timeout": 1800000,
+  "askedAtMs": 1718000000000,
+  "deadlineAtMs": 1718001800000,
+  "remainingMs": 1799500
+}
+```
+
+Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: unanswered question ids are reported back to the model. Send `cancelled: true` to dismiss.
+
+While the question is open, the client may send `extension_ui_progress` frames with draft `answers` and `comment`. Each progress frame resets the idle timer; the host emits `question_updated` with the refreshed `deadlineAtMs` and `remainingMs`.
+
+When the question resolves (answered, comment-submitted, timed_out, or cancelled), the host broadcasts `question_resolved` to all connections:
+
+```json
+{
+  "type": "question_resolved",
+  "id": "uuid-q1",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "outcome": "answered",
+  "answers": { "q1": { "selected": ["PostgreSQL"] } },
+  "comment": "",
+  "unanswered": []
+}
+```
+
+A late answer after resolution receives a `question_already_resolved` error.
+
+`RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
+
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
 
 ### Extension UI Responses (stdin)
 

@@ -1,4 +1,39 @@
+## 2026-09-10 - Honor an inline isError on returned tool results
 
+### What changed
+
+- packages/agent/src/types.ts: `AgentToolResult` declares `isError?: boolean` so a tool can report a failure without throwing while keeping `content` and `details` intact.
+- packages/agent/src/agent-loop.ts: `executePreparedToolCall` carries `settled.isError === true` into the executed outcome instead of hardcoding `isError: false`, so `tool_execution_end` and the `toolResult` message flag the failure.
+
+### Why
+
+- Structured-failure tools (omo's team and memory tools, the terminal tool) return `isError: true` with typed `details` for the model to branch on. The loop dropped that flag, so the TUI painted the row as success, the RPC `tool_execution_end.isError` the desktop GUI maps to "failed" stayed false, and `tool_result` hooks saw a success.
+
+### Why this lives in the fork
+
+- The error flag is decided inside the loop's execution outcome before any hook runs; extensions can only rewrite it per tool through `tool_result`, not restore the contract for every tool.
+
+### Expected merge conflict zones
+
+- `executePreparedToolCall` return in packages/agent/src/agent-loop.ts and the `AgentToolResult` interface in packages/agent/src/types.ts.
+
+## 2026-09-10 - Use native TypeScript builds for omob performance
+
+### What changed
+
+- packages/agent/package.json: build uses tsgo for the emitted workspace build.
+
+### Why
+
+- The native compiler reduces omob build time without changing runtime JavaScript.
+
+### Why this lives in the fork
+
+- The package build manifest owns the compiler used by the fork's release pipeline.
+
+### Expected merge conflict zones
+
+- The `build` script in packages/agent/package.json.
 ## 2026-09-05 - Preserve Astra reasoning effort across session changes
 
 ### What changed
@@ -44,6 +79,29 @@
 - Agent loop configuration and session entry unions.
 
 # Changes
+
+## 2026-09-08 - Recover empty native tool-use responses
+
+### What changed
+
+- `packages/agent/src/empty-assistant-recovery.ts`: retry terminal native `toolUse` responses with no tool-call blocks once, then surface an error and telemetry diagnostic; preserve existing empty-stop gating.
+- `packages/agent/src/assistant-terminal-state.ts`: demote contradictory tool-use terminal messages without tool calls, stamping an `empty_tool_use_terminal_state` diagnostic so the demotion stays identifiable after the stop reason is rewritten.
+- `packages/agent/src/agent-loop.ts`: compose terminal normalization with pending-tool promotion.
+- `packages/agent/src/index.ts`: export `EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC` so the goal builtin can recognize a demoted malformed turn.
+
+### Why
+
+- Providers can lose a streamed tool call while retaining the `toolUse` stop reason, which otherwise silently ends the user's session.
+
+### Why an extension could not handle it
+
+- Provider stream buffering and terminal-state normalization occur inside the core agent loop before extension callbacks observe the message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `empty-assistant-recovery.ts` stream terminal handling and `agent-loop.ts` terminal message normalization.
+- LOW: the `assistant-terminal-state.ts` re-export line in `index.ts`.
+
 
 ## 2026-09-04 - Drop the byte count from write-tool results
 

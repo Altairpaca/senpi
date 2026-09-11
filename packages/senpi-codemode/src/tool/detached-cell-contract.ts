@@ -15,6 +15,8 @@ export interface EvalDetachedCellSnapshot {
 	readonly interruptNote?: string;
 	/** Set only when the wall-clock kill deadline ended this cell. */
 	readonly hardLimitSeconds?: number;
+	/** Set only when the cell's own execution time exhausted its run budget. */
+	readonly runBudgetSeconds?: number;
 }
 
 export interface EvalDetachedCellNotification {
@@ -38,6 +40,8 @@ export interface EvalDetachedCellManagerOptions {
 	readonly notifier?: EvalDetachedCellNotifier;
 	/** Wall-clock kill deadline in seconds; defaults to the bash-parity 1800s. */
 	readonly hardLimitSeconds?: number;
+	/** Kill deadline for a cell's own execution time in seconds; a per-call `timeout` replaces it. Defaults to 300s. */
+	readonly runBudgetSeconds?: number;
 	readonly onStatusChange?: (entries: readonly EvalDetachedCellStatusEntry[]) => void;
 	/** Receives a full per-source liveness snapshot on every detached-cell transition; used by the goal builtin. */
 	readonly onWakeSourceState?: (state: WakeSourceState) => void;

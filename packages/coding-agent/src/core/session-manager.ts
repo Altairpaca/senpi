@@ -20,6 +20,7 @@ import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { reserveSessionWrite } from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -128,6 +129,36 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	originalModelId?: string;
 }
 
+/**
+ * A model switch the session refused. Recorded because the refusal happens
+ * before any `model_change` is appended, which left an attempted-and-rejected
+ * switch indistinguishable from one the user never made (#1526).
+ *
+ * Durability follows the shared session-file contract, it is not special-cased:
+ * `_persist` buffers every entry until the branch holds an assistant message,
+ * so a refusal recorded before the session's first assistant reply reaches the
+ * JSONL only when that reply flushes the buffer. A session that never gets one
+ * keeps the record in memory for its lifetime and never writes a file.
+ */
+export interface ModelChangeRejectedEntry extends SessionEntryBase {
+	type: "model_change_rejected";
+	provider: string;
+	modelId: string;
+	reason: "context-budget" | "auth";
+	/**
+	 * The guard's own explanation, including its remedy. Named `detail` rather
+	 * than `message` so this entry stays structurally distinct from
+	 * `SessionMessageEntry`, whose `message` is an object.
+	 */
+	detail: string;
+	/** Budget numbers; present only for the context-budget reason. */
+	contextWindow?: number;
+	liveContextTokens?: number;
+	requiredTokens?: number;
+	shortfallTokens?: number;
+	safetyMarginProfile?: string;
+}
+
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	type: "compaction";
 	summary: string;
@@ -208,6 +239,7 @@ export type SessionEntry =
 	| ThinkingLevelChangeEntry
 	| ConfigurationUpdateEntry
 	| ModelChangeEntry
+	| ModelChangeRejectedEntry
 	| CompactionEntry
 	| BranchSummaryEntry
 	| CustomEntry
@@ -907,6 +939,7 @@ export class SessionManager {
 	}
 
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
 		this.residentStore.clear();
@@ -982,7 +1015,9 @@ export class SessionManager {
 
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			reserveSessionWrite(path);
+			this.sessionFile = path;
 		}
 		return this.sessionFile;
 	}
@@ -1027,6 +1062,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		reserveSessionWrite(this.sessionFile);
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
@@ -1067,6 +1103,7 @@ export class SessionManager {
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
@@ -1231,6 +1268,24 @@ export class SessionManager {
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			reasoning: { effort },
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/**
+	 * Append a refused model switch (#1526). The refusal happens before any
+	 * `model_change` is written, so without this the attempt leaves no trace.
+	 */
+	appendModelChangeRejected(
+		details: Omit<ModelChangeRejectedEntry, "type" | "id" | "parentId" | "timestamp">,
+	): string {
+		const entry: ModelChangeRejectedEntry = {
+			type: "model_change_rejected",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			...details,
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1775,6 +1830,7 @@ export class SessionManager {
 				parentId = labelEntry.id;
 			}
 
+			reserveSessionWrite(newSessionFile);
 			this.residentStore.clear();
 			this.mirrorTrimmed = false;
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
@@ -1844,6 +1900,7 @@ export class SessionManager {
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
 		const resolvedPath = resolvePath(path);
+		reserveSessionWrite(resolvedPath);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
 		if (cwdOverride === undefined && existsSync(resolvedPath)) {
@@ -1938,6 +1995,7 @@ export class SessionManager {
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
 		};
+		reserveSessionWrite(newSessionFile);
 		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 
 		// Copy all non-header entries from source

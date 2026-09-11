@@ -12,6 +12,94 @@
 
 ### Removed
 
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool result returned with `isError: true` is now treated as a tool error: `tool_execution_end.isError` and the `toolResult` message carry the flag while `content` and `details` stay intact, so structured failures (team, memory, terminal tools) render and report as failures instead of successes. `AgentToolResult` declares the optional `isError` field.
+
+### Removed
+
+## [2026.9.9-2] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Recover a provider response that reports the `tool_use` stop reason while carrying no tool-call block. The turn is retried once on models that already use stream recovery, and the contradictory terminal state is demoted to a coherent stop for every model, so a lost tool call no longer ends the turn silently.
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.6] - 2026-09-06
 
 ### Breaking Changes

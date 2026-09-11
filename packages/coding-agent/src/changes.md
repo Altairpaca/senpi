@@ -1,5 +1,190 @@
 # changes
 
+## 2026-09-10 - Restrict GPT-6 Astra high-reasoning warning to max
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: GPT-6 Astra now emits
+  the high-reasoning warning only at `max`; GPT-5.6 Sol retains its `xhigh`/`max`
+  warning behavior.
+- `packages/coding-agent/test/high-reasoning-warning.test.ts`: added coverage for
+  Astra variants at both reasoning levels.
+
+### Why
+
+- Astra's warning policy is specific to its highest reasoning level, so showing it
+  at `xhigh` was overly broad.
+
+### Why an extension could not handle it
+
+- The warning predicate is core session policy evaluated before warning events are
+  emitted.
+
+### Expected merge conflict zones
+
+- LOW: the high-reasoning warning predicate and its focused test.
+
+## 2026-09-10 - Print mode binds editAssistantMessage for extensions
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the extension `commandContextActions` gain `editAssistantMessage`, delegating to `session.editAssistantMessage` with `summarize` / `customInstructions` / `expectedLeafId`, beside the existing `navigateTree` binding.
+
+### Why
+
+- `ExtensionCommandContextActions.editAssistantMessage` is required, so every mode that binds command actions must provide it; print mode is one of the three binding sites.
+
+### Why an extension could not handle it
+
+- The actions object is built by the mode before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: the `navigateTree` neighbour inside `commandContextActions` in `print-mode.ts`.
+
+## 2026-09-10 - Render Anthropic tool_search results instead of raw JSON
+
+### What changed
+
+- `packages/coding-agent/src/modes/provider-native-rendering.ts` formats the `tool_search_tool_result` provider-native
+  block: the summary reads `<provider> tool_search results` and the body lists the discovered `tool_name` values
+  (capped at ten when collapsed), or the `error_code`/`error_message` of a `tool_search_tool_result_error`.
+
+### Why
+
+- Native Anthropic tool search is injected by the shared tool-search builtin, so its result block reaches every user
+  whose catalog has inactive extension tools. Without a formatter the block fell through to the generic provider-native
+  fallback and printed the whole payload as pretty JSON in the transcript.
+
+### Why an extension could not handle it
+
+- Provider-native block rendering happens in the assistant-message renderer that the interactive mode and print mode
+  share; extensions cannot supply a formatter for a native block subtype.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/provider-native-rendering.ts` if upstream adds its own provider-native
+  formatter next to the existing web-search cases.
+
+## 2026-09-10 - Fall back to the running install when PACKAGE_DIR ships no assets
+
+### What changed
+
+- `packages/coding-agent/src/config.ts` resolves `getThemesDir()` and `getExportTemplateDir()` through one
+  layout-aware helper that probes the preferred root for a marker file (`dark.json` / `template.html`) and falls back
+  to the running install's own asset tree when the `PACKAGE_DIR`-derived root does not ship it. A valid relocation
+  still wins, and a genuinely broken install still returns the preferred path so the resulting error names it.
+
+### Why
+
+- `PACKAGE_DIR` is consumed by `getPackageDir()` before any layout decision, so an inherited root belonging to a
+  DIFFERENT install silently produced an asset path that cannot exist. A Bun binary that embeds this CLI pins the
+  variable to its own root and ships themes in a flat `theme/`; a Node install inheriting that root resolved
+  `<root>/dist/modes/interactive/theme/dark.json` and died in `initTheme()` before the session started.
+
+### Why an extension could not handle it
+
+- Asset-root resolution runs inside `config.ts` during startup, before extensions load, and `theme.ts` reads the
+  returned directory synchronously while building the builtin theme table.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/config.ts` around `getThemesDir()` / `getExportTemplateDir()` if upstream edits
+  either resolver; the shared `ShippedAsset` descriptors and `resolveShippedAssetDir()` are fork-owned.
+
+||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
+## 2026-09-09 - Forward shared-host policy to extension loading
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` supplies the shared-host policy when constructing CLI runtime resources.
+
+### Why
+
+- `packages/coding-agent/src/main.ts` knows the application mode and branded environment used by the shared-host decision.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` owns CLI mode selection and runtime service creation before extension factories execute.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` resource-loader configuration.
+
+## 2026-09-09 - Upgrade generate_image to GPT Image 2.5
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts` now defaults to GPT Image 2.5 Sunburst, offers Flare and legacy GPT Image 2, accepts xhigh/max quality and validated custom sizes, and forwards local reference images to the existing pi-ai edits route.
+- Schema/results and reference-file validation move into focused `imagegen/params.ts` and `imagegen/reference-images.ts` modules. The bundled skill documents model/tier choices, size constraints, and reference-image editing while retaining prompt-crafting guidance.
+
+### Why
+
+- The fixed GPT Image 2 text-only surface could not expose the newly released GPT Image 2.5 capabilities.
+
+### Why an extension could not handle it
+
+- The change is implemented entirely in the owning imagegen builtin extension and its guide, not session core. Its credential gate, native-tool arbitration, and PNG output behavior remain intact.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts` execution and schema extraction; see the imagegen-local tracker for details.
+- LOW: the two new imagegen modules, skill guide, and focused tool regression tests.
+
+## 2026-09-09 - Export the compact read classifier API
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `CompactReadClassification`, `ReadClassifier`, `registerReadClassifier`, and `classifyRead` from the shared read-classifier module alongside the core tool exports.
+
+### Why
+
+- `packages/coding-agent/src/index.ts` makes the classifier contract available to extensions and SDK consumers through the public package entry point, sharing the same registry used by the read renderer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts` is the package's public export surface. An extension cannot expose host-owned types and functions from that entry point without a core export change.
+
+### Expected merge conflict zones
+
+- LOW: the core tool export block in `packages/coding-agent/src/index.ts`, immediately after the exports from `core/tools/index.ts`.
+
+## 2026-09-08 - Construct shared RPC runtimes inside session workers
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` extracts `createCliRuntimeFactory` with cloneable CLI configuration and isolate-local extension/UI construction. Shared mode dispatches before creating any default SessionManager and passes worker configuration to the host. Inline extension factories are rejected in shared mode rather than crossing IPC.
+
+### Why
+
+- The shared host must remain responsive while a session's filesystem access or JavaScript execution blocks its worker; eagerly constructing a default session or closing over main-thread runtime objects defeats that boundary.
+
+### Why an extension could not handle it
+
+- CLI dispatch and runtime construction in `packages/coding-agent/src/main.ts` precede extension execution and own the shared-host boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/main.ts` runtime resolver and mode dispatch. Classic runtime selection uses the extracted resolver unchanged.
+
+## 2026-09-07 - Add the memory Aha-moment tip
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/memory-tips.ts` gains `memory.aha-moment`, gated on the `memory` command like its siblings: memory can surface a stored fact on its own as an `Aha moment!` line when it would change the next step, and silence means nothing relevant was found.
+
+### Why
+
+- The memorian recall notice (omo-senpi `memorian-notice.ts`, oh-my-openagent #7906) had no tip in the rotation, so the one memory feature that acts without a command was the only one never explained.
+
+### Why an extension could not handle it
+
+- The tip catalog is a core interactive-mode registry with no extension registration surface.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `MEMORY_TIPS` in `memory-tips.ts` and `test/suite/list-tips.test.ts`.
+
 ## 2026-09-06 - Preserve inline skill anchors in composed prompts
 
 ### What changed

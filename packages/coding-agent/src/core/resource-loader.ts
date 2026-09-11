@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
@@ -35,6 +35,7 @@ import type {
 	LoadedHookSources,
 } from "./extensions/types.ts";
 import { findGitPaths } from "./footer-data-provider.ts";
+import { dedupePathsByPackageIdentity, findNearestPackageIdentity } from "./package-identity.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
@@ -324,6 +325,7 @@ export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager?: SettingsManager;
+	sharedHostEnabled?: boolean;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
@@ -360,6 +362,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
+	private sharedHostEnabled: boolean;
 	private eventBus: EventBus;
 	private packageManager: DefaultPackageManager;
 	private additionalExtensionPaths: string[];
@@ -422,6 +425,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
+		this.sharedHostEnabled = options.sharedHostEnabled ?? this.settingsManager.getExperimentalSharedHost();
 		this.eventBus = options.eventBus ?? createEventBus();
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -666,7 +670,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const extensionPaths = this.noExtensions
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
-		const dedupedExtensionPaths = this.dedupeExtensionPathsByPackageName(
+		const dedupedExtensionPaths = dedupePathsByPackageIdentity(
 			this.shadowVendoredBuiltinExtensionPaths(extensionPaths, metadataByPath),
 		);
 
@@ -682,9 +686,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
 		this.applyExtensionSourceInfo(this.extensionsResult.extensions, metadataByPath);
 
-		const skillPaths = this.noSkills
-			? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
-			: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths);
+		const skillPaths = dedupePathsByPackageIdentity(
+			this.noSkills
+				? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
+				: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths),
+		);
 
 		this.lastSkillPaths = skillPaths;
 		this.updateSkillsFromPaths(skillPaths, metadataByPath);
@@ -790,10 +796,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private buildGlobalDefaultExtensionLoadOptions(): { factoryResolver: ExtensionFactoryResolver } {
+	private buildGlobalDefaultExtensionLoadOptions(): {
+		factoryResolver: ExtensionFactoryResolver;
+		sharedHostEnabled: boolean;
+	} {
 		return {
 			factoryResolver: (_extensionPath, resolvedPath) =>
 				resolveGeneratedGlobalDefaultExtensionFactory(resolvedPath, this.agentDir),
+			sharedHostEnabled: this.sharedHostEnabled,
 		};
 	}
 
@@ -818,7 +828,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return extensionsResult;
 		}
 
-		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
+		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, this.sharedHostEnabled);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
 		extensionsResult.errors.push(...inlineExtensions.errors);
 		return extensionsResult;
@@ -840,7 +850,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				undefined,
 				this.buildGlobalDefaultExtensionLoadOptions(),
 			);
-			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
+			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, this.sharedHostEnabled);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
 			this.rebuildExtensionFlagDefaults(extensionsResult);
 			extensionsResult.errors.push(...inlineExtensions.errors);
@@ -1146,64 +1156,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return resolvePath(p, this.cwd, { trim: true });
 	}
 
-	private findNearestPackageIdentity(resourcePath: string): { key: string; packageName: string } | undefined {
-		if (resourcePath.startsWith("<")) {
-			return undefined;
-		}
-
-		const normalizedResourcePath = resolve(resourcePath);
-		let currentPath = resolve(resourcePath);
-		try {
-			if (!statSync(currentPath).isDirectory()) {
-				currentPath = resolve(currentPath, "..");
-			}
-		} catch {
-			currentPath = resolve(currentPath, "..");
-		}
-
-		while (true) {
-			const packageJsonPath = join(currentPath, "package.json");
-			if (existsSync(packageJsonPath)) {
-				try {
-					const packageJson: { name?: unknown } = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-					if (typeof packageJson.name !== "string" || packageJson.name.length === 0) {
-						return undefined;
-					}
-					return {
-						key: `${packageJson.name}:${relative(currentPath, normalizedResourcePath)}`,
-						packageName: packageJson.name,
-					};
-				} catch {
-					return undefined;
-				}
-			}
-
-			const parentPath = resolve(currentPath, "..");
-			if (parentPath === currentPath) {
-				return undefined;
-			}
-			currentPath = parentPath;
-		}
-	}
-
-	private dedupeExtensionPathsByPackageName(extensionPaths: string[]): string[] {
-		const dedupedPaths: string[] = [];
-		const seenPackageNames = new Set<string>();
-
-		for (const extensionPath of extensionPaths) {
-			const packageIdentity = this.findNearestPackageIdentity(extensionPath);
-			if (packageIdentity) {
-				if (seenPackageNames.has(packageIdentity.key)) {
-					continue;
-				}
-				seenPackageNames.add(packageIdentity.key);
-			}
-			dedupedPaths.push(extensionPath);
-		}
-
-		return dedupedPaths;
-	}
-
 	private getActiveBuiltinExtensionIds(): Set<string> {
 		const enabledBuiltinExtensions = this.settingsManager.getEnabledBuiltinExtensions();
 		const enabledBuiltinExtensionSet = enabledBuiltinExtensions ? new Set(enabledBuiltinExtensions) : undefined;
@@ -1261,7 +1213,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				continue;
 			}
 
-			const packageIdentity = this.findNearestPackageIdentity(extensionPath);
+			const packageIdentity = findNearestPackageIdentity(extensionPath);
 			if (packageIdentity && shadowedPackageNames.has(packageIdentity.packageName)) {
 				continue;
 			}
@@ -1353,7 +1305,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private async loadExtensionFactories(runtime: ExtensionRuntime): Promise<{
+	private async loadExtensionFactories(
+		runtime: ExtensionRuntime,
+		sharedHostEnabled: boolean,
+	): Promise<{
 		extensions: Extension[];
 		errors: Array<{ path: string; error: string }>;
 	}> {
@@ -1374,6 +1329,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					this.eventBus,
 					runtime,
 					extensionPath,
+					sharedHostEnabled,
 				);
 				extensions.push(extension);
 			} catch (error) {
@@ -1397,6 +1353,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 						this.eventBus,
 						runtime,
 						extensionPath,
+						sharedHostEnabled,
 					);
 					extensions.push(extension);
 					continue;
@@ -1421,7 +1378,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		if (bundledExtensionPaths.length > 0) {
-			const bundledResult = await loadExtensions(bundledExtensionPaths, this.cwd, this.eventBus, runtime);
+			const bundledResult = await loadExtensions(bundledExtensionPaths, this.cwd, this.eventBus, runtime, {
+				sharedHostEnabled,
+			});
 			extensions.push(...bundledResult.extensions);
 			errors.push(...bundledResult.errors);
 		}
@@ -1431,7 +1390,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const factory = isNamed ? input.factory : input;
 			const extensionPath = `<inline:${isNamed ? input.name : index + 1}>`;
 			try {
-				const extension = await loadExtensionFromFactory(factory, this.cwd, this.eventBus, runtime, extensionPath);
+				const extension = await loadExtensionFromFactory(
+					factory,
+					this.cwd,
+					this.eventBus,
+					runtime,
+					extensionPath,
+					sharedHostEnabled,
+				);
 				extension.hidden = isNamed && input.hidden;
 				extensions.push(extension);
 			} catch (error) {
@@ -1541,8 +1507,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return true;
 		}
 
-		const existingPackageIdentity = this.findNearestPackageIdentity(existingOwner);
-		const candidatePackageIdentity = this.findNearestPackageIdentity(candidateOwner);
+		const existingPackageIdentity = findNearestPackageIdentity(existingOwner);
+		const candidatePackageIdentity = findNearestPackageIdentity(candidateOwner);
 		return existingPackageIdentity !== undefined && existingPackageIdentity.key === candidatePackageIdentity?.key;
 	}
 

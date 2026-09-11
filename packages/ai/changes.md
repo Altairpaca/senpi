@@ -1,3 +1,133 @@
+## 2026-09-10 - Venice AI catalog generation
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` adds a Venice AI fetcher over the models.dev `venice` catalog (`VENICE_BASE_URL`, `VENICE_COMPAT`), emitting `openai-completions` models at `https://api.venice.ai/api/v1` under provider id `venice`. It honors the shared `tool_call !== true` and `status === "deprecated"` skips and routes reasoning metadata through `recordModelsDevReasoningOptions`, so Venice's `reasoning_effort` ladder is derived from models.dev rather than hardcoded.
+- Every generated Venice model carries `compat.veniceParameters = { include_venice_system_prompt: false }`.
+
+### Why
+
+- Venice was the one provider a user asked for that had no representation anywhere in `packages/ai`. models.dev already publishes the catalog, so generation is the maintainable source; the generated ids were cross-checked against Venice's live `GET /models` listing and all 104 exist.
+- Venice prepends its own default system prompt unless `include_venice_system_prompt` is false, which would place a second system prompt ahead of the agent's.
+
+### Why an extension could not handle it
+
+- The committed model catalog is a build-time artifact consumed by the provider registry before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the models.dev provider block ordering in `loadModelsDevData()` when upstream adds its own provider fetchers nearby.
+
+## 2026-09-10 - Image input token rate in the static OpenAI image catalog
+
+## 2026-09-10 - Use native TypeScript builds for omob performance
+
+### What changed
+
+- packages/ai/package.json: build uses tsgo for the emitted workspace build.
+
+### Why
+
+- The native compiler reduces omob build time without changing runtime JavaScript.
+
+### Why this lives in the fork
+
+- The package build manifest owns the compiler used by the fork's release pipeline.
+
+### Expected merge conflict zones
+
+- The `build` script in packages/ai/package.json.
+
+### What changed
+
+- `packages/ai/scripts/generate-image-models.ts`: `OPENAI_IMAGE_MODELS` entries for `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, and `gpt-image-2` carry `imageInput: 8` (USD per million image input tokens), regenerated into `packages/ai/src/image-models.generated.ts` with `--strict`; the OpenRouter block is unchanged.
+
+### Why
+
+- OpenAI bills image inputs (references, edit targets, masks) at $8/M against $5/M for text, so a single `input` rate under-reported every edit request.
+
+### Why an extension could not handle it
+
+- The builtin image catalog is generated data loaded before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `OPENAI_IMAGE_MODELS` array and its comment block.
+
+## 2026-09-09 - GPT Image 2.5 entries in the static OpenAI image catalog
+
+### What changed
+
+- `packages/ai/scripts/generate-image-models.ts`: `OPENAI_IMAGE_MODELS` gains `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` (released 2026-09-08) ahead of the existing entries, with $5 input / $30 output / $1.25 cached-input per million tokens, and every GPT Image entry that the edits endpoint accepts now advertises `["text", "image"]` inputs. The regenerated OpenAI block lives in `packages/ai/src/image-models.generated.ts`; the OpenRouter block is untouched.
+
+### Why
+
+- OpenAI's own API exposes no image-model catalog to fetch, so the static generator entries are the only place the new model ids and their pricing can enter the builtin registry.
+
+### Why an extension could not handle it
+
+- The builtin image catalog is generated data loaded before any extension runs; an extension can add a provider but cannot amend the `openai` provider's shipped model list.
+
+### Expected merge conflict zones
+
+- LOW: the `OPENAI_IMAGE_MODELS` array and its comment block in the generator.
+
+## 2026-09-07 - One context window for the whole GPT-6 Astra series
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` is 600,000, and the new `applyGpt6AstraContextWindow` stamps it onto every model whose id carries `gpt-6-astra` in the final metadata pass, after `applyOpenAiInputCap` and before provider grouping. Regenerated `packages/ai/src/providers/data/` (13 Astra rows across azure-openai-responses, github-copilot, openai-codex, openai, opencode, openrouter and vercel-ai-gateway) plus `packages/ai/src/providers/data/.manifest.json`.
+- `packages/ai/test/gpt-6-astra-context-window.test.ts` walks every generated catalog and requires the whole series to agree; `gpt-6-astra-catalog.test.ts`, `openai-fast-models.test.ts` and `openai-input-cap-catalog.test.ts` move their Astra expectations to the series value.
+
+### Why
+
+- `contextWindow` is the prompt budget senpi gates on, and the Astra series had no budget of its own: it inherited whatever the input-cap pass produced, so the model's usable window was a side effect of the provider that served it. A single series default makes the budget the same on every route, and users who want a wider or narrower one still set it through model overrides.
+
+### Why an extension could not handle it
+
+- Catalog data is loaded before any extension runs, so only the generator can change what every consumer of `contextWindow` sees.
+
+### Expected merge conflict zones
+
+- LOW: the OpenAI flagship constants block and the final `for (const model of allModels)` metadata pass in the generator.
+
+## 2026-09-07 - OpenAI input cap applied on every provider (#1422 follow-up)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `applyOpenAiInputCap` runs in the final metadata pass over every provider's GPT-5.x / GPT-6 rows (`isOpenAiFlagshipFamilyId` strips the `openai/`, `openai.`, `global.openai.` gateway prefixes and excludes `gpt-oss`), mapping the 400,000 / 1,050,000 totals to 272,000 / 922,000 when `maxTokens` is 128,000, and correcting `gpt-5-pro`'s mirrored 272,000 max output to 128,000 before the mapping. The earlier `provider === "openai"`-only call and the openai-only `gpt-5-pro` fix are folded into it. Regenerated `packages/ai/src/providers/data/` (128 rows across bedrock, azure, cloudflare, copilot, openai, opencode, opencode-go, opengateway, openrouter, vercel) plus `packages/ai/src/providers/data/.manifest.json`.
+- `packages/ai/test/openai-input-cap-catalog.test.ts` pins the invariant for the whole builtin catalog.
+
+### Why
+
+- The input/output split is a property of the model, not of the gateway: OpenRouter, Vercel, OpenGateway, Copilot and the cloud hosts forward the same upstream rejection, so luna/terra/sol/astra rows on those providers still let a session run 128k tokens past the point where the provider rejects the prompt.
+
+### Why an extension could not handle it
+
+- Catalog data is loaded before any extension runs; only the generator can change what every consumer of `contextWindow` sees.
+
+### Expected merge conflict zones
+
+- LOW: the final `for (const model of allModels)` metadata pass and the OpenAI constants block in the generator.
+
+## 2026-09-07 - OpenAI catalog contextWindow stores the documented input cap (#1422)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, `packages/ai/src/providers/data/azure-openai-responses.json`, `packages/ai/src/providers/data/.manifest.json` (the same run picked up one OpenRouter price refresh).
+
+### Why
+
+- The Responses API rejects a request with `context_too_large` once the prompt alone exceeds window minus max output, regardless of `max_output_tokens`. senpi uses `contextWindow` as the prompt budget everywhere (compaction gates, usage meter, output clamp), so the totals put every gate above the point where the provider already rejects. The catalog already used the input-cap convention for gpt-5.4/5.5/5.6 (272,000); the flagship rows were the inconsistent ones.
+
+### Why an extension could not handle it
+
+- The catalog generator and its committed data are the source of every model's `contextWindow`; no extension hook runs before the catalog is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the OpenAI normalization block and the flagship constants in the generator.
+
 # 2026-09-05 - GPT-6 Astra async tool calling and WebSocket steering: deferred with design
 
 ### What changed

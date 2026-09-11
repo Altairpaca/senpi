@@ -2,6 +2,7 @@ import type { ExtensionFactory } from "../types.ts";
 import accountExtension from "./account/index.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
+import askUserExtension from "./ask-user/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
@@ -65,6 +66,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
+	{ id: "ask-user", factory: askUserExtension },
 	{ id: "imagegen", factory: imageGenExtension },
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },

@@ -1,5 +1,302 @@
 # changes
 
+## 2026-09-10 - Optional display-name account descriptor (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProviderAccount` gains optional `displayName`, matching the safe shared descriptor returned by `get_provider_accounts`. `name` remains the immutable selector ID; credentials never enter this projection.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: clients need human-readable labels without changing their pin/remove selectors or existing legacy payloads.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` defines the host-owned typed response contract, not an extension-local message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts` account descriptor interface.
+
+## win32 supervisor bootstraps its own internal directory and public secret (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the win32 branch of `createInternalSocketPath()` now creates `<baseDir>/internal-<uuid>` with `recursive: true` instead of `recursive: false`. The function is exported and takes an injectable `platform`, mirroring `spawnableChildLaunch(launch, platform)` in the same module, so the win32 bootstrap is coverable from any host. The posix branch is unchanged. `runHostSupervisor()` now provisions the public socket secret through the new `ensurePublicSocketSecret()` helper (`ensureSocketSecret` instead of `readSocketSecret`) before it allocates the internal hop or spawns the child, so the direct launch route owns the secret its own listener authenticates with; a provisioning failure is rethrown naming the bootstrap step and the secret path.
+- `packages/coding-agent/docs/rpc.md`: the shared-host lifecycle section records that the win32 internal hop directory is created recursively and that the supervisor self-provisions `<publicSocket>.secret`, reusing an existing valid secret.
+- `packages/coding-agent/test/suite/regressions/1370-rpc-internal-socket-mkdir.test.ts`: a subprocess regression drives the real `--internal-rpc-host-supervisor` CLI route on a fresh profile through readiness, connection and a `get_protocol_info` response; two cases drive `runHostSupervisor()` itself with `process.platform` stubbed to win32 to prove a missing secret is created and an existing one preserved; the `createInternalSocketPath()` cases remain as supplemental unit coverage.
+
+### Why
+
+- `runHostSupervisor()` passes `paths.dir` (`<agentDir>/rpc-host-daemon`) as the base directory. `ensureHost()` creates that parent before spawning, but the hidden `--internal-rpc-host-supervisor` launch route does not, so on a fresh Windows profile the supervisor died during bootstrap with `ENOENT: no such file or directory, mkdir '<agentDir>\rpc-host-daemon\internal-<uuid>'` (#1370). The posix branch never hit this because it roots the directory in `tmpdir()`, which always exists.
+- The same fresh profile then died on the second failure reported in #1370: `readSocketSecret()` requires `<publicSocket>.secret`, which only `ensureHost()` wrote, so the direct route never reached `listen()`. Reuse (not rotation) is mandatory because `resolveSocketTransportAddress()` derives the win32 pipe name from the socket path AND the secret, so a fresh secret would move the endpoint away from the one the caller published.
+
+### Why an extension could not handle it
+
+- The failure happens inside the supervisor's own bootstrap, before any session, runtime, or extension surface exists.
+
+### Expected merge conflict zones
+
+- LOW: the `createInternalSocketPath` signature and its win32 `mkdir` call, the secret provisioning at the top of `runHostSupervisor` and the `ensurePublicSocketSecret` helper in `host-lifecycle.ts`, and the internal launch route paragraph in `docs/rpc.md`.
+
+## The refused-switch entry crosses the RPC seam and stays bookkeeping (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `validSessionEntry` accepts `model_change_rejected` (`provider`, `modelId` and `detail` must be strings), so an `append_session_entry` carrying the entry is no longer refused as malformed.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the deferred-entry gate counts `model_change_rejected` as auto-appended bookkeeping next to `model_change`/`thinking_level_change`, so a session whose only content is a refused switch keeps shipping status snapshots without its entry list.
+
+### Why
+
+- `model_change_rejected` (#1526) is appended by the session itself on a refused switch. Without the validator branch the entry could not cross the `append_session_entry` seam `rpc-client.ts` exists for, and without the bookkeeping exclusion recording a refusal silently turned every `get_state` for that session into a full entry dump.
+
+### Why an extension could not handle it
+
+- Both are RPC-mode internals: the command validator runs before any extension sees the command, and the state snapshot is assembled by the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `validSessionEntry` switch and the `entries` spread inside the state snapshot builder.
+
+## An aborted question carries the extension's outcome (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts`: the abort listener installed for `opts.signal` no longer hard-codes `cancelled`. It reads the abort reason and resolves `timed_out` when the aborting side already settled the question that way, so the broadcast `question_resolved` outcome matches the response the model received. Every other abort (dismissal, superseded question, session close) still resolves `cancelled`.
+
+### Why
+
+- The ask-user builtin owns the authoritative idle timer and aborts the dialog controller when it fires. The bridge's own equal-length timer lost that race in RPC mode, so an idle timeout broadcast `question_resolved{outcome:"cancelled"}` while the framed notice and tool result carried the timeout text - and `docs/rpc.md` documents `timed_out` as the outcome desktop clients map onto the resolved row (probe scenario `async`).
+
+### Why an extension could not handle it
+
+- The outcome broadcast to connections is written by the bridge; an extension only sees its own `QuestionResponse`.
+
+### Expected merge conflict zones
+
+- LOW: the `cancel` closure inside `ConnectionQuestionBridge.ask`.
+
+## open_session of an existing session file starts as a resume (2026-09-10)
+
+### What changed
+
+- `session-registry.ts`: `openSession` passes `sessionStartEvent: { type: "session_start", reason: "resume" }` to `createAgentSessionRuntime` when the requested `sessionPath` already exists on disk (the same `isResume` predicate that already restores the persisted model and thinking level). A session created by the open still starts with the default `reason: "startup"`.
+
+### Why
+
+- `AgentSession` defaults to `reason: "startup"` when no event is supplied, so re-opening a session over RPC fired `session_start{startup}`. Extensions that rebuild per-session state only on a resume never ran: after a host crash the ask-user builtin's dangling-question hook (`resume.ts`, `reason` must be `resume`/`reload`) left the pending tool call hanging with nothing re-presented and no orphaned-after-restart message (probe scenario `resume`). Interactive `/resume` already emits the event through `AgentSessionRuntime.switchSession`; the RPC restart path now mirrors it.
+
+### Why an extension could not handle it
+
+- The start reason is decided by the runtime factory call inside the registry, before any extension is bound; an extension cannot observe why its session was created.
+
+### Expected merge conflict zones
+
+- LOW: the `isResume` block and the `createAgentSessionRuntime` options in `RpcSessionRegistry.openSession`.
+
+## Pending questions survive the opening connection's drop (2026-09-10)
+
+### What changed
+
+- `session-command-router.ts`: `releaseConnection` no longer calls `cancelPendingExtensionUiRequests()` for every session a dropped connection owned. The cancellation moved into `releaseOwnedSession`, on the branch where the close claim made this caller the finalizer - i.e. the attachment refcount already decided the session is being torn down. A drop that leaves other attachments alive now keeps the shared binding's pending questions pending.
+
+### Why
+
+- A question is session-owned: `docs/rpc.md` promises pending questions are broadcast to every attached connection and replayed to connections that attach later. Cancelling on any owner drop resolved the question `cancelled` for all peers, made `open_session` hydrate zero pending questions, and rejected the surviving connection's answer with `question_already_resolved` (probe scenario `owner-drop`).
+
+### Why an extension could not handle it
+
+- Connection lifecycle, attachment refcounting and binding teardown are router-private; no extension hook observes a dropped socket or the close claim that decides whether the session survives.
+
+### Expected merge conflict zones
+
+- LOW: the attachment loop in `releaseConnection` and the finalizer branch of `releaseOwnedSession`.
+
+## edit_assistant_message command and typed edit errors (2026-09-10)
+
+### What changed
+
+- `rpc-types.ts`: new command member `edit_assistant_message { entryId, text, expectedLeafId?, summarize?, customInstructions? }`, response `data: EditAssistantMessageResult` (`edited | unchanged | cancelled`), and five `RPC_ERROR_*` constants (`streaming`, `not_found`, `not_assistant`, `empty`, `stale_leaf`) folded into `RpcErrorCode`.
+- `connection-handler.ts`: `case "edit_assistant_message"` beside `fork` - validates the shape, calls `session.editAssistantMessage` on the connection's bound session (the same routed session `get_entries`/`get_tree` use), maps outcomes, and turns `AssistantEditError`/`SessionStreamingError` into `errorCode`; the extension `commandContextActions` gain `editAssistantMessage`.
+- `rpc-client.ts`: `editAssistantMessage()` plus `RpcCommandError` (an `Error` subclass carrying `errorCode`/`errorData`) now thrown by `getData()` for every failed command instead of a bare `Error` with the same message.
+
+### Why
+
+- The TUI-only edit from `/tree` (#1532) was unreachable from RPC clients such as the desktop, and clients had no typed way to learn why an edit was refused.
+
+### Why an extension could not handle it
+
+- The RPC command surface and the error envelope are owned by this directory; an extension cannot add a wire command.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` command/response unions and the `RPC_ERROR_*` block; `connection-handler.ts` switch (one new case next to `fork`); `rpc-client.ts` `getData()`.
+## Client writer for question draft progress (2026-09-10)
+
+### What changed
+
+- `rpc-client.ts`: `sendExtensionUIProgress` writes an `extension_ui_progress` stdin record fire-and-forget (no reply wait), and `send()` now preserves the host request id for progress records exactly as it already does for `extension_ui_response` (never minting `req_<n>`).
+
+### Why
+
+- A TUI attached to a shared RPC host debounces question-overlay drafts (todo 10) and needs a client-side writer to forward them so the host can reset the question's idle deadline.
+
+### Why an extension could not handle it
+
+- The record must go out on the RPC stdin stream the client owns, with the routing/id rules private to `RpcClient.send`.
+
+### Expected merge conflict zones
+
+- LOW: the new method beside `sendExtensionUIResponse` and the id-preserving branch at the top of `send`.
+
+## Session-owned question bridge (2026-09-10)
+
+### What changed
+
+- `connection-question-bridge.ts` implements question submission, progress-driven idle deadlines, draft-preserving timeout, cancellation, late-answer errors, and sequential select/input fallback. `connection-handler.ts` gates native questions on client capabilities and projects pending questions into session state.
+- `session-event-fanout.ts` retains pending questions independently of assistant snapshots, replays them once on attachment, refreshes deadlines, and forgets terminal questions. `session-event-writer.ts` clears retention on session close; questions remain broadcast.
+- `session-worker.ts` publishes question state changes across the existing snapshot IPC. `session-registry.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` admit progress alongside UI responses during closing.
+
+### Why
+
+- Multi-client question prompts must survive completion of the assistant message and detachment of the asking client, accept drafts without resolving, and resolve exactly once for all peers.
+
+### Why an extension could not handle it
+
+- RPC routing, socket replay, client capabilities, and worker snapshots are runtime-owned. Extensions cannot implement these transport guarantees.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts` UI binding and input dispatch; worker output snapshot selection; privileged routing allowlists; fanout snapshot retention and attachment replay.
+
+## Question extension-UI wire types and client capability (2026-09-10)
+
+### What changed
+
+- `rpc-types.ts`: additive `extension_ui_request{method:"question"}` (`RpcQuestionUiRequest`), `{answers, comment}` `extension_ui_response` member, inbound `RpcExtensionUIProgress` on `RpcInboundRecord`, outbound `question_updated` / `question_resolved`, and optional `RpcSessionState.pendingQuestions`.
+- `custom-capability.ts`: export `QUESTION_CAPABILITY = "question"` next to the existing client-capability constants.
+
+### Why
+
+- The ask-user tool needs a typed RPC wire for broadcasting a multi-question prompt, receiving partial drafts and a final `{answers, comment}` reply, hydrating late-attaching clients from session state, and gating on an explicit client capability. Older clients that never advertise `question` keep today's select/input path.
+
+### Why an extension could not handle it
+
+- RPC record shapes, session-state hydration fields, and the client-capability handshake are host protocol, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcExtensionUIRequest` / `RpcExtensionUIResponse` union tails in `rpc-types.ts`, the `RpcSessionState` field list, and the capability constants in `custom-capability.ts`.
+
+## Cut stalled socket peers before they consume the session worker credit (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: `SocketEventSinkActor` bounds each write's drain wait with `stallMs` (`DEFAULT_STALL_MS` = 4000, pinned below `SESSION_WORKER_LIMITS.controlMs`). A peer that has not accepted the write in time fails the actor exactly like a byte overflow: one best-effort `{"type":"overflow","error":"stalled, resync required"}` notice, actor closed, `onFailure(SocketEventQueueStallError)` (the fanout removes the connection and closes its socket).
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `waitForSessionBackpressure`, `flush` and `drainUntilEmpty` settle socket actors through `settleActors`, which treats a rejected actor flush as a cut peer. Previously any actor rejection (byte overflow, now also stall) propagated into `Promise.all`, rejected the writer-wide drain and called `fail()` on the shared host writer, or reached the session worker client which then killed the worker.
+- `registerConnection` accepts `stallMs` (tests use a short budget); `packages/coding-agent/docs/rpc.md` documents the stall cut and that a cut connection never withholds session credit.
+
+### Why
+
+- Live on mengmotaHost 2026-09-09 17:17 and 2026-09-10 11:07 (two runtimes): a desktop client stalled on its own downstream ack pacing, the kernel socket buffer filled during a large `eval` tool result, `waitForSessionBackpressure` never resolved, and the session worker failed itself with `session_worker_credit_timeout` after 5 s — the user's running turn was truncated (`session_closed` with no final assistant message) although the session and every other peer were healthy. One slow consumer must not kill the producer; the writer already had fail-closed overflow semantics for slow peers, they were just byte-only.
+- `test/suite/rpc-socket-stall.test.ts`: stall budget < worker deadline; a stalled actor is cut with the notice while a sibling drains; the writer returns session credit and closes only the stalled connection; the writer and its stdio lane survive a stalled peer (this last case failed the whole writer before the fix).
+
+### Why an extension could not handle it
+
+- Transport credit, socket drain and worker liveness are host infrastructure below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: `SocketEventSinkActor.drain` and the three actor-flush aggregation sites in `session-event-writer.ts`. Upstream has no socket fanout.
+
+## Bound quarantined and joined close reply admission (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` counts admitted close reply records and serialized bytes against the existing stdio queue budgets before they are queued. The first closer reserves both terminal records; direct duplicate replies use the same admission gate. Saturation emits a bounded `rpc_close_output_overflow, resync required` notice, not one buffered reply or stderr line per rejected command. Stdio keeps one notice per episode. Socket notices target only the rejected requester, with at most one outstanding notice per sink until consumption; actor identity isolates reconnects without retaining dead connections.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` admits reply debt before claiming an attachment or awaiting finalization. Rejected commands do neither; admitted replies transfer their reservation to FIFO output, with release on every completion/error path. Native-exit canonical ownership is unchanged.
+- `packages/coding-agent/docs/rpc.md` documents close admission, overflow recovery, and the distinction between an overflow notice and a successful acknowledgment.
+
+### Why
+
+- Broadcasting one global socket notice incorrectly told healthy peers to resynchronize and suppressed notification for later affected requesters. Deterministic two-connection tests reproduce both failures and preserve independent peer progress. They also drain socket actors without a stdio lane, then saturate the same actors again: first-closer terminal records survive, reply debt is reclaimed, and later episodes receive fresh requester-only notices without reconnecting.
+- A native-FIFO-blocked quarantined worker can remain resident indefinitely. Previously, 4,196 duplicate closes queued 4,196 noncompactable replies beyond the 4,096-record bound; checking only at enqueue also leaves unbounded reply debt in joined finalization promises.
+
+### Why an extension could not handle it
+
+- Output budgets, reply admission and attachment claims are transport/router infrastructure below extension hooks.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-event-writer.ts` close/output admission and `packages/coding-agent/src/modes/rpc/session-command-router.ts` close routing. Tests cover count and byte saturation with real quarantined workers and held finalization; existing terminal/FIFO and native-pressure proofs remain intact.
+
+## Shared RPC session workers retain ownership until exit (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts` accepts the build-time `SENPI_RPC_SESSION_WORKER_ENTRY` define so external Bun wrappers can embed the published dist worker under their own explicit compile root. Compiled entries are resolved against `import.meta.url`, converted with `fileURLToPath`, and normalized to forward slashes before Worker construction. On Windows Bun 1.4.0, passing a URL lets `node:worker_threads` convert it to a backslash path: the embedded file exists but worker startup reports ENOENT. Passing the same absolute path with forward slashes starts the embedded worker; POSIX paths remain unchanged. Source/Node resolution and the standalone source-entry default are unchanged.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker-requests.ts`, and `worker-session-registry.ts` introduce per-session workers, prepare/grant/commit opening, bounded requests and IPC credit, and main-owned reservations retained through quarantine until actual worker exit.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts` selects the worker registry for CLI shared hosts and reports stdio capacity failures without terminating sibling sessions.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` carries worker ownership and internal quarantine while retaining the injected in-process registry seam. `worker-session-registry.ts` publishes quarantined workers as the existing `closing` wire status, preserving desktop eager-reattach semantics without releasing ownership.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` and `connection-handler.ts` keep classic semantics inside each worker and flush shared-session events into the bounded transport synchronously.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` routes snapshots and requester identity across IPC, releases unrelated connections' sessions independently, preserves exact settlement events, and removes exited-worker attachment bookkeeping.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` returns worker credit only after the session's own destinations drain and bounds stdio queues with visible overflow and terminal-failure records.
+
+### Why
+
+- A session's synchronous filesystem operation or JavaScript loop must not freeze the shared transport or other sessions. Neither timeout nor routing closure proves worker termination, and a second writer must not be admitted while the old worker can resume.
+
+### Why an extension could not handle it
+
+- Canonical admission, transport credit, routing ownership and worker lifetime are host infrastructure below the extension boundary. The classic handler still owns command semantics inside the worker.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-command-router.ts` attachment/close paths, `session-event-writer.ts` output scheduling, `session-binding.ts` and `connection-handler.ts` binding options. LOW: `multi-session-host.ts`, `session-registry.ts`, `rpc-types.ts`, and the new worker modules.
+
+## Watchdog reads the ownership token before it removes the scratch directory (2026-09-07)
+
+### What changed
+
+- `host-watchdog.ts`: `HostWatchdogConfig.beforeCleanup` runs when the watchdog fires, before `scratchDir` and `cleanupPaths` are removed; a failing hook never blocks the cleanup or the shutdown behind it.
+- `multi-session-host.ts`: a supervised host passes a hook that reads the supervisor's `public-socket.owner` token if the startup wait has not loaded it yet, so the ownership-checked removal of the public socket has something to prove with.
+- `test/suite/rpc-socket-ownership.test.ts`: the two removal assertions wait, bounded, for the path to disappear instead of stat-ing one snapshot at `close`.
+
+### Why
+
+The supervisor publishes the token right after its `listen()` and prints `ready` immediately after, while the host learns the token through a 25 ms poll. Under load (CI, or the earlier cases of the same test file) the supervisor could be SIGKILLed while the host was still polling. The watchdog then removed the scratch directory first, the host's shutdown ran `unlinkOwnedSocket(publicSocket, undefined)`, correctly refused (`ownership unknown; leaving it`), and the public socket outlived both processes. `test/suite/rpc-socket-ownership.test.ts` failed on `main` exactly this way (senpi #1442); standalone the same sequence passed, which is why it read as a flaky test rather than the startup race it is.
+
+### Why an extension could not handle it
+
+The watchdog fires inside the host's transport lifecycle below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `host-watchdog.ts` config field and `fire()`; the `armHostWatchdog` call in `multi-session-host.ts`; the two assertions in the ownership test.
+
+## Socket teardown is ownership-checked, never path-only (2026-09-07)
+
+### What changed
+
+- New `socket-ownership.ts`: `statSocketIdentity()` (dev+ino of a socket path entry), an ownership token sidecar in the lifecycle supervisor's private scratch directory (`public-socket.owner`), and `unlinkOwnedSocket()`, which unlinks a socket path only while its current stat identity matches the recorded one. ENOENT is nothing to do; a mismatch logs `socket path ... now owned by another host; leaving it`; an unknown identity is never guessed at and the path is left.
+- `multi-session-host.ts`: the socket host records its bound entry's identity right after `listen()` (same step as the existing 0600 chmod) and its shutdown replaces the unconditional `unlink(socketPath)` with the ownership-checked removal. A supervised host additionally removes the supervisor's public socket through the same check, using the token its supervisor published; that covers the watchdog crash path, which previously removed the public socket by path from `HOST_CLEANUP_PATHS`.
+- `host-lifecycle.ts`: the supervisor stats the public entry it just bound, publishes the token into its scratch directory for its child, and its shutdown replaces `rm(publicSocket)` with the ownership-checked removal. On POSIX the public socket is no longer listed in `HOST_CLEANUP_PATHS` (the child removes it token-checked); Windows named pipes keep the old behavior since they have no filesystem entry to own.
+- `test/suite/rpc-socket-ownership.test.ts`: for both a direct multi-session host and a supervisor-managed one, a replacement socket renamed over the live path (the takeover dance) survives SIGTERM shutdown and still connects, while the no-takeover path is removed and an already-absent path is tolerated; a supervisor SIGKILL (watchdog crash path) preserves a taken-over path and still removes an untaken one.
+
+### Why
+
+The startup path already refuses to touch a socket path owned by a live server (`prepareSocketPath` probes before unlinking), but every teardown path removed by path only. The OmO desktop replaces a socketless host by starting the new host on `<socket>.takeover-<pid>`, renaming it over `rpc.sock`, then SIGTERMing the old host; the old host's shutdown unlinked `rpc.sock` - now the NEW host's entry - leaving the supervisor alive, `rpc host ready on .../rpc.sock` logged, the socket absent, and every desktop session failing `connect ENOENT rpc.sock`. The same blind removal existed on the supervisor's own shutdown and on the child watchdog's crash-path cleanup (`HOST_CLEANUP_PATHS`). A probe-if-live check alone does not close this: after the rename and before the new host's listen completes, a probe would also fail, and crash/signal paths reintroduce the race. The dev+ino token captured at bind is what closes every teardown path deterministically.
+
+### Why an extension could not handle it
+
+Socket bind, unlink, and process-teardown ordering are transport lifecycle internals below every extension hook; no extension observes or intercepts host shutdown.
+
+### Expected merge conflict zones
+
+- LOW: `socket-ownership.ts` is fork-only and additive.
+- LOW: the `listen()` tail and shutdown-removal call in `multi-session-host.ts`, and the public-socket cleanup swap plus token write in `host-lifecycle.ts`.
+- LOW: `test/suite/rpc-socket-ownership.test.ts` (new).
+
 ## Shared-host logical sessions are unlimited by default (2026-09-06)
 
 ### What changed

@@ -169,6 +169,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.tree.foldOrUp` | `ctrl+left`, `alt+left` | Fold current branch segment, or jump to the previous segment start |
 | `app.tree.unfoldOrDown` | `ctrl+right`, `alt+right` | Unfold current branch segment, or jump to the next segment start or branch end |
 | `app.tree.editLabel` | `shift+l` | Edit the label on the selected tree node |
+| `app.tree.editMessage` | `ctrl+e` | Edit the selected assistant response in the editor and continue from the edited copy; on a user message it behaves like `enter` |
 | `app.tree.toggleLabelTimestamp` | `shift+t` | Toggle label timestamps in the tree |
 | `app.tree.filter.default` | `ctrl+d` | Set tree filter to default view |
 | `app.tree.filter.noTools` | `ctrl+t` | Toggle tree filter that hides tool results |

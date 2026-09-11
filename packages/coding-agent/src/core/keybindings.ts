@@ -36,6 +36,7 @@ export interface AppKeybindings {
 	"app.tree.foldOrUp": true;
 	"app.tree.unfoldOrDown": true;
 	"app.tree.editLabel": true;
+	"app.tree.editMessage": true;
 	"app.tree.toggleLabelTimestamp": true;
 	"app.session.togglePath": true;
 	"app.session.toggleSort": true;
@@ -156,6 +157,10 @@ export const KEYBINDINGS = {
 	"app.tree.editLabel": {
 		defaultKeys: "shift+l",
 		description: "Edit tree label",
+	},
+	"app.tree.editMessage": {
+		defaultKeys: "ctrl+e",
+		description: "Edit the selected assistant response, or reopen a user message in the editor",
 	},
 	"app.tree.toggleLabelTimestamp": {
 		defaultKeys: "shift+t",
@@ -293,6 +298,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	treeFoldOrUp: "app.tree.foldOrUp",
 	treeUnfoldOrDown: "app.tree.unfoldOrDown",
 	treeEditLabel: "app.tree.editLabel",
+	treeEditMessage: "app.tree.editMessage",
 	treeToggleLabelTimestamp: "app.tree.toggleLabelTimestamp",
 	toggleSessionPath: "app.session.togglePath",
 	toggleSessionSort: "app.session.toggleSort",

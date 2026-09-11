@@ -36,6 +36,7 @@ import { ProviderRetryWatchdogAbortError, prepareAgentToolCall } from "@earendil
 import {
 	contentText,
 	measureCursorHistorySerializedBytes,
+	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
 	type ThinkingSelection,
 } from "@earendil-works/pi-ai";
@@ -102,18 +103,42 @@ import {
 	shouldCompact,
 } from "./compaction/index.ts";
 import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from "./compaction/lifecycle.ts";
+import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
+import {
+	AssistantEditError,
+	assertExpectedLeaf,
+	assistantTextEquals,
+	buildEditedAssistantMessage,
+	SessionStreamingError,
+} from "./edited-assistant-message.ts";
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./extensions/builtin/claude-sdk-oauth/account-management.ts";
 import {
 	type ModelUsabilityAdmission,
 	ModelUsabilityBudgetError,
+	type ModelUsabilityBudgetProjection,
 	projectModelUsabilityBudget,
 } from "./extensions/builtin/compaction/model-usability-budget.ts";
-import { resolveReserveTokens } from "./extensions/builtin/compaction/policy.ts";
+import {
+	resolveEffectiveReserveTokens,
+	resolveReserveTokens,
+	shouldTriggerCompaction,
+} from "./extensions/builtin/compaction/policy.ts";
+import {
+	createResumeCompactionRequirement,
+	type ResumeCompactionRequirement,
+} from "./extensions/builtin/compaction/resume-admission.ts";
+import {
+	RESUME_SLICE_ORIGIN,
+	RESUME_SLICE_SCHEMA,
+	type ResumeSlicePlan,
+	resumeSliceNotice,
+} from "./extensions/builtin/compaction/resume-slice.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
@@ -160,7 +185,11 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
-import { MANUAL_CONTINUE_CUSTOM_TYPE, MANUAL_CONTINUE_DIRECTIVE } from "./manual-continue.ts";
+import {
+	isManualContinueSubmission,
+	MANUAL_CONTINUE_CUSTOM_TYPE,
+	MANUAL_CONTINUE_DIRECTIVE,
+} from "./manual-continue.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -408,6 +437,18 @@ export type AgentSessionEvent =
 	| { type: "agent_settled" }
 	| { type: "agent_idle" }
 	| { type: "session_abort" }
+	| {
+			type: "resume_compaction_required";
+			projection: ModelUsabilityBudgetProjection;
+			notice: string;
+	  }
+	| {
+			type: "resume_context_reduced";
+			tokensBefore: number;
+			tokensAfter: number;
+			droppedEntries: number;
+			notice: string;
+	  }
 	| { type: "continuation_error"; errorMessage: string }
 	| {
 			type: "skill_invocation";
@@ -452,6 +493,18 @@ export type AgentSessionEvent =
 			model: Model<any>;
 			thinkingLevel: ThinkingLevel;
 			source: ModelSelectSource;
+	  }
+	/** A switch the session refused; recorded so the attempt survives (#1526). */
+	| {
+			type: "model_change_rejected";
+			model: Model<any>;
+			reason: "context-budget" | "auth";
+			detail: string;
+			contextWindow?: number;
+			liveContextTokens?: number;
+			requiredTokens?: number;
+			shortfallTokens?: number;
+			safetyMarginProfile?: string;
 	  }
 	| {
 			type: "model_change_skipped";
@@ -769,6 +822,26 @@ export interface ExtensionBindings {
 	onError?: ExtensionErrorListener;
 }
 
+export interface TreeNavigationOptions {
+	summarize?: boolean;
+	customInstructions?: string;
+	replaceInstructions?: boolean;
+	label?: string;
+	/** Leaf the caller last observed; the mutation is refused with `stale-leaf` when the session moved on. */
+	expectedLeafId?: string;
+}
+
+export interface AssistantEditResult {
+	editorText?: string;
+	cancelled: boolean;
+	aborted?: boolean;
+	summaryEntry?: BranchSummaryEntry;
+	/** The replacement text matched the original, so nothing was appended. */
+	unchanged?: boolean;
+	/** Id of the appended edited assistant entry. */
+	entryId?: string;
+}
+
 /** Options for AgentSession.prompt() */
 export type PromptDisposition = "handled" | "queued" | "started";
 
@@ -1068,16 +1141,26 @@ export class AgentSession {
 	private readonly _wakeSources = new WakeSourceTracker();
 	private _unsubscribeWakeSources: (() => void) | undefined;
 	private _overflowRecoveryAttempted = false;
+	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
 	// that AgentSession initiated required-compaction recovery.
 	private _requiredCompactionTurnError: RequiredCompactionError | undefined;
+	private _resumeCompactionRequirement: ResumeCompactionRequirement | undefined;
+	private _resumeSlice: ResumeSlicePlan | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
 	private _skipNextPostRetryCompactionCheck = false;
-	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; revision: number } | undefined;
+	/**
+	 * Armed when an accepted compaction produced a summary that still leaves the
+	 * context over budget. It survives synthetic revision bumps (model or settings
+	 * changes, queue mutation, extension continuations, scheduled retries) because
+	 * none of those change the context that was rejected; only a real reduction, a
+	 * new user prompt, or a manual compaction releases it (#7921 case 6).
+	 */
+	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; contentTokens: number } | undefined;
 	private _delegatedCompactionKey: { provider: string; id: string } | undefined;
 	private _skipNextPostCompactionAssistantCheck = false;
 	private _scheduledContinuationRecompacted = false;
@@ -1201,6 +1284,9 @@ export class AgentSession {
 			envValue("NO_FALLBACK") === "1";
 		if (noModelFallback) {
 			this.settingsManager.applyOverrides({ retry: { modelFallback: false } });
+		}
+		if (config.resourceLoader.getExtensions().runtime.flagValues.get("no-ask-user") === true) {
+			this.settingsManager.applyOverrides({ askUser: { enabled: false } });
 		}
 		this._scopedModels = config.scopedModels ?? [];
 		this._favoriteModels = config.favoriteModels ?? [];
@@ -1375,7 +1461,7 @@ export class AgentSession {
 	 * session model so compaction never silently breaks.
 	 */
 	private _resolveCompactionModel(sessionModel: Model<any>): Model<any> {
-		const override = this.settingsManager.getCompactionSettings().model;
+		const override = this._getCompactionSettings().model;
 		if (!override) return sessionModel;
 		const slash = override.indexOf("/");
 		if (slash <= 0 || slash === override.length - 1) return sessionModel;
@@ -1782,6 +1868,33 @@ export class AgentSession {
 
 	private _incrementMessageRevision(): void {
 		this._messageRevision++;
+		// A revision bump alone is not evidence that the rejected context changed:
+		// releasing here let a synthetic bump retry the unchanged oversized context
+		// (#7921 case 6). Release only once the context actually shrank.
+		this._releaseBlockedPostCompactionAdmissionIfReduced();
+	}
+
+	/** Byte-derived size of the context an admission decision would carry. */
+	private _blockedAdmissionContentTokens(): number {
+		return estimateMessagesTokens(filterContextExcludedMessages(this.agent.state.messages));
+	}
+
+	/** A compaction that genuinely reduced the context clears the blocked state. */
+	private _releaseBlockedPostCompactionAdmissionIfReduced(): void {
+		const blocked = this._blockedPostCompactionAssistant;
+		if (blocked === undefined) return;
+		if (this._blockedAdmissionContentTokens() < blocked.contentTokens) {
+			this._blockedPostCompactionAssistant = undefined;
+		}
+	}
+
+	/**
+	 * Unconditional release for manual `/compact`, the user's explicit remedy. An
+	 * ordinary user prompt is deliberately not a release: it only adds context, so
+	 * it cannot make the rejected context admissible, and the pre-prompt gate
+	 * already owns its own fail-closed rejection for that route.
+	 */
+	private _releaseBlockedPostCompactionAdmission(): void {
 		this._blockedPostCompactionAssistant = undefined;
 	}
 
@@ -1837,7 +1950,7 @@ export class AgentSession {
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
 			liveContextTokens: this._getDownswitchLiveContextTokens(model),
-			compaction: this.settingsManager.getCompactionSettings(),
+			compaction: this._getCompactionSettings(),
 		});
 		return projection.usable ? undefined : projection;
 	}
@@ -2103,14 +2216,22 @@ export class AgentSession {
 		return resolveThresholdContextTokens(directContextTokens, estimateMessagesTokens(messages));
 	}
 
+	/**
+	 * `compaction.enabled=false` disables proactive (threshold) compaction only.
+	 * A provider-confirmed overflow is an error the session cannot progress past
+	 * by any other route, so overflow recovery stays armed regardless (#1422).
+	 */
 	private _getAutoCompactionReason(message: AssistantMessage): "overflow" | "threshold" | undefined {
-		const settings = this.settingsManager.getCompactionSettings();
-		if (!settings.enabled || message.stopReason === "aborted") {
+		const settings = this._getCompactionSettings();
+		if (message.stopReason === "aborted") {
 			return undefined;
 		}
 
 		const model = this.model;
-		if (!model || this._isAssistantFromBeforeLatestCompaction(message)) {
+		// Narrowed to the stale usage number itself: pre-boundary provenance does
+		// not exempt a context whose own content already exceeds the policy.
+		if (!model) return undefined;
+		if (this._isAssistantFromBeforeLatestCompaction(message) && !this._exceedsPolicyByContentEstimate()) {
 			return undefined;
 		}
 
@@ -2124,11 +2245,15 @@ export class AgentSession {
 			contextUsage !== undefined &&
 			contextUsage.tokens !== null &&
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
-		if (isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction)) {
-			return "overflow";
+		const isOverflow =
+			(isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction)) ||
+			this._isCursorPayloadOverflow(message);
+		if (isOverflow) {
+			if (settings.enabled || isTurnStuckOnContextOverflow(message, model.contextWindow)) return "overflow";
+			return undefined;
 		}
-		if (this._isCursorPayloadOverflow(message)) {
-			return "overflow";
+		if (!settings.enabled) {
+			return undefined;
 		}
 
 		let contextTokens: number;
@@ -2148,13 +2273,31 @@ export class AgentSession {
 					usageMessage?.role === "assistant" &&
 					this._isAssistantFromBeforeLatestCompaction(usageMessage)
 				) {
-					return undefined;
+					// Drop only the stale usage number; the messages themselves still count.
+					const contentTokens = estimateMessagesTokens(messages);
+					return shouldCompact(contentTokens, model.contextWindow, settings) ? "threshold" : undefined;
 				}
 			}
 			contextTokens = estimate.tokens;
 		}
 
 		return shouldCompact(contextTokens, model.contextWindow, settings) ? "threshold" : undefined;
+	}
+
+	/**
+	 * Content measured by bytes, ignoring every provider usage number. The
+	 * stale-usage exemptions below only claim that a usage figure measured before
+	 * the accepted compaction boundary is not evidence of current pressure; they
+	 * must not exempt the messages themselves, because fresh post-boundary content
+	 * (a large tool result, late steering) is measurable without any usage report
+	 * (#7921 case 5).
+	 */
+	private _exceedsPolicyByContentEstimate(): boolean {
+		const model = this.model;
+		if (!model) return false;
+		const settings = this._getCompactionSettings();
+		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(this.agent.state.messages));
+		return shouldCompact(contextTokens, model.contextWindow, settings);
 	}
 
 	private _hasPendingPostCompactionUsageExemption(message: AssistantMessage): boolean {
@@ -2414,10 +2557,15 @@ export class AgentSession {
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
+			const claudeSdkSameModelRemint = this._isClaudeSdkSameModelRemintError(msg);
 			const retryCanAdmitProvider =
 				!userAbortSuppressedQueuedContinuation &&
 				this.settingsManager.getRetrySettings().enabled &&
-				(retryableError || hardErrorFallbackEligible || cursorZeroTokenRe || cursorQuotaRe);
+				(retryableError ||
+					hardErrorFallbackEligible ||
+					cursorZeroTokenRe ||
+					cursorQuotaRe ||
+					claudeSdkSameModelRemint);
 			let compactedBeforeRetry = false;
 			if (
 				retryCanAdmitProvider &&
@@ -2441,6 +2589,8 @@ export class AgentSession {
 					// failed assistant before provider fallback so replay stays valid.
 					this._retireFailedRetryAssistant(msg);
 					retryOutcome = await this._handleRetryableError(msg, { hardErrorFallback: true });
+				} else if (claudeSdkSameModelRemint) {
+					retryOutcome = await this._handleRetryableError(msg, { sameModelRemint: true });
 				} else if (retryableError) {
 					retryOutcome = await this._handleRetryableError(msg);
 				} else if (hardErrorFallbackEligible) {
@@ -2803,6 +2953,16 @@ export class AgentSession {
 	 */
 	subscribe(listener: AgentSessionEventListener): () => void {
 		this._eventListeners.push(listener);
+		if (this._resumeCompactionRequirement !== undefined) {
+			listener({
+				type: "resume_compaction_required",
+				projection: this._resumeCompactionRequirement.projection,
+				notice: this._resumeCompactionRequirement.notice,
+			});
+		}
+		if (this._resumeSlice !== undefined) {
+			listener(this._resumeSliceEvent(this._resumeSlice));
+		}
 		for (const source of this.settingsManager.getSelectedSettingsSources()) {
 			listener({ type: "settings_source_selected", ...source });
 		}
@@ -3118,6 +3278,7 @@ export class AgentSession {
 				options?.signal,
 				options?.onUpdate as AgentToolUpdateCallback<unknown> | undefined,
 			);
+			isError = result.isError === true;
 		} catch (err) {
 			result = {
 				content: [
@@ -3623,7 +3784,13 @@ export class AgentSession {
 			// empty session, or a "." carrying image attachments (the user is sending
 			// the images, not asking to continue), falls through to ordinary prompt
 			// handling below.
-			if (text.trim() === "." && this.agent.state.messages.length > 0 && !options?.images?.length) {
+			if (
+				isManualContinueSubmission({
+					text,
+					hasMessages: this.agent.state.messages.length > 0,
+					hasImages: (options?.images?.length ?? 0) > 0,
+				})
+			) {
 				await this.sendCustomMessage(
 					{
 						customType: MANUAL_CONTINUE_CUSTOM_TYPE,
@@ -4639,17 +4806,48 @@ export class AgentSession {
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
 			liveContextTokens,
-			compaction: this.settingsManager.getCompactionSettings(),
+			compaction: this._getCompactionSettings(),
 			includeSpeculationLead: options?.includeSpeculationLead,
 			admission: options?.admission,
 		});
 		if (!projection.usable) throw new ModelUsabilityBudgetError(projection);
 	}
 
+	/** Admit an oversized restored transcript so the normal pre-provider compaction can run. */
+	admitResumeCompactionRequired(projection: ModelUsabilityBudgetProjection): void {
+		this._resumeCompactionRequirement = createResumeCompactionRequirement(projection);
+	}
+
+	/** Reduce an over-window restored context deterministically while the recorded transcript stays intact. */
+	applyResumeSlice(plan: ResumeSlicePlan): void {
+		this.sessionManager.appendCompaction(plan.summary, plan.firstKeptEntryId, plan.tokensBefore, {
+			schema: RESUME_SLICE_SCHEMA,
+			origin: RESUME_SLICE_ORIGIN,
+		});
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		this._resumeSlice = plan;
+		this._sessionLogger.info("resume_context_reduced", {
+			count: plan.droppedEntries,
+			tokensBefore: plan.tokensBefore,
+			tokensAfter: plan.tokensAfter,
+		});
+		this._emit(this._resumeSliceEvent(plan));
+	}
+
+	private _resumeSliceEvent(plan: ResumeSlicePlan): AgentSessionEvent {
+		return {
+			type: "resume_context_reduced",
+			tokensBefore: plan.tokensBefore,
+			tokensAfter: plan.tokensAfter,
+			droppedEntries: plan.droppedEntries,
+			notice: resumeSliceNotice(plan),
+		};
+	}
+
 	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
 		const currentModel = this.model;
 		if (!currentModel) return 0;
-		const compaction = this.settingsManager.getCompactionSettings();
+		const compaction = this._getCompactionSettings();
 		const currentBudget = projectModelUsabilityBudget({
 			model: currentModel,
 			systemPrompt: this.agent.state.systemPrompt,
@@ -4677,13 +4875,72 @@ export class AgentSession {
 		return this._setModel(model, false);
 	}
 
+	/**
+	 * #1526: every switch guard rejects before `_switchActiveModel` appends its
+	 * `model_change`, so a refused switch used to leave no entry, no event, and
+	 * no log line - indistinguishable from a switch the user never attempted.
+	 * Record the refusal, then rethrow the original error unchanged.
+	 */
+	private _recordRejectedModelChange(model: Model<Api>, error: unknown): void {
+		const budget = error instanceof ModelUsabilityBudgetError ? error.projection : undefined;
+		const detail = error instanceof Error ? error.message : String(error);
+		const reason = budget ? "context-budget" : "auth";
+		const numbers = budget
+			? {
+					contextWindow: budget.contextWindow,
+					liveContextTokens: budget.liveContextTokens,
+					requiredTokens: budget.requiredTokens,
+					shortfallTokens: budget.shortfallTokens,
+					safetyMarginProfile: budget.safetyMarginProfile,
+				}
+			: {};
+		this.sessionManager.appendModelChangeRejected({
+			provider: model.provider,
+			modelId: model.id,
+			reason,
+			detail,
+			...numbers,
+		});
+		this._emit({ type: "model_change_rejected", model, reason, detail, ...numbers });
+	}
+
+	/**
+	 * The admission only selects wording, and the switch wording's remedy
+	 * ("Compact the session, ...") is executable only when there is context to
+	 * compact. `_setModel` is also reachable from `session_start` (the
+	 * `recommended-models` builtin switches the model there), so derive the
+	 * admission from the branch instead of hardcoding a switch: with conversation
+	 * context this is a switch, on an empty session it is still a cold start.
+	 */
+	private _modelSwitchAdmission(): ModelUsabilityAdmission {
+		return this.sessionManager.hasContextMessages() ? "switch" : "start";
+	}
+
+	/**
+	 * The single guard seam for a model switch (#1526): every site that can
+	 * refuse a switch - the `_setModel` pre-flight, the post-`model_select`
+	 * revalidation in `_switchActiveModel`, and both cycle guards - records the
+	 * refusal and rethrows the original error unchanged, so no refusal is
+	 * observable on one path and invisible on its sibling.
+	 */
+	private _assertModelUsableForSwitch(model: Model<Api>, liveContextTokens: number): void {
+		try {
+			this.assertModelUsable(model, liveContextTokens, { admission: this._modelSwitchAdmission() });
+		} catch (error) {
+			this._recordRejectedModelChange(model, error);
+			throw error;
+		}
+	}
+
 	private async _setModel(
 		model: Model<Api>,
 		updateGlobalDefaults: boolean,
 	): Promise<SystemPromptChangeEvent | undefined> {
-		this.assertModelUsable(model, this._getDownswitchLiveContextTokens(model));
+		this._assertModelUsableForSwitch(model, this._getDownswitchLiveContextTokens(model));
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			throw new Error(`No API key for ${model.provider}/${model.id}`);
+			const error = new Error(`No API key for ${model.provider}/${model.id}`);
+			this._recordRejectedModelChange(model, error);
+			throw error;
 		}
 
 		// A manual model change abandons any active fallback window; if a fallback
@@ -4774,7 +5031,7 @@ export class AgentSession {
 			const systemPromptChange = opts.emitModelSelect
 				? await this._emitModelSelect(model, previousModel, opts.modelSelectSource)
 				: undefined;
-			this.assertModelUsable(model, liveContextTokens);
+			this._assertModelUsableForSwitch(model, liveContextTokens);
 			if (opts.appendSessionEntry) {
 				this.sessionManager.appendModelChange(
 					model.provider,
@@ -4880,7 +5137,10 @@ export class AgentSession {
 			const alternatives = favoriteModels.filter((entry) => !modelsAreEqual(entry.model, currentModel));
 			const onlyAlternative = alternatives.length === 1 ? alternatives[0] : undefined;
 			if (onlyAlternative) {
-				this.assertModelUsable(onlyAlternative.model, this._getDownswitchLiveContextTokens(onlyAlternative.model));
+				this._assertModelUsableForSwitch(
+					onlyAlternative.model,
+					this._getDownswitchLiveContextTokens(onlyAlternative.model),
+				);
 			}
 			return {
 				model: currentModel,
@@ -4891,7 +5151,7 @@ export class AgentSession {
 		}
 		const next = favoriteModels[selectedIndex];
 		const liveContextTokens = this._getDownswitchLiveContextTokens(next.model);
-		this.assertModelUsable(next.model, liveContextTokens);
+		this._assertModelUsableForSwitch(next.model, liveContextTokens);
 		const invalidatesCompaction =
 			this._modelSelectionChangesContext(currentModel, next.model) ||
 			currentModel?.provider !== next.model.provider ||
@@ -4904,8 +5164,6 @@ export class AgentSession {
 		const thinking = this._getThinkingForModelSwitch(next.model, next.thinkingLevel, next.thinkingSelection);
 
 		this.agent.state.model = next.model;
-		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
-		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
 		const previousTier = this._currentServiceTier;
 		const previousFastMode = this.isFastModeActive();
 		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
@@ -4913,19 +5171,25 @@ export class AgentSession {
 		// Apply thinking level and provenance from the favorite projection or remembered preference.
 		this._setThinkingLevel(thinking.level, false, thinking.selection);
 
-		// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
-		this._emit({
-			type: "model_changed",
-			model: next.model,
-			thinkingLevel: this.thinkingLevel,
-			source: "cycle",
-		});
-		this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
-
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		try {
 			const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
-			this.assertModelUsable(next.model, liveContextTokens);
+			// #1526: the `model_select` hook may have grown the system prompt, so the
+			// switch is not decided yet. Nothing durable - no `model_change`, no global
+			// default - may be written before this guard accepts, or a refused cycle
+			// would resume on a model that never ran (the ordering `_switchActiveModel`
+			// already uses).
+			this._assertModelUsableForSwitch(next.model, liveContextTokens);
+			this.sessionManager.appendModelChange(next.model.provider, next.model.id);
+			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
+			this._emit({
+				type: "model_changed",
+				model: next.model,
+				thinkingLevel: this.thinkingLevel,
+				source: "cycle",
+			});
+			this._emitServiceTierChangeIfNeeded(previousTier, previousFastMode);
 
 			const cycleResult: ModelCycleResult = {
 				model: next.model,
@@ -4941,6 +5205,7 @@ export class AgentSession {
 			if (currentModel) this.agent.state.model = currentModel;
 			else delete (this.agent.state as { model?: Model<Api> }).model;
 			this.agent.state.systemPrompt = previousSystemPrompt;
+			this._currentServiceTier = previousTier;
 			throw error;
 		}
 	}
@@ -5374,12 +5639,11 @@ export class AgentSession {
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		const model = this.model;
 		if (!model) throw new Error(formatNoModelSelectedMessage());
+		// Manual compaction is the user's explicit remedy for a blocked admission
+		// (#7921 case 6).
+		this._releaseBlockedPostCompactionAdmission();
 		const pathEntries = this.sessionManager.getBranch();
-		const settings = cursorOverflowCompactionSettings(
-			this.settingsManager.getCompactionSettings(),
-			model.provider,
-			"manual",
-		);
+		const settings = cursorOverflowCompactionSettings(this._getCompactionSettings(), model.provider, "manual");
 		if (!prepareCompaction(pathEntries, settings)) {
 			const requestId = randomUUID();
 			const lastEntry = pathEntries[pathEntries.length - 1];
@@ -5642,7 +5906,7 @@ export class AgentSession {
 			}
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = cursorOverflowCompactionSettings(
-				this.settingsManager.getCompactionSettings(),
+				this._getCompactionSettings(),
 				this.model?.provider,
 				request.reason,
 			);
@@ -5923,7 +6187,7 @@ export class AgentSession {
 			simulatedMessages = truncateToolResultBodies(simulatedMessages).messages ?? simulatedMessages;
 		}
 		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
-		const settings = this.settingsManager.getCompactionSettings();
+		const settings = this._getCompactionSettings();
 		const reserveTokens =
 			settings.reserveScalingEnabled === false
 				? settings.reserveTokens
@@ -6056,17 +6320,34 @@ export class AgentSession {
 		inlineReason: "pre_prompt" | "threshold",
 		retryAfterCompaction = false,
 	): Promise<boolean> {
+		this._releaseBlockedPostCompactionAdmissionIfReduced();
 		const blockedAdmission = this._blockedPostCompactionAssistant;
-		if (
-			blockedAdmission !== undefined &&
-			blockedAdmission.assistant === assistantMessage &&
-			blockedAdmission.revision === this._messageRevision
-		) {
+		if (blockedAdmission !== undefined && blockedAdmission.assistant === assistantMessage) {
 			throw new RequiredCompactionError();
 		}
 
-		const settings = this.settingsManager.getCompactionSettings();
+		const settings = this._getCompactionSettings();
 		const model = this.model;
+		if (this._resumeCompactionRequirement !== undefined) {
+			if (!model) throw new RequiredCompactionError();
+			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
+			if (!compacted) throw new RequiredCompactionError();
+			const currentContext = estimateContextTokens(
+				filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+			).tokens;
+			const remainingProjection = projectModelUsabilityBudget({
+				model,
+				systemPrompt: this.agent.state.systemPrompt,
+				tools: this.agent.state.tools,
+				liveContextTokens: currentContext,
+				compaction: settings,
+				includeSpeculationLead: false,
+				admission: "resume",
+			});
+			if (!remainingProjection.usable) throw new RequiredCompactionError();
+			this._resumeCompactionRequirement = undefined;
+			return true;
+		}
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
 		).tokens;
@@ -6104,11 +6385,28 @@ export class AgentSession {
 	}
 
 	/**
+	 * Pending queued input the provider will also carry on this turn. Steering and
+	 * follow-up text enqueued after the admission projection was assembled - by a
+	 * `before_agent_start` handler, an extension action, or the user racing the
+	 * gate - is drained into the same run, so the final gate must measure it
+	 * (#7921 case 5).
+	 */
+	private _pendingQueuedInputMessages(): AgentMessage[] {
+		const timestamp = Date.now();
+		return [...this._steeringMessages, ...this._followUpMessages].map((text) => ({
+			role: "user" as const,
+			content: [{ type: "text" as const, text }],
+			timestamp,
+		}));
+	}
+
+	/**
 	 * The normal pre-prompt check only estimates persisted session context. This
 	 * final gate also includes turn-local messages which the provider will see:
-	 * the current prompt, next-turn custom messages, and before_agent_start
-	 * additions. Compaction rewrites only session context, so callers retain and
-	 * reapply their already-assembled one-shot additions after it succeeds.
+	 * the current prompt, next-turn custom messages, before_agent_start additions,
+	 * and steering or follow-up input queued after that projection was assembled.
+	 * Compaction rewrites only session context, so callers retain and reapply
+	 * their already-assembled one-shot additions after it succeeds.
 	 */
 	private async _enforceFinalProviderAdmission(messages: readonly AgentMessage[]): Promise<void> {
 		// User-only prompts are deliberately admitted without this gate: prompt
@@ -6116,18 +6414,23 @@ export class AgentSession {
 		// (issues #531/#886), so oversized user prompts rely on threshold
 		// compaction — which also samples the local transcript estimate — and on
 		// provider-overflow recovery. This gate closes the separate gap opened by
-		// turn-local custom additions, which the pre-prompt check cannot observe.
-		if (!messages.some((message) => message.role === "custom")) return;
+		// turn-local custom additions and by late queued input, neither of which the
+		// pre-prompt check can observe.
+		const lateQueuedMessages = this._pendingQueuedInputMessages();
+		if (!messages.some((message) => message.role === "custom") && lateQueuedMessages.length === 0) return;
 
 		const model = this.model;
 		if (!model) return;
-		const settings = this.settingsManager.getCompactionSettings();
-		const reserveTokens =
-			settings.reserveScalingEnabled === false
-				? settings.reserveTokens
-				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
+		const settings = this._getCompactionSettings();
+		const reserveTokens = resolveEffectiveReserveTokens(model.contextWindow, settings);
 		const isOversized = (): boolean => {
-			const providerMessages = filterContextExcludedMessages([...this.agent.state.messages, ...messages]);
+			const providerMessages = filterContextExcludedMessages([
+				...this.agent.state.messages,
+				...messages,
+				// Re-read the queues on every sample: this closure is evaluated again
+				// after compaction, when more input may have arrived.
+				...this._pendingQueuedInputMessages(),
+			]);
 			const estimate = estimateContextTokens(providerMessages);
 			const usageMessage = estimate.lastUsageIndex === null ? undefined : providerMessages[estimate.lastUsageIndex];
 			// Kept assistant usage can describe the pre-compaction request. Once a
@@ -6162,8 +6465,7 @@ export class AgentSession {
 		inlineReason?: "pre_prompt" | "threshold",
 		retryAfterCompaction = false,
 	): Promise<boolean> {
-		const settings = this.settingsManager.getCompactionSettings();
-		if (!settings.enabled) return false;
+		const settings = this._getCompactionSettings();
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
@@ -6186,7 +6488,14 @@ export class AgentSession {
 		// compaction boundary. This prevents a stale pre-compaction usage/error
 		// from retriggering compaction on the first prompt after compaction.
 		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
-		if (this._isAssistantFromBeforeLatestCompaction(assistantMessage)) {
+		// The inline (pre-prompt) caller re-samples the current context itself and
+		// owns the fail-closed rejection, so only the automatic route needs the
+		// narrowed exemption here: fresh post-boundary content still counts even
+		// though this message's own usage predates the boundary (#7921 case 5).
+		if (
+			this._isAssistantFromBeforeLatestCompaction(assistantMessage) &&
+			(inlineReason !== undefined || !this._exceedsPolicyByContentEstimate())
+		) {
 			return false;
 		}
 		// Case 1: Overflow - LLM returned context overflow error.
@@ -6202,6 +6511,9 @@ export class AgentSession {
 			(isContextOverflow(assistantMessage, contextWindow) && (sameModel || currentContextNeedsCompaction)) ||
 			recoverableLength ||
 			this._isCursorPayloadOverflow(assistantMessage);
+		if (isOverflow && !settings.enabled && !isTurnStuckOnContextOverflow(assistantMessage, contextWindow)) {
+			return false;
+		}
 		if (
 			isOverflow &&
 			assistantMessage.stopReason === "stop" &&
@@ -6225,7 +6537,7 @@ export class AgentSession {
 				) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
-						revision: this._messageRevision,
+						contentTokens: this._blockedAdmissionContentTokens(),
 					};
 				}
 				return compacted;
@@ -6281,6 +6593,10 @@ export class AgentSession {
 			return compacted;
 		}
 
+		// Stuck-overflow recovery above runs regardless of the flag; threshold
+		// compaction below is the proactive path the user switched off (#1422).
+		if (!settings.enabled) return false;
+
 		// The first ordinary response can carry provider usage calculated before
 		// compaction. Consume that exemption only after proving this is not an
 		// overflow, then retain the decision for later admission re-sampling.
@@ -6291,6 +6607,7 @@ export class AgentSession {
 		// This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
 		// responses can still compact and do not reset context accounting.
 		let contextTokens: number;
+		let staleUsageContentTokens: number | undefined;
 		if (inlineReason) {
 			const messages = filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
 			contextTokens = estimateContextTokens(messages).tokens;
@@ -6311,10 +6628,12 @@ export class AgentSession {
 						usageMsg.role === "assistant" &&
 						this._isAssistantFromBeforeLatestCompaction(usageMsg)
 					) {
-						return false;
+						// Drop only the stale usage number; the messages themselves still count.
+						staleUsageContentTokens = estimateMessagesTokens(messages);
+						if (!shouldCompact(staleUsageContentTokens, contextWindow, settings)) return false;
 					}
 				}
-				contextTokens = estimate.tokens;
+				contextTokens = staleUsageContentTokens ?? estimate.tokens;
 			}
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
@@ -6335,7 +6654,7 @@ export class AgentSession {
 				) {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
-						revision: this._messageRevision,
+						contentTokens: this._blockedAdmissionContentTokens(),
 					};
 				}
 				return compacted;
@@ -6432,7 +6751,7 @@ export class AgentSession {
 
 	private async _revalidateScheduledContinuationAdmission(): Promise<void> {
 		const model = this.model;
-		const settings = this.settingsManager.getCompactionSettings();
+		const settings = this._getCompactionSettings();
 		if (!model || !settings.enabled) return;
 
 		const canonicalMessages = filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
@@ -6442,11 +6761,33 @@ export class AgentSession {
 			usageMessage?.role === "assistant" && this._isAssistantFromBeforeLatestCompaction(usageMessage)
 				? estimateMessagesTokens(canonicalMessages)
 				: estimate.tokens;
-		if (!shouldCompact(contextTokens, model.contextWindow, settings)) return;
+		// An explicit user prompt passes the proactive policy in the compaction
+		// extension's before_agent_start, which automatic continuations never emit.
+		// Sampling the same predicate here makes both routes compact at the same
+		// usage instead of letting a continuation ride past the threshold up to the
+		// hard valve (#7921 case 4).
+		const atHardLimit = shouldCompact(contextTokens, model.contextWindow, settings);
+		const overProactiveThreshold = shouldTriggerCompaction(
+			{
+				tokens: contextTokens,
+				contextWindow: model.contextWindow,
+				percent: model.contextWindow > 0 ? (contextTokens / model.contextWindow) * 100 : 0,
+			},
+			model.contextWindow,
+			settings,
+		);
+		if (!atHardLimit && !overProactiveThreshold) return;
 
 		const compacted = await this._runPrePromptCompaction(this._findLastAssistantMessage(), true, "pre_prompt");
 		if (!compacted) {
-			if (this._isCompactionOnCooldown() || this._isCompactionDelegated() || this._hasSupersedingCompactionClaim()) {
+			// Proactive pressure alone must never brick an automatic continuation:
+			// only the hard reserve valve stays fail-closed (#531/#886).
+			if (
+				!atHardLimit ||
+				this._isCompactionOnCooldown() ||
+				this._isCompactionDelegated() ||
+				this._hasSupersedingCompactionClaim()
+			) {
 				return;
 			}
 			throw new RequiredCompactionError();
@@ -6628,11 +6969,7 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(
 				this.sessionManager.getBranch(),
-				cursorOverflowCompactionSettings(
-					this.settingsManager.getCompactionSettings(),
-					this.model?.provider,
-					reason,
-				),
+				cursorOverflowCompactionSettings(this._getCompactionSettings(), this.model?.provider, reason),
 				reason === "overflow",
 			);
 			if (!preparation) {
@@ -6718,11 +7055,20 @@ export class AgentSession {
 	}
 
 	/**
-	 * Toggle auto-compaction setting.
+	 * Toggle auto-compaction for this session only. Persisting the flag is a
+	 * settings-editor concern; a session-level command (RPC `set_auto_compaction`,
+	 * one thread of a multi-session host) must never rewrite the global setting
+	 * for every other session on the machine (#1422).
 	 */
 	setAutoCompactionEnabled(enabled: boolean): void {
-		this.settingsManager.setCompactionEnabled(enabled);
+		this._autoCompactionSessionOverride = enabled;
 		this._emitSessionSettingsChanged();
+	}
+
+	private _getCompactionSettings(): ReturnType<SettingsManager["getCompactionSettings"]> {
+		const settings = this.settingsManager.getCompactionSettings();
+		if (this._autoCompactionSessionOverride === undefined) return settings;
+		return { ...settings, enabled: this._autoCompactionSessionOverride };
 	}
 
 	private _emitSessionSettingsChanged(): void {
@@ -6734,9 +7080,9 @@ export class AgentSession {
 		});
 	}
 
-	/** Whether auto-compaction is enabled */
+	/** Whether auto-compaction is enabled for this session */
 	get autoCompactionEnabled(): boolean {
-		return this.settingsManager.getCompactionEnabled();
+		return this._autoCompactionSessionOverride ?? this.settingsManager.getCompactionEnabled();
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
@@ -6988,6 +7334,7 @@ export class AgentSession {
 			{
 				getModel: () => this.model,
 				getServiceTier: () => this.serviceTier,
+				getEffectiveServiceTier: () => this.effectiveServiceTier,
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
 				getAgentDir: () => this._agentDir,
@@ -7005,7 +7352,7 @@ export class AgentSession {
 					this._extensionShutdownHandler?.();
 				},
 				getContextUsage: () => this.getContextUsage(),
-				getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
+				getCompactionSettings: () => this._getCompactionSettings(),
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
 				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),
@@ -7017,6 +7364,7 @@ export class AgentSession {
 						models: project?.models ?? global?.models,
 					};
 				},
+				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
 				getImageSettings: () => ({
 					autoResize: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
@@ -7545,9 +7893,48 @@ export class AgentSession {
 		return true;
 	}
 
+	private _isClaudeSdkSessionLockError(message: AssistantMessage): boolean {
+		return (message.errorMessage ?? "").includes("Lock file is already being held");
+	}
+
+	private _isClaudeSdkInvalidRequestError(message: AssistantMessage): boolean {
+		return message.errorMessage === "invalid_request";
+	}
+
+	/**
+	 * Claude-SDK-only quirks that a provider hop cannot fix: the session.json
+	 * lock is held by this session's own subprocess, and a bare `invalid_request`
+	 * from the SDK boundary carries no provider-neutral meaning. Both are scoped
+	 * to the Claude SDK lane, because the SAME wording from another provider is
+	 * an ordinary failure whose classification (transient retry, or hard-error
+	 * fallback) must not change. Provider-agnostic classes - the stream-stall
+	 * watchdog above all - stay out of this predicate: they already consume the
+	 * shared same-model budget through `isRetryableAssistantError` and must still
+	 * escalate to the fallback chain when that budget runs out.
+	 */
+	private _isClaudeSdkSameModelRemintError(message: AssistantMessage): boolean {
+		if (this.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+		return this._isClaudeSdkSessionLockError(message) || this._isClaudeSdkInvalidRequestError(message);
+	}
+
+	/**
+	 * The Claude SDK lane owns its own account pool: an auth miss there is
+	 * repaired or failed over inside the pool, so hopping to another provider
+	 * would abandon the user's Claude subscription on a recoverable miss. Every
+	 * other provider keeps the configured fallback-chain hop.
+	 */
+	private _isClaudeSdkAuthMissError(message: AssistantMessage): boolean {
+		return (
+			this.model?.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID &&
+			message.errorMessage === providerNotConfiguredMessage(CLAUDE_SDK_OAUTH_PROVIDER_ID)
+		);
+	}
+
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
+			!this._isClaudeSdkAuthMissError(message) &&
+			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
 			!this._isCursorPayloadOverflow(message) &&
@@ -7556,6 +7943,14 @@ export class AgentSession {
 			!message.content.some((content) => content.type === "toolCall") &&
 			this._retryFallback.canTryFallback()
 		);
+	}
+
+	private _takeNativeToolSearchInjectionFailure(): string | null {
+		try {
+			return getToolSearchService().takeNativeInjectionFailure();
+		} catch {
+			return null;
+		}
 	}
 
 	private _getProviderRetryDelayMs(errorMessage: string): number | undefined {
@@ -7690,6 +8085,7 @@ export class AgentSession {
 		const hardErrorFallback = options.hardErrorFallback === true;
 		const sameModelRemint = options.sameModelRemint === true;
 		let switchedFallback = false;
+		let sameModelNativeRecovery = false;
 		let is429TierRouted = false;
 		let hintTierDelayMs: number | undefined;
 		const tryFallback = async (
@@ -7723,25 +8119,37 @@ export class AgentSession {
 				return "not-handled";
 			}
 		} else if (hardErrorFallback) {
-			// A non-retryable provider failure must never replay on the same model.
-			// Billing-class failures never recover on this account, so the fallback
-			// switch pins as the session model instead of reverting after the cooldown.
-			const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
-			switchedFallback = await tryFallback(reason, { errorMessage });
-			if (!switchedFallback) {
-				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-				if (exhaustedChainKey) {
-					this._emit({
-						type: "retry_fallback_exhausted",
-						chainKey: exhaustedChainKey,
-						lastError: errorMessage,
-					});
+			// A rejected native tool-search request is recoverable in place: the
+			// adapter is disabled for the session on the 400, so the SAME model can
+			// succeed on the immediate next attempt and the fallback chain must not
+			// demote the user to a weaker model. The pending flag is consumed once,
+			// so a second rejection takes the ordinary hard-error path below.
+			const nativeSearchFailure = this._takeNativeToolSearchInjectionFailure();
+			if (nativeSearchFailure !== null) {
+				sameModelNativeRecovery = true;
+				// The recovery starts fresh, mirroring the fallback branch's attempt bookkeeping.
+				this._retryAttempt = 1;
+			} else {
+				// A non-retryable provider failure must never replay on the same model.
+				// Billing-class failures never recover on this account, so the fallback
+				// switch pins as the session model instead of reverting after the cooldown.
+				const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
+				switchedFallback = await tryFallback(reason, { errorMessage });
+				if (!switchedFallback) {
+					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
+					if (exhaustedChainKey) {
+						this._emit({
+							type: "retry_fallback_exhausted",
+							chainKey: exhaustedChainKey,
+							lastError: errorMessage,
+						});
+					}
+					this._resolveRetry();
+					return "not-handled";
 				}
-				this._resolveRetry();
-				return "not-handled";
+				// The fallback starts fresh; the failed model's transient attempts do not carry over.
+				this._retryAttempt = 1;
 			}
-			// The fallback starts fresh; the failed model's transient attempts do not carry over.
-			this._retryAttempt = 1;
 		} else if (isRefusal) {
 			// Refusals are only retried through a new chain candidate. They never use
 			// same-model retries or the transient over-budget fallback escape hatch.
@@ -8037,11 +8445,12 @@ export class AgentSession {
 			this._retryAttempt,
 			this._retryRandom(),
 		);
-		const delayMs = switchedFallback
-			? 0
-			: is429TierRouted
-				? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
-				: (nonTierProviderDelayMs ?? localExponentialMs);
+		const delayMs =
+			switchedFallback || sameModelNativeRecovery
+				? 0
+				: is429TierRouted
+					? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
+					: (nonTierProviderDelayMs ?? localExponentialMs);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
 
@@ -8089,7 +8498,7 @@ export class AgentSession {
 		// the prior retry checks. Revalidate canonical session context immediately
 		// before the continuation so a rejected compaction never admits that model.
 		const model = this.model;
-		const compactionSettings = this.settingsManager.getCompactionSettings();
+		const compactionSettings = this._getCompactionSettings();
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
 		).tokens;
@@ -8346,26 +8755,62 @@ export class AgentSession {
 	 */
 	async navigateTree(
 		targetId: string,
-		options: {
-			summarize?: boolean;
-			customInstructions?: string;
-			replaceInstructions?: boolean;
-			label?: string;
-		} = {},
+		options: TreeNavigationOptions = {},
 	): Promise<{
 		editorText?: string;
 		cancelled: boolean;
 		aborted?: boolean;
 		summaryEntry?: BranchSummaryEntry;
 	}> {
+		return this._navigateTree(targetId, options);
+	}
+
+	/**
+	 * Replace an assistant response with an edited copy. The leaf moves to the target's parent and
+	 * the edited message is appended there as the new leaf, so the original and everything after it
+	 * are abandoned exactly like a tree navigation (branch summary optional, `session_before_tree`
+	 * and `session_tree` fire). Unchanged text appends nothing.
+	 */
+	async editAssistantMessage(
+		entryId: string,
+		text: string,
+		options: TreeNavigationOptions = {},
+	): Promise<AssistantEditResult> {
 		if (this.isStreaming) {
-			throw new Error("Wait for the current response to finish before navigating the session tree.");
+			throw new SessionStreamingError();
+		}
+		// Stale tokens fail before the unchanged short-circuit: a stale window never learns "unchanged".
+		assertExpectedLeaf(options.expectedLeafId, this.sessionManager.getLeafId());
+		const targetEntry = this.sessionManager.getEntry(entryId);
+		if (!targetEntry) {
+			throw new AssistantEditError("not-found", `Entry ${entryId} not found`);
+		}
+		if (targetEntry.type !== "message" || targetEntry.message.role !== "assistant") {
+			throw new AssistantEditError("not-assistant", `Entry ${entryId} is not an assistant message`);
+		}
+		// Build first so an empty replacement is rejected even when the original carries no text.
+		const replacement = buildEditedAssistantMessage(targetEntry.message, text);
+		if (assistantTextEquals(targetEntry.message, text)) {
+			return { cancelled: false, unchanged: true };
+		}
+		return this._navigateTree(entryId, options, replacement);
+	}
+
+	private async _navigateTree(
+		targetId: string,
+		options: TreeNavigationOptions,
+		replacement?: AssistantMessage,
+	): Promise<AssistantEditResult> {
+		if (this.isStreaming) {
+			throw new SessionStreamingError();
 		}
 
 		const oldLeafId = this.sessionManager.getLeafId();
+		// Stale tokens fail even for a would-be no-op, before any extension hears about the navigation.
+		assertExpectedLeaf(options.expectedLeafId, oldLeafId);
 
-		// No-op if already at target
-		if (targetId === oldLeafId) {
+		// No-op if already at target (a replacement of the leaf itself still has work to do)
+		if (targetId === oldLeafId && !replacement) {
 			return { cancelled: false };
 		}
 
@@ -8490,7 +8935,10 @@ export class AgentSession {
 			let newLeafId: string | null;
 			let editorText: string | undefined;
 
-			if (targetEntry.type === "message" && targetEntry.message.role === "user") {
+			if (replacement) {
+				// Edited assistant message: leaf = parent, the edited copy is appended below
+				newLeafId = targetEntry.parentId;
+			} else if (targetEntry.type === "message" && targetEntry.message.role === "user") {
 				// User message: leaf = parent (null if root), text goes to editor
 				newLeafId = targetEntry.parentId;
 				editorText = contentText(targetEntry.message.content, "");
@@ -8529,9 +8977,11 @@ export class AgentSession {
 				this.sessionManager.branch(newLeafId);
 			}
 
+			const editedEntryId = replacement ? this.sessionManager.appendMessage(replacement) : undefined;
+
 			// Attach label to target entry when not summarizing (no summary entry to label)
 			if (label && !summaryText) {
-				this.sessionManager.appendLabelChange(targetId, label);
+				this.sessionManager.appendLabelChange(editedEntryId ?? targetId, label);
 			}
 
 			// Update agent state (preserving exact messages still awaiting persistence)
@@ -8550,7 +9000,7 @@ export class AgentSession {
 
 			// Emit to custom tools
 
-			return { editorText, cancelled: false, summaryEntry };
+			return { editorText, cancelled: false, summaryEntry, entryId: editedEntryId };
 		} finally {
 			this._branchSummaryAbortController = undefined;
 		}

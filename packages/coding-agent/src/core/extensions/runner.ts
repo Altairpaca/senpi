@@ -252,6 +252,12 @@ export type NavigateTreeHandler = (
 	options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 ) => Promise<{ cancelled: boolean }>;
 
+export type EditAssistantMessageHandler = (
+	entryId: string,
+	text: string,
+	options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+) => Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+
 export type SwitchSessionHandler = (
 	sessionPath: string,
 	options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
@@ -378,6 +384,7 @@ export class ExtensionRunner {
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
+	private getEffectiveServiceTier: () => ServiceTier | undefined = () => this.getServiceTier();
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -394,12 +401,16 @@ export class ExtensionRunner {
 		keepRecentTokens: 20000,
 	});
 	private getPromptCacheSafeWaitSecondsFn: () => number | undefined = () => undefined;
-	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 3570;
+	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 270;
 	private getPromptCacheKeepAliveSettingsFn: NonNullable<ExtensionContextActions["getPromptCacheKeepAliveSettings"]> =
 		() => ({ enabled: false, maxRequestsPerSession: 3, maxCostUsdPerSession: 0.05, marginSeconds: 60 });
 	private getLookAtSettingsFn: ExtensionContextActions["getLookAtSettings"] = () => ({
 		enabled: true,
 		models: undefined,
+	});
+	private getAskUserSettingsFn: () => { enabled: boolean; timeoutMinutes: number } = () => ({
+		enabled: true,
+		timeoutMinutes: 30,
 	});
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
@@ -431,6 +442,7 @@ export class ExtensionRunner {
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
+	private editAssistantMessageHandler: EditAssistantMessageHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler | undefined;
 	private reloadRequestPromise: Promise<void> | undefined;
@@ -494,6 +506,7 @@ export class ExtensionRunner {
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
 		this.getServiceTier = contextActions.getServiceTier;
+		this.getEffectiveServiceTier = contextActions.getEffectiveServiceTier ?? contextActions.getServiceTier;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
@@ -512,6 +525,7 @@ export class ExtensionRunner {
 		if (contextActions.getPromptCacheKeepAliveSettings)
 			this.getPromptCacheKeepAliveSettingsFn = contextActions.getPromptCacheKeepAliveSettings;
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
+		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -591,6 +605,7 @@ export class ExtensionRunner {
 			this.newSessionHandler = actions.newSession;
 			this.forkHandler = actions.fork;
 			this.navigateTreeHandler = actions.navigateTree;
+			this.editAssistantMessageHandler = actions.editAssistantMessage;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
 			return;
@@ -600,6 +615,7 @@ export class ExtensionRunner {
 		this.newSessionHandler = async () => ({ cancelled: false });
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
+		this.editAssistantMessageHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = undefined;
 	}
@@ -624,6 +640,7 @@ export class ExtensionRunner {
 	}
 
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
+		const questionFn = ui.question;
 		return {
 			...ui,
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
@@ -632,6 +649,12 @@ export class ExtensionRunner {
 				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
+			...(questionFn
+				? {
+						question: (request, opts) =>
+							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts)),
+					}
+				: {}),
 		};
 	}
 
@@ -1055,6 +1078,7 @@ export class ExtensionRunner {
 		const runner = this;
 		const getModel = this.getModel;
 		const getServiceTier = this.getServiceTier;
+		const getEffectiveServiceTier = this.getEffectiveServiceTier;
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
 		return {
@@ -1093,6 +1117,10 @@ export class ExtensionRunner {
 			get serviceTier() {
 				runner.assertActive();
 				return getServiceTier();
+			},
+			get effectiveServiceTier() {
+				runner.assertActive();
+				return getEffectiveServiceTier();
 			},
 			get scopedModels() {
 				runner.assertActive();
@@ -1162,6 +1190,10 @@ export class ExtensionRunner {
 			getLookAtSettings: () => {
 				runner.assertActive();
 				return runner.getLookAtSettingsFn();
+			},
+			getAskUserSettings: () => {
+				runner.assertActive();
+				return runner.getAskUserSettingsFn();
 			},
 			getImageSettings: () => {
 				runner.assertActive();
@@ -1242,6 +1274,10 @@ export class ExtensionRunner {
 		context.navigateTree = (targetId, options) => {
 			this.assertActive();
 			return this.navigateTreeHandler(targetId, options);
+		};
+		context.editAssistantMessage = (entryId, text, options) => {
+			this.assertActive();
+			return this.editAssistantMessageHandler(entryId, text, options);
 		};
 		context.switchSession = (sessionPath, options) => {
 			this.assertActive();

@@ -33,6 +33,7 @@ import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type {
 	EntryRenderer,
@@ -362,6 +363,7 @@ function createExtensionAPI(
 	runtime: ExtensionRuntime,
 	cwd: string,
 	eventBus: EventBus,
+	sharedHostEnabled: boolean,
 ): { api: ExtensionAPI; commit: () => void; discard: () => void } {
 	const pendingFlagValues = new Map<string, boolean | string>();
 	const pendingRuntimeChanges: Array<() => void> = [];
@@ -385,6 +387,7 @@ function createExtensionAPI(
 
 	const api = {
 		cwd,
+		sharedHostEnabled,
 
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): void {
@@ -486,6 +489,13 @@ function createExtensionAPI(
 			assertActive();
 			extension.entryRenderers ??= new Map();
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
+		},
+
+		registerReadClassifier(classifier: ReadClassifier): () => void {
+			assertActive();
+			const unregister = runtime.trackEventBusSubscription(registerReadClassifier(classifier));
+			if (state === "loading") loadingUnsubscribers.push(unregister);
+			return unregister;
 		},
 
 		registerMcpServer(name: string, config: RegisteredMcpServerDeclaration["config"]): void {
@@ -752,9 +762,10 @@ async function initializeExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
+	sharedHostEnabled: boolean,
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, resolvedPath, cwd);
-	const load = createExtensionAPI(extension, runtime, cwd, eventBus);
+	const load = createExtensionAPI(extension, runtime, cwd, eventBus, sharedHostEnabled);
 	try {
 		await factory(load.api);
 		load.commit();
@@ -774,6 +785,7 @@ async function loadExtension(
 	getImporter: () => ExtensionModuleImporter,
 	factoryResolver?: ExtensionFactoryResolver,
 	cacheToken?: ExtensionCacheToken,
+	sharedHostEnabled = false,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
 
@@ -786,7 +798,15 @@ async function loadExtension(
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
-		const extension = await initializeExtension(factory, extensionPath, resolvedPath, cwd, eventBus, runtime);
+		const extension = await initializeExtension(
+			factory,
+			extensionPath,
+			resolvedPath,
+			cwd,
+			eventBus,
+			runtime,
+			sharedHostEnabled,
+		);
 		return { extension, error: null };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -803,9 +823,10 @@ export async function loadExtensionFromFactory(
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
 	extensionPath = "<inline>",
+	sharedHostEnabled = false,
 ): Promise<Extension> {
 	const resolvedCwd = resolvePath(cwd);
-	return initializeExtension(factory, extensionPath, extensionPath, resolvedCwd, eventBus, runtime);
+	return initializeExtension(factory, extensionPath, extensionPath, resolvedCwd, eventBus, runtime, sharedHostEnabled);
 }
 
 /**
@@ -816,7 +837,7 @@ async function loadExtensionsInternal(
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
-	options?: { factoryResolver?: ExtensionFactoryResolver },
+	options?: { factoryResolver?: ExtensionFactoryResolver; sharedHostEnabled?: boolean },
 	useCache = false,
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
@@ -840,6 +861,7 @@ async function loadExtensionsInternal(
 			getImporter,
 			options?.factoryResolver,
 			cacheToken,
+			options?.sharedHostEnabled ?? false,
 		);
 
 		if (error) {
@@ -865,7 +887,7 @@ export async function loadExtensions(
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
-	options?: { factoryResolver?: ExtensionFactoryResolver },
+	options?: { factoryResolver?: ExtensionFactoryResolver; sharedHostEnabled?: boolean },
 ): Promise<LoadExtensionsResult> {
 	return loadExtensionsInternal(paths, cwd, eventBus, runtime, options);
 }

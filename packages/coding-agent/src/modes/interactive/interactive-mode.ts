@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type AuthEvent, type AuthPrompt, modelsAreEqual } from "@earendil-works/pi-ai";
+import { type AuthEvent, type AuthPrompt, contentText, modelsAreEqual } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -63,7 +63,12 @@ import {
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import {
+	type AgentSessionEvent,
+	type AssistantEditResult,
+	parseSkillBlock,
+	type TreeNavigationOptions,
+} from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
 import { envValue } from "../../core/brand.ts";
@@ -74,6 +79,8 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
+import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -88,11 +95,13 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
+import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { appendHiddenTuiStdout, appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
+import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
@@ -139,6 +148,16 @@ import {
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
+import {
+	ASK_USER_ANSWER_KEY,
+	ASK_USER_WIDGET_KEY,
+	AskUserAsyncWidget,
+	buildCommentResponse,
+	buildTimedOutResponse,
+	unansweredIds,
+} from "./components/ask-user-async-widget.ts";
+import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
+import type { QuestionDraft } from "./components/ask-user-question-state.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
@@ -200,6 +219,7 @@ import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./gr
 import type { InteractiveSession } from "./interactive-host-runtime.ts";
 import { restoreInteractiveStderr, takeOverInteractiveStderr } from "./interactive-stderr-guard.ts";
 import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-command.ts";
+import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
@@ -554,7 +574,8 @@ export class OptimisticUserEchoController {
 		return id;
 	}
 
-	promptOptions(id: string): {
+	/** `undefined` means nothing was painted for this submission; every callback then resolves to a no-op. */
+	promptOptions(id: string | undefined): {
 		preflightResult: (success: boolean) => void;
 		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
 	} {
@@ -575,14 +596,15 @@ export class OptimisticUserEchoController {
 		};
 	}
 
-	reject(id: string): void {
+	reject(id: string | undefined): void {
+		if (id === undefined) return;
 		const index = this.pending.findIndex((record) => record.id === id);
 		if (index === -1) return;
 		const [record] = this.pending.splice(index, 1);
 		record?.handle.remove();
 	}
 
-	remove(id: string): void {
+	remove(id: string | undefined): void {
 		this.reject(id);
 	}
 
@@ -600,7 +622,8 @@ export class OptimisticUserEchoController {
 interface InteractiveUserInput {
 	text: string;
 	images?: ImageContent[];
-	pendingEchoId: string;
+	/** `undefined` for a submission that paints no echo, such as the manual-continue shortcut. */
+	pendingEchoId: string | undefined;
 }
 
 /** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
@@ -731,12 +754,21 @@ type HostUiRequest = {
 	widgetPlacement?: "aboveEditor" | "belowEditor";
 	extensionName?: string;
 	text?: string;
+	requestId?: string;
+	toolCallId?: string;
+	waitForAnswer?: boolean;
+	questions?: QuestionRequest["questions"];
+	timeout?: number;
+	askedAtMs?: number;
+	deadlineAtMs?: number;
+	remainingMs?: number;
 };
 
 type HostUiResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true };
+	| { type: "extension_ui_response"; id: string; cancelled: true }
+	| { type: "extension_ui_response"; id: string; answers: QuestionResponse["answers"]; comment?: string };
 
 /**
  * Optional runtime capability: only the shared interactive host proxies extension
@@ -745,6 +777,27 @@ type HostUiResponse =
 type HostUiCapableRuntime = {
 	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
 	setClientInfo?(width: number): void;
+	/** Draft updates for an open host-side `question` request (debounced by the caller). */
+	sendHostUiProgress?(record: {
+		type: "extension_ui_progress";
+		id: string;
+		answers?: QuestionResponse["answers"];
+		comment?: string;
+	}): void;
+};
+
+type QuestionOverlayOptions = ExtensionUIDialogOptions & {
+	onProgress?: (draft: QuestionDraft) => void;
+};
+
+/** A waitForAnswer=false question parked behind the collapsed editor widget. */
+type AsyncQuestionState = {
+	request: QuestionRequest;
+	timeoutMs: number;
+	onProgress?: (draft: QuestionDraft) => void;
+	/** Last draft seen from the expanded component; kept across Esc so typed comments carry it. */
+	draft: QuestionDraft;
+	finish: (response: QuestionResponse) => void;
 };
 
 function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => Component) | undefined {
@@ -992,6 +1045,8 @@ export class InteractiveMode {
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
+	private askUserQuestion: AskUserQuestionComponent | undefined = undefined;
+	private asyncQuestion: AsyncQuestionState | undefined = undefined;
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -2598,6 +2653,21 @@ export class InteractiveMode {
 					void this.flushCompactionQueue({ willRetry: false });
 					return { cancelled: false };
 				},
+				editAssistantMessage: async (entryId, text, options) => {
+					const result = await this.session.editAssistantMessage(entryId, text, {
+						summarize: options?.summarize,
+						customInstructions: options?.customInstructions,
+						expectedLeafId: options?.expectedLeafId,
+					});
+					if (result.cancelled || result.unchanged) {
+						return { cancelled: result.cancelled, unchanged: result.unchanged };
+					}
+					this.chatContainer.clear();
+					this.renderInitialMessages();
+					this.showStatus("Replaced assistant response");
+					void this.flushCompactionQueue({ willRetry: false });
+					return { cancelled: false, entryId: result.entryId };
+				},
 				switchSession: async (sessionPath, options) => {
 					return this.handleResumeSession(sessionPath, options);
 				},
@@ -2731,7 +2801,6 @@ export class InteractiveMode {
 	 */
 	private setupExtensionShortcuts(extensionRunner: ExtensionRunner): void {
 		const shortcuts = extensionRunner.getShortcuts(this.keybindings.getEffectiveConfig());
-		if (shortcuts.size === 0) return;
 
 		// Create a context for shortcut handlers
 		const createContext = (): ExtensionContext => ({
@@ -2744,6 +2813,7 @@ export class InteractiveMode {
 			modelRegistry: extensionRunner.getModelRegistry(),
 			model: this.session.model,
 			serviceTier: this.session.serviceTier,
+			effectiveServiceTier: this.session.effectiveServiceTier,
 			scopedModels: this.session.scopedModels,
 			thinkingLevel: this.session.thinkingLevel,
 			isIdle: () => this.session.isIdle,
@@ -2791,6 +2861,7 @@ export class InteractiveMode {
 
 		// Set up the extension shortcut handler on the default editor
 		this.defaultEditor.onExtensionShortcut = (data: string) => {
+			if (this.handleAskUserShortcut(data)) return true;
 			for (const [shortcutStr, shortcut] of shortcuts) {
 				// Cast to KeyId - extension shortcuts use the same format
 				if (matchesKey(data, shortcutStr as KeyId)) {
@@ -2830,6 +2901,57 @@ export class InteractiveMode {
 				return value === undefined
 					? { type: "extension_ui_response", id: request.id, cancelled: true }
 					: { type: "extension_ui_response", id: request.id, value };
+			}
+			case "question": {
+				const questions = request.questions ?? [];
+				if (questions.length === 0) {
+					return { type: "extension_ui_response", id: request.id, cancelled: true };
+				}
+				const remainingMs =
+					request.remainingMs !== undefined && request.remainingMs > 0 ? request.remainingMs : request.timeout;
+				const hostRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
+				let progressTimer: ReturnType<typeof setTimeout> | undefined;
+				let lastDraft: { answers?: QuestionResponse["answers"]; comment?: string } | undefined;
+				const waitForAnswer = request.waitForAnswer ?? true;
+				// Async questions collapse into the editor widget; the host delivers the answer.
+				const show = waitForAnswer ? this.showQuestionOverlay : this.showAsyncQuestion;
+				const response = await show.call(
+					this,
+					{
+						requestId: request.requestId ?? "",
+						questions,
+						waitForAnswer,
+						timeoutMs: request.timeout ?? 0,
+					},
+					{
+						timeout: remainingMs,
+						onProgress: (draft) => {
+							lastDraft = draft;
+							if (progressTimer !== undefined) return;
+							progressTimer = setTimeout(() => {
+								progressTimer = undefined;
+								hostRuntime.sendHostUiProgress?.({
+									type: "extension_ui_progress",
+									id: request.id,
+									...(lastDraft?.answers !== undefined ? { answers: lastDraft.answers } : {}),
+									...(lastDraft?.comment !== undefined ? { comment: lastDraft.comment } : {}),
+								});
+							}, 1_000);
+						},
+					},
+				);
+				if (progressTimer !== undefined) clearTimeout(progressTimer);
+				if (response.status === "cancelled") {
+					return { type: "extension_ui_response", id: request.id, cancelled: true };
+				}
+				// The host owns the idle timer; a locally expired countdown sends nothing.
+				if (response.status === "timed_out") return undefined;
+				return {
+					type: "extension_ui_response",
+					id: request.id,
+					answers: response.answers,
+					...(response.comment !== undefined ? { comment: response.comment } : {}),
+				};
 			}
 			case "notify":
 				this.showExtensionNotify(request.message ?? "");
@@ -3279,6 +3401,14 @@ export class InteractiveMode {
 		if (this.extensionEditor) {
 			this.hideExtensionEditor();
 		}
+		if (this.askUserQuestion) {
+			this.hideQuestionOverlay();
+		}
+		this.asyncQuestion?.finish({
+			status: "cancelled",
+			answers: {},
+			unanswered: this.asyncQuestion.request.questions.map((question) => question.id),
+		});
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
@@ -3459,6 +3589,11 @@ export class InteractiveMode {
 			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
+			// Async answers are delivered by the ask-user extension, not here: the
+			// widget only resolves the question, so the model sees exactly one
+			// framed user message no matter which surface answered.
+			question: (request, opts) =>
+				request.waitForAnswer ? this.showQuestionOverlay(request, opts) : this.showAsyncQuestion(request, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
@@ -3688,6 +3823,167 @@ export class InteractiveMode {
 		this.extensionEditor = undefined;
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
+	}
+
+	/**
+	 * Show the ask-user multi-question overlay in place of the editor.
+	 */
+	private showQuestionOverlay(request: QuestionRequest, opts?: QuestionOverlayOptions): Promise<QuestionResponse> {
+		return new Promise((resolve) => {
+			let settled = false;
+			const previousWorkingMessage = this.workingMessage;
+			const finish = (response: QuestionResponse) => {
+				if (settled) return;
+				settled = true;
+				opts?.signal?.removeEventListener("abort", onAbort);
+				this.workingMessage = previousWorkingMessage;
+				this.updateWorkingIndicatorMessage();
+				this.hideQuestionOverlay();
+				resolve(response);
+			};
+			const onAbort = () => {
+				finish({
+					status: "cancelled",
+					answers: {},
+					unanswered: request.questions.map((question) => question.id),
+				});
+			};
+			if (opts?.signal?.aborted) {
+				resolve({
+					status: "cancelled",
+					answers: {},
+					unanswered: request.questions.map((question) => question.id),
+				});
+				return;
+			}
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+			this.workingMessage = "Waiting for your answer";
+			this.updateWorkingIndicatorMessage();
+			this.askUserQuestion = new AskUserQuestionComponent(request, (response) => finish(response), {
+				tui: this.ui,
+				timeoutMs: opts?.timeout ?? request.timeoutMs,
+				onProgress: opts?.onProgress,
+			});
+			this.disposeActiveSelector();
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.askUserQuestion);
+			this.ui.setFocus(this.askUserQuestion);
+			this.ui.requestRender();
+		});
+	}
+
+	/**
+	 * Hide the ask-user question overlay and restore the editor.
+	 */
+	private hideQuestionOverlay(): void {
+		this.askUserQuestion?.dispose();
+		this.askUserQuestion = undefined;
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Park a waitForAnswer=false question behind a one-line widget above the
+	 * editor. The turn keeps running; the promise settles when the user submits
+	 * from the expanded component, types an ordinary reply (comment), the idle
+	 * countdown expires, or the caller aborts. A newer async question supersedes
+	 * a pending one, which resolves as cancelled.
+	 */
+	private showAsyncQuestion(request: QuestionRequest, opts?: QuestionOverlayOptions): Promise<QuestionResponse> {
+		return new Promise((resolve) => {
+			const cancelled = (): QuestionResponse => ({
+				status: "cancelled",
+				answers: {},
+				unanswered: request.questions.map((question) => question.id),
+			});
+			if (opts?.signal?.aborted) {
+				resolve(cancelled());
+				return;
+			}
+			this.asyncQuestion?.finish(cancelled());
+			const onAbort = () => state.finish(cancelled());
+			const state: AsyncQuestionState = {
+				request,
+				timeoutMs: opts?.timeout ?? request.timeoutMs,
+				onProgress: opts?.onProgress,
+				draft: { answers: {} },
+				finish: (response) => {
+					if (this.asyncQuestion !== state) return;
+					this.asyncQuestion = undefined;
+					opts?.signal?.removeEventListener("abort", onAbort);
+					if (this.askUserQuestion) this.hideQuestionOverlay();
+					this.setExtensionWidget(ASK_USER_WIDGET_KEY, undefined);
+					resolve(response);
+				},
+			};
+			this.asyncQuestion = state;
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+			this.refreshAsyncWidget(state);
+		});
+	}
+
+	/** (Re)render the collapsed widget with a fresh idle countdown. */
+	private refreshAsyncWidget(state: AsyncQuestionState): void {
+		this.setExtensionWidget(ASK_USER_WIDGET_KEY, (tui) => {
+			const startedAt = Date.now();
+			return new AskUserAsyncWidget({
+				unanswered: unansweredIds(state.request, state.draft).length,
+				timeoutMs: state.timeoutMs,
+				tui,
+				onExpire: () => state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - startedAt)),
+			});
+		});
+	}
+
+	/** Editor shortcut: expand the pending async question into the full component. */
+	private handleAskUserShortcut(data: string): boolean {
+		const state = this.asyncQuestion;
+		if (!state || this.askUserQuestion || !matchesKey(data, ASK_USER_ANSWER_KEY)) return false;
+		const component = new AskUserQuestionComponent(
+			state.request,
+			(response) => {
+				if (this.asyncQuestion !== state) return;
+				if (response.status !== "cancelled") {
+					state.finish(response);
+					return;
+				}
+				// Esc collapses back to the widget; the question stays pending.
+				this.hideQuestionOverlay();
+				this.refreshAsyncWidget(state);
+			},
+			{
+				tui: this.ui,
+				timeoutMs: state.timeoutMs,
+				onProgress: (draft) => {
+					state.draft = draft;
+					state.onProgress?.(draft);
+				},
+			},
+		);
+		this.askUserQuestion = component;
+		this.disposeActiveSelector();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(component);
+		this.ui.setFocus(component);
+		this.ui.requestRender();
+		return true;
+	}
+
+	/**
+	 * Ordinary composer text while an async question is pending is the comment
+	 * answer: resolve the question with it and let the framed message replace
+	 * the raw text. Returns false when nothing is pending.
+	 */
+	private submitAsyncQuestionComment(text: string): boolean {
+		const state = this.asyncQuestion;
+		if (!state) return false;
+		this.editor.addToHistory?.(text);
+		this.editor.setText("");
+		state.finish(buildCommentResponse(state.request, state.draft, text));
+		return true;
 	}
 
 	/**
@@ -4173,6 +4469,25 @@ export class InteractiveMode {
 		this.showStatus("Startup is still in progress");
 	}
 
+	/**
+	 * Paint the render-only echo for a submission, unless it is the bare "."
+	 * manual-continue shortcut. The session routes that "." as a hidden
+	 * continuation, so painting it would leave a user bubble the transcript never
+	 * receives; `undefined` tells the echo callbacks nothing was painted.
+	 */
+	private beginUserEcho(text: string, images?: readonly ImageContent[]): string | undefined {
+		if (
+			isManualContinueSubmission({
+				text,
+				hasMessages: this.session.messages.length > 0,
+				hasImages: (images?.length ?? 0) > 0,
+			})
+		) {
+			return undefined;
+		}
+		return this.optimisticUserEchoes.begin(text);
+	}
+
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			try {
@@ -4188,6 +4503,16 @@ export class InteractiveMode {
 				this.lastEditorText = "";
 				text = text.trim();
 				if (!text) return;
+
+				// A pending async question claims ordinary text as its comment answer;
+				// slash and bash commands keep their normal routing.
+				if (
+					!text.startsWith("/") &&
+					!text.startsWith("!") &&
+					this.asyncQuestion &&
+					this.submitAsyncQuestionComment(text)
+				)
+					return;
 
 				// Handle commands
 				if (text === "/settings") {
@@ -4396,7 +4721,7 @@ export class InteractiveMode {
 					const images = preResolvedImages ?? this.takeSubmissionImages(text);
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
-					const pendingEchoId = this.optimisticUserEchoes.begin(text);
+					const pendingEchoId = this.beginUserEcho(text, images);
 					try {
 						await this.session.prompt(text, {
 							streamingBehavior: "steer",
@@ -4417,7 +4742,7 @@ export class InteractiveMode {
 				this.flushPendingBashComponents();
 
 				const images = preResolvedImages ?? this.takeSubmissionImages(text);
-				const pendingEchoId = this.optimisticUserEchoes.begin(text);
+				const pendingEchoId = this.beginUserEcho(text, images);
 				const submission: InteractiveUserInput =
 					images.length > 0 ? { text, images, pendingEchoId } : { text, pendingEchoId };
 				if (this.onInputCallback) {
@@ -4427,7 +4752,11 @@ export class InteractiveMode {
 				}
 				this.editor.addToHistory?.(text);
 			} catch (error) {
-				this.showError(error instanceof Error ? error.message : String(error));
+				if (typeof this.showError === "function") {
+					this.showError(error instanceof Error ? error.message : String(error));
+				} else {
+					throw error;
+				}
 			}
 		};
 	}
@@ -4517,6 +4846,14 @@ export class InteractiveMode {
 
 			case "high_reasoning_warning":
 				this.showHighReasoningWarning(event);
+				break;
+
+			case "resume_compaction_required":
+				this.showWarning(event.notice);
+				break;
+
+			case "resume_context_reduced":
+				this.showWarning(event.notice);
 				break;
 
 			case "settings_source_selected":
@@ -6005,7 +6342,7 @@ export class InteractiveMode {
 		if (this.session.isStreaming) {
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
-			const pendingEchoId = this.optimisticUserEchoes.begin(text);
+			const pendingEchoId = this.beginUserEcho(text, images);
 			try {
 				await this.session.prompt(text, {
 					streamingBehavior: "followUp",
@@ -6212,8 +6549,8 @@ export class InteractiveMode {
 		this.showNoticeBox({
 			title: "Update Available",
 			tone: "warning",
-			why: `New version ${newVersion} is available. Run ${action}`,
-			extra: [{ text: `Changelog: ${changelogLink}`, tone: "accent" }],
+			why: `New version ${newVersion} is available.`,
+			extra: [{ text: action }, { text: `Changelog: ${changelogLink}`, tone: "accent" }],
 		});
 	}
 
@@ -6671,6 +7008,7 @@ export class InteractiveMode {
 				},
 				{
 					onAutoCompactChange: (enabled) => {
+						this.settingsManager.setCompactionEnabled(enabled);
 						this.session.setAutoCompactionEnabled(enabled);
 						this.footer.setAutoCompactEnabled(enabled);
 					},
@@ -7386,96 +7724,12 @@ export class InteractiveMode {
 						return;
 					}
 
-					// Ask about summarization
 					done(); // Close selector first
-
-					// Loop until user makes a complete choice or cancels to tree
-					let wantsSummary = false;
-					let customInstructions: string | undefined;
-
-					// Check if we should skip the prompt (user preference to always default to no summary)
-					if (!this.settingsManager.getBranchSummarySkipPrompt()) {
-						while (true) {
-							const summaryChoice = await this.showExtensionSelector("Summarize branch?", [
-								"No summary",
-								"Summarize",
-								"Summarize with custom prompt",
-							]);
-
-							if (summaryChoice === undefined) {
-								// User pressed escape - re-show tree selector with same selection
-								this.showTreeSelector(entryId);
-								return;
-							}
-
-							wantsSummary = summaryChoice !== "No summary";
-
-							if (summaryChoice === "Summarize with custom prompt") {
-								customInstructions = await this.showExtensionEditor("Custom summarization instructions");
-								if (customInstructions === undefined) {
-									// User cancelled - loop back to summary selector
-									continue;
-								}
-							}
-
-							// User made a complete choice
-							break;
-						}
-					}
-
-					// The user committed to navigating: stop the active response first.
-					if (this.session.isStreaming) {
-						this.restoreQueuedMessagesToEditor();
-						await this.session.abort();
-					}
-
-					// Set up escape handler and status indicator if summarizing
-					let showingSummaryIndicator = false;
-					const originalOnEscape = this.defaultEditor.onEscape;
-
-					if (wantsSummary) {
-						this.defaultEditor.onEscape = () => {
-							this.session.abortBranchSummary();
-						};
-						this.chatContainer.addChild(new Spacer(1));
-						this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
-						showingSummaryIndicator = true;
-						this.ui.requestRender();
-					}
-
-					try {
-						const result = await this.session.navigateTree(entryId, {
-							summarize: wantsSummary,
-							customInstructions,
-						});
-
-						if (result.aborted) {
-							// Summarization aborted - re-show tree selector with same selection
-							this.showStatus("Branch summarization cancelled");
-							this.showTreeSelector(entryId);
-							return;
-						}
-						if (result.cancelled) {
-							this.showStatus("Navigation cancelled");
-							return;
-						}
-
-						// Update UI
-						this.chatContainer.clear();
-						this.renderInitialMessages();
-						if (result.editorText && !this.editor.getText().trim()) {
-							this.editor.setText(result.editorText);
-						}
-						this.showStatus("Navigated to selected point");
-						void this.flushCompactionQueue({ willRetry: false });
-					} catch (error) {
-						this.showError(error instanceof Error ? error.message : String(error));
-					} finally {
-						if (showingSummaryIndicator) {
-							this.clearStatusIndicator("branchSummary");
-						}
-						this.defaultEditor.onEscape = originalOnEscape;
-					}
+					await this.runTreeNavigation(entryId, {
+						promptForSummary: true,
+						navigate: (options) => this.session.navigateTree(entryId, options),
+						successStatus: "Navigated to selected point",
+					});
 				},
 				() => {
 					done();
@@ -7500,8 +7754,164 @@ export class InteractiveMode {
 					this.showError(error instanceof Error ? error.message : String(error));
 				}
 			};
+			selector.onEditMessage = (entryId) => {
+				done();
+				void this.editAssistantMessageFromTree(entryId);
+			};
 			return { component: selector, focus: selector };
 		});
+	}
+
+	private async editAssistantMessageFromTree(entryId: string): Promise<void> {
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry?.type !== "message" || entry.message.role !== "assistant") {
+			this.showError("Only assistant responses can be edited here");
+			return;
+		}
+		const message = entry.message;
+		// The leaf seen when the editor opens is the token the edit is checked against.
+		const expectedLeafId = this.sessionManager.getLeafId() ?? undefined;
+		const dropsToolCalls = message.content.some((block) => block.type === "toolCall");
+		const title = dropsToolCalls
+			? "Edit assistant response (its tool calls will be dropped)"
+			: "Edit assistant response";
+		const edited = await this.showExtensionEditor(title, contentText(message.content, ""));
+		if (edited === undefined) {
+			this.showTreeSelector(entryId);
+			return;
+		}
+		if (!edited.trim()) {
+			this.showError("Assistant response cannot be empty");
+			this.showTreeSelector(entryId);
+			return;
+		}
+		if (assistantTextEquals(message, edited)) {
+			this.showStatus("Assistant response unchanged");
+			return;
+		}
+		await this.runTreeNavigation(entryId, {
+			promptForSummary: this.treeNavigationAbandonsConversation(entryId),
+			navigate: async (options) => {
+				try {
+					return await this.session.editAssistantMessage(entryId, edited, { ...options, expectedLeafId });
+				} catch (error) {
+					if (error instanceof AssistantEditError && error.reason === "stale-leaf") {
+						throw new Error("The session changed while you were editing; reopen /tree and try again");
+					}
+					throw error;
+				}
+			},
+			successStatus: "Replaced assistant response with your edit",
+		});
+	}
+
+	/** Bookkeeping entries after the target (thinking level, labels, custom state) leave nothing to summarize. */
+	private treeNavigationAbandonsConversation(targetId: string): boolean {
+		const { entries } = collectEntriesForBranchSummary(
+			this.sessionManager,
+			this.sessionManager.getLeafId(),
+			targetId,
+		);
+		return entries.some(
+			(entry) =>
+				entry.type === "message" ||
+				entry.type === "custom_message" ||
+				entry.type === "compaction" ||
+				entry.type === "branch_summary",
+		);
+	}
+
+	private async promptBranchSummaryChoice(): Promise<{ summarize: boolean; customInstructions?: string } | undefined> {
+		while (true) {
+			const summaryChoice = await this.showExtensionSelector("Summarize branch?", [
+				"No summary",
+				"Summarize",
+				"Summarize with custom prompt",
+			]);
+			if (summaryChoice === undefined) {
+				return undefined;
+			}
+			if (summaryChoice !== "Summarize with custom prompt") {
+				return { summarize: summaryChoice !== "No summary" };
+			}
+			const customInstructions = await this.showExtensionEditor("Custom summarization instructions");
+			if (customInstructions !== undefined) {
+				return { summarize: true, customInstructions };
+			}
+		}
+	}
+
+	private async runTreeNavigation(
+		entryId: string,
+		flow: {
+			promptForSummary: boolean;
+			navigate: (options: TreeNavigationOptions) => Promise<AssistantEditResult>;
+			successStatus: string;
+		},
+	): Promise<void> {
+		let wantsSummary = false;
+		let customInstructions: string | undefined;
+		if (flow.promptForSummary && !this.settingsManager.getBranchSummarySkipPrompt()) {
+			const choice = await this.promptBranchSummaryChoice();
+			if (choice === undefined) {
+				// User pressed escape - re-show tree selector with same selection
+				this.showTreeSelector(entryId);
+				return;
+			}
+			wantsSummary = choice.summarize;
+			customInstructions = choice.customInstructions;
+		}
+
+		// The user committed to navigating: stop the active response first.
+		if (this.session.isStreaming) {
+			this.restoreQueuedMessagesToEditor();
+			await this.session.abort();
+		}
+
+		// Set up escape handler and status indicator if summarizing
+		let showingSummaryIndicator = false;
+		const originalOnEscape = this.defaultEditor.onEscape;
+
+		if (wantsSummary) {
+			this.defaultEditor.onEscape = () => {
+				this.session.abortBranchSummary();
+			};
+			this.chatContainer.addChild(new Spacer(1));
+			this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
+			showingSummaryIndicator = true;
+			this.ui.requestRender();
+		}
+
+		try {
+			const result = await flow.navigate({ summarize: wantsSummary, customInstructions });
+
+			if (result.aborted) {
+				// Summarization aborted - re-show tree selector with same selection
+				this.showStatus("Branch summarization cancelled");
+				this.showTreeSelector(entryId);
+				return;
+			}
+			if (result.cancelled) {
+				this.showStatus("Navigation cancelled");
+				return;
+			}
+
+			// Update UI
+			this.chatContainer.clear();
+			this.renderInitialMessages();
+			if (result.editorText && !this.editor.getText().trim()) {
+				this.editor.setText(result.editorText);
+			}
+			this.showStatus(flow.successStatus);
+			void this.flushCompactionQueue({ willRetry: false });
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		} finally {
+			if (showingSummaryIndicator) {
+				this.clearStatusIndicator("branchSummary");
+			}
+			this.defaultEditor.onEscape = originalOnEscape;
+		}
 	}
 
 	private showSessionSelector(): void {
@@ -7983,14 +8393,7 @@ export class InteractiveMode {
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
 		} catch (error: unknown) {
 			restoreEditor();
-			const errorMsg = error instanceof Error ? error.message : String(error);
-			if (error instanceof CredentialSynchronizationError) {
-				this.showError(
-					`Saved API key for ${providerName}, but local model state could not be synchronized: ${errorMsg}`,
-				);
-			} else if (errorMsg !== "Login cancelled") {
-				this.showError(`Failed to save API key for ${providerName}: ${errorMsg}`);
-			}
+			this.showLoginFailure(describeLoginFailure(error, providerName, "api_key"));
 		}
 	}
 
@@ -8097,15 +8500,14 @@ export class InteractiveMode {
 			await this.completeProviderAuthentication(providerId, providerName, "oauth", previousModel);
 		} catch (error: unknown) {
 			restoreEditor();
-			const errorMsg = error instanceof Error ? error.message : String(error);
-			if (error instanceof CredentialSynchronizationError) {
-				this.showError(
-					`Logged in to ${providerName}, but local model state could not be synchronized: ${errorMsg}`,
-				);
-			} else if (errorMsg !== "Login cancelled") {
-				this.showError(`Failed to login to ${providerName}: ${errorMsg}`);
-			}
+			this.showLoginFailure(describeLoginFailure(error, providerName, "oauth"));
 		}
+	}
+
+	/** #1542: a cancelled login is a neutral status line; only a genuine failure is an error. */
+	private showLoginFailure(notice: LoginFailureNotice): void {
+		if (notice.level === "status") this.showStatus(notice.message);
+		else this.showError(notice.message);
 	}
 
 	// =========================================================================

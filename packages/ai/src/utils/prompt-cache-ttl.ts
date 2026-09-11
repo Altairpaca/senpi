@@ -80,6 +80,7 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "chatTemplateArgs"
 	| "supportsThinkingTokenBudget"
 	| "thinkingTokenBudgetField"
+	| "veniceParameters"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	supportsPromptCacheKey?: OpenAICompletionsCompat["supportsPromptCacheKey"];
@@ -91,6 +92,8 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 	/** vLLM `priority`; off by default and never set on the generated catalog. */
 	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
+	/** Venice `venice_parameters`; only set on the generated Venice catalog. */
+	veniceParameters?: OpenAICompletionsCompat["veniceParameters"];
 };
 
 /**

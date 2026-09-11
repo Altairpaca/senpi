@@ -12,6 +12,103 @@
 
 ### Removed
 
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+- The eval `timeout` argument is now the cell's run budget (a kill deadline for the cell's own execution time) instead of the interactive detach budget; interactive calls detach at `cellTimeoutSeconds` capped by `foregroundWindowSeconds` regardless of `timeout`, and print/json calls are bounded by the run budget instead of a `cellTimeoutSeconds` idle kill.
+
+### Added
+
+- Every eval cell carries a run budget (`runBudgetSeconds`, default 300s, env `SENPI_CODEMODE_RUN_BUDGET_SECONDS`, per-call `timeout`) that charges only its own execution time, is paused while a host tool call is in flight, keeps counting after detach, and kills the cell through the cooperative interrupt path with a result or notification that names the exhausted budget and the kernel-state outcome.
+
+### Changed
+
+- The eval tool schema and description state the configured run budget, detach point, and hard limit, and say that a killed JavaScript cell that cannot settle restarts its kernel and loses every global.
+
+### Fixed
+
+### Removed
+
+## [2026.9.9-2] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The eval tool description teaches cell mechanics only (batch independent calls, real code, failures kept verbatim, truncated output re-read) and drops the "default execution surface / never a chain / distilled facts only" wording; routing lives in the model's prompt preset.
+
+### Fixed
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The JS kernel's shell capture now pins the worker's environment view for `Bun.spawnSync` as well as `Bun.spawn`, so a cell calling it without an explicit `env` sees the session's `PI_*` values instead of the inherited OS environ.
+- Eval kernels and every child they spawn now see the active session's `PI_*` environment (`PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`) exactly as bash-tool children do: inherited `PI_*` values are dropped before the session values are applied, so subprocesses such as `omo-agent-toolkit ulw-loop` resolve the same session as the `bash` tool instead of a cwd-global one.
+- JavaScript eval cells no longer lose their completion value when a nested function, callback, or try/catch helper contains `return`: the cell wrapper now skips last-expression capture only for a genuine top-level `return`, and a property named `return` no longer primes the statement scanner as the keyword (#1439).
+- Eval output truncation notices now name the real cause: a width-clamped line reports `N line(s) clamped to M columns (… dropped)`, a byte-capped tail reports the actual cap, and a notice never presents the output's own size as a limit.
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.6] - 2026-09-06
 
 ### Breaking Changes

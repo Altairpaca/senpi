@@ -50,15 +50,24 @@ import { processIsLive, readProcessStartTime } from "../app-server/daemon/proces
 import { createHostDaemonPaths } from "./host-ensure.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
+	HOST_PUBLIC_SOCKET_ENV,
 	HOST_SCRATCH_DIR_ENV,
 	HOST_WATCH_FD_ENV,
 	HOST_WATCH_PPID_ENV,
 } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import {
+	PUBLIC_SOCKET_IDENTITY_FILE,
+	type SocketFileIdentity,
+	shieldSocketDuringClose,
+	statSocketIdentity,
+	unlinkOwnedSocket,
+	writeSocketIdentityFile,
+} from "./socket-ownership.ts";
+import {
 	authenticateSocket,
 	createSocketSecret,
-	readSocketSecret,
+	ensureSocketSecret,
 	resolveSocketTransportAddress,
 	SOCKET_SECRET_FILE_ENV,
 	sendSocketHandshake,
@@ -101,13 +110,18 @@ const CHILD_WATCH_FD = 3;
  * The internal hop must stay short enough for sun_path (104 bytes on macOS)
  * regardless of where the public socket lives, and private against other local
  * users, so it gets its own 0700 directory under the OS temp directory.
+ *
+ * On win32 the directory lives under the caller-supplied rpc-host-daemon
+ * directory, which ensureHost() creates but a direct --internal-rpc-host-supervisor
+ * launch does not, so the parent is created recursively.
  */
-async function createInternalSocketPath(
+export async function createInternalSocketPath(
 	baseDir = tmpdir(),
+	platform: NodeJS.Platform = process.platform,
 ): Promise<{ socket: string; dir?: string; secretPath?: string }> {
-	if (process.platform === "win32") {
+	if (platform === "win32") {
 		const dir = join(baseDir, `internal-${randomUUID()}`);
-		await mkdir(dir, { recursive: false, mode: 0o700 });
+		await mkdir(dir, { recursive: true, mode: 0o700 });
 		return {
 			socket: `\\\\.\\pipe\\senpi-rpc-internal-${randomUUID()}`,
 			dir,
@@ -364,12 +378,16 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const paths = createHostDaemonPaths(launch.agentDir ?? getAgentDir());
 	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
 	const publicSocket = launch.socket;
+	// Direct-launch contract: the supervisor owns the public secret. ensureHost()
+	// writes it before spawning, but the hidden --internal-rpc-host-supervisor route
+	// has no such caller, so a fresh profile would otherwise die reading it (#1370).
+	// It is provisioned BEFORE the internal hop and the child so a provisioning
+	// failure leaves no scratch directory and no host process behind.
+	const publicSecret = process.platform === "win32" ? await ensurePublicSocketSecret(publicSocket) : undefined;
 	const internal = await createInternalSocketPath(paths.dir);
 	const internalSocket = internal.socket;
 	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
 	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
-	const publicSecret =
-		process.platform === "win32" ? await readSocketSecret(socketSecretPath(publicSocket)) : undefined;
 	const clientSockets = new Set<Socket>();
 	const busySessions = new Map<string, number>();
 	let observerHealthy = false;
@@ -390,8 +408,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			[HOST_CLEANUP_PATHS_ENV]: [
 				paths.pidFile,
 				paths.settingsFile,
-				...(process.platform === "win32" ? [] : [publicSocket]),
+				// POSIX public sockets are removed ownership-checked by the host child
+				// (token: the scratch-directory sidecar plus HOST_PUBLIC_SOCKET_ENV),
+				// never by path from a crash-path cleanup: a blind removal here would
+				// unlink a newer host's freshly published entry after a takeover.
+				// Windows named pipes have no filesystem entry to own, so they stay
+				// listed for the crash-path cleanup.
+				...(process.platform === "win32" ? [publicSocket] : []),
 			].join("\n"),
+			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 		},
 		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 		// wait on and keeps the write end owned by this process alone.
@@ -498,7 +523,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		try {
 			writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
 			for (const client of clientSockets) client.destroy();
-			await closeServer(server);
+			// libuv unlinks the bound NAME when the listening handle closes - which
+			// would delete a newer host's entry renamed over this path. Shield the
+			// current entry for the close, then let the ownership check decide.
+			await shieldSocketDuringClose(publicSocket, () => closeServer(server));
 			// Unlink the private directory BEFORE the child stop, which can take seconds:
 			// an external SIGKILL landing during that wait (ensureHost escalates while
 			// replacing a host) would otherwise leave the directory behind. The child
@@ -507,7 +535,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			if (internal.dir) await rm(internal.dir, { recursive: true, force: true });
 			await stopChild(child);
 			observer?.destroy();
-			if (publicSocketOwned && process.platform !== "win32") await rm(publicSocket, { force: true });
+			if (publicSocketOwned && process.platform !== "win32") {
+				// Ownership-checked: after a takeover, a newer host may have published
+				// a fresh entry at this path; only the entry THIS supervisor bound is
+				// removed. (The host child applies the same rule to its crash path.)
+				await unlinkOwnedSocket(publicSocket, publicSocketIdentity, supervisorLog);
+			}
 			// Mirror ensureHost's cleanupState: the pidfile and settings describe a
 			// live host only; the stderr log stays for diagnostics.
 			await rm(paths.pidFile, { force: true });
@@ -523,6 +556,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 
 	let observer: Socket | undefined;
 	let publicSocketOwned = false;
+	let publicSocketIdentity: SocketFileIdentity | undefined;
+	function supervisorLog(message: string): void {
+		writeStderrLine(`senpi rpc host supervisor: ${message}`);
+	}
 	// Registered before the startup handshake, not after it: the private internal
 	// directory already exists at this point, so a SIGTERM arriving during host
 	// startup must run the same cleanup instead of Node's default kill, which
@@ -534,6 +571,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		await prepareSocketPath(publicSocket);
 		await listen(server, publicSocket, publicSecret);
 		publicSocketOwned = true;
+		publicSocketIdentity = await statSocketIdentity(publicSocket);
+		// Publish the ownership token inside this supervisor's private scratch
+		// directory (which no replacement supervisor writes): the host child's
+		// crash-path cleanup compares the public path against THIS entry only.
+		if (publicSocketIdentity && internal.dir) {
+			await writeSocketIdentityFile(join(internal.dir, PUBLIC_SOCKET_IDENTITY_FILE), publicSocketIdentity);
+		}
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}
@@ -612,6 +656,23 @@ function registerSupervisorSignals(shutdown: (reason: string, exitCode: number) 
 		process.on(signal, () => {
 			void shutdown(`signal:${signal}`, signal === "SIGHUP" ? 129 : 143);
 		});
+	}
+}
+
+/**
+ * Reuses an existing valid secret - including one ensureHost() just wrote - and
+ * creates one (with its parent directories, mode 0600) when it is missing or
+ * unusable. Reuse is required, not just an optimization: on win32 the pipe name
+ * is derived from the socket path AND the secret, so rotating it here would
+ * point this supervisor at a different endpoint than its caller published.
+ * A failure names the bootstrap step and the path it could not provision.
+ */
+async function ensurePublicSocketSecret(publicSocket: string): Promise<Buffer> {
+	const secretPath = socketSecretPath(publicSocket);
+	try {
+		return await ensureSocketSecret(secretPath);
+	} catch (cause) {
+		throw new Error(`senpi rpc host supervisor: cannot provision public socket secret ${secretPath}`, { cause });
 	}
 }
 

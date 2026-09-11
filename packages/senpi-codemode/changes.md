@@ -1,5 +1,78 @@
 # senpi-codemode fork changes
 
+## 2026-09-10 - Every eval cell gets a run budget; `timeout` is that budget
+
+### What changed
+
+- New `src/timeouts/run-budget.ts` (`RunBudget`): a pausable, cumulative watchdog over a cell's own execution time. Unlike `IdleTimeout` it does not restart after each host tool call; it charges only un-parked time (nested pause depth), fires once with a `TimeoutError` naming the budget, and is disposable.
+- New `src/tool/cell-deadlines.ts` (`CellDeadlines`): the wall-clock hard limit timer moved here out of `detached-cell-manager.ts`, next to the run budget; first expiry wins and disarms the other. `EvalDetachedCellManager` creates one per cell at `create()` (hard limit = `max(hardLimitSeconds, timeout)`, run budget = `timeout ?? runBudgetSeconds`), exposes `pause(cell)`/`resume(cell)`, and routes both expiries through the existing foreground (`onKill` -> `CellExecution.cancel`) and detached (`#cancel` -> `kernel.interrupt`) paths. The snapshot carries `runBudgetSeconds` when the budget killed the cell and the completion notification says so.
+- `src/config/settings.ts`: `runBudgetSeconds` (default 300, `SENPI_CODEMODE_RUN_BUDGET_SECONDS`, `resolveRunBudgetSeconds`); the three env resolvers share one parser.
+- `src/tool/run-eval-cell.ts` (split out of `eval-tool.ts`, which sat at 258 pure LOC) and `cell-execution.ts`: the idle watchdog is now optional and only interactive calls get one, with `timeoutMs = min(cellTimeoutSeconds, foregroundWindowSeconds)`; `timeout` no longer feeds it. `timeout-pause`/`timeout-resume` status frames are forwarded to the manager as well as the idle watchdog.
+- `src/tool/types.ts`: the `timeout` and `on_timeout` descriptions are rendered from `EvalDeadlineSeconds` (run budget, effective detach point, hard limit) so a settings or env override shows in the tool contract. `src/prompt/eval-prompt-template.ts` (template split out of `eval-prompt.ts`) states the run budget and the kernel-loss cost of a kill; `index.ts` threads `runBudgetSeconds` into both tool registrations and both cell managers.
+
+### Why
+
+- A detached js cell had no bound on its own work short of the 1800s bash-parity hard limit, while one running cell blocks its whole language kernel and a killed js cell that cannot settle (a pending `Bun.$`, a sync call) restarts the worker with every global lost. Observed 2026-09-10: two `find` walks over a 450-node_modules volume held the js kernel for 10.5 minutes, then the same mistake in the py kernel; the model had no number to reason against because the schema named none. Five minutes of own execution time is the default now, host tool calls are exempt so `agent()` DAG cells keep working, and the contract is in the schema.
+- `timeout` carried two meanings (detach budget capped at the window, plus a hard-limit raise) that matched neither bash nor the model's intent ("let it run this long"). It is now one thing: the cell's run budget, bash's kill-deadline reading.
+- Print/json calls used to die at a 30s idle watchdog; they are now bounded by the same run budget as interactive cells, so a `timeout` means the same thing in every mode.
+
+### Tests
+
+- `test/run-budget.test.ts`: cumulative accounting, parked time not charged, nested pauses, orphan resume, dispose, single fire.
+- `test/eval-run-budget.test.ts`: detached kill and notification, parked survival with resumed counting, hard limit while parked, explicit `timeout` both directions, detach at the idle budget with a larger `timeout`, print-mode kill by the budget, kernel status frames freezing the budget, in-budget completion.
+- `test/eval-schema-deadlines.test.ts`: configured numbers reach the schema descriptions and the eval description.
+- Contract updates: `eval-detach` (print mode), `eval-foreground-window` (window caps the idle budget), `eval-hard-limit` (explicit timeout raise measured on a parked cell), `eval-tool-timeout-state` / `eval-bridge-finalization` / `eval-tool-interrupt` (budget message), `config`, `interpreter`, `extension`, prompt snapshot.
+
+## 2026-09-09 - Eval description teaches cell mechanics; routing moved to the presets
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: every dialect block (`<eval_first_batching>`, `<gpt_eval_dialect>`, codex, kimi, default) drops the "default execution surface / one cell per multi-call step / never a chain / return ONLY distilled facts" wording and keeps mechanics: batch a step's independent calls in one cell with `parallel(thunks)`, write real code around them, keep every failed or missing item in the result verbatim, re-read truncated output before deciding, and (with monitor) start long-running work through `tool.monitor`. `BATCHING_GUIDELINES` are one-line pointers without capitals. The routing decision (what is batched, what runs one at a time and is observed) now lives once, in the model's preset.
+- `test/prompt.test.ts`: the guideline equality uses the new default line; dialect markers are checked by tag and by shape (no all-caps words of five or more letters in the Kimi instruction, no `NEVER` in the default instruction) instead of pinned slogans.
+
+### Why
+
+- The same instruction rendered in three homes per session (tool description, preset rule, system guideline). Prompt-engineering skill: one home per rule; the description is the right home for mechanics because it renders for every model, the preset for routing because that wording is per model. Distilled-only returns hid the detail the next step needed in 14% of sampled cells (2026-09-09 census), so the description now names the failure-verbatim rule instead of "return ONLY distilled facts". o200k: default 1396 -> 1278, claude 1390 -> 1291, kimi 1397 -> 1277, codex/gpt 1325 -> 1321.
+
+## 2026-09-07 - Bun.spawnSync inherits the pinned session environment
+
+### What changed
+
+- `src/kernels/js/worker-shell-capture.js` wraps `Bun.spawnSync` under the same environment pin gate as `Bun.spawn`: when a session environment was applied and the call passes no explicit `env`, the worker's `process.env` view is injected (array and object call forms); explicit `env` is left untouched and the original is restored on uninstall.
+
+### Why
+
+- Measured on Bun 1.4.0: a Worker's `process.env` writes are visible to `Bun. and `node:child_process` but not to `Bun.spawn`/`Bun.spawnSync` without an explicit `env`, which inherit the OS environ. The 2026-09-07 session-environment change covered `Bun.spawn` only, so a cell using `Bun.spawnSync` could still route per-session tooling (e.g. the omo ulw-loop toolkit keyed on `PI_SESSION_ID`) to the wrong scope.
+
+### Tests
+
+- `test/js-kernel-shell-capture.test.ts`: pinned / explicit-env / object-form `spawnSync` cases and a no-session pass-through plus restore case (fake Bun records `spawnSync` calls).
+- `test/js-kernel-session-env.test.ts`: the worker + inline matrix runs a real `Bun.spawnSync` child when the cell runtime is Bun.
+
+
+## 2026-09-07 - Eval kernels carry the session environment
+
+### What changed
+
+- New `src/kernels/session-env.ts` resolves the per-session `PI_*` environment (`PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`) from the extension session context and merges it over the inherited environment with the bash tool's delete-then-set semantics.
+- `runtime-factory` resolves the environment at session start and threads it through `CreateCodemodeSessionManagerOptions.sessionEnv` into every kernel: the JS worker applies it to its own `process.env` at worker init (so `env()`, `process.env`, `Bun.$`, `Bun.spawn`, and `child_process` children all see it), and the py/rb/jl interpreters spawn with it merged into their environment (so `os.environ` and their children see it). Restarted or reset interpreters re-apply it because it is a kernel option, not a one-shot spawn side effect.
+- Under Bun a `delete process.env.X` does not unsetenv, so `worker-shell-capture.js` additionally pins the worker's environment view (`$.env` seed plus explicit `env` on captured `Bun.spawn` calls without one) whenever the session environment deleted inherited keys; without this, children would still see deleted `PI_*` values in the OS environment.
+
+### Why
+
+- A child spawned from an eval cell saw no `PI_SESSION_ID`, so `omo-agent-toolkit ulw-loop` invoked from a cell resolved the cwd-global state instead of the active session — a real data-corruption path. The contract is that a child spawned from eval sees the same session environment a child spawned from the `bash` tool sees; the core exposes no importable helper for that set (its bash implementation is private and the host package is a type-only dependency here), so the five-key contract is mirrored in one documented helper.
+
+## 2026-09-07 - Fail clearly when compiled codemode assets are missing
+
+### What changed
+
+- Kernel runtime asset resolution now rejects Bun virtual paths and reports the missing codemode sidecar beside the executable, while skill contribution resolution remains non-throwing.
+
+### Why
+
+- Compiled binaries cannot pass embedded `/$bunfs` paths to workers or subprocesses; the actionable error identifies the expected sidecar asset and deployment fix.
+
+
 ## 2026-09-06 - Bun eval description steers away from Bun.spawnSync
 
 ### What changed

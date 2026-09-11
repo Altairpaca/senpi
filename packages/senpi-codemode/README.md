@@ -54,6 +54,19 @@ task-tool names are known.
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
 
+### Session environment
+
+Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,
+`PI_SESSION_FILE` (when the session is persistent), `PI_PROVIDER`, `PI_MODEL`, and
+`PI_REASONING_LEVEL` (when set) — resolved at session start, mirroring the bash tool's
+session environment contract. The values are visible to `env()`/`process.env`/`os.environ`
+inside cells and are inherited by every child process a cell spawns
+(`Bun.$`, `Bun.spawn`, `child_process`, `subprocess`, ...). Inherited `PI_*` values from
+the launching environment are dropped first, so a child spawned from a cell sees exactly
+what a child spawned from the bash tool sees. The values snapshot at kernel start, so a
+mid-session model switch updates the bash tool's next command but not already-running
+kernels; a new session starts fresh kernels with fresh values.
+
 ## Settings
 
 Configuration is loaded in this order:
@@ -72,6 +85,8 @@ Configuration is loaded in this order:
   },
   "cellTimeoutSeconds": 30,
   "foregroundWindowSeconds": 60,
+  "runBudgetSeconds": 300,
+  "hardLimitSeconds": 1800,
   "parallelPoolWidth": 4,
   "taskTools": {
     "task": "task",
@@ -88,8 +103,10 @@ Configuration is loaded in this order:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `languages` | `py`/`js` enabled; `rb`/`jl` disabled | Selects desired languages before interpreter detection. |
-| `cellTimeoutSeconds` | `30` | Idle timeout for one cell unless the call supplies `timeout`; interactive calls detach by default and print/json calls error. |
-| `foregroundWindowSeconds` | `60` | Longest an interactive (detach-behavior) call blocks the turn before the cell detaches, capping the `timeout` detach budget. A larger `timeout` still raises the hard limit and keeps the cell running, but the turn is freed at this window. `on_timeout: "error"` calls keep the full `timeout` as an uncapped deadline. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
+| `cellTimeoutSeconds` | `30` | Idle time an interactive call blocks the turn before the cell detaches. Print/json calls never detach. |
+| `foregroundWindowSeconds` | `60` | Caps `cellTimeoutSeconds` and the grace a bridge-parked cell gets before it detaches, so an interactive call never blocks the turn longer than this. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
+| `runBudgetSeconds` | `300` | Kill deadline for a cell's own execution time - child processes, network, timers, CPU. Time parked in host tool calls (`agent()`, `tool.*`) is not charged, and the budget keeps counting after the cell detaches. A per-call `timeout` replaces it for that cell. Env override: `SENPI_CODEMODE_RUN_BUDGET_SECONDS`. |
+| `hardLimitSeconds` | `1800` | Wall-clock kill deadline for a cell, parked or not; a per-call `timeout` above it raises it. Env override: `SENPI_CODEMODE_HARD_LIMIT_SECONDS`. |
 | `parallelPoolWidth` | `4` | Maximum concurrent `parallel()` thunks. |
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
@@ -116,7 +133,7 @@ options object and asynchronous helpers are `await`-able.
 | `print(value, ...)` | Emits text output. |
 | `read(path, offset?, limit?)` | Reads text with 1-indexed line slicing. `local://` paths resolve under the session artifact root. |
 | `write(path, content)` | Creates parent directories and writes text. `local://` paths persist in the session artifact root. |
-| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. |
+| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
 | `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
@@ -159,6 +176,17 @@ default to `"error"` so their result is never silently detached. A detached
 cell keeps only its own language kernel busy. A new same-language call returns
 a busy error with its cell id and output tail; calls in other languages continue
 normally. Do not re-run the cell.
+
+Every cell, detached or not, is bounded by two kill deadlines. The run budget
+(`runBudgetSeconds`, or the call's `timeout`) charges only the cell's own
+execution time and is paused while a host tool call is in flight, so a cell
+waiting on `agent()` survives while a runaway child process or loop does not.
+The hard limit (`hardLimitSeconds`, raised by a larger `timeout`) is wall-clock
+and bounds parked cells too. A cell killed by either deadline reports which one
+in its result or completion notification, together with whether kernel state
+survived; the tool schema states the configured numbers. The `timeout` value
+never changes when an interactive call detaches: that is `cellTimeoutSeconds`
+capped by `foregroundWindowSeconds`.
 
 While any cell is detached, the interactive footer shows a highlighted
 `↗ <language> · <summary>` status on the extension status line (the cell id

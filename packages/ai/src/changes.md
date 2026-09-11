@@ -1,3 +1,295 @@
+## PR #1304 review fixes: shared auth-miss prefix, login merge, sentinel repair (2026-09-10)
+
+### What changed
+
+- `packages/ai/src/auth/resolve.ts`: `PROVIDER_NOT_CONFIGURED_PREFIX` / `providerNotConfiguredMessage()` export the exact auth-miss wording every resolution site throws; `packages/ai/src/models.ts` re-exports both and throws through the helper. Consumers keying recovery decisions off that message (the coding-agent session layer and the credential-pool classifier) can never drift from the throw sites.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` MERGES a provider-owned pool onto the value read under the credential lock - stored slots and their block state win for names that already exist, only genuinely new names are appended - instead of whole-writing a snapshot the provider built before the interactive browser round trip. `managedSentinelMaterial` / `isManagedSentinelSlot` / `repairManagedSentinelSlots` recognize and drop pool slots whose `access` and `refresh` both equal the provider's `<providerId>-managed` marker (clearing a pin that pointed at one), reporting whether a repair happened so callers rewrite storage only when bytes change.
+- `packages/ai/test/credential-pool-mutations.test.ts`: a pre-login snapshot never rewinds a sibling that rotated or earned a block; a provider-owned pool onto a flat current keeps the whole-write shape; sentinel slots are recognized, dropped, un-pinned, and a clean pool is a no-op.
+
+### Why
+
+- The provider builds its returned pool from a snapshot read BEFORE the browser flow, tens of seconds before the commit under the lock: writing it verbatim rolled a sibling's rotated refresh token back to the consumed value (a forced re-login, since Anthropic rotates refresh tokens on use) and erased its rate-limit block. Separately, a shipped build stored the provider pool's flat sentinel as a generated `login-N` slot; such a slot can never authenticate and dead-ends every request whose affinity picks it, so the coding-agent store now heals those entries on load.
+
+### Why an extension could not handle it
+
+- Both the merge and the repair algebra run inside the shared credential-pool read/write path the runtime owns; providers cannot intercept what the runtime stores after login returns or what every reader parses from auth.json.
+
+### Expected merge conflict zones
+
+- LOW: `appendLoginSlot` and the sentinel helpers in `auth/pool/slots.ts`; the prefix helpers in `auth/resolve.ts` and their re-export in `models.ts`.
+
+## Classify Claude SDK session lock contention as retryable (2026-09-02)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` matches `Lock file is already being held`.
+- `packages/ai/test/retry.test.ts`: pins that wording as a retryable assistant error.
+
+### Why
+
+- Claude Agent SDK session resume/stream hits proper-lockfile while a previous subprocess still holds `session.json`. The failure is local and transient; treating it as unknown/terminal made the coding-agent hard-error fallback hop providers.
+
+### Why an extension could not handle it
+
+- Retry classification lives in the shared `pi-ai` regexes used by every caller of `isRetryableAssistantError`.
+
+### Expected merge conflict zones
+
+- LOW: `RETRYABLE_PROVIDER_ERROR_PATTERN` in `retry.ts`.
+
+## Preserve provider-owned credential pools during login (2026-09-02)
+## 2026-09-10 - Kimi Code client identity headers on the subscription path (#1504)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/kimi-identity.ts` (new): `kimiCodeIdentityHeaders()` returns `User-Agent: KimiCLI/<version>` plus `X-Msh-Platform`, `X-Msh-Version`, `X-Msh-Device-Name`, `X-Msh-Device-Model`, `X-Msh-Os-Version`, and `X-Msh-Device-Id`. Every value is printable-ASCII sanitized. The device id is read from (or minted into) `<agent dir>/kimi-device-id` (`SENPI_CODING_AGENT_DIR` / `CODING_AGENT_DIR`, else `~/.senpi/agent`), memoized per process, and degrades to an ephemeral id when that directory cannot be written; `resetKimiDeviceIdForTests()` clears the memo.
+- `packages/ai/src/auth/oauth/kimi-coding.ts`: sends that header set on device authorization, device-code token polling, and token refresh, and returns it from `toAuth` so `resolveProviderAuth` merges it into every chat request the model runtime issues for the provider. The api-key auth path is untouched and stays header-free.
+
+### Why
+
+- `api.kimi.com/coding` recognizes its clients by a product `User-Agent` plus the six-header `X-Msh-*` device set; the official Kimi Code client attaches it to every OAuth and managed-API call. `X-Msh` existed nowhere in this package, so a Kimi For Coding subscription session presented itself as an anonymous Anthropic-protocol client holding a Kimi bearer token (#1504).
+- It is the only divergence from the reference clients that fits the timeline: the kimi-coding request shape had not changed when the endpoint began rejecting fresh sessions, so a server-side tightening around client identification explains it where a payload regression does not.
+- ASCII sanitization and best-effort device-id persistence are ported deliberately: raw non-ASCII header bytes draw a CDN 520 on this host, and an `ENOENT` on a fresh install must not break header construction for every request.
+
+### Why an extension could not handle it
+
+- The headers must ride the provider's own OAuth requests (device authorization, polling, refresh) inside `kimi-coding.ts` and the credential-derived request auth that `resolveProviderAuth` produces from `toAuth`. Both run below any extension hook, and an extension cannot see the device-code exchange at all.
+
+### Expected merge conflict zones
+
+- LOW: new file `packages/ai/src/auth/oauth/kimi-identity.ts`.
+- LOW: the three `fetch` call sites and `toAuth` in `packages/ai/src/auth/oauth/kimi-coding.ts`.
+
+## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
+
+## 2026-09-08 - Immutable account IDs with optional display metadata (senpi#1495)
+
+## 2026-09-10 - Immutable account IDs with column-bounded, render-unique display metadata (senpi#1495)
+
+
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: adds optional `displayName`, safe single-line labels, and pure rename/clear validation. A label is stored NFC-normalized with internal whitespace runs collapsed, must contain at least one visibly advancing character, may not begin with a combining mark, and is bounded at 32 terminal columns measured per grapheme cluster (`displayNameColumns`) rather than in UTF-16 code units. Provider-local uniqueness compares a fold of case, Unicode compatibility forms (NFKC), invisible code points and Cyrillic lookalikes, so two labels that render identically cannot coexist. Slot IDs and credential material remain unchanged. Login allocation reports the allocated ID together with its origin (`generated` for an ID Senpi chose, `provider` for one a provider envelope carried); provider-owned envelopes still require exactly one new ID compared with the locked current pool, never token matching or array ordering.
+- `packages/ai/src/auth/types.ts`: adds secret-free `AccountLoginReceipt` with `providerId`, `name` and `origin`, plus optional `AuthInteraction.onAccountCommitted`; the callback is excluded from provider interactions.
+- `packages/ai/src/models.ts`: captures the allocated ID and its origin inside the serialized login write and emits the receipt only after persistence succeeds. Ambiguous provider envelopes do not produce a receipt. Existing credential return values remain compatible.
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: account labels must not remap pins, refresh, health, failover, or HRW affinity, and a documented "unique per provider" / bounded-length guarantee must hold for real Unicode input: `trim`/`toLowerCase`/`String.length` accepted double-spaced, NFC/NFD and homoglyph duplicates and let a 170-column label through while rejecting 41 emoji.
+- `packages/ai/src/auth/types.ts`: callers need a supported, secret-free committed-slot identity, including whether the ID was machine-generated, to avoid prompting for a name a provider flow already asked for.
+- `packages/ai/src/models.ts`: only the login write knows which ID was actually committed and who chose it; callers must not infer it from credentials or list order.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts`, `packages/ai/src/auth/types.ts` and `packages/ai/src/models.ts` own shared credential metadata and the locked login boundary below the extension API. The user-facing commands remain extensions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/auth/pool/slots.ts` slot type, display-name validation block and append function; `packages/ai/src/auth/types.ts` interaction types; `packages/ai/src/models.ts` login mutation and return boundary.
+
+## 2026-09-10 - Map ask_user_question to Claude Code's AskUserQuestion wire name
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: map the registered `ask_user_question` tool to `AskUserQuestion` for Anthropic Claude Code wire requests, and map it back only when the registered tools include the alias.
+
+### Why
+
+- Claude Code's Anthropic wire contract uses `AskUserQuestion`; without the explicit alias, the built-in tool name cannot round-trip through streamed `tool_use` blocks.
+
+### Why an extension could not handle it
+
+- Tool-name conversion happens inside the Anthropic provider adapter while constructing and decoding provider messages, before an extension can repair the wire name.
+
+### Expected merge conflict zones
+
+- LOW: the Claude Code tool lookup and conversion helpers in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-09-10 - OAuth refresh runs outside the credential lock and the catalog lane joins it (#1542)
+
+### What changed
+
+- `packages/ai/src/auth/oauth-refresh.ts` (new): `refreshOAuthCredential({ credentials, providerId, oauth, stale, slotName, isStale, signal, owning })` re-reads the stored credential, runs `oauth.refresh` OUTSIDE `CredentialStore.modify` under `AbortSignal.any([exchange, timeout 15s])`, then re-enters `modify` and compare-and-swaps: the rotated token is written only when the slot's refresh token still equals the one the exchange consumed; on mismatch the newer stored value is adopted and no write happens. Concurrent refreshes of the same `(store, provider, slot, refresh token)` join one in-flight exchange; owning waiters (per-request resolution) cancel the exchange once none is left waiting and a result arriving after that is not persisted; a non-owning waiter (the catalog lane) only stops waiting. The write itself is not cancellable because the exchange already consumed the refresh token. Exports `OAuthRefreshExchangeError` / `OAuthRefreshStoreError` for code mapping and `projectOAuthSlot`.
+- `packages/ai/src/auth/resolve.ts`: `resolveStoredOAuth` no longer runs the refresh inside `credentials.modify`; it calls `refreshOAuthCredential` as an owning waiter and maps failures through the new exported `oauthRefreshModelsError` (`oauth` for the exchange, `auth` for the store) so `ModelsError` codes and messages are unchanged. `DEFAULT_OAUTH_REFRESH_TIMEOUT_MS` moved to `oauth-refresh.ts`.
+- `packages/ai/src/auth/refresh-credential.ts` (new, extracted from `models.ts` for the LOC ceiling): `resolveRefreshCredential(provider, credentials, authContext, stored, signal)` is the catalog lane's effective-credential step; the expired-OAuth branch joins `refreshOAuthCredential` with `owning: false`.
+- `packages/ai/src/models.ts`: `ModelsImpl.refresh` calls the extracted `resolveRefreshCredential`. The per-provider catalog-refresh controller (`supersedeProviderRefresh` on `setProvider`/`deleteProvider`/`refresh`) therefore no longer reaches the token exchange: a superseded catalog refresh stops waiting while the exchange completes and persists.
+
+### Why
+
+- Issue #1542: with several `openai-codex` OAuth slots, one slot's refresh held the single `auth.json` lock for the whole up-to-15s HTTP exchange while every other slot, provider and login gave up after `FILE_STORAGE_LOCK_RETRY_BUDGET_MS` (5.5s) with `CredentialStoreBusyError`; and any login/logout/`setRuntimeApiKey` for the shared provider id aborted an in-flight token refresh through the catalog-refresh controller.
+
+### Why an extension could not handle it
+
+- The lock scope is inside `resolveStoredOAuth` -> `CredentialStore.modify`, below every extension hook, and the catalog-refresh controller is private to `ModelsImpl`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/src/auth/resolve.ts` `resolveStoredOAuth` (the refresh block is now a call into `oauth-refresh.ts`).
+- MEDIUM: `packages/ai/src/models.ts` `refresh()` credential step and the removed private `resolveRefreshCredential`.
+- LOW: new files `auth/oauth-refresh.ts`, `auth/refresh-credential.ts`.
+
+## 2026-09-10 - Venice AI provider registration and venice_parameters
+
+### What changed
+
+- `packages/ai/src/types.ts` adds `"venice"` to `KnownProvider` and a `veniceParameters` field to `OpenAICompletionsCompat`, carrying Venice's only non-OpenAI request object (`{ include_venice_system_prompt?: boolean }`).
+- `packages/ai/src/api/openai-completions.ts` emits that object as the top-level `venice_parameters` request field, alongside the existing OpenRouter and Vercel gateway routing hooks, and declares it on `OpenAICompletionsRequestParams`. `packages/ai/src/utils/prompt-cache-ttl.ts` keeps it optional in `ResolvedOpenAICompletionsCompat` so auto-detection never has to synthesize one.
+- `packages/ai/src/env-api-keys.ts` maps `venice` to `VENICE_API_KEY`; `packages/ai/src/providers/all.ts` registers the fork-only `veniceProvider()` factory.
+
+### Why
+
+- Venice's `ChatCompletionRequest` schema is `additionalProperties: false` (`components.schemas.ChatCompletionRequest` in https://api.venice.ai/api/v1/swagger.yaml), so a Venice-only field cannot be smuggled in as an ad-hoc key and every other field senpi sends had to be checked against Venice's accepted list. It already accepts `store`, `developer` role, `reasoning_effort`, `stream_options.include_usage`, `max_completion_tokens`, `prompt_cache_key`, `prompt_cache_retention`, and `strict` tools, so the auto-detected compat defaults were left untouched.
+- Without `include_venice_system_prompt: false`, Venice prepends its own default system prompt ahead of the agent's.
+
+### Why an extension could not handle it
+
+- Provider registration, credential detection, and the outbound request body are all inside the AI adapter boundary, below the point where extension code can rewrite a provider request.
+
+### Expected merge conflict zones
+
+- LOW: the `KnownProvider` union tail and the `builtinProviders()` array in `providers/all.ts` when upstream adds providers.
+- LOW: the compat field list in `types.ts` / `prompt-cache-ttl.ts` and the request-field block in `openai-completions.ts` when upstream adds provider-specific request options.
+
+## 2026-09-10 - OpenAI images output options, masks, and image-token pricing
+
+### What changed
+
+- `packages/ai/src/api/openai-images-params.ts`: `OpenAIImagesOptions` gains `background`, `outputFormat`, `outputCompression`, `moderation`, and `mask`; `buildParams` forwards them and `parseOpenAIImageOutputOptions` (exported through compat) rejects transparent+jpeg, compression on png, non-integer or out-of-range compression, and a mask without an input image before any request.
+- `packages/ai/src/api/openai-images-edit.ts`: uploads the mask as `mask.<ext>` next to the reference images.
+- `packages/ai/src/images.ts`: re-exports `parseOpenAIImageOutputOptions`, `OpenAIImageBackground`, `OpenAIImageOutputFormat`, `OpenAIImageModeration`, and `OpenAIImageOutputOptions` through the compat surface.
+- `packages/ai/src/api/openai-images-result.ts` (moved out of `openai-images.ts` for the LOC ceiling): b64 payloads are labeled by their magic bytes, falling back to the requested container; URL hydration is unchanged.
+- `packages/ai/src/api/openai-images.ts`: echoes the response `background`, and `parseUsage` prices `input_tokens_details.image_tokens` with `cost.imageInput ?? cost.input`.
+- `packages/ai/src/types.ts`: `ImagesModelCost.imageInput`, `AssistantImages.background`, and `KnownImagesProvider` now includes `openai` so `getImageModel("openai", id)` type-checks.
+- `packages/ai/scripts/generate-image-models.ts` + regenerated `image-models.generated.ts`: `imageInput: 8` on gpt-image-2 and both 2.5 entries.
+
+### Why
+
+- GPT Image 2.5 supports transparent backgrounds, jpeg/webp containers, compression, moderation, and inpainting masks that the adapter could not request; image input tokens are billed at $8/M, not the $5/M text rate; and a gateway that ignores `output_format` returned png bytes labeled `image/webp`.
+
+### Why an extension could not handle it
+
+- The wire payload, response decoding, and usage pricing live inside the provider adapter behind the compat surface.
+
+### Expected merge conflict zones
+
+- MEDIUM: `openai-images.ts` (helper extraction) and `openai-images-params.ts`.
+- LOW: `types.ts` additions, generator array, tests.
+## 2026-09-09 - GPT Image 2.5 generation and reference-image editing
+
+### What changed
+
+- `packages/ai/scripts/generate-image-models.ts` and `packages/ai/src/image-models.generated.ts`: add GPT Image 2.5 Sunburst and Flare ahead of the existing OpenAI models with $5 input / $30 output / $1.25 cached-input rates per million tokens. Both new entries and GPT Image 2 advertise text and image inputs; the OpenRouter catalog is unchanged.
+- `packages/ai/src/api/openai-images-params.ts`: own the quality/size options, prompt construction, and exported `parseOpenAIImageSize` validator. Accept `xhigh`/`max` quality and arbitrary integer dimensions that satisfy the divisibility, edge, aspect-ratio, and pixel-count limits.
+- `packages/ai/src/api/openai-images-edit.ts` and `packages/ai/src/api/openai-images.ts`: upload up to 16 base64 reference images via `/images/edits`, without `input_fidelity`, using the generation path's payload/response hooks, retry, usage, and error handling. Keep the OpenAI SDK pinned at 6.26.0 with one localized request-type assertion.
+- `packages/ai/src/images.ts`: expose the parser, quality/size types, and `OpenAIImagesOptions` through the existing compat re-export without eagerly loading the SDK.
+
+### Why
+
+- The GPT Image 2.5 models released on 2026-09-08 add quality tiers and support high-resolution generation and reference-image edits. The adapter previously advertised only text inputs, rejected references, and typed only the preset dimensions.
+
+### Why an extension could not handle it
+
+- The built-in catalog, public option types, request validation, and SDK endpoint selection belong to the AI provider layer; callers should not need to rewrite payloads or implement uploads themselves.
+
+### Expected merge conflict zones
+
+- LOW: the OpenAI portion of the generated image catalog, its static generator entries, and the images export surface; MEDIUM: the request-construction block in `packages/ai/src/api/openai-images.ts`. The parameter and edit builders are new files.
+
+## 2026-09-08 - Recased gateway-namespaced tool references fold onto the request's tool names
+
+### What changed
+
+- `packages/ai/src/api/anthropic-tool-references.ts` (new): the Anthropic tool-reference integrity pass (`demoteUnavailableToolReferences` and its helpers) moved out of `packages/ai/src/api/anthropic-messages.ts` into its own module, mirroring `anthropic-tool-pairs.ts`. `packages/ai/src/api/anthropic-messages.ts` only imports the pass now (and keeps `httpStatusOfError`, which #1487 added beside it).
+- `resolveAvailableToolName` compares names with case and `_`/`-` separators folded away (`foldToolNameKey`) after the literal and namespace-stripped literal lookups fail. `collectAvailableToolNames` builds the folded index from the request's `tools` array once per request and drops any folded key that two request tools share, so the fold never guesses between candidates; such a reference stays unresolved and is dropped like before.
+- `packages/ai/test/anthropic-tool-reference-integrity.test.ts`: three cases pin the fold (recased native search references `mcp__a4e6__Memory` / `LspSymbols` / `XSearch` plus a hyphenated literal fold onto `memory` / `lsp_symbols` / `x_search` / the literal; a recased namespaced history `tool_use` is renamed; an ambiguous fold is dropped).
+
+### Why
+
+- Live 2026-09-08 (omo 5.0.0-0.beta.48 / senpi 2026.9.7-2, session 01a08016, claude-fable-5-1 through ccapi): a native tool search returned its references as `mcp__a4e6__Memory`, `mcp__a4e6__LspSymbols`, `mcp__a4e6__XSearch`, `mcp__a4e6__Eval` — namespaced AND recased. Every later Anthropic request failed with `Tool reference 'mcp__a4e6__Memory' not found in available tools` and the session fell back to another model each turn. The shipped engine predates #1480, so it replayed the block verbatim; on main, #1480's exact-suffix fold would have turned `Memory` into a dropped reference (no 400, but the discovery was lost and the search pair demoted) because `Memory !== memory`.
+
+### Why an extension could not handle it
+
+- Same seam as #1480: the repair runs against the final `tools` array right before the SDK call, on provider-native blocks the provider assembles from history.
+
+### Expected merge conflict zones
+
+- LOW: `anthropic-messages.ts` loses a fork-only block (the pass was fork-only since `5ecb30463`), so future upstream merges touch it less; the new module is fork-only.
+
+
+## 2026-09-08 - Deliver provider HTTP status on rejected Anthropic requests (senpi #1481)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: when the complete `retryProviderRequest` operation finally rejects, a numeric HTTP status carried by the SDK error (`APIError.status`) is delivered once through `options.onResponse` (`httpStatusOfError`) before the error is rethrown. Success-path delivery is unchanged; errors without a status (network, aborts) report nothing rather than a fabricated code.
+- `packages/ai/test/anthropic-on-response-error.test.ts`: a rejecting fake client proves status 400 and 500 reach `onResponse` exactly once and that a status-less error produces no callback.
+
+### Why
+
+- The SDK turns HTTP failures into rejections instead of a Response, so the success-only `onResponse` never fired for them. The native tool-search adapter's permanent 400 fallback (`noteResponseStatus`, senpi #1481) was unreachable on the live error path, and any other `after_provider_response` extension was blind to error statuses.
+
+### Why an extension could not handle it
+
+- The status exists only inside the provider's own request error object; an extension observing the payload hook or the assistant error message cannot recover the HTTP code.
+
+### Expected merge conflict zones
+
+- MEDIUM: the request construction block in `packages/ai/src/api/anthropic-messages.ts` (upstream has no error-path callback); LOW: the new test file (fork-only).
+## 2026-09-08 - Anthropic tool references resolve against the request's own tools (senpi native tool-search 400)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `demoteUnavailableToolReferences` now decides availability from the final `tools` array alone and repairs every reference site. A `tool_reference` whose `tool_name` carries a gateway namespace (`mcp__<id>__<tool>`) is folded back to the request's own tool name when that tool is defined (`resolveAvailableToolName`); a reference that still does not resolve is dropped. Replayed native `tool_search_tool_result` blocks are repaired the same way (`rewriteToolReferenceItems`), and a search pair whose every reference stopped resolving is demoted to text together with its `server_tool_use`. A history `tool_use` under a gateway namespace is renamed to the request's tool name; a `tool_use` whose only justification was a dangling discovery is demoted like any other unavailable call. `collectToolReferenceNames` is gone: discovered names no longer stand in for missing definitions.
+- `packages/ai/test/anthropic-tool-reference-integrity.test.ts`: five cases pin the invariant (namespaced native reference folded to `memory`; mixed list keeps the resolvable names; emptied search pair demoted; namespaced history `tool_use` renamed; dangling discovery no longer keeps its `tool_use`).
+
+### Why
+
+- Live 2026-09-08 (senpi 4adba7afb, omo desktop, claude-fable-5-1): a native tool search returned `tool_reference` names as `mcp__925c__memory`, `mcp__925c__todo`, ... — a namespace neither senpi nor the request defined — and the block replayed verbatim on the next request, which Anthropic rejected with `Tool reference 'mcp__925c__memory' not found in available tools`. The turn hard-errored and fell back to a weaker model. The repair pass saw the names as dangling but only rewrote `tool_result` content, so native results fell through untouched, and a dangling discovery still exempted a later `tool_use` from demotion.
+
+### Why an extension could not handle it
+
+- The reference repair runs after every `before_provider_request` hook, immediately before the SDK call, against the final tools array; an extension cannot see that array or the replayed provider-native blocks the provider itself assembles from history.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `demoteUnavailableToolReferences` block and its helpers in `packages/ai/src/api/anthropic-messages.ts` (upstream has no gateway-namespace handling); LOW: the integrity test file (fork-only).
+
+## 2026-09-08 - Simple stream options carry the requested service tier (code-yeongyu/oh-my-openagent#6795)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `SimpleStreamOptions.serviceTier` (`ServiceTierPreference`: `"auto" | "flex" | "priority"`) names the processing tier a caller requests.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`: `streamSimple` forwards that option into the provider options, so it reaches `service_tier` on the wire and the tier-aware usage pricing, exactly like a full `stream()` call. Azure is unchanged (it does not sell Priority processing).
+
+### Why
+
+- The simple path dropped `serviceTier` in `buildBaseOptions`, so the only way to send the field was to mutate the request payload from an extension hook. A session that loads no extensions (SDK embedders, oh-my-openagent's in-process delegated children) could therefore never run at the priority tier even when its model was a `-fast` catalog variant.
+
+### Why this lives in the fork
+
+- `streamSimple` is the provider-neutral entry every host goes through; the field has to be threaded there.
+
+### Expected merge conflict zones
+
+- LOW: `SimpleStreamOptions` in `types.ts`; the `streamSimple` option literals in both Responses adapters.
+
+## 2026-09-07 - Classify OpenAI context-window overflow and token rate limits (code-yeongyu/oh-my-openagent#7921)
+
+### What changed
+
+- `packages/ai/src/utils/overflow.ts`: widen the OpenAI overflow pattern so "exceeds the model's context window" and "exceeds this model's context window" match, and add NON_OVERFLOW exclusions for tokens-per-window quota wording, TPM/RPM, quota exceeded, retry-after, HTTP 429 prefixes, and overloaded providers so those stay on the rate-limit path (code-yeongyu/oh-my-openagent#7921).
+
+### Why
+
+- OpenAI's current overflow text does not contain "exceeds the context window" as a contiguous phrase, so compaction recovery missed real overflows. Generic overflow fallbacks also matched token-quota 429s ("too many tokens per minute", "exceeds the limit of N tokens per minute"), so the agent showed a context-overflow error instead of the provider rate-limit error.
+
+### Why an extension could not handle it
+
+- `isContextOverflow` is the shared pi-ai classifier that compaction and overflow recovery consult before any extension hook runs; only a core pattern change can correct both the miss and the false positive.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/utils/overflow.ts` OVERFLOW_PATTERNS OpenAI entry and NON_OVERFLOW_PATTERNS.
 
 ## 2026-09-05 - Project Astra configuration updates at the Responses wire
 
@@ -408,6 +700,49 @@
 ### Expected merge conflict zones
 
 - LOW: `utils/retry.ts` provider timeout pattern.
+
+## 2026-09-09 - Keep Anthropic thinking parameters stable across tool continuations
+
+### What changed
+
+- `api/anthropic-messages.ts` `buildParams()`: the "final assistant turn starts with tool_use" guard now degrades thinking only for a budget-thinking request (`thinking.type: "enabled"`) whose final assistant turn came from a different wire API (`finalAssistantTurnIsForeign`, the Kimi/OpenAI replay shape the guard was written for). Adaptive requests, and native turns under budget thinking, keep the caller's `thinking` and `output_config.effort`.
+
+### Why
+
+- With adaptive thinking the model routinely answers a trivial tool call with `tool_use` and no thinking block. The old guard then sent the tool continuation with `thinking: {type: "disabled"}` (and no `output_config`), and Anthropic keys the prompt cache on the thinking parameters: the continuation missed the whole cached prefix and re-wrote it (2026-09-09 capture, claude-opus-5 through a logging proxy: turn 2 first call `cache_read 28114`, its tool continuation `cache_read 0 / cache_creation 28239`, next turn `cache_read 28181` from the adaptive line). That is the "cache misses every second prompt / burns the 5h limit" report; every tool-using turn paid a full cache write.
+- The premise no longer holds for the models that matter: replaying that exact continuation with `thinking` left adaptive returned HTTP 200 on claude-opus-5, claude-opus-4-6 and claude-fable-5 (and 200 on claude-sonnet-4-5 under `enabled` thinking). The remaining risk is the original incident shape only - foreign history under budget thinking - so that is the only case that still degrades.
+
+### Why an extension could not handle it
+
+- The degrade happens inside the provider request builder after every extension hook has run; no extension sees or can veto the `thinking` rewrite.
+
+### Expected merge conflict zones
+
+- LOW: `src/api/anthropic-messages.ts` thinking degrade guard in `buildParams()` and the `finalAssistantTurnIsForeign` helper next to `finalAssistantTurnStartsWithToolUse`.
+- LOW: `test/anthropic-cross-model-history.test.ts` (the Fable expectation flipped from `effort: low` to adaptive/high; two native-turn cases added).
+
+## 2026-09-09 - Anthropic OAuth callback listener: ephemeral port fallback and idle timeout
+
+### What changed
+
+- `auth/oauth/anthropic.ts`: the login now binds its callback listener through `auth/oauth/anthropic-callback-listener.ts` (new, fork-only). The listener still prefers `127.0.0.1:53692`, but when that port is already held (EADDRINUSE, EACCES, EPERM) it binds an ephemeral loopback port instead of dropping into manual mode; the auth URL `redirect_uri`, the manual-prompt placeholder, and the token-exchange `redirect_uri` all carry the port that was actually bound. Manual-only mode (registered `http://localhost:53692/callback` redirect, paste the redirect URL) is now reached only when neither the preferred nor an ephemeral port can be bound.
+- `auth/oauth/anthropic.ts`: a login that receives neither a browser callback nor a pasted redirect URL for 10 minutes rejects with a timeout error and closes its listener, instead of holding the port and the manual prompt open indefinitely.
+- `auth/oauth/anthropic-callback-listener.ts`: a callback whose `state` belongs to another login answers HTTP 400 with a page that says the login belongs to a different session or an earlier attempt and tells the user to paste the address-bar URL into the session that is waiting (or to restart the login), instead of the bare "State mismatch." page.
+- `auth/oauth/authorization-input.ts` and `auth/oauth/error-details.ts` (new, fork-only): `parseAuthorizationInput` and `formatErrorDetails` moved out of `anthropic.ts` unchanged.
+
+### Why
+
+- Two senpi/omo processes on one machine (a second TUI session, an RPC host whose login prompt was never answered, an abandoned `/login`) could not both log in: the second login hit EADDRINUSE, fell back to manual mode while still advertising `localhost:53692`, and the browser redirect landed on the first process's stale listener, which rendered "State mismatch." on every retry (omo Discord report, 2026-09-09). The OAuth client is registered for any localhost port on `/callback` - the Claude Code CLI itself binds a random port - so a fixed port was never required.
+- A pending login had no deadline, so one abandoned attempt kept the port for the life of the process.
+
+### Why an extension could not handle it
+
+- The callback listener, the redirect URI it advertises, and the token exchange are created and owned inside the provider OAuth implementation before any auth interaction event reaches an extension; an extension can neither pick the port nor change the redirect URI the exchange must match.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/auth/oauth/anthropic.ts` callback listener startup, auth URL construction, manual prompt, cleanup (listener code moved out of the file).
+- LOW: `test/anthropic-oauth.test.ts` callback listener coverage.
 
 ## 2026-09-02 - Anthropic OAuth callback bind fallback
 
@@ -3627,3 +3962,22 @@ Detection has to happen inside the Anthropic SSE loop while the stream is still 
 
 ### Expected merge conflict zones
 - MEDIUM: `api/anthropic-messages.ts` cache-control placement in `buildParams()` and the final checkpoint pass in `convertMessages()`.
+
+## 2026-09-08 - Handle Anthropic mid-output server fallback
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts` handles Anthropic `fallback` content blocks through the existing receipt path regardless of whether they arrive before or after output starts.
+- When client-side abort is disabled, `packages/ai/src/api/anthropic-messages.ts` preserves the fallback boundary, records the serving model, and continues accumulating its output.
+
+### Why
+
+- Anthropic documents mid-output fallback blocks as a supported streaming response. The early error in `packages/ai/src/api/anthropic-messages.ts` prevented configured refusal fallback routing.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts` owns the SSE boundary, stream cancellation, and serving-model attribution before extension hooks receive the completed message.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `content_block_start` fallback receipt branch.

@@ -6,6 +6,115 @@
 
 ### Added
 
+- Pooled OAuth credential slots now retain optional human-readable display names while preserving immutable slot identities for selection, affinity, refresh, and failover.
+
+### Changed
+
+### Fixed
+- A provider-owned OAuth account pool is merged onto the stored pool at commit time instead of overwriting it with the pre-login snapshot, so a sibling account that rotated its refresh token or earned a rate-limit block during an interactive login is never rewound; pool slots carrying the provider's managed sentinel marker are recognized and dropped so they can never dead-end a request.
+- The auth-miss wording `Provider is not configured: <id>` is now a shared exported helper used by every throw site, so consumers keying recovery decisions off it cannot drift from the generators.
+- Claude Agent SDK `Lock file is already being held` is classified as a transient retryable error instead of an unknown/terminal failure.
+
+### Removed
+
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Kimi For Coding sessions now identify themselves as a Kimi client. `api.kimi.com/coding` recognizes its clients by a product `User-Agent` plus a six-header `X-Msh-*` device set (platform, version, device name, device model, OS version, per-install device id), which the official Kimi Code client sends on device authorization, token poll, token refresh, and every managed request; senpi sent none of them, so a subscription session presented itself as an anonymous Anthropic-protocol client holding a Kimi bearer token. The OAuth subscription path now sends the full set on all four request paths. Header values are printable-ASCII sanitized (the endpoint answers 520 on raw non-ASCII bytes) and the device id persists under the agent dir, falling back to a per-process id when that directory is unwritable instead of throwing. The api-key path is unchanged and stays header-free, because it authenticates with a platform key rather than a client session ([#1504](https://github.com/code-yeongyu/senpi/issues/1504))
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+- Venice AI is a built-in provider: id `venice`, `VENICE_API_KEY`, base URL `https://api.venice.ai/api/v1`, and a 104-model OpenAI-compatible catalog generated from models.dev whose ids were all confirmed against Venice's live `/models` listing. Venice's `ChatCompletionRequest` schema is `additionalProperties: false`, so a new `veniceParameters` compat flag shapes the one Venice-only request field: the catalog sets `venice_parameters: { include_venice_system_prompt: false }`, without which Venice prepends its own default system prompt ahead of the caller's ([#1551](https://github.com/code-yeongyu/senpi/issues/1551))
+
+- OpenAI images: `background`, `outputFormat`, `outputCompression`, `moderation`, and `mask` options reach the wire as `background`, `output_format`, `output_compression`, `moderation`, and a `mask` upload; transparent-with-jpeg, compression-with-png, out-of-range compression, and mask-without-image are rejected before any request. Responses report `background`, returned bytes are labeled by their magic (falling back to the requested format), image input tokens are priced with the new optional `ImagesModel.cost.imageInput` rate ($8/M for GPT Image 2 and 2.5), and `KnownImagesProvider` includes `openai`. `parseOpenAIImageOutputOptions` and the option types are exported through the compat surface.
+
+### Changed
+
+### Fixed
+
+- OAuth token refresh no longer holds the credential store lock across the network: `Models.getAuth()` runs the provider's token exchange outside `CredentialStore.modify`, then re-enters the store and writes only if the slot's refresh token is unchanged (a slot rotated meanwhile by another process is adopted instead of overwritten). Concurrent requests for one slot join a single exchange, and a `Models.refresh()`/`setProvider()` for the same provider joins an in-flight token refresh instead of aborting it through the per-provider catalog-refresh controller ([#1542](https://github.com/code-yeongyu/senpi/issues/1542)).
+
+### Removed
+
+## [2026.9.9-2] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+- OpenAI images: `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` join the builtin catalog; `quality` accepts `xhigh` and `max`; `size` accepts any `WIDTHxHEIGHT` (16px multiples, 1:3..3:1 aspect, edges <= 3840, 655,360..8,294,400 pixels) validated before the request; image inputs are sent to `/images/edits` with up to 16 reference uploads instead of throwing. `parseOpenAIImageSize` and the quality/size types are exported through the compat surface ([#1513](https://github.com/code-yeongyu/senpi/pull/1513)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Anthropic prompt caching no longer breaks on every tool continuation: when the model answers a tool call without a thinking block (the normal adaptive-thinking outcome), the follow-up request keeps the same `thinking`/`output_config` instead of degrading to disabled thinking, so the cached prefix is read instead of re-written ("cache misses every second prompt"). Only a budget-thinking request replaying a tool turn produced by another API still degrades, the case Anthropic has rejected.
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Anthropic OAuth login no longer dead-ends on a browser page reading "State mismatch." when another senpi/omo process on the same machine still holds the callback port 53692: the login binds an ephemeral loopback port instead and carries that port through the auth URL and the token exchange. A callback that belongs to another login now explains that the login belongs to a different session and how to continue, and a login that gets neither a browser callback nor a pasted redirect URL for 10 minutes times out and releases its port instead of holding it indefinitely.
+
+- Anthropic mid-output server fallback now follows the configured abort/continue policy instead of raising an unsupported-fallback error. Continuing responses retain their serving-model identity and do not execute abandoned pre-fallback tools, including through text-tool recovery middleware.
+
+- `streamSimple` on the OpenAI Responses and Codex Responses adapters forwards the new `SimpleStreamOptions.serviceTier` into the request (`service_tier`) and tier-aware usage pricing; the simple path previously dropped it (code-yeongyu/oh-my-openagent#6795).
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed context-overflow classification so OpenAI's "exceeds the model's context window" wording is detected and token-quota / rate-limit messages that mention tokens are not treated as overflow (code-yeongyu/oh-my-openagent#7921).
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed

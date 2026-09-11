@@ -56,7 +56,7 @@ describe("prompt surfaces render each stance in exactly one home", () => {
 
 		// then
 		expect(updateGoal.toLowerCase()).toContain("audit");
-		expect(surfacesContaining(surfaces, /consecutive/)).toEqual(["continuation"]);
+		expect(surfacesContaining(surfaces, /materially different/)).toEqual(["continuation"]);
 		expect(surfacesContaining(surfaces, /resumption channel/)).toEqual(["continuation"]);
 	});
 

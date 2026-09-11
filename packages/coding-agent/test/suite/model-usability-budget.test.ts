@@ -87,6 +87,10 @@ describe("model usability budget", () => {
 		// then
 		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
 		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected model budget rejection");
+		// #1526: `setModel` derives the admission from the session instead of
+		// declaring a switch, so an empty session keeps the cold-start contract - the
+		// switch wording would promise a compaction remedy with nothing to compact.
+		expect(error.projection.admission).toBe("start");
 		expect(error.message).toBe(
 			'Model "faux/low-context" cannot start: context window 16000 tokens is 21464 tokens short of the 37464-token minimum (system prompt 1, active tool schemas 695, output reserve 4000, compaction reserve 16384, speculation lead 8192, safety margin 8192 [default]).',
 		);
@@ -122,8 +126,8 @@ describe("model usability budget", () => {
 			safetyMarginTokens: 8_192,
 			usable: false,
 		});
-		expect(error.projection.liveContextTokens).toBeGreaterThanOrEqual(318_240);
-		expect(error.projection.liveContextTokens).toBeLessThanOrEqual(318_330);
+		expect(error.projection.liveContextTokens).toBeGreaterThanOrEqual(318_180);
+		expect(error.projection.liveContextTokens).toBeLessThanOrEqual(318_280);
 		expect(error.projection.speculationLeadTokens).toBeGreaterThan(0);
 		expect(error.projection.requiredTokens).toBe(
 			error.projection.liveContextTokens +
@@ -331,6 +335,68 @@ describe("model usability budget", () => {
 		// then
 		expect(resumed.session.agent.state.messages).toHaveLength(1);
 		resumed.session.dispose();
+	});
+
+	it("resumes a restored transcript whose uncompacted context requires compaction to hold output reserves", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "astra-shaped", contextWindow: 400_000, maxTokens: 128_000 }],
+		});
+		harnesses.push(harness);
+		const model = harness.getModel();
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		const liveTokens = 346_286;
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "! ".repeat(liveTokens * 2) }],
+			timestamp: Date.now(),
+		});
+
+		// when
+		const resumed = await createAgentSession({
+			cwd: harness.tempDir,
+			agentDir: join(harness.tempDir, "astra-resume"),
+			model,
+			sessionManager,
+		});
+
+		// then
+		expect(resumed.session.agent.state.messages).toHaveLength(1);
+		resumed.session.dispose();
+	});
+
+	it("rejects an uncompacted transcript on resume when compaction is disabled", async () => {
+		// given
+		const harness = await createHarness({
+			models: [{ id: "astra-shaped", contextWindow: 400_000, maxTokens: 128_000 }],
+			settings: { compaction: { enabled: false } },
+		});
+		harnesses.push(harness);
+		const model = harness.getModel();
+		const sessionManager = SessionManager.inMemory(harness.tempDir);
+		const liveTokens = 346_286;
+		sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "! ".repeat(liveTokens * 2) }],
+			timestamp: Date.now(),
+		});
+
+		// when / then
+		await expect(
+			createAgentSession({
+				cwd: harness.tempDir,
+				agentDir: join(harness.tempDir, "astra-disabled-resume"),
+				model,
+				sessionManager,
+				settingsManager: harness.settingsManager,
+			}),
+		).rejects.toMatchObject({
+			name: "ModelUsabilityBudgetError",
+			projection: {
+				usable: false,
+				admission: "resume",
+			},
+		});
 	});
 
 	it("keeps fresh and fitting resumed sessions accepted", async () => {
