@@ -20,6 +20,7 @@ export type FakeEditor = Text & { setText: Mock<(text: string) => void>; addToHi
 export type FakeSession = {
 	isStreaming: boolean;
 	isCompacting: boolean;
+	messages: unknown[];
 	sendUserMessage: Mock<(text: string, options?: { deliverAs?: "steer" | "followUp" }) => Promise<void>>;
 	prompt: Mock<(text: string, options?: object) => Promise<void>>;
 };
@@ -51,6 +52,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 	const session: FakeSession = {
 		isStreaming: options.isStreaming ?? false,
 		isCompacting: false,
+		messages: [],
 		sendUserMessage: vi.fn(async () => {}),
 		prompt: vi.fn(async () => {}),
 	};
