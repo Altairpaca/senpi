@@ -194,7 +194,7 @@
 - MEDIUM: `collectPackageResources` (manifest read moved above the filter branch) and the `InstalledSourceScope` alias plus the update filter in `packages/coding-agent/src/core/package-manager.ts`.
 - LOW: the `SourceScope` union in `packages/coding-agent/src/core/source-info.ts`; the `system` field in `packages/coding-agent/src/core/pi-manifest.ts`; the `extendResources` call site in `packages/coding-agent/src/core/agent-session.ts` where the two private helpers were removed.
 
-## 2026-09-12 - O(1) full-history entry count on SessionManager
+## 2026-09-12 - O(1) full-history entry count on SessionManager (senpi#1635)
 
 ### What changed
 

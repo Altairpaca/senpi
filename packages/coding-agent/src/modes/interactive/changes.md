@@ -303,7 +303,7 @@
 - MEDIUM: `showLoadedResources` (`formatCompactList`, `addLoadedSection` and the four compact-list call sites) and the removed `getDisplaySourceInfo` / `getScopeGroup` / `buildScopeGroups` / `formatScopeGroups` bodies in `interactive-mode.ts`, along with the new `loaded-resource-scopes.ts` and `loaded-resource-section.ts` imports.
 - LOW: the `ResourceGroup` interface and `SourceScope` import in `components/config-selector.ts`.
 
-## 2026-09-12 - Working/retry status cadence reads the O(1) entry count
+## 2026-09-12 - Working/retry status cadence reads the O(1) entry count (senpi#1635)
 
 ### What changed
 
