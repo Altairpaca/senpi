@@ -132,6 +132,9 @@
 
 - Fixed `bun add @code-yeongyu/senpi` failing with `No version matching "^<version>" found for specifier "@earendil-works/chord"`. The bundled chord workspace had been stamped with the fork's CalVer, so the packaged manifest (and the published `@code-yeongyu/senpi-agent-core` manifest) declared a chord range that no registry version answered. chord is not modified from upstream, so it now keeps upstream's own `0.85.1` release identity and its declared edges pin that exact published version; the bundled copy still ships and shadows it at runtime (fixes #1632).
 
+- Fixed long, compaction-trimmed sessions re-parsing the entire session file every time the working/retry status animation cadence was decided, which made the UI periodically freeze on multi-day sessions. The cadence now reads an O(1) maintained entry count (`SessionManager#getEntryCount()`); explicit full-history retrieval is unchanged.
+- Fixed `bun add @code-yeongyu/senpi` failing with `No version matching "^<version>" found for specifier "@earendil-works/chord"`. The bundled chord workspace had no published fork alias, so the packaged manifest declared a CalVer range that only upstream's own 0.85.x line could answer; chord is now published as `@code-yeongyu/senpi-chord` and the packaged dependency points at that alias, like every other bundled runtime workspace (fixes #1632).
+
 ### Removed
 
 ## [2026.9.12-3] - 2026-09-12
