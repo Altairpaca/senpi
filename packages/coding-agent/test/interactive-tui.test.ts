@@ -662,10 +662,10 @@ function createRetryStatusContext(sessionEntryCount: number): RetryStatusContext
 		activeStatusIndicator: undefined,
 		runtimeHost: {
 			session: {
-			sessionManager: {
-				getEntries: () => Array.from({ length: sessionEntryCount }, () => ({})),
-				getEntryCount: () => sessionEntryCount,
-			},
+				sessionManager: {
+					getEntries: () => Array.from({ length: sessionEntryCount }, () => ({})),
+					getEntryCount: () => sessionEntryCount,
+				},
 			},
 		},
 	}) as RetryStatusContext;

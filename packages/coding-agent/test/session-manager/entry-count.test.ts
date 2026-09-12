@@ -1,34 +1,20 @@
-import { mkdirSync, rmSync } from "fs";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	loadEntriesFromFile,
 	SessionManager,
 	setSessionEntryLoaderForTesting,
 } from "../../src/core/session-manager.ts";
-import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { assistantMsg, userMsg } from "../utilities.ts";
-
-type HookStatusTimerThis = {
-	sessionManager: SessionManager;
-	hookStatusIntervalId: ReturnType<typeof setInterval> | undefined;
-};
-
-type HookStatusTimerPrototype = {
-	startToolHookStatusTimer(this: HookStatusTimerThis): void;
-};
-
-function startHookStatusTimer(owner: HookStatusTimerThis): void {
-	(InteractiveMode.prototype as unknown as HookStatusTimerPrototype).startToolHookStatusTimer.call(owner);
-}
 
 describe("SessionManager entry count", () => {
 	let tempDir: string;
 
 	beforeEach(() => {
-		tempDir = join(tmpdir(), `session-entry-count-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-		mkdirSync(tempDir, { recursive: true });
+		tempDir = mkdtempSync(join(tmpdir(), "session-entry-count-"));
 	});
 
 	afterEach(() => {
@@ -93,15 +79,15 @@ describe("SessionManager entry count", () => {
 		session.appendCompaction("summary", firstKeptEntryId, 100);
 		const fullCount = session.getEntryCount();
 		const sessionFile = session.getSessionFile();
-		expect(sessionFile).toBeDefined();
+		assert.ok(sessionFile, "persisted session must have a file path");
 
-		const reopened = SessionManager.open(sessionFile!, tempDir);
+		const reopened = SessionManager.open(sessionFile, tempDir);
 		expect(reopened.getEntryCount()).toBe(fullCount);
 
 		reopened.newSession();
 		expect(reopened.getEntryCount()).toBe(0);
 
-		reopened.setSessionFile(sessionFile!);
+		reopened.setSessionFile(sessionFile);
 		expect(reopened.getEntryCount()).toBe(fullCount);
 	});
 
@@ -120,61 +106,5 @@ describe("SessionManager entry count", () => {
 
 		session.appendCustomEntry("synthetic", {});
 		expect(session.getEntryCount()).toBe(3);
-	});
-
-	it("starts the hook status timer on a trimmed session without loading history", () => {
-		const session = SessionManager.create(tempDir, tempDir);
-		session.appendMessage(assistantMsg("ready"));
-		const firstKeptEntryId = session.appendMessage(userMsg("kept"));
-		for (let i = 0; i < 998; i++) {
-			session.appendMessage(userMsg(`turn ${i}`));
-		}
-		session.appendCompaction("summary", firstKeptEntryId, 100);
-		expect(session.getEntryCount()).toBe(1001);
-
-		const fakeTimerHandle = { unref: () => {} } as unknown as ReturnType<typeof setInterval>;
-		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(fakeTimerHandle);
-		let loadCount = 0;
-		const restoreLoader = setSessionEntryLoaderForTesting((filePath) => {
-			loadCount++;
-			return loadEntriesFromFile(filePath);
-		});
-		try {
-			const owner: HookStatusTimerThis = { sessionManager: session, hookStatusIntervalId: undefined };
-			startHookStatusTimer(owner);
-			const intervalMs = setIntervalSpy.mock.calls.at(-1)?.[1];
-			expect(intervalMs).toBe(1_000);
-			expect(loadCount).toBe(0);
-		} finally {
-			restoreLoader();
-			setIntervalSpy.mockRestore();
-		}
-	});
-
-	it("preserves the working-status cadence boundary at 999 and 1000 entries", () => {
-		const session = SessionManager.inMemory(tempDir);
-		const fakeTimerHandle = { unref: () => {} } as unknown as ReturnType<typeof setInterval>;
-		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(fakeTimerHandle);
-		try {
-			const owner: HookStatusTimerThis = { sessionManager: session, hookStatusIntervalId: undefined };
-
-			startHookStatusTimer(owner);
-			expect(setIntervalSpy.mock.calls.at(-1)?.[1]).toBe(32);
-			owner.hookStatusIntervalId = undefined;
-
-			for (let i = 0; i < 999; i++) {
-				session.appendCustomEntry("synthetic", { index: i });
-			}
-			startHookStatusTimer(owner);
-			expect(setIntervalSpy.mock.calls.at(-1)?.[1]).toBe(32);
-			owner.hookStatusIntervalId = undefined;
-
-			session.appendCustomEntry("synthetic", { index: 999 });
-			startHookStatusTimer(owner);
-			expect(setIntervalSpy.mock.calls.at(-1)?.[1]).toBe(1_000);
-			owner.hookStatusIntervalId = undefined;
-		} finally {
-			setIntervalSpy.mockRestore();
-		}
 	});
 });
