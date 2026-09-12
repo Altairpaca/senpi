@@ -875,10 +875,7 @@ export class SessionManager {
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
 	private mirrorTrimmed = false;
-	// Maintained count of ALL non-header entries across the full history. Equals
-	// getEntries().length, but survives _trimMirrorAfterCompaction() so count-only
-	// readers never pay the full-history load that getEntries() performs once the
-	// mirror is trimmed.
+	// Counts loaded/appended entries, including those removed from the resident mirror.
 	private fullEntryCount = 0;
 	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
@@ -1104,9 +1101,7 @@ export class SessionManager {
 				}
 			}
 		}
-		// A compaction-trimmed mirror retains only kept entries while the full
-		// history still counts every persisted entry, so a trimmed rebuild must
-		// keep the maintained full-history count.
+		// A trimmed mirror cannot replace the full-history count.
 		if (!this.mirrorTrimmed) {
 			this.fullEntryCount = fullEntryCount;
 		}
@@ -1672,12 +1667,7 @@ export class SessionManager {
 		return materializedEntries;
 	}
 
-	/**
-	 * O(1) count of ALL session entries across the full history (excludes the
-	 * header, not branch-scoped). Maintained incrementally and identical to
-	 * getEntries().length, so count-only readers do not pay the full-history
-	 * load that getEntries() performs once the mirror is trimmed.
-	 */
+	/** Returns the maintained non-header entry count without loading or materializing history. */
 	getEntryCount(): number {
 		return this.fullEntryCount;
 	}

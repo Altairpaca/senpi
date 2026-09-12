@@ -307,28 +307,21 @@
 
 ### What changed
 
-- `interactive-mode.ts`: the three count-only cadence decisions - `startToolHookStatusTimer()`,
-  `getWorkingIndicatorOptions()`, and `showRetryStatusIndicatorWithCadence()` - read
-  `sessionManager.getEntryCount()` instead of `getEntries().length`, so starting the tool-hook
-  status timer or a retry indicator no longer reloads and materializes the full persisted history
-  on compaction-trimmed long sessions. Explicit full-history readers in this file (cache-miss
-  detection, tree view) are unchanged.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: use `getEntryCount()` in
+  the hook-status timer, working indicator and retry indicator. Ticker tests cover the 999/1000
+  cadence boundary and zero history loads on a trimmed persisted session.
 
 ### Why
 
-- On a compaction-trimmed session `getEntries()` re-parses the whole JSONL on every call; these UI
-  timers only need the entry count to pick the small/large-session animation cadence, and the
-  repeated loads dominated the timer path on multi-day sessions.
+- These cadence decisions need a count, not the full history that `getEntries()` loads after trim.
 
 ### Why an extension could not handle it
 
-- The cadence choices live inside interactive-mode's own timer and indicator constructors; the
-  session count they need is core `SessionManager` state exposed as `getEntryCount()`.
+- The timer and indicator constructors are internal to interactive mode.
 
 ### Expected merge conflict zones
 
-- LOW: the three `largeSessionWorkingStatusInterval(...)` call sites and the `sessionEntryCount`
-  line in `getWorkingIndicatorOptions()`.
+- LOW: the three count-only cadence call sites.
 
 ## 2026-09-12 - Upstream sync: status spinners in the editor border, mouse toggles, renderer-only tool cards
 
