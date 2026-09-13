@@ -635,21 +635,22 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const enabledSkills = enabledSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath));
 
 		// Add CLI paths metadata. Explicit -e/-s resources must keep CLI precedence
-		// even when they resolve through a package manifest.
-		for (const r of cliExtensionPaths.extensions) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.skills) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.prompts) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.themes) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-		}
-		for (const r of cliExtensionPaths.hooks) {
-			metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
+		// even when they resolve through a package manifest. A package that declared
+		// itself part of the harness keeps the system scope and root it resolved to.
+		const cliMetadata = (resource: ResolvedResource): PathMetadata =>
+			resource.metadata.scope === "system"
+				? { source: "cli", scope: "system", origin: "top-level", baseDir: resource.metadata.baseDir }
+				: { source: "cli", scope: "temporary", origin: "top-level" };
+		for (const resources of [
+			cliExtensionPaths.extensions,
+			cliExtensionPaths.skills,
+			cliExtensionPaths.prompts,
+			cliExtensionPaths.themes,
+			cliExtensionPaths.hooks,
+		]) {
+			for (const r of resources) {
+				metadataByPath.set(r.path, cliMetadata(r));
+			}
 		}
 
 		const cliEnabledExtensions = getEnabledPaths(cliExtensionPaths.extensions);
@@ -1033,10 +1034,20 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private applyExtensionSourceInfo(extensions: Extension[], metadataByPath: Map<string, PathMetadata>): void {
+		const bundledPackageRoots = this.getBundledExtensionPackageRoots();
 		for (const extension of extensions) {
+			const bundledPackageRoot = bundledPackageRoots.get(extension.resolvedPath);
 			extension.sourceInfo =
-				this.findSourceInfoForPath(extension.path, undefined, metadataByPath) ??
-				this.getDefaultSourceInfoForPath(extension.path);
+				bundledPackageRoot === undefined
+					? (this.findSourceInfoForPath(extension.path, undefined, metadataByPath) ??
+						this.getDefaultSourceInfoForPath(extension.path))
+					: {
+							path: extension.path,
+							source: "builtin",
+							scope: "system",
+							origin: "top-level",
+							baseDir: bundledPackageRoot,
+						};
 			for (const command of extension.commands.values()) {
 				command.sourceInfo = extension.sourceInfo;
 			}
@@ -1094,10 +1105,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	private getDefaultSourceInfoForPath(filePath: string): SourceInfo {
 		if (filePath.startsWith("<") && filePath.endsWith(">")) {
+			const source = filePath.slice(1, -1).split(":")[0] || "temporary";
 			return {
 				path: filePath,
-				source: filePath.slice(1, -1).split(":")[0] || "temporary",
-				scope: "temporary",
+				source,
+				scope: source === "builtin" ? "system" : "temporary",
 				origin: "top-level",
 			};
 		}
@@ -1410,18 +1422,24 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getBundledExtensionEntryPaths(): Set<string> {
-		const paths = new Set<string>();
+		return new Set(this.getBundledExtensionPackageRoots().keys());
+	}
+
+	/** Resolved entry path of every active bundled extension mapped to the root of the package that ships it. */
+	private getBundledExtensionPackageRoots(): Map<string, string> {
+		const packageRoots = new Map<string, string>();
 		for (const bundledExtension of bundledBuiltinExtensions) {
 			try {
 				const packageJsonPath = bundledExtension.resolvePackage();
+				const packageRoot = resolve(packageJsonPath, "..");
 				for (const extensionPath of this.resolvePackageExtensionEntries(packageJsonPath)) {
-					paths.add(this.resolveExtensionLoadPath(extensionPath));
+					packageRoots.set(this.resolveExtensionLoadPath(extensionPath), packageRoot);
 				}
 			} catch {
 				// Bundled resolution errors are already reported by loadExtensionFactories().
 			}
 		}
-		return paths;
+		return packageRoots;
 	}
 
 	private resolvePackageExtensionEntries(packageJsonPath: string): string[] {
