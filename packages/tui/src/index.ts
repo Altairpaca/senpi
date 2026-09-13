@@ -110,6 +110,17 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.ts";
+export {
+	decodeMouseButton,
+	isMouseSequence,
+	MOUSE_TRACKING,
+	MouseClickSynthesizer,
+	parseSgrMouseEvent,
+	parseWheelEvent,
+	type SgrMouseEvent,
+	toTuiMouseEvent,
+	type WheelEvent,
+} from "./mouse-input.ts";
 // Native platform integration
 export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
 export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";

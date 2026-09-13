@@ -1,5 +1,28 @@
 # TUI delta rendering fork changes
 
+## 2026-09-13 - Share mouse protocol parsing and retain owned fragments
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: four helper bodies delegate to `mouse-input.ts`; fullscreen selection, scrolling, search, and tracking bytes remain unchanged.
+- `packages/tui/src/index.ts`: exports the shared parser, protocol constants, and click synthesizer.
+- `packages/tui/src/stdin-buffer.ts`: retains incomplete owned SGR reports for at most 750 ms and 64 characters, discarding expired tails through a CSI terminator rather than leaking them into keyboard handling.
+
+### Why
+
+- `packages/tui/src/tui-alt-screen.ts` and `packages/tui/src/index.ts`: regular-mode consumers need the same zero-based mouse protocol contract without duplicating private parsing.
+- `packages/tui/src/stdin-buffer.ts`: timeout-flushed mouse fragments previously exposed protocol tails as typed text.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui-alt-screen.ts`, `packages/tui/src/index.ts`, and `packages/tui/src/stdin-buffer.ts`: protocol framing and renderer-private helper ownership precede extension input dispatch.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui-alt-screen.ts`: helper delegations and one import; selection, scrollbar, and search logic are untouched.
+- `packages/tui/src/index.ts`: mouse exports.
+- `packages/tui/src/stdin-buffer.ts`: owned-fragment buffering and timeout flush.
+
 ## 2026-09-12 - Carry-forwards from the upstream v0.85.x sync
 
 ### What changed
