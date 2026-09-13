@@ -14,6 +14,8 @@ import { ASYNC_QUESTIONS, createAskUserDelivery } from "./helpers/ask-user-deliv
 const ESC = "\x1b";
 const CTRL_ENTER = "\x1b[13;5u";
 const ALT_A = "\x1ba";
+const DOWN = "\x1b[B";
+const SPACE = " ";
 
 function buildRequest(): QuestionRequest {
 	return {
@@ -240,7 +242,9 @@ describe("async ask-user question in the interactive TUI", () => {
 		expect(overlay(fake)).toBeUndefined();
 
 		fake.pressEditorKey(ALT_A);
-		overlay(fake)?.handleInput("2");
+		// Space retains an optional draft; digits now submit a single question immediately (#1645).
+		overlay(fake)?.handleInput(DOWN);
+		overlay(fake)?.handleInput(SPACE);
 		vi.advanceTimersByTime(1_000);
 		expect(sendHostUiProgress).toHaveBeenCalledWith({
 			type: "extension_ui_progress",

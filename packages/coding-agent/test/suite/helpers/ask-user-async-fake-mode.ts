@@ -67,6 +67,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 			text = value;
 		}),
 		addToHistory: vi.fn(),
+		setReplyLabel: vi.fn(),
 	});
 	let focused: unknown = editor;
 	editorContainer.addChild(editor);
@@ -99,6 +100,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 		pendingOrder: [],
 		shownQuestionId: undefined,
 		questionSurface: "collapsed",
+		composerDestination: { kind: "chat" },
 		lastEditorText: "",
 		preResolvedSubmissionImages: undefined,
 		pendingUserInputs: [],
@@ -133,6 +135,10 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 		pressEditorKey: (data: string): boolean => fake.handleAskUserShortcut(data),
 		submitEditorText: async (text: string) => {
 			if (!fake.defaultEditor.onSubmit) fake.setupEditorSubmitHandler();
+			// This helper models typing followed by Enter, including the host's pre-insertion destination binding.
+			if (text !== "" && !text.startsWith("/") && !text.startsWith("!") && fake.editor.getText() === "") {
+				fake.handleAskUserShortcut(text);
+			}
 			await fake.defaultEditor.onSubmit?.(text);
 		},
 	};

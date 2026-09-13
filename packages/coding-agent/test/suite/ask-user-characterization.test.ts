@@ -62,6 +62,7 @@ function withEditor() {
 	Object.assign(fake, { editor, defaultEditor: editor, keybindings, updateShortcutOverlay: vi.fn() });
 	fake.editorContainer.clear();
 	fake.editorContainer.addChild(editor);
+	fake.ui.setFocus(editor);
 	editor.onExtensionShortcut = (data) => fake.handleAskUserShortcut(data);
 	fake.setupEditorSubmitHandler();
 	return { fake, editor };
@@ -100,13 +101,18 @@ describe("ask-user characterization", () => {
 		expect(fake.session.prompt).not.toHaveBeenCalled();
 	});
 
-	it("b2: text present before arrival is currently claimed as a comment", async () => {
+	it("b2: text present before arrival stays an ordinary chat message", async () => {
 		const { fake, editor } = withEditor();
 		editor.handleInput("existing draft");
-		const pending = ask(fake);
+		const settled = vi.fn();
+		void ask(fake).then(settled);
 		editor.handleInput(ENTER);
-		await expect(pending).resolves.toMatchObject({ status: "comment-submitted", comment: "existing draft" });
-		expect(fake.session.prompt).not.toHaveBeenCalled();
+		await Promise.resolve();
+		expect(settled).not.toHaveBeenCalled();
+		expect(fake.session.prompt).toHaveBeenCalledWith(
+			"existing draft",
+			expect.objectContaining({ streamingBehavior: "steer" }),
+		);
 	});
 
 	it("c: Esc collapses without settling and preserves the draft", async () => {
@@ -143,17 +149,15 @@ describe("ask-user characterization", () => {
 		question.dispose();
 	});
 
-	it("e: async single-select digit currently moves to Submit without settling", () => {
+	it("e: async single-select digit submits immediately", () => {
 		const done = vi.fn();
 		const progress = vi.fn();
 		const question = new AskUserQuestionComponent(request(), done, { onProgress: progress });
 		question.handleInput("2");
-		expect(done).not.toHaveBeenCalled();
+		expect(done).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: "answered" }));
 		expect(progress).toHaveBeenLastCalledWith(
 			expect.objectContaining({ answers: { auth: { selected: ["API key"] } } }),
 		);
-		question.handleInput(ENTER);
-		expect(done).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: "answered" }));
 		question.dispose();
 	});
 

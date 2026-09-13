@@ -26,6 +26,7 @@ import {
 	CombinedAutocompleteProvider,
 	type Component,
 	Container,
+	decodeKittyPrintable,
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
@@ -33,6 +34,7 @@ import {
 	Markdown,
 	matchesKey,
 	outerKittyGraphicsMode,
+	SelectList,
 	Spacer,
 	sanitizeTerminalLabel,
 	setCapabilityOverrides,
@@ -153,9 +155,10 @@ import {
 	AskUserAsyncWidget,
 	buildCommentResponse,
 	buildTimedOutResponse,
+	unansweredIds,
 } from "./components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
-import type { QuestionDraft } from "./components/ask-user-question-state.ts";
+import { formatCountdownLabel, type QuestionDraft } from "./components/ask-user-question-state.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
@@ -239,6 +242,7 @@ import {
 	getAvailableThemesWithPaths,
 	getEditorTheme,
 	getMarkdownTheme,
+	getSelectListTheme,
 	getThemeByName,
 	onThemeChange,
 	setRegisteredThemes,
@@ -1035,6 +1039,7 @@ export class InteractiveMode {
 	private pendingOrder: string[] = [];
 	private shownQuestionId: string | undefined;
 	private questionSurface: "collapsed" | "list" | "expanded" = "collapsed";
+	private composerDestination: { kind: "chat" } | { kind: "answer"; requestId: string } = { kind: "chat" };
 
 	private get shownQuestion(): AsyncQuestionState | undefined {
 		return this.shownQuestionId === undefined ? undefined : this.pendingQuestions.get(this.shownQuestionId);
@@ -3832,6 +3837,17 @@ export class InteractiveMode {
 				this.pendingQuestions.delete(request.requestId);
 				this.pendingOrder = this.pendingOrder.filter((id) => id !== request.requestId);
 				opts?.signal?.removeEventListener("abort", onAbort);
+				if (
+					this.composerDestination.kind === "answer" &&
+					this.composerDestination.requestId === request.requestId
+				) {
+					this.setComposerReply();
+					if (this.editor.getText() !== "") this.showStatus("That question is no longer pending");
+				}
+				if (this.pendingOrder.length === 0 && this.questionSurface === "list") {
+					this.ui.hideOverlay();
+					this.questionSurface = "collapsed";
+				}
 				if (this.shownQuestionId === request.requestId) {
 					if (this.questionSurface === "expanded") this.hideQuestionOverlay();
 					this.shownQuestionId = this.pendingOrder[0];
@@ -3871,28 +3887,114 @@ export class InteractiveMode {
 		);
 	}
 
-	/** Intercept question chords before app actions, without taking autocomplete keys. */
+	/** Intercept question chords and first typed input before the editor inserts it. */
 	private handleAskUserShortcut(data: string): boolean {
-		if (!this.shownQuestion || this.askUserQuestion) return false;
+		const state = this.shownQuestion;
+		if (
+			!state ||
+			this.askUserQuestion ||
+			this.ui.hasOverlay() ||
+			this.extensionSelector ||
+			this.extensionInput ||
+			this.extensionEditor
+		)
+			return false;
+		if (matchesAskUserAnswerKey(data)) return this.expandPendingQuestion();
+		if (
+			this.editor.getText() !== "" ||
+			this.ui.getFocusedComponent() !== this.editor ||
+			this.defaultEditor.isShowingAutocomplete()
+		)
+			return false;
 		if (this.keybindings.matches(data, "app.question.next")) {
-			if (
-				this.pendingOrder.length < 2 ||
-				this.editor.getText() !== "" ||
-				this.ui.hasOverlay() ||
-				this.ui.getFocusedComponent() !== this.editor ||
-				this.defaultEditor.isShowingAutocomplete() ||
-				this.extensionSelector ||
-				this.extensionInput ||
-				this.extensionEditor
-			)
-				return false;
-			const index = this.pendingOrder.indexOf(this.shownQuestionId!);
+			if (this.pendingOrder.length < 2) return false;
+			const index = this.pendingOrder.indexOf(state.request.requestId);
 			this.shownQuestionId = this.pendingOrder[(index + 1) % this.pendingOrder.length];
 			this.refreshAsyncWidget();
 			return true;
 		}
-		if (!matchesAskUserAnswerKey(data)) return false;
-		return this.expandPendingQuestion();
+		const unanswered = unansweredIds(state.request, state.draft);
+		const questionIndex = state.request.questions.findIndex((question) => question.id === unanswered[0]);
+		const question = state.request.questions[questionIndex];
+		if (/^[1-9]$/.test(data) && question?.options[Number(data) - 1]) {
+			this.expandPendingQuestion(state.request.requestId, questionIndex, data);
+			return true;
+		}
+		const printable = decodeKittyPrintable(data) ?? data;
+		if (
+			data.startsWith("\x1b[200~") ||
+			(printable !== "" && !/[\x00-\x1f\x7f]/.test(printable) && !/^[/!]/.test(printable))
+		) {
+			this.setComposerReply(state.request.requestId);
+		}
+		return false;
+	}
+
+	private setComposerReply(requestId?: string): void {
+		this.composerDestination = requestId === undefined ? { kind: "chat" } : { kind: "answer", requestId };
+		const state = requestId === undefined ? undefined : this.pendingQuestions.get(requestId);
+		this.defaultEditor.setReplyLabel(
+			state
+				? theme.fg(
+						"muted",
+						`↳ reply to ${state.request.questions[0].header} · ${keyText("app.message.followUp")} sends as message`,
+					)
+				: undefined,
+		);
+		this.ui.requestRender();
+	}
+
+	private handleAnswerCommand(argument: string): void {
+		const state = this.shownQuestion;
+		if (!state) {
+			this.showStatus("No question is pending.");
+			return;
+		}
+		if (argument === "skip") {
+			state.finish({
+				status: "cancelled",
+				answers: state.draft.answers ?? {},
+				unanswered: unansweredIds(state.request, state.draft),
+			});
+			this.showStatus("The user dismissed the question.");
+			return;
+		}
+		if (argument !== "") {
+			const id = /^[1-9]\d*$/.test(argument) ? this.pendingOrder[Number(argument) - 1] : undefined;
+			if (id === undefined) {
+				this.showStatus("Choose a pending question number or /answer skip.");
+				return;
+			}
+			this.expandPendingQuestion(id);
+			return;
+		}
+		if (this.pendingOrder.length === 1) {
+			this.expandPendingQuestion();
+			return;
+		}
+		const list = new SelectList(
+			this.pendingOrder.map((id) => {
+				const pending = this.pendingQuestions.get(id)!;
+				const remaining = (pending.getDeadlineAtMs?.() ?? pending.askedAtMs + pending.timeoutMs) - Date.now();
+				return {
+					value: id,
+					label: `${pending.request.questions[0].header} · ${formatCountdownLabel(Date.now() - pending.askedAtMs)} ago · ${formatCountdownLabel(remaining)} remaining`,
+				};
+			}),
+			10,
+			getSelectListTheme(),
+		);
+		const close = () => {
+			this.ui.hideOverlay();
+			this.questionSurface = "collapsed";
+		};
+		list.onCancel = close;
+		list.onSelect = ({ value }) => {
+			close();
+			this.expandPendingQuestion(value);
+		};
+		this.questionSurface = "list";
+		this.ui.showOverlay(list, { width: "80%", anchor: "bottom-center" });
 	}
 
 	/**
@@ -3900,9 +4002,14 @@ export class InteractiveMode {
 	 * mounts the full component in place of the editor. Returns false when
 	 * nothing is pending or the component is already open.
 	 */
-	private expandPendingQuestion(): boolean {
-		const state = this.shownQuestion;
+	private expandPendingQuestion(
+		requestId = this.shownQuestionId,
+		initialQuestionIndex?: number,
+		initialInput?: string,
+	): boolean {
+		const state = requestId === undefined ? undefined : this.pendingQuestions.get(requestId);
 		if (!state || this.askUserQuestion) return false;
+		this.shownQuestionId = state.request.requestId;
 		const component = new AskUserQuestionComponent(
 			state.request,
 			(response) => {
@@ -3920,6 +4027,7 @@ export class InteractiveMode {
 				timeoutMs: state.timeoutMs,
 				getDeadlineAtMs: state.getDeadlineAtMs,
 				initialDraft: state.draft,
+				initialQuestionIndex,
 				onProgress: (draft) => {
 					state.draft = draft;
 					state.onProgress?.(draft);
@@ -3934,6 +4042,7 @@ export class InteractiveMode {
 		this.editorContainer.addChild(component);
 		this.ui.setFocus(component);
 		this.ui.requestRender();
+		if (initialInput !== undefined) component.handleInput(initialInput);
 		return true;
 	}
 
@@ -3943,8 +4052,10 @@ export class InteractiveMode {
 	 * the raw text. Returns false when nothing is pending.
 	 */
 	private submitAsyncQuestionComment(text: string): boolean {
-		const state = this.shownQuestion;
+		const destination = this.composerDestination;
+		const state = destination.kind === "answer" ? this.pendingQuestions.get(destination.requestId) : undefined;
 		if (!state) return false;
+		this.setComposerReply();
 		this.editor.addToHistory?.(text);
 		this.editor.setText("");
 		state.finish(buildCommentResponse(state.request, state.draft, text));
@@ -4489,15 +4600,8 @@ export class InteractiveMode {
 					return;
 				}
 
-				// A pending async question claims ordinary text as its comment answer;
-				// slash and bash commands keep their normal routing.
-				if (
-					!text.startsWith("/") &&
-					!text.startsWith("!") &&
-					this.shownQuestion &&
-					this.submitAsyncQuestionComment(text)
-				)
-					return;
+				// Only an explicitly bound reply claims ordinary text; pre-arrival drafts and history stay chat.
+				if (!text.startsWith("/") && !text.startsWith("!") && this.submitAsyncQuestionComment(text)) return;
 
 				// Handle commands
 				if (text === "/settings") {
@@ -4561,9 +4665,9 @@ export class InteractiveMode {
 					await this.handleKeybindingsCommand();
 					return;
 				}
-				if (text === "/answer") {
+				if (text === "/answer" || text.startsWith("/answer ")) {
 					this.editor.setText("");
-					if (!this.expandPendingQuestion()) this.showStatus("No question is pending.");
+					this.handleAnswerCommand(text.slice("/answer".length).trim());
 					return;
 				}
 				if (text === "/hotkeys") {
@@ -6295,6 +6399,7 @@ export class InteractiveMode {
 	}
 
 	private async handleFollowUp(): Promise<void> {
+		this.setComposerReply();
 		const text = this.getExpandedEditorText().trim();
 		if (!text) return;
 

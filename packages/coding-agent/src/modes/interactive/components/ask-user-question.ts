@@ -40,6 +40,8 @@ export interface AskUserQuestionOptions {
 	onProgress?: (draft: QuestionDraft) => void;
 	/** Answers and comment captured earlier (an async question re-expanded from its widget). */
 	initialDraft?: QuestionDraft;
+	/** Host digit entry targets the first unanswered sub-question. */
+	initialQuestionIndex?: number;
 }
 
 export class AskUserQuestionComponent extends Container implements Focusable {
@@ -108,6 +110,8 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 			this.state.restoreDraft(opts.initialDraft);
 			if (this.state.comment !== undefined) this.commentInput.setValue(this.state.comment);
 		}
+
+		if (opts.initialQuestionIndex !== undefined) this.state.jumpToQuestion(opts.initialQuestionIndex);
 
 		const timeoutMs = opts.timeoutMs ?? request.timeoutMs;
 		if (timeoutMs > 0 || opts.getDeadlineAtMs) {
