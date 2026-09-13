@@ -997,6 +997,7 @@ export class AgentSession {
 	private readonly _messageEndsAwaitingPersistence = new Set<AgentMessage>();
 	private _isAgentRunActive = false;
 	private _toolExecutionDepth = 0;
+	private readonly _toolContextDisposers = new Set<() => void>();
 	private _promptStartPending = false;
 	private _nextInputId = 0;
 	private _idleWaitPromise: Promise<void> | undefined;
@@ -1780,6 +1781,30 @@ export class AgentSession {
 		} catch {
 			return undefined;
 		}
+	}
+
+	private _createToolContext(signal: AbortSignal | undefined) {
+		const context = this._extensionRunner.createContext();
+		const controller = new AbortController();
+		const cancellation = signal ?? context.signal;
+		const unsubscribe = this.subscribe((event) => {
+			if (event.type === "queue_update" && event.steering.length > 0) controller.abort();
+		});
+		const dispose = () => {
+			unsubscribe();
+			cancellation?.removeEventListener("abort", dispose);
+			this._toolContextDisposers.delete(dispose);
+		};
+		this._toolContextDisposers.add(dispose);
+		cancellation?.addEventListener("abort", dispose, { once: true });
+		if (cancellation?.aborted) {
+			dispose();
+		} else if (this._steeringMessages.length > 0) {
+			// Subscribe before checking, without yielding: queued steering cannot fall in a gap.
+			controller.abort();
+		}
+		Object.defineProperty(context, "steeringSignal", { value: controller.signal, enumerable: true });
+		return { context, dispose };
 	}
 
 	private _emitQueueUpdate(): void {
@@ -2927,6 +2952,7 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		for (const dispose of this._toolContextDisposers) dispose();
 		try {
 			this._probeBackScheduler.cancel("dispose");
 			this.abortRetry();
@@ -7583,7 +7609,8 @@ export class AgentSession {
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
 		const runner = this._extensionRunner;
-		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner);
+		const createToolContext = (signal: AbortSignal | undefined) => this._createToolContext(signal);
+		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner, createToolContext);
 		const wrappedBuiltInTools = wrapRegisteredTools(
 			Array.from(this._baseToolDefinitions.values())
 				.filter((definition) => isAllowedTool(definition.name))
@@ -7592,6 +7619,7 @@ export class AgentSession {
 					sourceInfo: createSyntheticSourceInfo(`<builtin:${definition.name}>`, { source: "builtin" }),
 				})),
 			runner,
+			createToolContext,
 		);
 
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));

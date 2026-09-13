@@ -1,5 +1,27 @@
 # Core Extensions Changes
 
+## 2026-09-13 - Optional steering-specific tool signal (senpi#1637)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.steeringSignal`, separate from cancellation.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` accepts an optional invocation-context factory and disposes its scope in `finally`, including thrown and detached results. Callers without the factory retain their prior context behavior.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` lets foreground tools observe steering without polling or cancelling work.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` is the shared invocation boundary for built-in and extension tools, so it can remove session-owned subscriptions at settlement.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned context contract.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` adapts every registered tool before execution, outside an individual extension's lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.signal` neighbours.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: wrapper signatures and the execute call; tool-result metadata handling remains unchanged.
+
 ## 2026-09-10 - ctx.editAssistantMessage
 
 ### What changed

@@ -476,6 +476,11 @@ export interface ExtensionContext {
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
+	/**
+	 * Invocation-scoped notification that steering is queued. Never a cancellation signal.
+	 * Available during tool execution; follow-up messages do not trigger it.
+	 */
+	readonly steeringSignal?: AbortSignal;
 	/** Abort the current agent operation */
 	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */
