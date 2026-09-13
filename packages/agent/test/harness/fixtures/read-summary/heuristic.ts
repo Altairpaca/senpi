@@ -1,84 +1,14 @@
+import { scanBraces } from "./brace-scanner.ts";
+import { scanPython } from "./python-scanner.ts";
 import type { Fold } from "./scorer.ts";
 
-export type Prototype = { readonly text: string; readonly folds: readonly Fold[]; readonly reason: string };
-
-// Evaluation only. Ambiguous lexical constructs fall back instead of guessing.
-function braceRanges(source: string): Fold[] | undefined {
-	const ranges: Fold[] = [];
-	const stack: { char: string; line: number }[] = [];
-	let line = 1;
-	let quote = "";
-	let blockStart = 0;
-	let lineComment = false;
-	for (let i = 0; i < source.length; i++) {
-		const char = source[i];
-		const next = source[i + 1];
-		if (char === "\n") {
-			line++;
-			lineComment = false;
-		}
-		if (lineComment) continue;
-		if (blockStart) {
-			if (char === "/" && next === "*") return undefined; // Rust nested comments need a parser.
-			if (char === "*" && next === "/") {
-				if (line - blockStart >= 5) ranges.push({ start: blockStart + 1, end: line - 1 });
-				blockStart = 0;
-				i++;
-			}
-			continue;
-		}
-		if (quote) {
-			if (char === "\\") {
-				i++;
-				continue;
-			}
-			if (char === quote) quote = "";
-			else if (char === "\n") return undefined;
-			continue;
-		}
-		if (char === "`") return undefined;
-		if (char === '"' || char === "'") {
-			quote = char;
-			continue;
-		}
-		if (char === "/") {
-			if (next === "/") {
-				lineComment = true;
-				i++;
-				continue;
-			}
-			if (next === "*") {
-				blockStart = line;
-				i++;
-				continue;
-			}
-			return undefined; // Division versus regexp is intentionally unsupported.
-		}
-		if (char === "{" || char === "[") stack.push({ char, line });
-		if (char === "}" || char === "]") {
-			const open = stack.pop();
-			if (!open || (open.char === "{" ? char !== "}" : char !== "]")) return undefined;
-			if (line - open.line - 1 >= 4) ranges.push({ start: open.line + 1, end: line - 1 });
-		}
-	}
-	return quote || blockStart || stack.length ? undefined : ranges;
-}
-
-function indentRanges(source: string): Fold[] | undefined {
-	if (/\t|'''|"""|\\\n/.test(source)) return undefined;
-	const lines = source.split("\n");
-	const ranges: Fold[] = [];
-	for (let i = 0; i < lines.length; i++) {
-		if (!/^\s*(?:async )?def \w+\([^#]*\)(?: -> [^:]+)?:\s*$/.test(lines[i])) continue;
-		const indent = lines[i].length - lines[i].trimStart().length;
-		let end = i + 1;
-		while (end < lines.length && (!lines[end].trim() || lines[end].length - lines[end].trimStart().length > indent))
-			end++;
-		while (end > i + 1 && !lines[end - 1].trim()) end--;
-		if (end - i - 2 >= 4) ranges.push({ start: i + 2, end: end - 1 });
-	}
-	return ranges;
-}
+export type Prototype = {
+	readonly text: string;
+	readonly folds: readonly Fold[];
+	readonly reason: string;
+	readonly fallback_reason?: string;
+	readonly scanned_folds: number;
+};
 
 export function renderPrototype(source: string, folds: readonly Fold[]): string {
 	const lines = source.split("\n");
@@ -98,7 +28,13 @@ export function renderPrototype(source: string, folds: readonly Fold[]): string 
 }
 
 export function heuristic(source: string, language: string): Prototype {
-	const raw = (reason: string): Prototype => ({ text: source, folds: [], reason });
+	const raw = (reason: string, scanned_folds = 0): Prototype => ({
+		text: source,
+		folds: [],
+		reason,
+		fallback_reason: reason,
+		scanned_folds,
+	});
 	const lines = source.split("\n");
 	if (language === "markdown" || language === "txt") return raw("prose_exempt");
 	if (lines.length < 100 || lines.length > 2000 || Buffer.byteLength(source) > 51200) return raw("size_gate");
@@ -111,9 +47,9 @@ export function heuristic(source: string, language: string): Prototype {
 			throw error;
 		}
 	}
-	const ranges = language === "python" ? indentRanges(source) : braceRanges(source);
-	if (!ranges) return raw("ambiguous_lexing");
-	const ordered = ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+	const scan = language === "python" ? scanPython(source) : scanBraces(source, language);
+	if (scan.fallbackReason) return raw(scan.fallbackReason);
+	const ordered = [...scan.ranges].sort((a, b) => a.start - b.start || b.end - a.end);
 	let selected = ordered.filter(
 		(range, i) => !ordered.slice(0, i).some((parent) => parent.start <= range.start && parent.end >= range.end),
 	);
@@ -135,9 +71,11 @@ export function heuristic(source: string, language: string): Prototype {
 				break;
 			}
 		}
-		if (!refined) return raw("visible_budget_unreachable");
+		if (!refined) return raw("visible_budget_unreachable", ordered.length);
 	}
-	if (!selected.length || visible(selected) > 100) return raw("skeleton_exceeds_budget");
+	if (!selected.length || visible(selected) > 100) return raw("skeleton_exceeds_budget", ordered.length);
 	const text = renderPrototype(source, selected);
-	return text.length < source.length ? { text, folds: selected, reason: "folded" } : raw("no_byte_saving");
+	return text.length < source.length
+		? { text, folds: selected, reason: "folded", scanned_folds: ordered.length }
+		: raw("no_byte_saving", ordered.length);
 }

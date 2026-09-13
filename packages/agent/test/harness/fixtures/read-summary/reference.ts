@@ -13,7 +13,7 @@ const nodeSchema = z.object({
 	endLine: z.number(),
 });
 export type SourceNode = z.infer<typeof nodeSchema>;
-const referenceSchema = z.object({
+export const referenceSchema = z.object({
 	settings: z.record(z.string(), z.unknown()),
 	results: z.array(
 		z.object({

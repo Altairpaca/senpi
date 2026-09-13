@@ -4,17 +4,21 @@ import { dirname, join } from "node:path";
 import { createReadTool } from "../../../../../coding-agent/src/core/tools/read.ts";
 import { measurePrototypeBinary } from "./binary-sizes.ts";
 import { boundaryFixtures } from "./boundary-fixtures.ts";
-import { languages, loadCorpus } from "./corpus.ts";
+import { loadCorpus } from "./corpus.ts";
+import { loadFrozenBaseline, loadReadGate } from "./frozen-baseline.ts";
 import { heuristic } from "./heuristic.ts";
+import { selectLanguages } from "./language-selections.ts";
 import { annotate, compareOmp, retainedSourceExact } from "./oracle.ts";
 import { runReference, tokenize } from "./reference.ts";
-import { type Sample, selectEngine, sha256, validBoundaries } from "./scorer.ts";
+import { sha256, validBoundaries } from "./scorer.ts";
 
 export async function bakeoff(options: {
 	readonly input: string;
 	readonly manifestHash: string;
 	readonly omp: string;
 	readonly out: string;
+	readonly baseline?: string;
+	readonly gate?: string;
 }) {
 	const startedAt = new Date().toISOString();
 	const out = dirname(options.out);
@@ -35,24 +39,28 @@ export async function bakeoff(options: {
 		return { ...fixture, file, sha256: sha256(fixture.source), path: fixture.id };
 	});
 	const all = [...entries, ...synthetic];
-	const reference = runReference(options.omp, all);
+	const frozen = options.baseline ? loadFrozenBaseline(options.baseline) : undefined;
+	const gateReceipt = options.gate ? loadReadGate(options.gate) : undefined;
+	const reference = frozen?.reference ?? runReference(options.omp, all);
 	json("reference-command.json", {
 		command: reference.command,
 		readToolSha256: reference.readToolSha256,
 		settings: reference.settings,
 	});
 	// Freeze source-derived annotations before executing or scoring any candidate.
-	const annotations = all.map((entry) => {
-		const ref = reference.results.find((result) => result.id === entry.id);
-		if (!ref) throw new Error("reference_unavailable");
-		if (ref.sourceSha256 !== entry.sha256) throw new Error("reference_source_hash_mismatch");
-		return {
-			id: entry.id,
-			source_sha256: entry.sha256,
-			ranges: annotate(entry.source, entry.language, ref.nodes),
-			reference_annotation_errors: ref.annotationErrors,
-		};
-	});
+	const annotations =
+		frozen?.annotations ??
+		all.map((entry) => {
+			const ref = reference.results.find((result) => result.id === entry.id);
+			if (!ref) throw new Error("reference_unavailable");
+			if (ref.sourceSha256 !== entry.sha256) throw new Error("reference_source_hash_mismatch");
+			return {
+				id: entry.id,
+				source_sha256: entry.sha256,
+				ranges: annotate(entry.source, entry.language, ref.nodes),
+				reference_annotation_errors: ref.annotationErrors,
+			};
+		});
 	const annotationsHash = sha256(JSON.stringify(annotations));
 	json("source-annotations.json", { sha256: annotationsHash, annotations });
 	const rawTool = createReadTool(options.input);
@@ -61,6 +69,8 @@ export async function bakeoff(options: {
 		const ref = reference.results.find((result) => result.id === entry.id);
 		const annotation = annotations.find((item) => item.id === entry.id);
 		if (!ref || !annotation) throw new Error("missing_reference_or_annotation");
+		if (annotation.source_sha256 !== entry.sha256 || ref.sourceSha256 !== entry.sha256)
+			throw new Error("frozen_source_mismatch");
 		if (sha256(readFileSync(entry.file)) !== entry.sha256) throw new Error("stale_corpus_hash");
 		const rawStart = performance.now();
 		const rawResult = await rawTool.execute(entry.id, { path: entry.file });
@@ -69,6 +79,7 @@ export async function bakeoff(options: {
 			.filter((content) => content.type === "text")
 			.map((content) => content.text)
 			.join("\n");
+		if (frozen && frozen.raw.get(entry.id) !== raw) throw new Error("frozen_raw_output_changed");
 		const candidateStart = performance.now();
 		const candidate = heuristic(entry.source, entry.language);
 		const candidateMs = performance.now() - candidateStart;
@@ -83,7 +94,13 @@ export async function bakeoff(options: {
 		writeFileSync(join(out, "omp", `${entry.id}.txt`), ref.text);
 		writeFileSync(join(out, "candidate", `${entry.id}.txt`), candidate.text);
 		json(`omp/${entry.id}.json`, ref.result);
+		const oracleHidden = new Set(
+			annotation.ranges
+				.filter((range) => range.end - range.start + 1 >= 4)
+				.flatMap((range) => Array.from({ length: range.end - range.start + 1 }, (_, i) => range.start + i)),
+		);
 		rows.push({
+			minimumOracleSkeleton: entry.source.split("\n").length - oracleHidden.size,
 			entry,
 			raw,
 			candidate,
@@ -129,54 +146,17 @@ export async function bakeoff(options: {
 			synthetic: row.entry.id.startsWith("boundary-"),
 			allowed: row.allowed,
 			candidate: row.candidate.folds,
+			fallback_reason: row.candidate.fallback_reason,
+			scanned_folds: row.candidate.scanned_folds,
+			minimum_oracle_skeleton_lines: row.minimumOracleSkeleton,
 			retained_exact: row.exact,
 			valid: row.valid,
 			omp: row.referenceComparison,
 		})),
 	});
-	const selections = languages.map((language) => {
-		if (language === "markdown")
-			return { language, engine: "raw", status: "prose_exempt", reason: "markdown_and_txt_remain_raw" };
-		const real = samples.filter((row) => row.entry.language === language && !row.entry.id.startsWith("boundary-"));
-		const invalid = samples.filter((row) => row.entry.language === language && !row.valid).map((row) => row.entry.id);
-		const scored: Sample[] = real.map((row) => ({
-			path: row.entry.file,
-			source: row.entry.source,
-			sha256: row.entry.sha256,
-			folds: row.candidate.folds,
-			allowed: row.allowed,
-			retainedExact: row.exact,
-			rawTokens: row.rawTokens,
-			ompTokens: row.ompTokens,
-			candidateTokens: row.candidateTokens,
-		}));
-		const result = selectEngine({
-			samples: scored,
-			referenceAvailable: true,
-			tokenizerExact: true,
-			embeddedBytes: 0,
-			budget: corpus.max_embedded_delta_bytes,
-		});
-		if (language === "go")
-			return {
-				language,
-				...result,
-				reason: "measurement_blocked_insufficient_corpus (2 tracked Go files, both <100 lines)",
-				owner_action: "additional source corpus under OQ1",
-				measured_files: 0,
-			};
-		return {
-			language,
-			...result,
-			...(invalid.length ? { engine: "raw", status: "pending_owner", reason: "wasm_candidate_pending_owner" } : {}),
-			measured_files: real.length,
-			invalid_boundaries: invalid,
-			heuristic_rejection: invalid.length ? "invalid_boundaries" : result.reason,
-			total_saved_tokens: real.reduce((n, row) => n + row.rawTokens - row.candidateTokens, 0),
-		};
-	});
+	const selections = selectLanguages(samples, corpus.max_embedded_delta_bytes);
 	const csv = [
-		"id,language,sha256,synthetic,source_bytes,raw_tokens,omp_tokens,candidate_tokens,saved_token_fraction,omp_saved_token_fraction,raw_ms,omp_ms,candidate_ms,valid_boundaries,candidate_reason",
+		"id,language,sha256,synthetic,source_bytes,raw_tokens,omp_tokens,candidate_tokens,saved_token_fraction,omp_saved_token_fraction,raw_ms,omp_ms,candidate_ms,valid_boundaries,candidate_reason,fallback_reason,scanned_folds,emitted_folds,minimum_oracle_skeleton_lines",
 	];
 	for (const row of samples)
 		csv.push(
@@ -196,16 +176,25 @@ export async function bakeoff(options: {
 				row.candidateMs,
 				row.valid,
 				row.candidate.reason,
+				row.candidate.fallback_reason ?? "",
+				row.candidate.scanned_folds,
+				row.candidate.folds.length,
+				row.minimumOracleSkeleton,
 			].join(","),
 		);
 	writeFileSync(join(out, "per-file.csv"), `${csv.join("\n")}\n`);
 	json("corpus.json", { ...corpus, input_manifest_sha256: manifestSha256, tokenizer: reference.tokenizer });
+	if (frozen && sha256(readFileSync(join(out, "corpus.json"))) !== frozen.corpusSha256)
+		throw new Error("frozen_corpus_changed");
 	const binary = measurePrototypeBinary(out);
 	json("binary-sizes.json", binary);
 	const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 	const selection = {
 		version: 1,
 		gate_status: "OQ1_unresolved_defaults_used",
+		gate_receipt: gateReceipt,
+		reference_mode: frozen ? "frozen_actual_ReadTool_outputs" : "live_actual_ReadTool",
+		reference_latency_scope: frozen ? "original baseline observation, not rerun latency" : "current run",
 		wasm_enabled: false,
 		status: "frozen_measurement_with_per_language_raw_fallbacks",
 		head_sha: head,

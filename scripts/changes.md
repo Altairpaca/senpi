@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `scripts/qa/omp-item1.ts`: adds actual-read bake-off and invalid-measurement entry points backed by test-only adapters in `packages/agent/test/harness/fixtures/read-summary/`.
+- `scripts/qa/omp-item1.ts`: adds actual-read bake-off and invalid-measurement entry points backed by test-only adapters in `packages/agent/test/harness/fixtures/read-summary/`. Candidate-only reruns validate frozen raw/omp captures and oracle hashes, cite the OQ1 receipt, and report actual balanced-brace/indent folding separately from per-file fallbacks.
 
 ### Why
 

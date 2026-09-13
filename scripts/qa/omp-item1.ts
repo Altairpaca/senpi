@@ -17,7 +17,8 @@ try {
 			const manifestHash = process.env.OMP_BAKEOFF_CORPUS_SHA256;
 			const omp = process.env.OMP_BAKEOFF_REFERENCE;
 			if (!input || !manifestHash || !omp) throw new Error("Execution-owned input, frozen manifest SHA and omp copy are required: OMP_BAKEOFF_INPUT, OMP_BAKEOFF_CORPUS_SHA256, OMP_BAKEOFF_REFERENCE");
-			const result = await bakeoff({ input, manifestHash, omp, out });
+			const result = await bakeoff({ input, manifestHash, omp, out,
+				baseline: process.env.OMP_BAKEOFF_BASELINE, gate: process.env.OMP_BAKEOFF_GATE });
 			console.log(JSON.stringify({ status: result.status, languages: result.languages, out }));
 			break;
 		}

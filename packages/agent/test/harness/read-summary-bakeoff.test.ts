@@ -33,6 +33,67 @@ function changeSamples(change: (sample: Sample) => Sample): Measurement {
 }
 
 describe("read-summary bake-off gate (#1639)", () => {
+	it.each(["ts", "js", "rust", "python"])(
+		"folds real lexical constructs rather than abandoning %s files",
+		(language) => {
+			const body =
+				language === "rust"
+					? [
+							"fn example<'a>(value: &'a str) -> &'a str {",
+							"  /* outer /* nested } */ comment */",
+							"  let character = '}';",
+							'  let raw = r##"{ raw }"##;',
+							'  let escaped = "\\\\\\"}";',
+							"  let ratio = 4 / 2;",
+							"  let another = 3;",
+							"  value",
+							"}",
+						]
+					: language === "python"
+						? [
+								"def example(value):",
+								'    """A docstring with { braces }.',
+								'    Another line."""',
+								'    text = f"value {value}"',
+								"    ratio = 4 / 2",
+								"    other = 3",
+								"    value += other",
+								"    return value",
+								"",
+							]
+						: [
+								"function example(value) {",
+								"  /* a } comment */",
+								"  const ratio = 4 / 2;",
+								"  const regex = /[{}\\\\/]+/g;",
+								`  const text = \`value \${(() => { return \`nested \${1}\`; })()}\`;`,
+								'  const escaped = "\\\\\\"}";',
+								"  const other = 3;",
+								"  return value;",
+								"}",
+							];
+			const source = Array.from({ length: 20 }, (_, i) => body.join("\n").replace("example", `example${i}`)).join(
+				"\n",
+			);
+			const result = heuristic(source, language);
+			expect(result.folds.length).toBeGreaterThan(0);
+			expect(retainedSourceExact(source, result)).toBe(true);
+			for (const fold of result.folds) {
+				expect(fold.start % 9).toBe(2);
+				expect(fold.end % 9).toBe(language === "python" ? 7 : 8);
+			}
+		},
+	);
+	it("falls back on a malformed Python file instead of exposing invalid folds", () => {
+		const source = `${Array.from({ length: 20 }, (_, i) =>
+			[`def f${i}():`, ...Array.from({ length: 6 }, () => "    x = 1")].join("\n"),
+		).join("\n")}\n"unterminated`;
+		const result = heuristic(source, "python");
+		expect(result.folds).toEqual([]);
+		expect(result.text).toBe(source);
+		expect(result.reason).toBe("python_unterminated_string");
+		expect(result.fallback_reason).toBe("python_unterminated_string");
+	});
 	it("prototype retains exact bytes and is deterministic on strings containing braces", () => {
 		const source = Array.from({ length: 20 }, (_, i) =>
 			[`function f${i}() {`, ...Array.from({ length: 6 }, () => '  let x = "} {";'), "}"].join("\n"),
