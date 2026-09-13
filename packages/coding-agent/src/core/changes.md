@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-13 - Pending-question cycling keybinding (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts` adds `app.question.next`, default `alt+down`, for cycling pending requests from an empty composer. Tab autocomplete and Shift+Tab thinking cycling are unchanged.
+
+### Why
+
+- Multiple requests need a configurable cycling chord without taking existing editor actions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts` owns the app binding table and its TUI type augmentation; host dispatch and hints must share that declaration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: AppKeybindings and KEYBINDINGS question entries.
+
 ## 2026-09-13 - Invocation-scoped steering notification (senpi#1637)
 
 ### What changed

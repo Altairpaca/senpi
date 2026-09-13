@@ -832,12 +832,16 @@ type HostUiCapableRuntime = {
 
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
 	onProgress?: (draft: QuestionDraft) => void;
+	getDeadlineAtMs?: () => number;
 };
 
 /** A waitForAnswer=false question parked behind the collapsed editor widget. */
 type AsyncQuestionState = {
 	request: QuestionRequest;
 	timeoutMs: number;
+	askedAtMs: number;
+	completion: Promise<QuestionResponse>;
+	getDeadlineAtMs?: () => number;
 	onProgress?: (draft: QuestionDraft) => void;
 	/** Last draft seen from the expanded component; kept across Esc so typed comments carry it. */
 	draft: QuestionDraft;
@@ -1027,7 +1031,14 @@ export class InteractiveMode {
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private askUserQuestion: AskUserQuestionComponent | undefined = undefined;
-	private asyncQuestion: AsyncQuestionState | undefined = undefined;
+	private pendingQuestions = new Map<string, AsyncQuestionState>();
+	private pendingOrder: string[] = [];
+	private shownQuestionId: string | undefined;
+	private questionSurface: "collapsed" | "list" | "expanded" = "collapsed";
+
+	private get shownQuestion(): AsyncQuestionState | undefined {
+		return this.shownQuestionId === undefined ? undefined : this.pendingQuestions.get(this.shownQuestionId);
+	}
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -3311,11 +3322,13 @@ export class InteractiveMode {
 		if (this.askUserQuestion) {
 			this.hideQuestionOverlay();
 		}
-		this.asyncQuestion?.finish({
-			status: "cancelled",
-			answers: {},
-			unanswered: this.asyncQuestion.request.questions.map((question) => question.id),
-		});
+		for (const state of this.pendingQuestions.values()) {
+			state.finish({
+				status: "cancelled",
+				answers: {},
+				unanswered: state.request.questions.map((question) => question.id),
+			});
+		}
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
@@ -3770,6 +3783,7 @@ export class InteractiveMode {
 			this.askUserQuestion = new AskUserQuestionComponent(request, (response) => finish(response), {
 				tui: this.ui,
 				timeoutMs: opts?.timeout ?? request.timeoutMs,
+				getDeadlineAtMs: opts?.getDeadlineAtMs,
 				onProgress: opts?.onProgress,
 			});
 			this.disposeActiveSelector();
@@ -3786,69 +3800,98 @@ export class InteractiveMode {
 	private hideQuestionOverlay(): void {
 		this.askUserQuestion?.dispose();
 		this.askUserQuestion = undefined;
+		this.questionSurface = "collapsed";
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
 	}
 
-	/**
-	 * Park a waitForAnswer=false question behind a one-line widget above the
-	 * editor. The turn keeps running; the promise settles when the user submits
-	 * from the expanded component, types an ordinary reply (comment), the idle
-	 * countdown expires, or the caller aborts. A newer async question supersedes
-	 * a pending one, which resolves as cancelled.
-	 */
+	/** Queue an async request without replacing another request or taking editor focus. */
 	private showAsyncQuestion(request: QuestionRequest, opts?: QuestionOverlayOptions): Promise<QuestionResponse> {
-		return new Promise((resolve) => {
-			const cancelled = (): QuestionResponse => ({
-				status: "cancelled",
-				answers: {},
-				unanswered: request.questions.map((question) => question.id),
-			});
-			if (opts?.signal?.aborted) {
-				resolve(cancelled());
-				return;
-			}
-			this.asyncQuestion?.finish(cancelled());
-			const onAbort = () => state.finish(cancelled());
-			const state: AsyncQuestionState = {
-				request,
-				timeoutMs: opts?.timeout ?? request.timeoutMs,
-				onProgress: opts?.onProgress,
-				draft: { answers: {} },
-				finish: (response) => {
-					if (this.asyncQuestion !== state) return;
-					this.asyncQuestion = undefined;
-					opts?.signal?.removeEventListener("abort", onAbort);
-					if (this.askUserQuestion) this.hideQuestionOverlay();
-					this.setExtensionWidget(ASK_USER_WIDGET_KEY, undefined);
-					resolve(response);
-				},
-			};
-			this.asyncQuestion = state;
-			opts?.signal?.addEventListener("abort", onAbort, { once: true });
-			this.refreshAsyncWidget(state);
+		const existing = this.pendingQuestions.get(request.requestId);
+		if (existing) return existing.completion;
+		const cancelled = (): QuestionResponse => ({
+			status: "cancelled",
+			answers: {},
+			unanswered: request.questions.map((question) => question.id),
 		});
+		if (opts?.signal?.aborted) return Promise.resolve(cancelled());
+		const completion = Promise.withResolvers<QuestionResponse>();
+		const onAbort = () => state.finish(cancelled());
+		const state: AsyncQuestionState = {
+			request,
+			timeoutMs: opts?.timeout ?? request.timeoutMs,
+			askedAtMs: Date.now(),
+			completion: completion.promise,
+			getDeadlineAtMs: opts?.getDeadlineAtMs,
+			onProgress: opts?.onProgress,
+			draft: { answers: {} },
+			finish: (response) => {
+				if (this.pendingQuestions.get(request.requestId) !== state) return;
+				this.pendingQuestions.delete(request.requestId);
+				this.pendingOrder = this.pendingOrder.filter((id) => id !== request.requestId);
+				opts?.signal?.removeEventListener("abort", onAbort);
+				if (this.shownQuestionId === request.requestId) {
+					if (this.questionSurface === "expanded") this.hideQuestionOverlay();
+					this.shownQuestionId = this.pendingOrder[0];
+				}
+				this.refreshAsyncWidget();
+				completion.resolve(response);
+			},
+		};
+		this.pendingQuestions.set(request.requestId, state);
+		this.pendingOrder.push(request.requestId);
+		this.shownQuestionId ??= request.requestId;
+		opts?.signal?.addEventListener("abort", onAbort, { once: true });
+		this.refreshAsyncWidget();
+		return completion.promise;
 	}
 
-	/** (Re)render the collapsed widget with a fresh idle countdown. */
-	private refreshAsyncWidget(state: AsyncQuestionState): void {
-		this.setExtensionWidget(ASK_USER_WIDGET_KEY, (tui) => {
-			const startedAt = Date.now();
-			return new AskUserAsyncWidget({
-				request: state.request,
-				draft: state.draft,
-				timeoutMs: state.timeoutMs,
-				tui,
-				onExpire: () => state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - startedAt)),
-			});
-		});
+	/** Only the visible surface ticks; extension deadlines remain authoritative. */
+	private refreshAsyncWidget(): void {
+		const state = this.shownQuestion;
+		if (!state || this.questionSurface === "expanded") {
+			this.setExtensionWidget(ASK_USER_WIDGET_KEY, undefined);
+			return;
+		}
+		this.setExtensionWidget(
+			ASK_USER_WIDGET_KEY,
+			(tui) =>
+				new AskUserAsyncWidget({
+					request: state.request,
+					draft: state.draft,
+					timeoutMs: state.timeoutMs,
+					getDeadlineAtMs: state.getDeadlineAtMs,
+					pendingCount: this.pendingOrder.length,
+					tui,
+					onExpire: () =>
+						state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - state.askedAtMs)),
+				}),
+		);
 	}
 
-	/** Editor shortcut: expand the pending async question into the full component. */
+	/** Intercept question chords before app actions, without taking autocomplete keys. */
 	private handleAskUserShortcut(data: string): boolean {
-		if (!this.asyncQuestion || this.askUserQuestion || !matchesAskUserAnswerKey(data)) return false;
+		if (!this.shownQuestion || this.askUserQuestion) return false;
+		if (this.keybindings.matches(data, "app.question.next")) {
+			if (
+				this.pendingOrder.length < 2 ||
+				this.editor.getText() !== "" ||
+				this.ui.hasOverlay() ||
+				this.ui.getFocusedComponent() !== this.editor ||
+				this.defaultEditor.isShowingAutocomplete() ||
+				this.extensionSelector ||
+				this.extensionInput ||
+				this.extensionEditor
+			)
+				return false;
+			const index = this.pendingOrder.indexOf(this.shownQuestionId!);
+			this.shownQuestionId = this.pendingOrder[(index + 1) % this.pendingOrder.length];
+			this.refreshAsyncWidget();
+			return true;
+		}
+		if (!matchesAskUserAnswerKey(data)) return false;
 		return this.expandPendingQuestion();
 	}
 
@@ -3858,23 +3901,24 @@ export class InteractiveMode {
 	 * nothing is pending or the component is already open.
 	 */
 	private expandPendingQuestion(): boolean {
-		const state = this.asyncQuestion;
+		const state = this.shownQuestion;
 		if (!state || this.askUserQuestion) return false;
 		const component = new AskUserQuestionComponent(
 			state.request,
 			(response) => {
-				if (this.asyncQuestion !== state) return;
+				if (this.pendingQuestions.get(state.request.requestId) !== state) return;
 				if (response.status !== "cancelled") {
 					state.finish(response);
 					return;
 				}
 				// Esc collapses back to the widget; the question stays pending.
 				this.hideQuestionOverlay();
-				this.refreshAsyncWidget(state);
+				this.refreshAsyncWidget();
 			},
 			{
 				tui: this.ui,
 				timeoutMs: state.timeoutMs,
+				getDeadlineAtMs: state.getDeadlineAtMs,
 				initialDraft: state.draft,
 				onProgress: (draft) => {
 					state.draft = draft;
@@ -3883,6 +3927,8 @@ export class InteractiveMode {
 			},
 		);
 		this.askUserQuestion = component;
+		this.questionSurface = "expanded";
+		this.refreshAsyncWidget();
 		this.disposeActiveSelector();
 		this.editorContainer.clear();
 		this.editorContainer.addChild(component);
@@ -3897,7 +3943,7 @@ export class InteractiveMode {
 	 * the raw text. Returns false when nothing is pending.
 	 */
 	private submitAsyncQuestionComment(text: string): boolean {
-		const state = this.asyncQuestion;
+		const state = this.shownQuestion;
 		if (!state) return false;
 		this.editor.addToHistory?.(text);
 		this.editor.setText("");
@@ -4448,7 +4494,7 @@ export class InteractiveMode {
 				if (
 					!text.startsWith("/") &&
 					!text.startsWith("!") &&
-					this.asyncQuestion &&
+					this.shownQuestion &&
 					this.submitAsyncQuestionComment(text)
 				)
 					return;

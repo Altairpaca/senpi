@@ -115,6 +115,7 @@ function startQuestion(
 		signal: controller.signal,
 		deliver: request.waitForAnswer ? "tool-result" : "user-message",
 		hardDeadlineAtMs: Date.now() + 7_200_000,
+		getDeadlineAtMs: () => pending.deadlineAtMs,
 		onProgress: (progress) => {
 			draft = { ...draft, ...progress, answers: progress.answers ?? draft.answers };
 			pending.touch(draft);

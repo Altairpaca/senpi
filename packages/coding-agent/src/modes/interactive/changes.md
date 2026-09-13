@@ -1,3 +1,24 @@
+## 2026-09-13 - Request-id keyed pending-question queue (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` holds a FIFO map and a pinned shown request, removes only the settled id, preserves per-request drafts, and restores editor focus without expanding the next question. `app.question.next` cycles only from an empty, unobstructed composer.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` shows the pending request count and next-question hint. The widget and `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` share an absolute countdown; an extension deadline makes it display-only. Only the mounted surface ticks.
+- All 18 characterization rows remain unchanged and green in this increment.
+
+### Why
+
+- A second question must not cancel the first or steal focus, and re-rendering must not replace the extension's authoritative idle deadline.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns the editor, widget slot, input interception, and overlay focus. The extension can provide its deadline but cannot queue these host-owned surfaces.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: question state fields, resetExtensionUI, showAsyncQuestion, refreshAsyncWidget, expandPendingQuestion, and composer comment routing.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` and `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: countdown construction and pending-count rendering.
+
 ## 2026-09-13 - Ask-user overlay: no focus traps in the own-answer and Submit editors, draft restore on re-expansion (senpi#1641)
 
 ### What changed

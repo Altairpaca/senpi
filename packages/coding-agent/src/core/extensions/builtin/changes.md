@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## 2026-09-13 - Expose authoritative ask-user idle deadlines (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/registry.ts` adds the optional `QuestionDialogOptions.getDeadlineAtMs` getter. `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` supplies it from the pending state machine, so TUI countdowns display rather than own the idle timeout.
+
+### Why
+
+- Recreating a widget or expanding a request must not restart a separate competing timeout.
+
+### Why an extension could not handle it
+
+- These files implement the builtin's existing pending-state-to-UI handoff. The additive option keeps QuestionRequest and transport frames unchanged.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/registry.ts`: QuestionDialogOptions; `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: startQuestion options.
+
 ## 2026-09-11 - Partial ask-user answers resolve consistently
 
 ### What changed

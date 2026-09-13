@@ -30,6 +30,7 @@ export interface AppKeybindings {
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
 	"app.question.answer": true;
+	"app.question.next": true;
 	"app.clipboard.pasteImage": true;
 	"app.session.new": true;
 	"app.session.tree": true;
@@ -147,6 +148,10 @@ export const KEYBINDINGS = {
 	"app.question.answer": {
 		defaultKeys: "alt+a",
 		description: "Open the pending question",
+	},
+	"app.question.next": {
+		defaultKeys: "alt+down",
+		description: "Show the next pending question",
 	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",
