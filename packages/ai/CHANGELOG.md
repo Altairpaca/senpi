@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added a Devin provider-module override and static Cursor/Devin public subpaths for standalone Bun consumers, keeping Node-only implementations outside browser-facing root exports ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 ### Changed
 
 ### Fixed

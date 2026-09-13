@@ -19,6 +19,25 @@
 
 - The Windows and non-Windows compile argv in `scripts/build-binaries.sh`.
 
+## 2026-09-13 - Keep Bun provider registration outside Node bundles
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` resolves literal `bun/runtime-modules` imports to an empty module only in its Node esbuild graph.
+- Bundle coverage tests require positive implementation bytes reachable from both compiled entries; relocated binary probes consume terminal assistant errors in classic and shared RPC.
+
+### Why
+
+- esbuild follows literal imports even inside the worker's `isBunBinary` branch and would otherwise inline all three Node-only provider modules and the AWS SDK into its unsplit Node worker.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` establishes distribution bundle membership at build time, before extension execution.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs` plugin list and Bun-only import resolver.
+
 ## 2026-09-12 - Chord keeps upstream's release identity instead of the fork CalVer
 
 ### What changed

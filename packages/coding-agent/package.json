@@ -18,6 +18,10 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./bun-runtime": {
+			"types": "./dist/bun/runtime-modules.d.ts",
+			"import": "./dist/bun/runtime-modules.js"
+		},
 		"./rpc-entry": {
 			"import": "./dist/rpc-entry.js"
 		},
