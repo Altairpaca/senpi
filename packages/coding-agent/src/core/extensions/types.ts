@@ -847,6 +847,12 @@ export interface ResourcesDiscoverEvent {
 	type: "resources_discover";
 	cwd: string;
 	reason: "startup" | "reload";
+	/**
+	 * Capability signal: this host accepts `{ path, scope }` entries in the result. Hosts that
+	 * predate scoped entries omit the field, so a handler that must run on both returns plain
+	 * paths when it is absent.
+	 */
+	scopedEntries: true;
 }
 
 /**
