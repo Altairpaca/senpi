@@ -1,24 +1,5 @@
 # Core Extensions Changes
 
-## 2026-09-13 - Native compiled-Bun extension importer
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/loader.ts` creates an asynchronous batch importer: compiled Bun uses native runtime modules, while Node lazily imports `jiti/static` through a variable specifier. Node SEA, bundled Node, source TypeScript and unbundled Node retain their existing options and `moduleCache: false`.
-- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts` registers host namespace objects, resolves imports from each real file directory, and assigns each batch a monotonically increasing module namespace. Bun rewrites static imports without bundling dependency instances; runtime hooks keep computed relative imports in the same generation. Real-file import metadata is exposed without changing Bun's internal referrer. Only the existing per-cwd factory cache reuses factories.
-
-### Why
-
-- `packages/coding-agent/src/core/extensions/loader.ts` previously put jiti's transformer in the standalone compiled graph. Fresh root imports alone would leave helpers stale and duplicate host modules would break reference identity.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/extensions/loader.ts` chooses the importer before extension code can run. Generation isolation and host namespace registration belong to that host-owned boundary.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/extensions/loader.ts`: importer type, runtime branch, asynchronous batch cache and import call. The Node option branches and per-cwd factory cache policy must remain intact.
-
 ## 2026-09-13 - `resources_discover` advertises scoped-entry support (senpi#1655)
 
 ### What changed
@@ -38,6 +19,25 @@
 ### Expected merge conflict zones
 
 - LOW: the `ResourcesDiscoverEvent` interface in `types.ts` and the event literal inside `emitResourcesDiscover` in `runner.ts`; both sit beside the senpi#1640 changes.
+
+## 2026-09-13 - Native compiled-Bun extension importer
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts` creates an asynchronous batch importer: compiled Bun uses native runtime modules, while Node lazily imports `jiti/static` through a variable specifier. Node SEA, bundled Node, source TypeScript and unbundled Node retain their existing options and `moduleCache: false`.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts` registers host namespace objects, resolves imports from each real file directory, and assigns each batch a monotonically increasing module namespace. Bun rewrites static imports without bundling dependency instances; runtime hooks keep computed relative imports in the same generation. Real-file import metadata is exposed without changing Bun's internal referrer. Only the existing per-cwd factory cache reuses factories.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/loader.ts` previously put jiti's transformer in the standalone compiled graph. Fresh root imports alone would leave helpers stale and duplicate host modules would break reference identity.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/loader.ts` chooses the importer before extension code can run. Generation isolation and host namespace registration belong to that host-owned boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: importer type, runtime branch, asynchronous batch cache and import call. The Node option branches and per-cwd factory cache policy must remain intact.
 
 ## 2026-09-13 - Optional steering-specific tool signal (senpi#1637)
 

@@ -1,24 +1,5 @@
 # changes
 
-## 2026-09-13 - Keep jiti out of the native Bun extension graph
-
-### What changed
-
-- `scripts/build-coding-agent-bundle.mjs` removes the obsolete lazy-jiti transform plugin and its external allowlist entry; the loader itself now owns the variable-specifier Node-only import. The Bun runtime-module stub remains unchanged.
-- `scripts/compiled-extension-load.test.ts` verifies relocated classic/shared-session extension loading, helper reload, host identity, direct/per-cwd cached factory behavior and zero positive-output jiti inputs under the release graph flags.
-
-### Why
-
-- `scripts/build-coding-agent-bundle.mjs` no longer needs to replace a static jiti import. Native compiled extensions use Bun's module loader, while jiti remains an installed Node runtime dependency.
-
-### Why an extension could not handle it
-
-- `scripts/build-coding-agent-bundle.mjs` determines the distribution graph before an extension can run.
-
-### Expected merge conflict zones
-
-- `scripts/build-coding-agent-bundle.mjs`: plugin list and external package allowlist; preserve the separate Bun runtime-module stub.
-
 ## 2026-09-13 - Share compiled standalone entry graphs
 
 ### What changed
@@ -37,6 +18,25 @@
 ### Expected merge conflict zones
 
 - The Windows and non-Windows compile argv in `scripts/build-binaries.sh`.
+
+## 2026-09-13 - Keep jiti out of the native Bun extension graph
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` removes the obsolete lazy-jiti transform plugin and its external allowlist entry; the loader itself now owns the variable-specifier Node-only import. The Bun runtime-module stub remains unchanged.
+- `scripts/compiled-extension-load.test.ts` verifies relocated classic/shared-session extension loading, helper reload, host identity, direct/per-cwd cached factory behavior and zero positive-output jiti inputs under the release graph flags.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs` no longer needs to replace a static jiti import. Native compiled extensions use Bun's module loader, while jiti remains an installed Node runtime dependency.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` determines the distribution graph before an extension can run.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: plugin list and external package allowlist; preserve the separate Bun runtime-module stub.
 
 ## 2026-09-13 - Keep Bun provider registration outside Node bundles
 
