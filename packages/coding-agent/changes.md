@@ -1,5 +1,23 @@
 # Local fork changes
 
+## 2026-09-13 - Align standalone compile entries and splitting
+
+### What changed
+
+- `packages/coding-agent/package.json` adds `--splitting` and the missing RPC session-worker entry to `build:binary`, keeping the existing minify, keep-names and autoload flags. The RPC documentation describes splitting support without changing the build-time worker-entry define.
+
+### Why
+
+- `packages/coding-agent/package.json` must embed the same four entries as the release script, sharing the duplicated graph while retaining multi-session workers (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` supplies compiler argv before any extension can load.
+
+### Expected merge conflict zones
+
+- The `build:binary` script in `packages/coding-agent/package.json`.
+
 ## 2026-09-12 - Pin the chord dependency to upstream's published version
 
 ### What changed

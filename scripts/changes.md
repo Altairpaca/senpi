@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-13 - Share compiled standalone entry graphs
+
+### What changed
+
+- `scripts/build-binaries.sh` adds `--splitting` immediately after `--compile` in both platform branches, retaining minification, names, autoload isolation and all four explicit entries.
+- `scripts/build-binaries-flags.test.mjs` checks parsed release/package argv. `scripts/session-worker-compile.test.ts` characterizes split and unsplit relocated production clients with two live workers, shared-memory acknowledgments and native exits.
+
+### Why
+
+- `scripts/build-binaries.sh` previously embedded duplicate copies of the shared session-worker graph. Splitting shares those bytes without changing the runtime worker-entry contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/build-binaries.sh` selects embedded entry graphs at compile time, before runtime extensions exist.
+
+### Expected merge conflict zones
+
+- The Windows and non-Windows compile argv in `scripts/build-binaries.sh`.
+
 ## 2026-09-12 - Chord keeps upstream's release identity instead of the fork CalVer
 
 ### What changed
