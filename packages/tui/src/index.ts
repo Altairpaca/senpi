@@ -127,7 +127,7 @@ export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
-export { ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
+export { type CursorPosition, ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
 // Terminal colors
 export {
 	parseOsc11BackgroundColor,

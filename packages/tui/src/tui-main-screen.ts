@@ -47,7 +47,7 @@ export class TuiMainScreen extends TuiBase {
 			Boolean(process.stdout.isTTY) &&
 			!process.env.TERMUX_VERSION &&
 			(process.platform !== "win32" || Boolean(process.env.WT_SESSION));
-		const next = enabled && supported;
+		const next = enabled && supported && !this.stopped;
 		this.clicks.cancel();
 		this.mousePress = undefined;
 		if (this.trackingEnabled === next) return;
@@ -64,6 +64,21 @@ export class TuiMainScreen extends TuiBase {
 
 	protected override doRender(): void {
 		if (this.stopped) return;
+		if (this.mouseExternalWritePending) {
+			// CPR locates the cursor, not an old frame displaced by arbitrary output.
+			// Append a new working frame without erasing diagnostics or scrollback.
+			this.mouseExternalWritePending = false;
+			this.terminal.write("\r\n");
+			this.restoreRenderState({
+				previousLines: [],
+				previousWidth: 0,
+				previousHeight: 0,
+				cursorRow: 0,
+				hardwareCursorRow: 0,
+				maxLinesRendered: 0,
+				previousViewportTop: 0,
+			});
+		}
 		super.doRender();
 		this.noteCommittedMouseFrame();
 		const components: Component[] = [];
@@ -82,6 +97,7 @@ export class TuiMainScreen extends TuiBase {
 		}
 		this.committedMouseLines = [...this.previousLines];
 		this.committedMouseComponents = components;
+		this.calibrateMouseAnchor();
 	}
 
 	private applyMouseResult(result: TuiMouseDispatchResult | undefined): void {

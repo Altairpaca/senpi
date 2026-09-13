@@ -1,5 +1,30 @@
 # TUI delta rendering fork changes
 
+## 2026-09-13 - Private cursor calibration and external-output recovery
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: adds the private DECXCPR broker, two/three-parameter response interception, shared in-flight promises, bounded timeout, late-fragment discard, and non-suppressing external-write observation. A timed-out broker stays fail-closed until restart because CPR has no request identifiers.
+- `packages/tui/src/tui.ts`: calibrates short frames against a matching committed placement/cursor snapshot and invalidates placement on external stdout/stderr writes. The pending-wrap CPR column just beyond the right margin is accepted.
+- `packages/tui/src/tui-main-screen.ts`: after external output, appends a fresh working frame before recalibration rather than guessing the old frame position from a moved cursor. Existing output and scrollback are not cleared.
+- `packages/tui/src/index.ts`: exports the cursor-position result type; custom terminals may omit the optional query/observation methods.
+
+### Why
+
+- `packages/tui/src/terminal.ts` and `packages/tui/src/index.ts`: private replies avoid collisions with modified function keys, while custom terminal implementations remain usable without CPR support.
+- `packages/tui/src/tui.ts` and `packages/tui/src/tui-main-screen.ts`: real-PTY QA showed that recalibrating an unchanged old frame after a stderr newline mapped a blank row onto an option. A fresh committed frame is necessary before its cursor can identify its origin.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`, `packages/tui/src/tui.ts`, `packages/tui/src/tui-main-screen.ts`, and `packages/tui/src/index.ts`: terminal negotiation, write ownership, hardware cursor snapshots, and committed renderer geometry are below extension APIs.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: keyboard-negotiation interception, stdout guard, stderr observer, and lifecycle cleanup.
+- `packages/tui/src/tui.ts`: additive calibration members and stop cleanup; no terminal-input handler changes.
+- `packages/tui/src/tui-main-screen.ts`: fork-owned post-output append recovery and committed-frame calibration.
+- `packages/tui/src/index.ts`: terminal result-type exports.
+
 ## 2026-09-13 - Regular-mode scoped click dispatch
 
 ### What changed

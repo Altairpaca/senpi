@@ -778,13 +778,23 @@ export abstract class TuiBase extends Container {
 		columns: number;
 	} = { kind: "unknown", epoch: 0, rows: 0, columns: 0 };
 	private mouseCommittedLineCount = 0;
+	private mouseAnchorPending = false;
+	private mouseWriteUnsubscribe?: () => void;
+	protected mouseExternalWritePending = false;
 
 	/** Host-owned intent. A replacement renderer starts with no leases. */
 	acquireMouseCapture(reason: string): () => void {
 		const token = Symbol(reason);
 		const first = this.mouseLeases.size === 0;
 		this.mouseLeases.set(token, reason);
-		if (first) this.applyMouseTracking(this.mouseCaptureEnabled);
+		if (first) {
+			this.mouseWriteUnsubscribe ??= this.terminal.observeExternalWrites?.(() => {
+				this.placementEpoch++;
+				this.mouseExternalWritePending = true;
+			});
+			this.applyMouseTracking(this.mouseCaptureEnabled);
+			this.calibrateMouseAnchor();
+		}
 		return () => {
 			if (!this.mouseLeases.delete(token)) return;
 			if (this.mouseLeases.size === 0) this.applyMouseTracking(false);
@@ -820,6 +830,7 @@ export abstract class TuiBase extends Container {
 		};
 		this.mouseCommittedLineCount = this.previousLines.length;
 		this.noteCommittedMouseFrame();
+		this.calibrateMouseAnchor();
 	}
 
 	/** Called only after the renderer has published its geometry and bytes. */
@@ -850,6 +861,60 @@ export abstract class TuiBase extends Container {
 				columns: this.terminal.columns,
 			};
 		}
+	}
+
+	/** Never block a frame on terminal protocol negotiation or a missing reply. */
+	protected calibrateMouseAnchor(): void {
+		if (
+			!this.mouseCaptureEnabled ||
+			this.stopped ||
+			this.mouseAnchorPending ||
+			this.mouseExternalWritePending ||
+			!this.terminal.queryCursorPosition ||
+			this.previousLines.length === 0 ||
+			this.previousLines.some(isImageLine)
+		)
+			return;
+		if (
+			this.anchor.kind !== "unknown" &&
+			this.anchor.epoch === this.placementEpoch &&
+			this.anchor.rows === this.terminal.rows &&
+			this.anchor.columns === this.terminal.columns
+		)
+			return;
+		const epoch = this.placementEpoch;
+		const rows = this.terminal.rows;
+		const columns = this.terminal.columns;
+		const hardwareCursorRow = this.hardwareCursorRow;
+		const lineCount = this.previousLines.length;
+		this.mouseAnchorPending = true;
+		void this.terminal.queryCursorPosition().then((position) => {
+			this.mouseAnchorPending = false;
+			if (
+				!position ||
+				this.stopped ||
+				!this.mouseCaptureEnabled ||
+				epoch !== this.placementEpoch ||
+				rows !== this.terminal.rows ||
+				columns !== this.terminal.columns ||
+				hardwareCursorRow !== this.hardwareCursorRow ||
+				lineCount !== this.previousLines.length
+			)
+				return;
+			const top = position.row - 1 - hardwareCursorRow;
+			if (
+				!Number.isSafeInteger(top) ||
+				top < 0 ||
+				top + lineCount > rows ||
+				!Number.isSafeInteger(position.column) ||
+				position.column < 1 ||
+				// Some emulators report the pending-wrap cell just past the right edge.
+				position.column > columns + 1 ||
+				(position.page !== undefined && position.page !== 1)
+			)
+				return;
+			this.anchor = { kind: "cpr", frameTopScreenRow: top, epoch, rows, columns };
+		});
 	}
 
 	/** Input rows are one-based; the returned committed frame line is zero-based. */
@@ -1309,6 +1374,8 @@ export abstract class TuiBase extends Container {
 		this.beforeTerminalStop(options);
 		this.mouseLeases.clear();
 		this.mouseBlockers.clear();
+		this.mouseWriteUnsubscribe?.();
+		this.mouseWriteUnsubscribe = undefined;
 		this.placementEpoch++;
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit.
 		// Skipped when the screen is preserved for another renderer taking over this terminal.
