@@ -225,7 +225,7 @@ describe("AskUserQuestionComponent", () => {
 		expect(single.doneCalls[0]?.status).toBe("answered");
 	});
 
-	it("keeps an async one-question selection open for an optional comment", () => {
+	it("submits an async one-question digit selection immediately", () => {
 		const request = buildRequest();
 		const asyncQuestion = mount({
 			...request,
@@ -235,8 +235,11 @@ describe("AskUserQuestionComponent", () => {
 
 		asyncQuestion.component.handleInput("1");
 
-		expect(asyncQuestion.doneCalls).toHaveLength(0);
-		expect(asyncQuestion.render()).toContain("Review your answers");
+		expect(asyncQuestion.doneCalls).toHaveLength(1);
+		expect(asyncQuestion.doneCalls[0]).toMatchObject({
+			status: "answered",
+			answers: { auth: { selected: ["OAuth"] } },
+		});
 	});
 
 	it("preserves the first printable character when opening own-answer", () => {

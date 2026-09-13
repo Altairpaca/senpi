@@ -71,8 +71,17 @@ describe("optimistic pending user echo", () => {
 		const defaultEditor: { onSubmit?: (text: string) => Promise<void> } = {};
 		const beginUserEcho = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "beginUserEcho");
 		if (typeof beginUserEcho !== "function") throw new Error("InteractiveMode.beginUserEcho is missing");
+		// Refs #1645: keep ordinary echo coverage on the real composer classifier.
+		const submitAsyncQuestionComment = Reflect.get(
+			interactiveModeModule.InteractiveMode.prototype,
+			"submitAsyncQuestionComment",
+		);
+		if (typeof submitAsyncQuestionComment !== "function")
+			throw new Error("InteractiveMode.submitAsyncQuestionComment is missing");
 		const context = {
 			beginUserEcho,
+			submitAsyncQuestionComment,
+			composerDestination: { kind: "chat" },
 			defaultEditor,
 			preResolvedSubmissionImages: undefined,
 			hideShortcutOverlay: () => {},
