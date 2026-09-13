@@ -1,5 +1,42 @@
 # changes
 
+## 2026-09-13 - Configurable pending-question arrival bell (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts` adds optional `AskUserSettings.bell`; `packages/coding-agent/src/core/settings-manager.ts` resolves it to true by default and honors an explicit false value. `docs/settings.md` documents the bell and pending-title behavior.
+
+### Why
+
+- Question arrivals should be noticeable without forcing an audible signal on users who disable it.
+
+### Why an extension could not handle it
+
+- The core settings manager owns global/project merge precedence and the typed ask-user settings contract consumed by the interactive host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: AskUserSettings; `packages/coding-agent/src/core/settings-manager.ts`: getAskUserSettings.
+
+## 2026-09-13 - Pending-question cycling keybinding (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts` adds `app.question.next`, default `alt+down`, for cycling pending requests from an empty composer. Tab autocomplete and Shift+Tab thinking cycling are unchanged.
+- The answer action defaults to both `alt+up` and the retained `alt+a`. Exported primary/fallback key constants keep terminal-aware hints tied to the binding table. Pending-question interception precedes dequeue without changing its handler; Windows/WSL retain their independent `alt+q` dequeue key.
+
+### Why
+
+- Multiple requests need a configurable cycling chord without taking existing editor actions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts` owns the app binding table and its TUI type augmentation; host dispatch and hints must share that declaration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: AppKeybindings and KEYBINDINGS question entries.
+
 ## 2026-09-13 - Invocation-scoped steering notification (senpi#1637)
 
 ### What changed

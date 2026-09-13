@@ -193,7 +193,7 @@ function handleOptionsKey(ctx: AskUserKeyHandlerContext, data: string, kb: Keybi
 			state.activateOption(state.activeQuestion.id, option.label);
 			ctx.emitProgress();
 			if (!state.activeQuestion.multiSelect) {
-				if (state.request.waitForAnswer && state.request.questions.length === 1) ctx.attemptSubmit();
+				if (state.request.questions.length === 1) ctx.attemptSubmit();
 				else state.advance();
 			}
 			ctx.updateAll();
@@ -233,7 +233,7 @@ function activateHighlighted(ctx: AskUserKeyHandlerContext, confirm: boolean): v
 	ctx.emitProgress();
 	ctx.updateAll();
 	if (confirm) {
-		if (!state.activeQuestion.multiSelect && state.request.waitForAnswer && state.request.questions.length === 1) {
+		if (!state.activeQuestion.multiSelect && state.request.questions.length === 1) {
 			ctx.attemptSubmit();
 		} else {
 			state.advance();
