@@ -63,16 +63,16 @@ describe("release package versioning", () => {
 		const protocolPackage = JSON.parse(
 			readFileSync(join(tempDir, "packages", "protocol", "package.json"), "utf8"),
 		);
-		// Chord is bundled, not published, but it rides the same CalVer lockstep so the
-		// generated install lock can treat it as an internal workspace.
+		// Chord is bundled but keeps upstream's own release identity, so it does NOT ride the fork
+		// CalVer lockstep and applyWorkspaceVersions must leave its version untouched (issue #1632).
 		const chordPackage = JSON.parse(
 			readFileSync(join(tempDir, "packages", "chord", "package.json"), "utf8"),
 		);
-		assert.equal(chordPackage.version, "2099.1.2");
+		assert.equal(chordPackage.version, "0.0.0");
+		assert.ok(!logs.some((message) => message.includes("packages/chord/package.json")));
 		assert.equal(ptyPackage.version, "2099.1.2");
 		assert.equal(clientPackage.version, "2099.1.2");
 		assert.equal(protocolPackage.version, "2099.1.2");
-		assert.ok(logs.includes("  packages/chord/package.json: 0.0.0 -> 2099.1.2"));
 		assert.ok(logs.includes("  packages/pty/package.json: 0.0.0 -> 2099.1.2"));
 		assert.ok(logs.includes("  packages/client/package.json: 0.0.0 -> 2099.1.2"));
 		assert.ok(logs.includes("  packages/protocol/package.json: 0.0.0 -> 2099.1.2"));
