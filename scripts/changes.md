@@ -21,6 +21,24 @@
 
 - Compile and smoke argv in `scripts/build-binaries.sh`; asset staging in `scripts/prepare-bun-compile-assets.mjs`; dependency copying in `scripts/prepare-senpi-bundled-workspaces.mjs`.
 
+## 2026-09-13 - Report entry-graph sizes on success
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` prints each declared entry's file count on success so a green run still reports the `./harness/session` size.
+
+### Why
+
+- The session budget is a cost contract. A silent pass hid the 132-file AI-barrel regression until the script was run by hand.
+
+### Why an extension could not handle it
+
+- Entry-graph walking is a commit-time source import check. Extensions cannot change which modules the checker walks.
+
+### Expected merge conflict zones
+
+- LOW: the success `console.log` in `scripts/check-entry-graphs.mjs`.
+
 ## 2026-09-13 - Share compiled standalone entry graphs
 
 ### What changed

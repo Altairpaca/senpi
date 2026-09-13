@@ -1,5 +1,24 @@
 # changes — senpi-monorepo root
 
+## Re-wire check:entry-graphs into the root check chain (2026-09-13)
+
+### What changed
+
+- `package.json`: `npm run check` runs `check:entry-graphs` after `check:ts-imports`, matching the original 5507d76ee gate. `scripts/check-entry-graphs.mjs` prints each entry's file count on success so a green run still reports the harness/session size.
+- `packages/agent/src/harness/messages.ts`: session no longer value-imports the AI barrel; see `packages/agent/src/changes.md`.
+
+### Why
+
+- The session subpath is a cost contract (budget 25, no `packages/ai/src/index.ts`). The script existed but was not in `check`, so the barrel regression stayed red until someone ran it by hand.
+
+### Why an extension could not handle it
+
+- Root `package.json` scripts and the source import graph are build-time inputs; no runtime extension can restore either.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script string in root `package.json`.
+
 ## Pin the bundled chord workspace to upstream's published version (2026-09-12)
 
 ### What changed
