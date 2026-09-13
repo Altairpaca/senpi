@@ -160,7 +160,8 @@ export function startReadSession(command, directory, fixture) {
 		async close() {
 			// Use the same SIGTERM shutdown surface as the production RpcClient.stop().
 			child.kill("SIGTERM");
-			const timer = setTimeout(() => child.kill("SIGKILL"), 10000);
+			// Source-mode Bun can need more than 10s to tear down on loaded CI filesystems.
+			const timer = setTimeout(() => child.kill("SIGKILL"), 60000);
 			try {
 				return await exited;
 			} finally {

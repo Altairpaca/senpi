@@ -8,6 +8,7 @@
 - `scripts/qa/read-summary-build.mjs` derives compile argv from the package release script, checks identical baseline/candidate contracts and executes version smoke from an explicitly staged distribution layout.
 - `scripts/qa/omp-item1.ts` runs the production folder/view bake-off, recording potential candidate output separately from the actual selected default-read output. The raw comparator explicitly omits a folder.
 - `scripts/qa/read-summary-smoke.mjs` records final-HEAD JS/JSON summary and TS raw behavior on the source and relocated binary. The real rebuilt missing-theme binary remains the initialization-failure proof.
+- `scripts/qa/read-summary-rpc.mjs` awaits the exact source-process exit with a 60-second kill fence, avoiding a timing-luck failure on loaded CI filesystems without polling.
 
 ### Why
 
