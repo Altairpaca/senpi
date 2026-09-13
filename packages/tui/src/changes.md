@@ -1,5 +1,26 @@
 # TUI delta rendering fork changes
 
+## 2026-09-13 - Regular-mode scoped click dispatch
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: consumes mouse input before extension listeners, enables click-only tracking for leases on supported terminals, and dispatches same-cell clicks against committed component and overlay geometry.
+- `packages/tui/src/tui.ts`: exposes mounted mouse-layout roots to the fork-owned main-screen renderer. No terminal input handler changes.
+
+### Why
+
+- `packages/tui/src/tui-main-screen.ts`: stale mouse reports must never reach the editor or extension input listeners; layout changes must cancel gestures rather than activate a replaced control.
+- `packages/tui/src/tui.ts`: overlay identity participates in the same committed-layout check as root component identity.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui-main-screen.ts` and `packages/tui/src/tui.ts`: the renderer owns terminal capture, input ordering, overlays, and committed hit geometry.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui-main-screen.ts`: fork-owned dispatch and tracking lifecycle.
+- `packages/tui/src/tui.ts`: additive protected mouse-layout root accessor only.
+
 ## 2026-09-13 - Lease intent and fail-closed mouse geometry
 
 ### What changed

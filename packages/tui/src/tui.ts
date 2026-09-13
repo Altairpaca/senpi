@@ -797,6 +797,10 @@ export abstract class TuiBase extends Container {
 
 	protected applyMouseTracking(_enabled: boolean): void {}
 
+	protected getMouseLayoutRoots(): readonly Component[] {
+		return [...this.getMountedRoots(), ...this.renderedOverlayLayouts.map((layout) => layout.entry.component)];
+	}
+
 	protected setMouseBlocker(name: "suspended" | "external-editor" | "shutting-down", on: boolean): void {
 		if (this.mouseBlockers.has(name) === on) return;
 		if (on) this.mouseBlockers.add(name);
