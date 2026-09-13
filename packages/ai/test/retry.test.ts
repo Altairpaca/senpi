@@ -117,6 +117,14 @@ describe("provider retry classification", () => {
 		).toBe(true);
 		expect(
 			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "WebSocket liveness timeout after 70000ms (2 pings unanswered)",
+				}),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: "Provider stream never started" }),
 			),
 		).toBe(false);
@@ -131,8 +139,8 @@ describe("provider retry classification", () => {
 			true,
 		],
 		["Idle timeout waiting for provider stream after 5ms (x)", false, false],
-		["WebSocket liveness check failed after 70000ms (2 pings unanswered)", true, true],
-		["WebSocket liveness check failed after 70000ms (2 pings unanswered) extra", false, false],
+		["WebSocket liveness timeout after 70000ms (2 pings unanswered)", true, true],
+		["WebSocket liveness timeout after 70000ms (2 pings unanswered) extra", false, false],
 		["Request timed out.", false, true],
 		["Request timed out", false, true],
 		["Command timed out after 30000ms", false, false],

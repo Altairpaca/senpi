@@ -41,7 +41,7 @@ export interface WebSocketLivenessMonitor {
 }
 
 export function formatWebSocketLivenessFailure(silentMs: number, unansweredPings: number): string {
-	return `WebSocket liveness check failed after ${silentMs}ms (${unansweredPings} pings unanswered)`;
+	return `WebSocket liveness timeout after ${silentMs}ms (${unansweredPings} pings unanswered)`;
 }
 
 export class WebSocketLivenessError extends Error {

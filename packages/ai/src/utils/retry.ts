@@ -382,13 +382,13 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
 /**
  * Matches the agent-loop stream watchdog failures ("Idle timeout waiting for
  * provider stream after <n>ms" and "Provider stream start timed out after
- * <n>ms") plus the WebSocket liveness verdict ("WebSocket liveness check
- * failed after <n>ms (<k> pings unanswered)"). These anchored shapes
+ * <n>ms") plus the WebSocket liveness verdict ("WebSocket liveness timeout
+ * after <n>ms (<k> pings unanswered)"). These anchored shapes
  * distinguish provider-stream stalls from unrelated extension, command, or MCP
  * timeout diagnostics.
  */
 const PROVIDER_STREAM_STALL_ERROR_PATTERN =
-	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness check failed after \d+ms \(\d+ pings unanswered\))$/i;
+	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness timeout after \d+ms \(\d+ pings unanswered\))$/i;
 const PROVIDER_TRANSPORT_TIMEOUT_ERROR_PATTERN = /^Request timed out\.?$/i;
 
 export function isProviderStreamStallError(message: AssistantMessage): boolean {
