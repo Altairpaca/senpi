@@ -104,6 +104,44 @@ describe("optimistic pending user echo", () => {
 		expect(order).toEqual(["render:paint me now", "prompt-handoff"]);
 	});
 
+	it("dispatches an extension command through prompt() without painting an optimistic echo", async () => {
+		const order: string[] = [];
+		const Controller = getControllerConstructor();
+		const optimisticUserEchoes = new Controller((text) => {
+			order.push(`render:${text}`);
+			return { replace: () => {}, remove: () => order.push(`remove:${text}`) };
+		});
+		const defaultEditor: { onSubmit?: (text: string) => Promise<void> } = {};
+		const context = {
+			composerDestination: { kind: "chat" },
+			defaultEditor,
+			preResolvedSubmissionImages: undefined,
+			hideShortcutOverlay: () => {},
+			lastEditorText: "",
+			isExtensionCommand: (text: string) => text.startsWith("/btw"),
+			session: {
+				isCompacting: false,
+				isStreaming: false,
+				messages: [],
+				prompt: async (text: string) => {
+					order.push(`prompt:${text}`);
+				},
+			},
+			optimisticUserEchoes,
+			editor: { addToHistory: () => {}, setText: () => {} },
+		};
+		const setup = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "setupEditorSubmitHandler");
+		if (typeof setup !== "function") throw new Error("InteractiveMode.setupEditorSubmitHandler is missing");
+		setup.call(context);
+
+		await defaultEditor.onSubmit?.("/btw hi");
+
+		// The command runs inside AgentSession.prompt() and never becomes a canonical
+		// user message, so a painted echo would only sit next to the command's own
+		// UI (e.g. the /btw panel) until the handler resolved, then vanish.
+		expect(order).toEqual(["prompt:/btw hi"]);
+	});
+
 	it("renders synchronously before prompt work starts", async () => {
 		const { controller, rendered } = createController();
 		const requestStarted = vi.fn();

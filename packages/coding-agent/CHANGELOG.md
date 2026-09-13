@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed `/btw` showing its question twice in the interactive TUI: extension commands no longer paint an optimistic user bubble while their handler runs, so only the side-question panel shows the question during the stream.
+
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13
