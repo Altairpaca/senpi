@@ -67,6 +67,19 @@ describe("ask-user overlay own-answer editor focus", () => {
 		expect(h.render()).toContain("→ 1. OAuth");
 	});
 
+	it("leaving an empty editor with Up keeps the question's existing selection", () => {
+		const h = mountFocus();
+
+		h.keys(KEY.tab, KEY.space, KEY.down, KEY.down, KEY.enter);
+		expect(h.render()).toContain(OWN_ANSWER_EDITOR);
+
+		h.keys(KEY.up);
+
+		expect(h.render()).not.toContain(OWN_ANSWER_EDITOR);
+		expect(h.lastDraft()?.answers?.extras).toEqual({ selected: ["Verbose logging"] });
+		expect(h.render()).toContain("Submit (1/2 answered)");
+	});
+
 	it("Backspace on an empty editor returns to the option list", () => {
 		const h = mountFocus();
 		openOwnAnswer(h);

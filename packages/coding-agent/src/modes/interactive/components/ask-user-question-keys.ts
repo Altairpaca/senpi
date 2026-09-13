@@ -45,6 +45,12 @@ export function handleAskUserKeyInput(ctx: AskUserKeyHandlerContext, data: strin
 	handleOptionsKey(ctx, data, kb);
 }
 
+/** Navigation out of the editor saves typed text but never wipes an existing answer with an empty editor. */
+function saveTypedOwnAnswer(ctx: AskUserKeyHandlerContext): void {
+	if (ctx.ownAnswerInput.getValue().trim() !== "") ctx.commitOwnAnswer();
+	else ctx.ownAnswerInput.setValue("");
+}
+
 function handleOwnAnswerKey(ctx: AskUserKeyHandlerContext, data: string, kb: Keybindings): void {
 	const state = ctx.state;
 	if (matchesKey(data, "ctrl+enter")) {
@@ -65,19 +71,19 @@ function handleOwnAnswerKey(ctx: AskUserKeyHandlerContext, data: string, kb: Key
 		return;
 	}
 	if (kb.matches(data, "tui.select.up")) {
-		ctx.commitOwnAnswer();
+		saveTypedOwnAnswer(ctx);
 		state.leaveOwnAnswer(state.ownAnswerRowIndex - 1);
 		ctx.updateAll();
 		return;
 	}
 	if (kb.matches(data, "tui.select.down")) {
-		ctx.commitOwnAnswer();
+		saveTypedOwnAnswer(ctx);
 		state.leaveOwnAnswer(state.ownAnswerRowIndex);
 		ctx.updateAll();
 		return;
 	}
 	if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
-		ctx.commitOwnAnswer();
+		saveTypedOwnAnswer(ctx);
 		state.switchTab(matchesKey(data, "tab") ? 1 : -1);
 		ctx.updateAll();
 		return;
