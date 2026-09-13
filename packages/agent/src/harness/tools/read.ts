@@ -2,7 +2,7 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { Context } from "../context.ts";
 import type { AgentHarnessTool } from "../types.ts";
-import { getOrThrow } from "../types.ts";
+import { FileError, getOrThrow } from "../types.ts";
 import { type ReadFolder, selectedReadFolder } from "../utils/read-folders/index.ts";
 import { createDefaultReadSummary } from "../utils/segmented-read-view.ts";
 import {
@@ -59,7 +59,7 @@ export function createReadTool<TContext extends ExecutionToolContext = Execution
 		async execute(_toolCallId, { path, offset, limit }, _onUpdate, { env }, _invocation, context) {
 			const absolutePath = await resolveReadToolPath(env, path, context);
 			const bytes = getOrThrow(await env.readBinaryFile(absolutePath, context));
-			if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+			if (context.abortSignal?.aborted) throw new FileError("aborted", "Operation aborted", absolutePath);
 			const mimeType = detectSupportedImageMimeType(bytes);
 			if (mimeType) {
 				if (options?.imageProcessor) {

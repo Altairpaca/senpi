@@ -1,5 +1,26 @@
 # changes
 
+## 2026-09-13 - Reconcile read QA with the release graph (#1639)
+
+### What changed
+
+- `scripts/prepare-bun-compile-assets.mjs` removes the self-declared empty read asset accessor/output; transitive feature bundle inputs now establish dependency isolation.
+- `scripts/qa/read-summary-build.mjs` derives compile argv from the package release script, checks identical baseline/candidate contracts and executes version smoke from an explicitly staged distribution layout.
+- `scripts/qa/omp-item1.ts` runs the production folder/view bake-off, recording potential candidate output separately from the actual selected default-read output. The raw comparator explicitly omits a folder.
+- `scripts/qa/read-summary-smoke.mjs` records final-HEAD JS/JSON summary and TS raw behavior on the source and relocated binary. The real rebuilt missing-theme binary remains the initialization-failure proof.
+
+### Why
+
+- `scripts/prepare-bun-compile-assets.mjs` must not claim dependency isolation from a constant unrelated to the compiler's input graph. Release-graph parity must include every actual worker and flag.
+
+### Why an extension could not handle it
+
+- `scripts/prepare-bun-compile-assets.mjs` is build-time packaging; runtime extensions cannot select or verify the shipped entry graph.
+
+### Expected merge conflict zones
+
+- `scripts/prepare-bun-compile-assets.mjs`: removal of read-only reporting; existing asset preparation and binary budget validation remain intact.
+
 ## 2026-09-13 - Size-gated standalone read parity (#1639)
 
 ### What changed

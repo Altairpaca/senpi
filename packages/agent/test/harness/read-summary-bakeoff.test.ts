@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createReadTool } from "../../../coding-agent/src/core/tools/read.ts";
 import { heuristic } from "./fixtures/read-summary/heuristic.ts";
 import { retainedSourceExact } from "./fixtures/read-summary/oracle.ts";
+import { readRawBaseline } from "./fixtures/read-summary/raw-baseline.ts";
 import { type Measurement, type Sample, selectEngine, sha256 } from "./fixtures/read-summary/scorer.ts";
 
 function measurement(): Measurement {
@@ -33,6 +34,27 @@ function changeSamples(change: (sample: Sample) => Sample): Measurement {
 }
 
 describe("read-summary bake-off gate (#1639)", () => {
+	it("keeps the raw comparator verbatim when the public default read summarizes", async () => {
+		// Given a foldable file and the actual integrated reader, not a replacement tool.
+		const cwd = await mkdtemp(join(tmpdir(), "read-raw-baseline-"));
+		const path = join(cwd, "input.js");
+		const source = Array.from({ length: 20 }, (_, i) =>
+			[
+				`function example${i}() {`,
+				...Array.from({ length: 6 }, () => '  const longValue = "raw comparator source bytes";'),
+				"}",
+			].join("\n"),
+		).join("\n");
+		try {
+			await writeFile(path, source);
+			const defaultRead = await createReadTool(cwd).execute("default-control", { path });
+			expect(defaultRead.content).not.toEqual([{ type: "text", text: source }]);
+			// When reading through the bake-off's raw arm; then the independent source is unchanged.
+			expect(await readRawBaseline(cwd, path)).toBe(source);
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
 	it.each(["ts", "js", "rust", "python"])(
 		"folds real lexical constructs rather than abandoning %s files",
 		(language) => {

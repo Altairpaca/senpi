@@ -17,6 +17,7 @@ type ScoredRow = {
 	readonly rawTokens: number;
 	readonly ompTokens: number;
 	readonly candidateTokens: number;
+	readonly defaultReadTokens: number;
 	readonly minimumOracleSkeleton: number;
 };
 
@@ -57,6 +58,10 @@ export function selectLanguages(samples: readonly ScoredRow[], budget: number) {
 			...result,
 			...(invalid.length ? { engine: "raw", status: "pending_owner", reason: "wasm_candidate_pending_owner" } : {}),
 			measured_files: real.length,
+			default_read_median_saving: real
+				.map((row) => (row.rawTokens - row.defaultReadTokens) / row.rawTokens)
+				.sort((a, b) => a - b)[2],
+			default_read_saved_tokens: real.reduce((sum, row) => sum + row.rawTokens - row.defaultReadTokens, 0),
 			files_with_folds: real.filter((row) => row.candidate.folds.length > 0).length,
 			discovered_folds: real.reduce((sum, row) => sum + row.candidate.scanned_folds, 0),
 			file_outcomes: real.map((row) => ({

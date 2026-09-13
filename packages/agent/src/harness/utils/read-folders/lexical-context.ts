@@ -1,0 +1,36 @@
+export type Open = {
+	readonly char: "{" | "[" | "(";
+	readonly line: number;
+	readonly foldable: boolean;
+	readonly protected: boolean;
+	readonly interpolation: boolean;
+	readonly control: boolean;
+	readonly call: boolean;
+	readonly valueParameters: boolean;
+};
+
+export const expressionKeywords = new Set([
+	"return",
+	"throw",
+	"yield",
+	"await",
+	"case",
+	"typeof",
+	"void",
+	"delete",
+	"in",
+	"of",
+	"instanceof",
+]);
+export const controls = new Set(["if", "while", "for", "switch", "catch", "with"]);
+
+/** Only expression callees release argument values; declarations retain parameter protection. */
+export function isCallCallee(previous: string, beforeWord: string): boolean {
+	return (
+		/^[A-Za-z_$][\w$]*$/.test(previous) &&
+		!["function", "async", "new"].includes(previous) &&
+		!expressionKeywords.has(previous) &&
+		!controls.has(previous) &&
+		[".", "=", ":", "return", "await", "new"].includes(beforeWord)
+	);
+}

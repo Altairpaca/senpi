@@ -45,7 +45,7 @@ export async function readSurface(command, directory, files) {
 		for (const file of files) {
 			writeFileSync(join(directory, file.path), file.content);
 			const full = await session.read([{ id: `${file.id}-default`, args: { path: file.path } }]);
-			assert.deepEqual(full.identity.folder, { id: "measured-brace", version: "1" });
+			assert.deepEqual(full.identity.folder, { id: "measured-brace", version: "2" });
 			assert.equal(full.identity.selection.wasm, false);
 			const output = text(full.results[0].result);
 			const elided = output.split("\n").includes("\u2026") ? ranges(output) : [];
@@ -102,10 +102,10 @@ export function readSummaryControl() {
 	).join("\n");
 	return {
 		id: "positive-control",
-		path: "positive-control.ts",
+		path: "positive-control.js",
 		content,
 		sha256: createHash("sha256").update(content).digest("hex"),
-		language: "ts",
+		language: "js",
 	};
 }
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
-import { binaryIdentity, stageReadRuntime } from "./read-summary-build.mjs";
+import { binaryIdentity, repository, runRecorded, stageReadRuntime } from "./read-summary-build.mjs";
 import { readSummaryControl, readSurface } from "./read-summary-parity.mjs";
 
 const { values } = parseArgs({ options: { binary: { type: "string" }, out: { type: "string" } }, strict: true });
@@ -17,13 +18,15 @@ try {
 	const control = readSummaryControl();
 	const files = [
 		control,
-		{ ...control, id: "javascript", path: "javascript.js" },
+		{ id: "json", path: "data.json", content: JSON.stringify(Array.from({ length: 20 }, () => Array.from({ length: 12 }, (_, i) => i)), null, 2) },
+		{ ...control, id: "typescript-raw", path: "typescript.ts" },
 		{ ...control, id: "unsupported", path: "unsupported.rs" },
 	];
 	const sourceDirectory = mkdtempSync(join(directory, "source-"));
 	const binaryDirectory = mkdtempSync(join(directory, "binary-"));
 	const sourceLayout = stageReadRuntime(sourceDirectory);
 	const binaryLayout = stageReadRuntime(binaryDirectory, values.binary);
+	const versionSmoke = runRecorded([...binaryLayout.command, "--version"], binaryDirectory, `${values.out}.version.json`);
 	const source = await readSurface(sourceLayout.command, sourceDirectory, files);
 	const binary = await readSurface(binaryLayout.command, binaryDirectory, files);
 	assert.deepEqual(binary.records, source.records);
@@ -31,11 +34,14 @@ try {
 	assert(source.records[0].elided.length > 0);
 	assert(source.records[1].elided.length > 0);
 	assert.deepEqual(source.records[2].elided, []);
+	assert.deepEqual(source.records[3].elided, []);
 	writeFileSync(
 		values.out,
 		`${JSON.stringify(
 			{
 				passed: true,
+				head_sha: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim(),
+				versionSmoke,
 				startedAt,
 				finishedAt: new Date().toISOString(),
 				platform: process.platform,

@@ -104,6 +104,7 @@ export function renderSegmentedReadView({
 				elidedRanges.push({ startLine: segment.startLine, endLine: segment.endLine });
 				break;
 			default:
+				segment satisfies never;
 				throw new InvalidReadSegmentsError();
 		}
 		cursor = segment.endLine + 1;

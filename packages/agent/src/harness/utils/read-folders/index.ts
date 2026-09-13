@@ -8,8 +8,9 @@ export const READ_FOLDER_SELECTION = Object.freeze({
 	head: "d186dd4a7d1fe172e13b8e351378b6f7edadf079",
 	selectionSha256: "ae5b0a54447ef9540466c7eabac33bb669a375525b2104d2ffb1c5f683dd2c16",
 	wasm: false,
+	rawReasons: Object.freeze({ ts: "wasm_candidate_pending_owner" } as const),
 	languages: Object.freeze({
-		ts: "heuristic",
+		ts: "raw",
 		js: "heuristic",
 		json: "heuristic",
 		tsx: "unsupported",
@@ -85,6 +86,7 @@ function fold({ path, text, settings }: ReadFolderInput): ReadFolderResult {
 			return { status: "unsupported", reason: "unsupported_language" };
 		case "prose_exempt":
 			return { status: "unsupported", reason: "prose_exempt" };
+		case "raw": // Retain the pure candidate for safety/quality measurement, never default-read eligibility.
 		case "heuristic":
 			break;
 		default:
@@ -116,4 +118,4 @@ function fold({ path, text, settings }: ReadFolderInput): ReadFolderResult {
 	}
 }
 
-export const selectedReadFolder: ReadFolder = Object.freeze({ id: "measured-brace", version: "1", fold });
+export const selectedReadFolder: ReadFolder = Object.freeze({ id: "measured-brace", version: "2", fold });

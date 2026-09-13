@@ -3,24 +3,27 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getReadSummaryCompileAssets, measureReadSummaryBinaryDelta } from "../prepare-bun-compile-assets.mjs";
+import { parseArgs } from "node:util";
+import { parse } from "shell-quote";
+import { measureReadSummaryBinaryDelta } from "../prepare-bun-compile-assets.mjs";
 
-export const compileEntries = Object.freeze([
-	"packages/coding-agent/dist/bun/cli.js",
-	"packages/coding-agent/src/utils/image-resize-worker.ts",
-	"node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js",
-]);
-export const compileFlags = Object.freeze([
-	"--compile",
-	"--compile-autoload-package-json",
-	"--no-compile-autoload-dotenv",
-	"--no-compile-autoload-bunfig",
-	"--minify",
-	"--keep-names",
-]);
+/** Execute the release package's argv, never a second hand-maintained entry/flag recipe. */
+export function releaseCompileArgs(root, output) {
+	const manifest = JSON.parse(readFileSync(join(root, "packages/coding-agent/package.json"), "utf8"));
+	const tokens = parse(manifest.scripts["build:binary"]);
+	const start = tokens.findIndex((token, index) => token === "bun" && tokens[index + 1] === "build");
+	assert(start >= 0, "Release script must contain bun build");
+	const end = tokens.findIndex((token, index) => index > start && typeof token !== "string");
+	const argv = tokens.slice(start, end < 0 ? undefined : end);
+	assert(argv.includes("--compile"));
+	const outfile = argv.indexOf("--outfile");
+	assert(outfile >= 0 && outfile + 1 < argv.length, "Release compile must name its output");
+	argv[outfile + 1] = resolve(output);
+	return argv;
+}
 export const binaryTargets = Object.freeze([
 	"darwin-arm64",
 	"darwin-x64",
@@ -67,8 +70,8 @@ export function compileBinary(root, output, target) {
 	const targetFlags = target ? [`--target=bun-${target}${target.endsWith("-x64") ? "-baseline" : ""}`] : [];
 	mkdirSync(dirname(output), { recursive: true });
 	return runRecorded(
-		["bun", "build", ...compileFlags, ...targetFlags, ...compileEntries, "--outfile", output],
-		root,
+		[...releaseCompileArgs(root, output), ...targetFlags],
+		join(root, "packages/coding-agent"),
 		`${output}.build.json`,
 	);
 }
@@ -104,7 +107,8 @@ export function stageReadRuntime(directory, binary) {
 
 export function buildReadBinaries(directory, baselineRoot, ceiling) {
 	assert.notEqual(resolve(baselineRoot), repository);
-	assert.deepEqual(getReadSummaryCompileAssets(), []);
+	assert.deepEqual(releaseCompileArgs(baselineRoot, directory), releaseCompileArgs(repository, directory),
+		"Baseline and candidate must use identical release entry/flag contracts");
 	const commands = [];
 	for (const [name, root] of [
 		["baseline", baselineRoot],
@@ -137,9 +141,13 @@ export function buildReadBinaries(directory, baselineRoot, ceiling) {
 			}),
 		});
 	}
+	const runtimeDirectory = join(directory, "runtime");
+	const runtime = stageReadRuntime(runtimeDirectory, candidate);
+	const versionSmoke = runRecorded([...runtime.command, "--version"], runtimeDirectory, join(directory, "version-smoke.json"));
 	return {
 		commands,
 		measurements,
+		runtime: { directory: runtimeDirectory, command: runtime.command, versionSmoke },
 		binary: binaryIdentity(candidate),
 		baseline: binaryIdentity(baseline),
 		hostDelta: measureReadSummaryBinaryDelta({
@@ -147,6 +155,11 @@ export function buildReadBinaries(directory, baselineRoot, ceiling) {
 			candidateBytes: statSync(candidate).size,
 			maxDeltaBytes: ceiling,
 		}),
-		selectedAssets: getReadSummaryCompileAssets(),
 	};
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+	const { values } = parseArgs({ options: { out: { type: "string" } }, strict: true });
+	assert(values.out, "--out is required");
+	compileBinary(repository, resolve(values.out));
 }

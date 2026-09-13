@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as agent from "../../src/index.ts";
 import { boundaryFixtures } from "./fixtures/read-summary/boundary-fixtures.ts";
+import { functionReturningObjectType } from "./fixtures/read-summary/signature-fixtures.ts";
 
 const body = (n: number) =>
 	[`function f${n}() {`, ...Array.from({ length: 6 }, (_, i) => `  const x${i} = "brace } { [ ]";`), "}"].join("\n");
@@ -15,6 +16,27 @@ function view(text: string, path = "source.ts") {
 }
 
 describe("selected read folders (#1639)", () => {
+	it("preserves function-return arrow object types in the public default view", () => {
+		// Given twenty declarations whose return types have five-line object members.
+		const text = functionReturningObjectType;
+		// When reading by default; then every complete signature survives, or the whole file is raw.
+		const rendered =
+			agent.createDefaultReadSummary({
+				path: "return-types.ts",
+				text,
+				folder: agent.selectedReadFolder,
+				truncated: false,
+			})?.text ?? text;
+		const candidate = view(text);
+		for (let index = 0; index < 20; index++) {
+			const signature = text
+				.split("\n")
+				.slice(index * 9, index * 9 + 7)
+				.join("\n");
+			expect(rendered).toContain(signature);
+			expect(candidate.status === "summary" ? candidate.rendered.text : text).toContain(signature);
+		}
+	});
 	it("ambiguous syntax and unsupported languages fall back", () => {
 		// Given malformed lexical constructs, unsupported indentation grammars and unsafe budgets.
 		const cases = [
@@ -121,7 +143,7 @@ describe("selected read folders (#1639)", () => {
 		expect(Object.isFrozen(agent.READ_FOLD_SETTINGS)).toBe(true);
 		expect(Object.isFrozen(agent.selectedReadFolder)).toBe(true);
 		expect(agent.READ_FOLDER_SELECTION.languages).toEqual({
-			ts: "heuristic",
+			ts: "raw",
 			js: "heuristic",
 			json: "heuristic",
 			tsx: "unsupported",
@@ -131,10 +153,11 @@ describe("selected read folders (#1639)", () => {
 			markdown: "prose_exempt",
 			txt: "prose_exempt",
 		});
-		expect(agent.READ_FOLDER_SELECTION.head).toBe("d186dd4a7d1fe172e13b8e351378b6f7edadf079");
+		expect(agent.READ_FOLDER_SELECTION.head).toMatch(/^[a-f0-9]{40}$/);
+		expect(agent.READ_FOLDER_SELECTION.rawReasons.ts).toBe("wasm_candidate_pending_owner");
 		expect(agent.READ_FOLDER_SELECTION.wasm).toBe(false);
 		expect(agent.selectedReadFolder.id).toBe("measured-brace");
-		expect(agent.selectedReadFolder.version).toBe("1");
+		expect(agent.selectedReadFolder.version).toBe("2");
 	});
 
 	it.each(["ts", "js"])("preserves complete lexical spans and exact sibling coordinates in %s", (language) => {

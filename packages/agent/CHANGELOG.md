@@ -10,9 +10,11 @@
 
 ### Changed
 
-- Default reads of eligible code now use structural views with exact offset/limit rereads. Prose, explicit ranges, unsupported input and existing size-limit fallbacks remain verbatim; callers can inject a folder or omit it from custom options to retain raw reads ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Default reads of eligible JS/JSON code now use structural views with exact offset/limit rereads. TypeScript remains raw after the production candidate missed its measured quality threshold. Prose, explicit ranges and existing size-limit fallbacks remain verbatim; callers can inject a folder or omit it from custom options to retain raw reads ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
+
+- Preserved arrow-return object types in read-folder signatures and reused structured file cancellation before folding. Production measurements use an explicit raw comparator and the actual shared folder/view ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Removed
 

@@ -175,13 +175,6 @@ export function stageImageGenSkill(repoRoot) {
 	return true;
 }
 
-// Row 17 selected only dependency-free TS/JS/JSON heuristics. This is deliberately
-// empty: adding a parser here requires a new approved selection and parity proof.
-const readSummaryCompileAssets = Object.freeze([]);
-export function getReadSummaryCompileAssets() {
-	return readSummaryCompileAssets;
-}
-
 export function measureReadSummaryBinaryDelta({ baselineBytes, candidateBytes, maxDeltaBytes }) {
 	for (const value of [baselineBytes, candidateBytes, maxDeltaBytes]) {
 		if (!Number.isSafeInteger(value) || value < 0) {
@@ -216,7 +209,6 @@ function main() {
 		}
 	}
 	const preparedImageGenSkillCount = stageImageGenSkill(repoRoot) ? 1 : 0;
-	console.log(JSON.stringify({ readSummaryAssets: getReadSummaryCompileAssets() }));
 
 	if (preparedCssTreeCount === 0 && preparedJsdomCount === 0 && preparedImageGenSkillCount === 0) {
 		console.log("[prepare-bun-compile-assets] css-tree, jsdom, and imagegen assets not installed; skipping");

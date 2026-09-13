@@ -32,7 +32,7 @@ async function bounded<T>(signal: Promise<T>): Promise<T> {
 
 export async function cancellationParity() {
 	return privateDir(async (cwd) => {
-		const path = join(cwd, "source.ts");
+		const path = join(cwd, "source.js");
 		await writeFile(path, source());
 		const receipts = [];
 		for (const name of readerNames) {

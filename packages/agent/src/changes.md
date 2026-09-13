@@ -1,3 +1,24 @@
+## 2026-09-13 - Corrective production read selection (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/tools/read.ts` reuses `FileError("aborted")` after fresh bytes and before folding.
+- `packages/agent/src/harness/utils/read-folders/index.ts` binds production measurements: JS/JSON defaults are selected, while the retained TS candidate is excluded from default reads after missing the quality threshold.
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` protects arrow-return signatures and classifies definite call arguments, balanced brace-free type arguments and comparison scopes without dropping ambiguity guards.
+- `packages/agent/src/harness/utils/segmented-read-view.ts` proves renderer exhaustiveness while preserving runtime invalid-segment errors.
+
+### Why
+
+- `packages/agent/src/harness/tools/read.ts` must preserve the environment's structured cancellation code rather than throwing an untyped cancellation error.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/tools/read.ts` is the injectable lower-level filesystem reader below extension execution.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/tools/read.ts`: error imports and the post-read cancellation check; both truncators remain unchanged.
+
 ## 2026-09-13 - Structural default reads with exact range fallback
 
 ### What changed

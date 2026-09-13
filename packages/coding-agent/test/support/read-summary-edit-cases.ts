@@ -8,7 +8,7 @@ export async function summaryRereadEdit() {
 		const receipts = [];
 		for (const name of readerNames)
 			for (const ending of ["\n", "\r\n"]) {
-				const path = join(cwd, `${name}.ts`);
+				const path = join(cwd, `${name}.js`);
 				const original = `${source()}\nconst literal = "\u2026";\n`.replaceAll("\n", ending);
 				await writeFile(path, original);
 				const tools = readers(cwd);
@@ -55,7 +55,7 @@ export async function syntheticEditRefusal() {
 	return privateDir(async (cwd) => {
 		const receipts = [];
 		for (const name of readerNames) {
-			const path = join(cwd, `${name}.ts`);
+			const path = join(cwd, `${name}.js`);
 			const text = `${source()}\nconst literal = "\u2026";`;
 			await writeFile(path, text);
 			const tools = readers(cwd);

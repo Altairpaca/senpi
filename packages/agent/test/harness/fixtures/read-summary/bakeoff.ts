@@ -1,14 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createReadTool } from "../../../../../coding-agent/src/core/tools/read.ts";
-import { measurePrototypeBinary } from "./binary-sizes.ts";
+import { READ_FOLDER_SELECTION } from "../../../../src/harness/utils/read-folders/index.ts";
 import { boundaryFixtures } from "./boundary-fixtures.ts";
 import { loadCorpus } from "./corpus.ts";
 import { loadFrozenBaseline, loadReadGate } from "./frozen-baseline.ts";
-import { heuristic } from "./heuristic.ts";
 import { selectLanguages } from "./language-selections.ts";
 import { annotate, compareOmp, retainedSourceExact } from "./oracle.ts";
+import { productionCandidate } from "./production-candidate.ts";
+import { readRawBaseline } from "./raw-baseline.ts";
 import { runReference, tokenize } from "./reference.ts";
 import { sha256, validBoundaries } from "./scorer.ts";
 
@@ -23,7 +23,8 @@ export async function bakeoff(options: {
 	const startedAt = new Date().toISOString();
 	const out = dirname(options.out);
 	const { corpus, entries, manifestSha256 } = loadCorpus(options.input, options.manifestHash);
-	for (const dir of ["raw", "omp", "candidate", "synthetic"]) mkdirSync(join(out, dir), { recursive: true });
+	for (const dir of ["raw", "omp", "candidate", "default-read", "synthetic"])
+		mkdirSync(join(out, dir), { recursive: true });
 	const json = (name: string, value: unknown) => writeFileSync(join(out, name), `${JSON.stringify(value, null, 2)}\n`);
 	const synthetic = boundaryFixtures().map((fixture) => {
 		const ext =
@@ -63,7 +64,6 @@ export async function bakeoff(options: {
 		});
 	const annotationsHash = sha256(JSON.stringify(annotations));
 	json("source-annotations.json", { sha256: annotationsHash, annotations });
-	const rawTool = createReadTool(options.input);
 	const rows = [];
 	for (const entry of all) {
 		const ref = reference.results.find((result) => result.id === entry.id);
@@ -73,15 +73,11 @@ export async function bakeoff(options: {
 			throw new Error("frozen_source_mismatch");
 		if (sha256(readFileSync(entry.file)) !== entry.sha256) throw new Error("stale_corpus_hash");
 		const rawStart = performance.now();
-		const rawResult = await rawTool.execute(entry.id, { path: entry.file });
+		const raw = await readRawBaseline(options.input, entry.file);
 		const rawMs = performance.now() - rawStart;
-		const raw = rawResult.content
-			.filter((content) => content.type === "text")
-			.map((content) => content.text)
-			.join("\n");
 		if (frozen && frozen.raw.get(entry.id) !== raw) throw new Error("frozen_raw_output_changed");
 		const candidateStart = performance.now();
-		const candidate = heuristic(entry.source, entry.language);
+		const candidate = await productionCandidate(options.input, entry.file, entry.source);
 		const candidateMs = performance.now() - candidateStart;
 		const exact = retainedSourceExact(entry.source, candidate);
 		const valid = validBoundaries({
@@ -93,6 +89,7 @@ export async function bakeoff(options: {
 		writeFileSync(join(out, "raw", `${entry.id}.txt`), raw);
 		writeFileSync(join(out, "omp", `${entry.id}.txt`), ref.text);
 		writeFileSync(join(out, "candidate", `${entry.id}.txt`), candidate.text);
+		writeFileSync(join(out, "default-read", `${entry.id}.txt`), candidate.defaultReadText);
 		json(`omp/${entry.id}.json`, ref.result);
 		const oracleHidden = new Set(
 			annotation.ranges
@@ -122,17 +119,19 @@ export async function bakeoff(options: {
 			raw_sha256: sha256(row.raw),
 			omp_sha256: sha256(row.omp),
 			candidate_sha256: sha256(row.candidate.text),
+			default_read_sha256: sha256(row.candidate.defaultReadText),
 		})),
 	);
 	const tokens = tokenize(
 		options.omp,
-		rows.flatMap((row) => [row.raw, row.omp, row.candidate.text]),
+		rows.flatMap((row) => [row.raw, row.omp, row.candidate.text, row.candidate.defaultReadText]),
 	);
 	const samples = rows.map((row, index) => ({
 		...row,
-		rawTokens: tokens[index * 3],
-		ompTokens: tokens[index * 3 + 1],
-		candidateTokens: tokens[index * 3 + 2],
+		rawTokens: tokens[index * 4],
+		ompTokens: tokens[index * 4 + 1],
+		candidateTokens: tokens[index * 4 + 2],
+		defaultReadTokens: tokens[index * 4 + 3],
 	}));
 	json("boundaries.json", {
 		annotations_sha256: annotationsHash,
@@ -156,7 +155,7 @@ export async function bakeoff(options: {
 	});
 	const selections = selectLanguages(samples, corpus.max_embedded_delta_bytes);
 	const csv = [
-		"id,language,sha256,synthetic,source_bytes,raw_tokens,omp_tokens,candidate_tokens,saved_token_fraction,omp_saved_token_fraction,raw_ms,omp_ms,candidate_ms,valid_boundaries,candidate_reason,fallback_reason,scanned_folds,emitted_folds,minimum_oracle_skeleton_lines",
+		"id,language,sha256,synthetic,source_bytes,raw_tokens,omp_tokens,candidate_tokens,saved_token_fraction,omp_saved_token_fraction,raw_ms,omp_ms,candidate_ms,valid_boundaries,candidate_reason,fallback_reason,scanned_folds,emitted_folds,minimum_oracle_skeleton_lines,default_read_tokens",
 	];
 	for (const row of samples)
 		csv.push(
@@ -180,17 +179,32 @@ export async function bakeoff(options: {
 				row.candidate.scanned_folds,
 				row.candidate.folds.length,
 				row.minimumOracleSkeleton,
+				row.defaultReadTokens,
 			].join(","),
 		);
 	writeFileSync(join(out, "per-file.csv"), `${csv.join("\n")}\n`);
 	json("corpus.json", { ...corpus, input_manifest_sha256: manifestSha256, tokenizer: reference.tokenizer });
 	if (frozen && sha256(readFileSync(join(out, "corpus.json"))) !== frozen.corpusSha256)
 		throw new Error("frozen_corpus_changed");
-	const binary = measurePrototypeBinary(out);
-	json("binary-sizes.json", binary);
 	const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 	const selection = {
-		version: 1,
+		version: 2,
+		candidate_implementation: "production_folder_segmented_view_and_default_read",
+		default_read_selection: READ_FOLDER_SELECTION,
+		candidate_sources_sha256: Object.fromEntries(
+			[
+				"read-folders/brace-scanner.ts",
+				"read-folders/lexical-context.ts",
+				"read-folders/lexical-spans.ts",
+				"read-folders/types.ts",
+				"segmented-read-view.ts",
+			].map((path) => [
+				path,
+				sha256(readFileSync(new URL(`../../../../src/harness/utils/${path}`, import.meta.url))),
+			]),
+		),
+		tree_sha: execFileSync("git", ["write-tree"], { encoding: "utf8" }).trim(),
+		binary_measurement: "omp-item1 --case compiled-parity (release graph, all shipped targets)",
 		gate_status: "OQ1_unresolved_defaults_used",
 		gate_receipt: gateReceipt,
 		reference_mode: frozen ? "frozen_actual_ReadTool_outputs" : "live_actual_ReadTool",

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { getReadSummaryCompileAssets, measureReadSummaryBinaryDelta } from "../prepare-bun-compile-assets.mjs";
+import { measureReadSummaryBinaryDelta } from "../prepare-bun-compile-assets.mjs";
 import {
 	binaryIdentity,
 	compileBinary,
@@ -17,7 +17,6 @@ import { readSurface } from "./read-summary-parity.mjs";
 import { isolatedReadEnvironment } from "./read-summary-rpc.mjs";
 
 export async function missingAssetAndBudget(directory, binary, ceiling) {
-	assert.deepEqual(getReadSummaryCompileAssets(), []);
 	// Corrupt a generated compile input, never source: the rebuilt binary asks for a
 	// missing required distribution theme during CLI initialization, before any read.
 	const asset = realpathSync(join(repository, "packages/coding-agent/dist/modes/interactive/theme/theme.js"));
@@ -91,7 +90,7 @@ export async function missingAssetAndBudget(directory, binary, ceiling) {
 	const healthyLayout = stageReadRuntime(healthy, binary);
 	const content = `${Array.from({ length: 110 }, (_, index) => `const value${index} = ${index};`).join("\n")}\nfunction broken() {`;
 	const files = [
-		{ id: "malformed-ts", path: "malformed.ts", content },
+		{ id: "malformed-js", path: "malformed.js", content },
 		{ id: "unsupported-rust", path: "unsupported.rs", content },
 	];
 	const fallback = await readSurface(healthyLayout.command, healthy, files);
@@ -100,7 +99,6 @@ export async function missingAssetAndBudget(directory, binary, ceiling) {
 		assert.equal(row.full.results[0].result.content[0].text, content);
 	}
 	return {
-		selectedAssets: getReadSummaryCompileAssets(),
 		build,
 		binary: binaryIdentity(negativeBinary),
 		missingAsset: {

@@ -1,18 +1,25 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { build as bundle } from "esbuild";
 import * as preparation from "./prepare-bun-compile-assets.mjs";
 import * as build from "./qa/read-summary-build.mjs";
 import * as rpc from "./qa/read-summary-rpc.mjs";
 
 // #1639: a heuristic selection must not gain an install-dependent parser.
 describe("read-summary compile contract", () => {
+	it("uses the release entry graph and compile flags", () => {
+		// Given the actual package release recipe; this compares argv, not command prose.
+		const pkg = JSON.parse(readFileSync(join(build.repository, "packages/coding-agent/package.json"), "utf8"));
+		const args = pkg.scripts["build:binary"].split(" && ").find((part) => part.startsWith("bun build ")).split(/\s+/).slice(2);
+		args[args.indexOf("--outfile") + 1] = resolve("read-parity/senpi");
+		// When deriving the argv used by QA; then no release worker or flag can be omitted.
+		assert.deepEqual(build.releaseCompileArgs(build.repository, "read-parity/senpi"), ["bun", "build", ...args]);
+	});
 	it("correlates parallel read results by invocation identity, not completion order", () => {
 		// Given real RPC event shapes arriving in reverse order.
 		const calls = [{ id: "first" }, { id: "second" }];
@@ -56,35 +63,29 @@ describe("read-summary compile contract", () => {
 		}
 	});
 
-	it("reports an immutable empty selected asset set", () => {
-		// Given the frozen heuristic-only selection, when requesting its compile manifest.
-		assert.equal(typeof preparation.getReadSummaryCompileAssets, "function");
-		const assets = preparation.getReadSummaryCompileAssets();
-		// Then no parser runtime or grammar is required, even after a repeated request.
-		assert.deepEqual(assets, []);
-		assert(Object.isFrozen(assets));
-		assert.strictEqual(preparation.getReadSummaryCompileAssets(), assets);
+	it("bundles the actual folder and view without external runtime dependencies", async () => {
+		// Given the shipping feature's actual entry modules, not a self-reported empty registry.
+		const folder = "packages/agent/src/harness/utils/read-folders/";
+		const view = "packages/agent/src/harness/utils/segmented-read-view.ts";
+		// When bundling their transitive graph; then any parser, asset or other runtime import fails this boundary.
+		const result = await bundle({ absWorkingDir: build.repository, entryPoints: [`${folder}index.ts`, view],
+			bundle: true, platform: "browser", format: "esm", outdir: "unused", write: false, metafile: true });
+		const inputs = Object.keys(result.metafile.inputs);
+		assert(inputs.includes(`${folder}brace-scanner.ts`));
+		assert(inputs.every((path) => path === view || (path.startsWith(folder) && path.endsWith(".ts"))), JSON.stringify(inputs));
+		assert(Object.values(result.metafile.outputs).every((output) => output.imports.length === 0));
 	});
 
-	it("emits the same empty manifest from preparation in a clean directory", () => {
-		// Given no installed optional compile packages.
-		const root = mkdtempSync(join(tmpdir(), "read-summary-assets-"));
+	it("derives changed release entries and quoted argv without a copied contract", () => {
+		// Given an execution-owned package recipe with a distinct entry and a quoted path.
+		const root = mkdtempSync(join(tmpdir(), "read-release-argv-"));
 		try {
-			const invoke = () =>
-				spawnSync(process.execPath, [fileURLToPath(new URL("./prepare-bun-compile-assets.mjs", import.meta.url))], {
-					cwd: root,
-					encoding: "utf8",
-					env: { ...process.env, PI_BUN_COMPILE_REPO_ROOT: root },
-				});
-			// When preparation runs twice, then its machine manifest is stable.
-			const first = invoke();
-			const second = invoke();
-			assert.equal(first.status, 0, first.stderr);
-			assert.equal(second.status, 0, second.stderr);
-			const manifests = first.stdout.split("\n").filter((line) => line.startsWith("{"));
-			assert.equal(manifests.length, 1);
-			assert.deepEqual(JSON.parse(manifests[0]), { readSummaryAssets: [] });
-			assert.equal(second.stdout, first.stdout);
+			mkdirSync(join(root, "packages/coding-agent"), { recursive: true });
+			writeFileSync(join(root, "packages/coding-agent/package.json"), JSON.stringify({ scripts: {
+				"build:binary": 'bun run prepare && bun build --compile --splitting "./worker with space.ts" --outfile old && bun run copy-assets',
+			} }));
+			// When deriving the candidate argv; then release changes and output paths survive as individual arguments.
+			assert.deepEqual(build.releaseCompileArgs(root, join(root, "new output")), ["bun", "build", "--compile", "--splitting", "./worker with space.ts", "--outfile", join(root, "new output")]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -126,31 +127,6 @@ describe("read-summary compile contract", () => {
 				}),
 			{ code: "READ_SUMMARY_BINARY_BUDGET_EXCEEDED" },
 		);
-	});
-
-	it("fails explicitly at initialization when a required prepared asset is missing", () => {
-		// Given a real executable prepared-data module, not a substitute read tool.
-		const root = mkdtempSync(join(tmpdir(), "read-summary-missing-"));
-		try {
-			const path = join(root, "theme.cjs");
-			writeFileSync(join(root, "dark.json"), "{}");
-			writeFileSync(
-				path,
-				'const fs = require("node:fs");\nJSON.parse(fs.readFileSync(require("node:path").join(__dirname, "dark.json"), "utf8"));\nconsole.log("INITIALIZED");\n',
-			);
-			assert.equal(spawnSync(process.execPath, [path]).status, 0);
-			assert.equal(typeof build.corruptRequiredCompileAsset, "function");
-			// When the compiled required theme lookup points to a missing packaged asset.
-			build.corruptRequiredCompileAsset(path);
-			const result = spawnSync(process.execPath, [path], { encoding: "utf8" });
-			// Then startup fails, names the missing asset, and never reports initialization success.
-			assert.notEqual(result.status, 0);
-			assert.match(result.stderr, /ENOENT/);
-			assert.match(result.stderr, /read-summary-required-theme\.missing\.json/);
-			assert.doesNotMatch(result.stdout, /INITIALIZED/);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
 	});
 
 	it("rejects invalid byte measurements before comparing the budget", () => {

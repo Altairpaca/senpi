@@ -1,31 +1,10 @@
-import { commentSpan, regexSpan, stringSpan } from "./lexical-spans.ts";
+import { controls, expressionKeywords, isCallCallee, type Open } from "./lexical-context.ts";
+import { commentSpan, regexSpan, stringSpan, typeArgumentsSpan } from "./lexical-spans.ts";
 import type { ReadFoldSettings, ReadLineRange } from "./types.ts";
 
 type Scan =
 	| { readonly status: "parsed"; readonly ranges: readonly ReadLineRange[] }
 	| { readonly status: "parse_failure"; readonly reason: string };
-type Open = {
-	readonly char: "{" | "[" | "(";
-	readonly line: number;
-	readonly foldable: boolean;
-	readonly protected: boolean;
-	readonly interpolation: boolean;
-	readonly control: boolean;
-};
-const expressionKeywords = new Set([
-	"return",
-	"throw",
-	"yield",
-	"await",
-	"case",
-	"typeof",
-	"void",
-	"delete",
-	"in",
-	"of",
-	"instanceof",
-]);
-const controls = new Set(["if", "while", "for", "switch", "catch", "with"]);
 
 /** Measured row-17 brace lexer, restricted to the three selected languages. */
 export function scanBraces(source: string, language: "ts" | "js" | "json", settings: ReadFoldSettings): Scan {
@@ -37,8 +16,11 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 	let template = false;
 	let templateDepth = 0;
 	let previous = "";
+	let beforeWord = "";
+	let valueArrow = false;
 	let expressionEnd: boolean | null = false;
 	let importClause = false;
+	let ambiguousAngleDepth: number | undefined;
 	if (source.startsWith("#!")) {
 		const end = source.indexOf("\n");
 		i = end < 0 ? source.length : end;
@@ -59,7 +41,16 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				expressionEnd = true;
 				previous = "literal";
 			} else if (char === "$" && next === "{") {
-				stack.push({ char: "{", line, foldable: false, protected: true, interpolation: true, control: false });
+				stack.push({
+					char: "{",
+					line,
+					foldable: false,
+					protected: true,
+					interpolation: true,
+					control: false,
+					call: false,
+					valueParameters: false,
+				});
 				template = false;
 				expressionEnd = false;
 				previous = "{";
@@ -133,9 +124,9 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			continue;
 		}
 		if (/[A-Za-z_$]/.test(char)) {
-			if (previous === "<") return fail("ambiguous_angle_syntax");
 			const start = i++;
 			while (/[A-Za-z_$0-9]/.test(source[i] ?? "")) i++;
+			beforeWord = previous;
 			previous = source.slice(start, i);
 			expressionEnd = !expressionKeywords.has(previous);
 			if (previous === "import") importClause = true;
@@ -150,14 +141,24 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			continue;
 		}
 		if (char === "{" || char === "[" || char === "(") {
-			if (language !== "json" && char !== "(" && previous === ",") return fail("ambiguous_binding");
-			// Parenthesized bindings/defaults and return-type literals are signature bytes.
+			if (char === "{" && ambiguousAngleDepth !== undefined) return fail("ambiguous_angle_syntax");
+			if (
+				language !== "json" &&
+				char !== "(" &&
+				previous === "," &&
+				!stack.some((open) => open.protected) &&
+				stack.at(-1)?.char !== "[" &&
+				!stack.at(-1)?.call
+			)
+				return fail("ambiguous_binding");
+			const call = char === "(" && isCallCallee(previous, beforeWord);
 			const protectedRange =
-				char === "(" ||
+				(char === "(" && !call && !(previous === "=>" && valueArrow)) ||
 				importClause ||
 				stack.some((open) => open.protected) ||
 				["const", "let", "var", "export", "type", "#", "!"].includes(previous) ||
-				(language !== "json" && [":", "<", "&", "|"].includes(previous));
+				(language !== "json" && [":", "<", "&", "|"].includes(previous)) ||
+				(language === "ts" && previous === "=>" && !valueArrow);
 			const foldable =
 				templateDepth === 0 &&
 				char !== "(" &&
@@ -170,7 +171,10 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				protected: protectedRange,
 				interpolation: false,
 				control: char === "(" && controls.has(previous),
+				call,
+				valueParameters: char === "(" && stack.at(-1)?.call === true && ["(", ","].includes(previous),
 			});
+			valueArrow = false;
 			expressionEnd = false;
 			previous = char;
 			i++;
@@ -178,6 +182,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 		}
 		if (char === "}" || char === "]" || char === ")") {
 			const open = stack.pop();
+			if (ambiguousAngleDepth !== undefined && stack.length < ambiguousAngleDepth) ambiguousAngleDepth = undefined;
 			if (!open || { "{": "}", "[": "]", "(": ")" }[open.char] !== char) return fail("unbalanced_delimiters");
 			if (open.interpolation) {
 				template = true;
@@ -186,6 +191,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			}
 			if (open.foldable && line - open.line - 1 >= settings.minBodyLines)
 				ranges.push({ startLine: open.line + 1, endLine: line - 1 });
+			valueArrow = open.valueParameters;
 			expressionEnd = open.control ? false : char === "}" ? null : true;
 			if (char === "}") importClause = false;
 			previous = char;
@@ -198,9 +204,26 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			continue;
 		}
 		// JSX, escaped identifiers and unknown lexical tokens cannot establish safe delimiters.
-		if (char === "<" && /^<\/?[A-Za-z][^\n]*>/.test(source.slice(i))) return fail("ambiguous_angle_syntax");
+		if (char === "<" && language === "ts" && expressionEnd) {
+			const span = typeArgumentsSpan(source, i + 1);
+			if (span) {
+				line += span.newlines;
+				i = span.end;
+				previous = ">";
+				continue;
+			}
+			// A comparison can finish at its enclosing delimiter; an unresolved generic
+			// reaching a brace must fail rather than fold constraint/signature members.
+			if (!/^\s*\{/.test(source.slice(i + 1))) ambiguousAngleDepth = stack.length;
+		}
+		if (char === "<" && !expressionEnd && /^<\/?[A-Za-z]/.test(source.slice(i)))
+			return fail("ambiguous_angle_syntax");
 		if (!";:,.?=><!~+-*%&|^".includes(char)) return fail("unknown_token");
-		if (char === ";") importClause = false;
+		if (char === ";") {
+			importClause = false;
+			if (ambiguousAngleDepth === stack.length) ambiguousAngleDepth = undefined;
+		}
+		valueArrow = valueArrow && previous === ")" && char === "=" && next === ">";
 		previous = char === "=" && next === ">" ? "=>" : char;
 		i += previous === "=>" ? 2 : 1;
 		expressionEnd = char === "." ? null : false;
