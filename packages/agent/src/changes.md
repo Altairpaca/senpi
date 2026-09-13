@@ -1,3 +1,25 @@
+## 2026-09-13 - Measured folders and shared segmented read views
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports the selected folder, immutable D4 policy and pure segmented-view contract.
+- `packages/agent/src/harness/tools/read.ts`: adds the optional `ReadToolOptions.folder` type seam only; execution is unchanged pending read integration.
+- `packages/agent/src/harness/utils/segmented-read-view.ts`: owns segment validation, FIFO breadth-first refinement, exact source rendering and offset/limit footer metadata.
+- `packages/agent/src/harness/utils/read-folders/{index,types,brace-scanner,lexical-spans}.ts`: productionizes the row-17 TS/JS/JSON scanner and frozen selection without grammar dependencies; unsupported languages and prose remain explicit fallbacks.
+
+### Why
+
+- `packages/agent/src/index.ts` exposes a single reusable contract so both read surfaces can consume identical validated views without an agent-to-coding-agent dependency.
+- `packages/agent/src/harness/tools/read.ts` reserves the folder injection seam without changing today's raw reader before parity integration is verified.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/index.ts` and `packages/agent/src/harness/tools/read.ts` own the public library exports and reader options used below the coding-agent extension layer.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` utility re-exports and `packages/agent/src/harness/tools/read.ts` imports/options; no execute or truncation changes.
+
 ## 2026-09-10 - Honor an inline isError on returned tool results
 
 ### What changed

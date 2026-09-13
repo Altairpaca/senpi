@@ -3,6 +3,7 @@ import { type Static, Type } from "typebox";
 import type { Context } from "../context.ts";
 import type { AgentHarnessTool } from "../types.ts";
 import { getOrThrow } from "../types.ts";
+import type { ReadFolder } from "../utils/read-folders/types.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -42,6 +43,8 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Optional image conversion/resizing implementation. */
 	imageProcessor?: ReadImageProcessor;
+	/** Structural folder injection contract; read execution integration is separate. */
+	folder?: ReadFolder;
 }
 
 export function createReadTool<TContext extends ExecutionToolContext = ExecutionToolContext>(

@@ -1,0 +1,113 @@
+import { scanBraces } from "./brace-scanner.ts";
+import type { ReadFolder, ReadFolderInput, ReadFolderResult, ReadFoldRange, ReadLineRange } from "./types.ts";
+
+export * from "./types.ts";
+
+/** Frozen row-17 selection, not a runtime registry that can enable unmeasured grammars. */
+export const READ_FOLDER_SELECTION = Object.freeze({
+	head: "d186dd4a7d1fe172e13b8e351378b6f7edadf079",
+	selectionSha256: "ae5b0a54447ef9540466c7eabac33bb669a375525b2104d2ffb1c5f683dd2c16",
+	wasm: false,
+	languages: Object.freeze({
+		ts: "heuristic",
+		js: "heuristic",
+		json: "heuristic",
+		tsx: "unsupported",
+		python: "unsupported",
+		rust: "unsupported",
+		go: "unsupported",
+		markdown: "prose_exempt",
+		txt: "prose_exempt",
+	} as const),
+} as const);
+
+type Language = keyof typeof READ_FOLDER_SELECTION.languages;
+function languageForPath(path: string): Language | undefined {
+	const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+	if (!name.includes(".")) return undefined;
+	switch (name.slice(name.lastIndexOf(".") + 1)) {
+		case "ts":
+			return "ts";
+		case "js":
+			return "js";
+		case "json":
+			return "json";
+		case "tsx":
+			return "tsx";
+		case "py":
+			return "python";
+		case "rs":
+			return "rust";
+		case "go":
+			return "go";
+		case "md":
+		case "markdown":
+		case "mdown":
+		case "mkd":
+		case "mkdn":
+			return "markdown";
+		case "txt":
+			return "txt";
+		default:
+			return undefined;
+	}
+}
+
+function hierarchy(ranges: readonly ReadLineRange[]): readonly ReadFoldRange[] | undefined {
+	// Builder-owned arrays; no caller-owned ranges are sorted or mutated.
+	type Node = ReadLineRange & { readonly children: Node[] };
+	const roots: Node[] = [];
+	const stack: Node[] = [];
+	for (const range of [...ranges].sort((a, b) => a.startLine - b.startLine || b.endLine - a.endLine)) {
+		while (stack.length && range.startLine > stack[stack.length - 1].endLine) stack.pop();
+		const parent = stack[stack.length - 1];
+		if (parent && range.startLine === parent.startLine && range.endLine === parent.endLine) continue;
+		if (parent && (range.startLine <= parent.startLine || range.endLine >= parent.endLine)) return undefined;
+		const node: Node = { ...range, children: [] };
+		(parent ? parent.children : roots).push(node);
+		stack.push(node);
+	}
+	return roots;
+}
+
+function fold({ path, text, settings }: ReadFolderInput): ReadFolderResult {
+	const language = languageForPath(path);
+	if (!language) return { status: "unsupported", reason: "unsupported_language" };
+	const engine = READ_FOLDER_SELECTION.languages[language];
+	switch (engine) {
+		case "unsupported":
+			return { status: "unsupported", reason: "unsupported_language" };
+		case "prose_exempt":
+			return { status: "unsupported", reason: "prose_exempt" };
+		case "heuristic":
+			break;
+		default:
+			return engine satisfies never;
+	}
+	// Narrow the language independently: the manifest is the sole enablement authority.
+	if (language !== "ts" && language !== "js" && language !== "json")
+		return { status: "unsupported", reason: "unsupported_language" };
+	if (language === "json") {
+		try {
+			JSON.parse(text);
+		} catch (error) {
+			if (error instanceof SyntaxError) return { status: "parse_failure", reason: "invalid_json" };
+			throw error;
+		}
+	}
+	const scan = scanBraces(text, language, settings);
+	switch (scan.status) {
+		case "parse_failure":
+			return scan;
+		case "parsed": {
+			const ranges = hierarchy(scan.ranges);
+			return ranges
+				? { status: "parsed", text, ranges }
+				: { status: "parse_failure", reason: "ambiguous_line_boundaries" };
+		}
+		default:
+			return scan satisfies never;
+	}
+}
+
+export const selectedReadFolder: ReadFolder = Object.freeze({ id: "measured-brace", version: "1", fold });

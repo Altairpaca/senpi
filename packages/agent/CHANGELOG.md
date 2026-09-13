@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added dependency-free measured TS/JS/JSON read folders and a pure source-preserving segmented-view API with bounded breadth-first unfolding. Built-in read execution is unchanged ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
 ### Changed
 
 ### Fixed
