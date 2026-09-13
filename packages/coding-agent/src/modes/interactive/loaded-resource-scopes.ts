@@ -1,4 +1,4 @@
-import type { SourceInfo } from "../../core/source-info.ts";
+import type { SourceInfo, SourceScope } from "../../core/source-info.ts";
 import { theme } from "./theme/theme.ts";
 
 export type ResourceScopeGroup = "project" | "user" | "path" | "system";
@@ -102,6 +102,21 @@ export function formatResourceScopeGroups(
 	}
 
 	return lines.join("\n");
+}
+
+export function getScopeAutocompleteTag(scope: SourceScope): "u" | "p" | "t" | "s" {
+	switch (scope) {
+		case "user":
+			return "u";
+		case "project":
+			return "p";
+		case "temporary":
+			return "t";
+		case "system":
+			return "s";
+		default:
+			return assertNever(scope);
+	}
 }
 
 export function getDisplaySourceInfo(sourceInfo?: SourceInfo): DisplaySourceInfo {

@@ -777,6 +777,28 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 });
 
 describe("InteractiveMode.createBaseAutocompleteProvider", () => {
+	test("prefixes autocomplete descriptions with the resource scope tag, system included", () => {
+		const prototype = InteractiveMode.prototype as unknown as {
+			getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined;
+			prefixAutocompleteDescription(description: string | undefined, sourceInfo?: SourceInfo): string | undefined;
+		};
+		const fakeThis = { getAutocompleteSourceTag: prototype.getAutocompleteSourceTag };
+		const prefix = (scope: SourceInfo["scope"], source = "local"): string | undefined =>
+			prototype.prefixAutocompleteDescription.call(fakeThis, "desc", {
+				path: "/tmp/resource",
+				source,
+				scope,
+				origin: "top-level",
+			});
+
+		expect(prefix("user")).toBe("[u] desc");
+		expect(prefix("project")).toBe("[p] desc");
+		expect(prefix("temporary", "cli")).toBe("[t] desc");
+		expect(prefix("system", "builtin")).toBe("[s] desc");
+		expect(prefix("system", "cli")).toBe("[s] desc");
+		expect(prefix("system", "npm:harness-pkg")).toBe("[s:npm:harness-pkg] desc");
+	});
+
 	test("matches model command arguments across provider/model order", async () => {
 		type TestModel = { id: string; provider: string; name: string };
 		type FakeInteractiveMode = {
