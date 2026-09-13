@@ -1,5 +1,28 @@
 # changes
 
+## 2026-09-12 - Chord keeps upstream's release identity instead of the fork CalVer
+
+### What changed
+
+- `scripts/registry-packages.mjs`: chord is deliberately absent from the owned-alias map, so the fork does not publish a `@code-yeongyu/senpi-chord` package and chord's declared edges resolve to upstream's published version.
+- `scripts/release-packages.mjs`: `packages/chord` is removed from `WORKSPACE_PACKAGES` so the CalVer stamp no longer overwrites chord's version, and a new `BUNDLED_INTERNAL_WORKSPACES` export lists chord as a bundled runtime workspace that is internal to the install-lock but not lockstep-versioned.
+- `scripts/generate-coding-agent-install-lock.mjs`: the install-lock classifies `WORKSPACE_PACKAGES` ∪ `BUNDLED_INTERNAL_WORKSPACES` as internal, so chord's closure resolves from the local workspace manifest (its `esbuild@0.28.2` dep) instead of fetching upstream `@earendil-works/chord@0.85.1` metadata (which pins `esbuild@0.28.1`). The lockstep CalVer version check still applies only to `WORKSPACE_PACKAGES`.
+- `scripts/install-lock-validation.mjs`: the registry-metadata exemption now covers every internal name (not only the CalVer-locked ones), so a bundled-internal workspace staged with a registry tarball URL and no integrity is accepted.
+- `packages/chord/package.json`: version returns to upstream's `0.85.1` (no CalVer stamp).
+- `packages/{agent,client,coding-agent,protocol,server}/package.json`: the `@earendil-works/chord` dependency is pinned to the exact upstream `0.85.1` it resolves to.
+
+### Why
+
+- `@code-yeongyu/senpi@2026.9.12-3` could not be installed with bun: chord had been CalVer-stamped, so the packaged manifest and the published `@code-yeongyu/senpi-agent-core` manifest declared `@earendil-works/chord@^2026.9.12-3`, a version no registry package provides (only upstream's 0.85.x exists), and bun resolves those declared edges from the registry (issue #1632). npm's OIDC trusted publishing cannot create the first version of a brand-new package name, so publishing a `@code-yeongyu/senpi-chord` alias is not viable without a manual bootstrap; chord is byte-for-byte upstream apart from packaging metadata, so it keeps upstream's own `0.85.1` identity and its edges pin that exact published version. Keeping chord classified internal for the install-lock (`packages/chord/package.json`, `scripts/generate-coding-agent-install-lock.mjs`, `scripts/install-lock-validation.mjs`) keeps the installer closure resolving the bundled fork copy's `esbuild@0.28.2` rather than dragging upstream chord's `esbuild@0.28.1` into the lock. `scripts/release-packages.mjs` and `scripts/registry-packages.mjs` are where the fork records which workspaces ride the CalVer lockstep and which are published, so both had to drop chord from those roles.
+
+### Why an extension could not handle it
+
+- Version stamping, publish-target selection, registry-alias mapping and install-lock generation all run in the release scripts before publication, outside the runtime extension system: `scripts/registry-packages.mjs`, `scripts/release-packages.mjs`, `scripts/generate-coding-agent-install-lock.mjs` and `scripts/install-lock-validation.mjs` execute in the release pipeline, never inside a running agent session, and the `packages/*/package.json` edges are static manifest data.
+
+### Expected merge conflict zones
+
+- `scripts/registry-packages.mjs` owned-alias map; `scripts/release-packages.mjs` workspace lists; `scripts/generate-coding-agent-install-lock.mjs` internal-name construction; `scripts/install-lock-validation.mjs` exemption predicate; the `@earendil-works/chord` dependency range in `packages/{agent,chord,client,coding-agent,protocol,server}/package.json`.
+
 ## 2026-09-12 - Registry planning and concurrent-main release recovery
 
 ### What changed
