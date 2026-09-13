@@ -1121,6 +1121,12 @@ ctx.sessionManager.buildContextEntries()    // Active branch entries with compac
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
 
+### ctx.goalStoreFile
+
+Optional read-only getter for the absolute path to the current session's authoritative goal-store file. The host resolves it from the session manager and `ctx.cwd`; reading it performs no file creation. Persisted sessions honor session-directory overrides, while in-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Do not derive it from `getSessionFile()`.
+
+Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
+
 ### ctx.modelRegistry / ctx.model / ctx.thinkingLevel / ctx.scopedModels
 
 Access to models, providers, and resolved authentication. `ctx.modelRegistry.getProvider(id)` returns the effective pi-ai provider, while `getProviderAuth(id)` resolves its current API key, headers, base URL, and provider-scoped environment without requiring a loaded model. `ctx.model` is the active model, and `ctx.thinkingLevel` is its current effective thinking level.
@@ -2537,7 +2543,7 @@ const bashTool = createBashTool(cwd, {
 });
 ```
 
-`createBashTool()` and `createPowerShellTool()` expose the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
+`createBashTool()` and `createPowerShellTool()` expose the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_SESSION_CWD`, `PI_GOAL_STORE_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
 
 ```typescript
 const bashTool = createBashTool(cwd, {

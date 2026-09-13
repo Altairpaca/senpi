@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` session environment keys for kernels and shell children, including clearing of inherited values when absent (fixes #1663).
+
 - Interactive foreground eval cells detach on queued steering without cancelling their computation or in-flight tools. An occupied detached slot keeps the call waiting ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
 
 ### Changed
