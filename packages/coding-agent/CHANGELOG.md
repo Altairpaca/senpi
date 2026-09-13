@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the TUI foundation for host-leased regular-mode mouse clicks, with fail-closed frame anchoring and private cursor-position calibration; native selection and scrollback remain unchanged when no lease is active ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
 - Added optional read-only `ctx.steeringSignal` during tool execution so extensions can observe queued steering without cancelling work or consuming messages; follow-up input remains separate ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
 
 - Added `scopedEntries: true` to the `resources_discover` event so a handler can feature-detect that the host accepts `{ path, scope }` entries and fall back to plain paths on older hosts (fixes #1655).
