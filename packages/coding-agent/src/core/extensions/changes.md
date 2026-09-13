@@ -1,5 +1,25 @@
 # Core Extensions Changes
 
+## 2026-09-13 - `resources_discover` advertises scoped-entry support (senpi#1655)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ResourcesDiscoverEvent` gains `scopedEntries: true`, the capability signal that the host accepts `{ path, scope }` entries (senpi#1640) in the result.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitResourcesDiscover` constructs the event with `scopedEntries: true`.
+- Docs: `docs/extensions.md` shows a handler that returns the object form only when the field is present.
+
+### Why
+
+- A host that predates scoped entries treats an object entry as a path string and aborts session start (`input.trim is not a function` from `resolvePath`), so a distribution extension that must load on both old and new engines had no safe way to use the scoped form. The event field is the feature-detect: absent on old hosts, `true` here.
+
+### Why an extension could not handle it
+
+- Only the host knows which entry forms its runner accepts; an extension cannot probe the runner without crashing an old host, and engine version strings do not identify dev builds that already carry the feature.
+
+### Expected merge conflict zones
+
+- LOW: the `ResourcesDiscoverEvent` interface in `types.ts` and the event literal inside `emitResourcesDiscover` in `runner.ts`; both sit beside the senpi#1640 changes.
+
 ## 2026-09-13 - Optional steering-specific tool signal (senpi#1637)
 
 ### What changed
