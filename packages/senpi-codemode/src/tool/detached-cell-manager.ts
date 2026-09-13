@@ -144,7 +144,12 @@ export class EvalDetachedCellManager {
 	}
 
 	detach(cell: ManagedCell): boolean {
-		if (!cell.canDetach || !allowsDetachedCellTransition(cell.state, "detached")) return false;
+		if (
+			!cell.canDetach ||
+			!allowsDetachedCellTransition(cell.state, "detached") ||
+			this.#detachedByLanguage.has(cell.input.language)
+		)
+			return false;
 		cell.state = "detached";
 		cell.wasDetached = true;
 		this.#detachedByLanguage.set(cell.input.language, cell);

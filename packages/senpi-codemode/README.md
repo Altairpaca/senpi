@@ -177,6 +177,12 @@ cell keeps only its own language kernel busy. A new same-language call returns
 a busy error with its cell id and output tail; calls in other languages continue
 normally. Do not re-run the cell.
 
+Queued steering also detaches an eligible interactive foreground call, including
+one paused in a host tool bridge, without cancelling its computation. If the
+language's detached slot is occupied, steering leaves the call waiting. Follow-up
+messages, explicit `on_timeout: "error"`, and print/JSON calls do not trigger this
+transition; caller abort and existing deadlines retain their cancellation behavior.
+
 Every cell, detached or not, is bounded by two kill deadlines. The run budget
 (`runBudgetSeconds`, or the call's `timeout`) charges only the cell's own
 execution time and is paused while a host tool call is in flight, so a cell
@@ -185,8 +191,8 @@ The hard limit (`hardLimitSeconds`, raised by a larger `timeout`) is wall-clock
 and bounds parked cells too. A cell killed by either deadline reports which one
 in its result or completion notification, together with whether kernel state
 survived; the tool schema states the configured numbers. The `timeout` value
-never changes when an interactive call detaches: that is `cellTimeoutSeconds`
-capped by `foregroundWindowSeconds`.
+never changes the idle detach deadline: that is `cellTimeoutSeconds` capped by
+`foregroundWindowSeconds`; queued steering can detach the call earlier.
 
 While any cell is detached, the interactive footer shows a highlighted
 `↗ <language> · <summary>` status on the extension status line (the cell id
