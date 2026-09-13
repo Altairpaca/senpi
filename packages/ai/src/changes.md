@@ -1,3 +1,25 @@
+## Responses completion-phase watchdog: a dropped terminal event is a stall, not a five-minute wait (2026-09-13)
+
+### What changed
+
+- `packages/ai/src/api/responses-completion-grace.ts` (new): `withResponsesCompletionGrace(stream, graceMs = RESPONSES_COMPLETION_GRACE_MS)` wraps a Responses event stream. It counts `response.output_item.added` / `response.output_item.done`; once at least one item is done and none is open, waiting for the next event is bounded by the grace (60 s). On expiry it throws `ResponsesCompletionStallError` (`Provider stream stalled after the last output item: response.completed timed out after <n>ms`) and releases the source iterator without awaiting it. While an item is open, or before the first item is done, it imposes no deadline.
+- `packages/ai/src/api/openai-responses-shared.ts`: `processResponsesStream` iterates `withResponsesCompletionGrace(openaiStream)`, so every Responses transport (SSE and WebSocket; OpenAI, Codex, Azure, gateways) gets the watchdog.
+- `packages/ai/src/utils/retry.ts`: `PROVIDER_STREAM_STALL_ERROR_PATTERN` accepts the wording; "timed out" also satisfies the turn retry gate.
+- Tests: `packages/ai/test/responses-completion-grace.test.ts` (stall after grace; no deadline while an item is open or before the first done; continues when a new item is added; end to end through the Codex SSE stream the assistant message ends as a stall that both classifiers accept).
+
+### Why
+
+- The second stall class behind senpi#1648: about a quarter of the local `Idle timeout waiting for provider stream after 300000ms` incidents had a complete tool call or message in the message and then silence — the server had finished generating but `response.completed` never arrived. A healthy server sends the terminal event within milliseconds of the last `output_item.done`, so silence in that phase is a dropped event or a dead path, not the model thinking; it deserves a short grace, not the full idle budget. The WebSocket liveness heartbeat only covers Bun WebSocket transports; this covers SSE and Node as well.
+
+### Why an extension could not handle it
+
+- The phase (which items are open) is only visible inside the shared stream processor; an extension sees the assistant message after the idle watchdog has already spent five minutes.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/responses-completion-grace.ts` has no upstream counterpart.
+- LOW: one import plus the `for await` head in `packages/ai/src/api/openai-responses-shared.ts` `processResponsesStream`; one alternation in `packages/ai/src/utils/retry.ts`.
+
 ## Codex WebSocket liveness: no more five-minute stalls on dead connections (2026-09-13)
 
 ### What changed
