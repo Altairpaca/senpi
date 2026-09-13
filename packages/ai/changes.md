@@ -1,3 +1,21 @@
+## 2026-09-13 - Publish static provider module subpaths
+
+### What changed
+
+- `packages/ai/package.json` exports `./cursor-agent-provider` and `./devin-provider` from the built distribution, alongside `./bedrock-provider`.
+
+### Why
+
+- Standalone Bun consumers need static imports that also resolve from the published layout without exposing Node-only transports through the browser-safe root.
+
+### Why an extension could not handle it
+
+- `packages/ai/package.json` controls package resolution before extensions execute.
+
+### Expected merge conflict zones
+
+- `packages/ai/package.json` public exports block.
+
 ## 2026-09-12 - Fork-owned model catalog shards survive generation
 
 ### What changed

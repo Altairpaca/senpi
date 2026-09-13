@@ -18,6 +18,23 @@
 ### Expected merge conflict zones
 
 - LOW: the public proxy's attach/detach callbacks and observer event handling in `host-lifecycle.ts`.
+## 2026-09-13 - Register compiled provider modules in each session worker
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` imports the Bun runtime registration entry through a literal dynamic import when `isBunBinary`, before accepting messages.
+
+### Why
+
+- Provider overrides are isolate-local: registration in the launcher cannot satisfy lazy implementation loads in a shared-session worker. Relocated compiled probes and a worker-registration mutation distinguish both paths.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` owns isolate startup before the session loads extensions and accepts RPC commands.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` startup imports and initialization before `parentPort` message subscription.
 
 ## 2026-09-12 - Queued RPC input carries its source to extension `input` handlers
 

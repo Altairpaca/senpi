@@ -56,6 +56,22 @@ export function createJiti(...args) {
 	},
 };
 
+// Only standalone Bun isolates register these modules. esbuild follows the worker's
+// literal import even behind isBunBinary; keep that unreachable graph out of Node.
+const bunRuntimeModulesPlugin = {
+	name: "omit-bun-runtime-modules",
+	setup(build) {
+		build.onResolve({ filter: /[/\\\\]bun[/\\\\]runtime-modules\.(ts|js)$/ }, (args) => ({
+			namespace: "bun-runtime-modules",
+			path: args.path,
+		}));
+		build.onLoad({ filter: /.*/, namespace: "bun-runtime-modules" }, () => ({
+			contents: "export {};",
+			loader: "js",
+		}));
+	},
+};
+
 const httpsProxyAgentNamedExportPlugin = {
 	name: "https-proxy-agent-named-export",
 	setup(build) {
@@ -98,7 +114,7 @@ function commonBuildOptions() {
 		// package replaces it with a synchronous lazy require so jiti loads only
 		// when importing an extension; Babel remains deferred until a cache miss
 		// needs transformation.
-		plugins: [lazyJitiPlugin, httpsProxyAgentNamedExportPlugin],
+		plugins: [lazyJitiPlugin, httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin],
 		sourcemap: false,
 		target: "node22.19",
 		// Do not apply the monorepo's source-oriented path aliases while bundling

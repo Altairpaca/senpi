@@ -18,6 +18,24 @@
 
 - The `build:binary` script in `packages/coding-agent/package.json`.
 
+## 2026-09-13 - Public Bun runtime registration entry
+
+### What changed
+
+- `packages/coding-agent/package.json` exports `./bun-runtime` with JavaScript and declaration entries under `dist/bun/runtime-modules`.
+
+### Why
+
+- Compiled consumers must register static provider implementations once per isolate using a published, opt-in entry; ordinary Node and browser roots stay unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` defines the package-resolution boundary before extension loading.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json` exports block; binary build scripts are deliberately unchanged.
+
 ## 2026-09-12 - Pin the chord dependency to upstream's published version
 
 ### What changed

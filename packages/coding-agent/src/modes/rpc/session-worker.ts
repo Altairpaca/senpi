@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parentPort } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
@@ -22,6 +23,11 @@ import {
 	type WorkerDisplay,
 	type WorkerSnapshot,
 } from "./session-worker-protocol.ts";
+
+if (isBunBinary) {
+	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
+	registerBunRuntimeModules();
+}
 
 takeOverStdout();
 const port = parentPort;
