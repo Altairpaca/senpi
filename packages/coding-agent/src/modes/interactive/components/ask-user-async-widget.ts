@@ -10,7 +10,7 @@
 import { Container, Text, TruncatedText, type TUI } from "@earendil-works/pi-tui";
 import type { QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
 import { theme } from "../theme/theme.ts";
-import { ASK_USER_ANSWER_KEYBINDING } from "./ask-user-answer-key.ts";
+import { askUserAnswerKeyHint } from "./ask-user-answer-key.ts";
 import { AskUserCountdown } from "./ask-user-countdown.ts";
 import { formatCountdownLabel, type QuestionDraft } from "./ask-user-question-state.ts";
 import { keyText } from "./keybinding-hints.ts";
@@ -95,7 +95,7 @@ export function renderOptionsLine(question: Question, remaining: number): string
 
 /** Hint naming every way into the pending question; the shortcut segment follows the effective binding. */
 export function renderAnswerHint(): string {
-	const shortcut = keyText(ASK_USER_ANSWER_KEYBINDING);
+	const shortcut = askUserAnswerKeyHint();
 	const keys = shortcut === "" ? "enter" : `enter or ${shortcut}`;
 	return [
 		theme.fg("dim", keys) + theme.fg("muted", " to answer"),

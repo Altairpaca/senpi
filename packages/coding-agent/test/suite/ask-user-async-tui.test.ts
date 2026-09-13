@@ -2,6 +2,7 @@ import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { QuestionRequest } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
+import { askUserAnswerKeyHint } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
 import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
@@ -268,8 +269,6 @@ describe("async ask-user question in the interactive TUI", () => {
 	it("renders the shortcut hint from the registered key", () => {
 		const fake = createFakeInteractiveMode();
 		void fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
-		expect(stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "")).toContain(
-			process.platform === "darwin" ? "option+a" : "alt+a",
-		);
+		expect(stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "")).toContain(askUserAnswerKeyHint());
 	});
 });

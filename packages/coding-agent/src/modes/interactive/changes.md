@@ -1,3 +1,22 @@
+## 2026-09-13 - Shared answer chord and terminal-aware hint (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-key.ts` selects the primary configured answer chord for hints, or its retained letter fallback under tmux, Apple Terminal, Warp and VS Code; Option-composed glyph matching remains active.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` uses that hint. `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and the input tip catalog list the queue and both configurable question actions; keybinding and TUI docs explain dequeue precedence and Windows/WSL behavior.
+
+### Why
+
+- Users need an arrow chord that does not remove the existing answer shortcut or consume a separate dequeue binding.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns the app hotkeys display and pre-action question interception, while the widget owns its terminal-aware hint.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: hotkeys question rows only; handleDequeue is unchanged. The answer-key and widget hint helpers are fork-owned.
+
 ## 2026-09-13 - Explicit bound replies and digit answers (senpi#1645)
 
 ### What changed

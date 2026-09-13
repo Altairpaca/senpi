@@ -5,6 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/keybindings.ts` adds `app.question.next`, default `alt+down`, for cycling pending requests from an empty composer. Tab autocomplete and Shift+Tab thinking cycling are unchanged.
+- The answer action defaults to both `alt+up` and the retained `alt+a`. Exported primary/fallback key constants keep terminal-aware hints tied to the binding table. Pending-question interception precedes dequeue without changing its handler; Windows/WSL retain their independent `alt+q` dequeue key.
 
 ### Why
 

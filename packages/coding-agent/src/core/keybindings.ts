@@ -77,6 +77,9 @@ declare module "@earendil-works/pi-tui" {
 
 const windowsKeybindings = useWindowsKeybindings();
 
+export const QUESTION_ANSWER_PRIMARY_KEY = "alt+up" satisfies KeyId;
+export const QUESTION_ANSWER_FALLBACK_KEY = "alt+a" satisfies KeyId;
+
 export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
 	"tui.editor.undo": {
@@ -146,7 +149,7 @@ export const KEYBINDINGS = {
 		description: "Restore queued messages",
 	},
 	"app.question.answer": {
-		defaultKeys: "alt+a",
+		defaultKeys: [QUESTION_ANSWER_PRIMARY_KEY, QUESTION_ANSWER_FALLBACK_KEY],
 		description: "Open the pending question",
 	},
 	"app.question.next": {
