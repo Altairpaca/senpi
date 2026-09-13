@@ -22,7 +22,7 @@ const normalized = (path: string): string => path.replaceAll("\\", "/");
 beforeAll(() => {
 	// Given: the same four entries and optimization flags as the release build, without --compile.
 	const result = spawnSync(process.execPath, [
-		"build", "--target=bun", "--minify", "--keep-names", `--metafile=${join(scratch, "metafile.json")}`,
+		"build", "--target=bun", "--splitting", "--minify", "--keep-names", `--metafile=${join(scratch, "metafile.json")}`,
 		"./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/utils/image-resize-worker.ts",
 		"../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js", "--outdir", scratch,
 	], { cwd, encoding: "utf8", timeout: 120_000 });
