@@ -61,6 +61,24 @@
 
 - LOW: `packages/agent/src/index.ts` utility re-exports and `packages/agent/src/harness/tools/read.ts` imports/options; no execute or truncation changes.
 
+## 2026-09-13 - Keep the harness/session entry graph off the AI barrel
+
+### What changed
+
+- `packages/agent/src/harness/messages.ts`: `dropFailedAssistantTurns` is imported from `@earendil-works/pi-ai/utils/drop-failed-assistant-turns` and AI message types stay `import type` from the barrel. `convertToLlm` behavior is unchanged.
+
+### Why
+
+- `./harness/session` value-imports `jsonl/legacy-v3.ts` through storage/repo, and that file value-imports the two summary factories from `messages.ts`. The mixed barrel import of `dropFailedAssistantTurns` (ab68b5eb0) turned that type-only edge into a runtime walk of `packages/ai/src/index.ts` (132 files vs budget 25). The helper is a leaf already exported on `./utils/*`.
+
+### Why an extension could not handle it
+
+- Entry-graph budgets are a compile-time import contract. Extensions cannot change which module `messages.ts` evaluates.
+
+### Expected merge conflict zones
+
+- LOW: the import lines at the top of `packages/agent/src/harness/messages.ts`.
+
 ## 2026-09-10 - Honor an inline isError on returned tool results
 
 ### What changed

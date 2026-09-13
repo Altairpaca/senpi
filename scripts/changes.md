@@ -60,6 +60,24 @@
 
 - `scripts/qa/omp-item1.ts` is a new fork-only measurement script. Existing build and reader code is unchanged.
 
+## 2026-09-13 - Report entry-graph sizes on success
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` prints each declared entry's file count on success so a green run still reports the `./harness/session` size.
+
+### Why
+
+- The session budget is a cost contract. A silent pass hid the 132-file AI-barrel regression until the script was run by hand.
+
+### Why an extension could not handle it
+
+- Entry-graph walking is a commit-time source import check. Extensions cannot change which modules the checker walks.
+
+### Expected merge conflict zones
+
+- LOW: the success `console.log` in `scripts/check-entry-graphs.mjs`.
+
 ## 2026-09-13 - Share compiled standalone entry graphs
 
 ### What changed
@@ -78,6 +96,25 @@
 ### Expected merge conflict zones
 
 - The Windows and non-Windows compile argv in `scripts/build-binaries.sh`.
+
+## 2026-09-13 - Keep Bun provider registration outside Node bundles
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` resolves literal `bun/runtime-modules` imports to an empty module only in its Node esbuild graph.
+- Bundle coverage tests require positive implementation bytes reachable from both compiled entries; relocated binary probes consume terminal assistant errors in classic and shared RPC.
+
+### Why
+
+- esbuild follows literal imports even inside the worker's `isBunBinary` branch and would otherwise inline all three Node-only provider modules and the AWS SDK into its unsplit Node worker.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` establishes distribution bundle membership at build time, before extension execution.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs` plugin list and Bun-only import resolver.
 
 ## 2026-09-12 - Chord keeps upstream's release identity instead of the fork CalVer
 

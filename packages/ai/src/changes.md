@@ -102,6 +102,25 @@
 - `packages/ai/src/model.ts`: the `compat` conditional type chain gains a `devin-agent` arm.
 - Everything under `packages/ai/src/api/devin-agent/`, `packages/ai/src/api/devin-agent.ts`, `packages/ai/proto/devin/cascade.proto` and `packages/ai/src/providers/devin*` are fork-owned files with no upstream counterpart.
 
+## Devin static module override (2026-09-13)
+
+### What changed
+
+- `packages/ai/src/api/devin-agent.lazy.ts` accepts a typed module override before its existing variable-specifier fallback, including for wrappers created before registration.
+- `packages/ai/src/devin-provider.ts` exposes the concrete streaming functions as a static module shape for standalone bundles.
+
+### Why
+
+- A relocated Bun binary cannot resolve a variable-specifier import whose implementation is not embedded.
+
+### Why an extension could not handle it
+
+- The lazy loader and its module state belong to the AI package, while static bundle membership is determined before extensions run.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/devin-agent.lazy.ts` loader and override setter; both files are fork-only.
+
 ## Devin Cascade model transport (2026-09-12)
 
 ### What changed

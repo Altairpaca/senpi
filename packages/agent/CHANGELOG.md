@@ -16,6 +16,8 @@
 
 - Preserved arrow-return object types in read-folder signatures and reused structured file cancellation before folding. Production measurements use an explicit raw comparator and the actual shared folder/view ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
+- `convertToLlm` still drops failed assistant turns, but `dropFailedAssistantTurns` is imported from `@earendil-works/pi-ai/utils/drop-failed-assistant-turns` so the `./harness/session` entry stays off the AI barrel.
+
 ### Removed
 
 ## [2026.9.13] - 2026-09-13
