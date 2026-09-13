@@ -65,7 +65,7 @@
     },
     "packages/chord": {
       "name": "@earendil-works/chord",
-      "version": "2026.9.12-3",
+      "version": "0.85.1",
       "dependencies": {
         "esbuild": "0.28.2",
       },

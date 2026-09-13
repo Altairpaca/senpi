@@ -15,7 +15,7 @@ import {
 } from "./install-lock-utils.mjs";
 import { validateGeneratedFiles } from "./install-lock-validation.mjs";
 import { resolveOptionalRegistryPackage } from "./publish-lock-optional-registry.mjs";
-import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
+import { BUNDLED_INTERNAL_WORKSPACES, WORKSPACE_PACKAGES } from "./release-packages.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -161,7 +161,14 @@ async function generateInstallLock() {
 	const lockstepInternalNames = new Set(
 		WORKSPACE_PACKAGES.map((packagePath) => readJson(join(repoRoot, packagePath)).name),
 	);
-	const internalWorkspaces = getInternalWorkspaces(lockPackages, lockstepInternalNames);
+	// Bundled-internal workspaces (chord) resolve their closure from the local manifest like
+	// lockstep workspaces, but keep upstream's own version, so they are classified internal without
+	// being subject to the CalVer version check.
+	const internalWorkspaceNames = new Set([
+		...lockstepInternalNames,
+		...BUNDLED_INTERNAL_WORKSPACES.map((packagePath) => readJson(join(repoRoot, packagePath)).name),
+	]);
+	const internalWorkspaces = getInternalWorkspaces(lockPackages, internalWorkspaceNames);
 	const installLockPackages = {
 		"": createRootLockEntry(installerPackageJson),
 	};

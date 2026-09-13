@@ -39,7 +39,6 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			private: true,
 		});
 		for (const [directory, name] of [
-			["chord", "@earendil-works/chord"],
 			["agent", "@earendil-works/pi-agent-core"],
 			["tui", "@earendil-works/pi-tui"],
 			["pty", "@earendil-works/pi-pty"],

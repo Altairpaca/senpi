@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import semver from "semver";
+import { findPackageDirectories } from "./package-workspaces.mjs";
 import { bundledWorkspacePackageChecks } from "./prepare-senpi-bundled-workspaces.mjs";
 import { registryPackageNames } from "./registry-packages.mjs";
-import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { BUNDLED_INTERNAL_WORKSPACES, WORKSPACE_PACKAGES, getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -24,7 +26,6 @@ const INDEPENDENT_UPSTREAM_WORKSPACES = [
 	},
 ];
 const OWNED_REGISTRY_ALIASES = [
-	"@code-yeongyu/senpi-chord",
 	"@code-yeongyu/senpi-ai",
 	"@code-yeongyu/senpi-agent-core",
 	"@code-yeongyu/senpi-tui",
@@ -70,20 +71,56 @@ describe("npm publish dependency graph", () => {
 		}
 	});
 
-	it("publishes a registry alias for every bundled workspace", () => {
-		// Given: npm installs a bundled workspace from the packed copy, but Bun resolves the
-		// declared edge from the registry and synthesizes `^<bundled version>` when the manifest
-		// has none. A bundled workspace without an owned alias therefore ships a CalVer spec no
-		// upstream release satisfies, and `bun add @code-yeongyu/senpi@<version>` fails outright
+	it("keeps every bundled workspace's declared edge resolvable", () => {
+		// Given: npm installs a bundled workspace from the packed copy, but Bun resolves the declared
+		// edge from the registry — including the edges inside the published `@code-yeongyu/senpi-*`
+		// manifests. A bundled workspace is therefore only installable when it is either published
+		// under a fork alias, or left on upstream's own release line so its declared range matches a
+		// version that exists upstream. CalVer-stamping a bundled workspace the fork does not publish
+		// produces a spec nothing can satisfy and breaks `bun add @code-yeongyu/senpi` outright
 		// (issue #1632: chord shipped that way in 2026.9.12-3).
 		const publishedNames = getPublicWorkspacePackages().map(({ name }) => name);
-		const unaliased = [];
+		const manifests = findPackageDirectories().map((directory) => ({
+			directory,
+			manifest: readJson(join(directory, "package.json")),
+		}));
+		const problems = [];
 		for (const { packageName } of bundledWorkspacePackageChecks()) {
 			const registryName = registryPackageNames.get(packageName);
-			if (registryName === undefined || !publishedNames.includes(registryName)) {
-				unaliased.push(packageName);
+			if (registryName !== undefined) {
+				if (!publishedNames.includes(registryName)) {
+					problems.push(`${packageName}: mapped to ${registryName} but that alias is not published`);
+				}
+				continue;
+			}
+			const source = manifests.find(({ manifest }) => manifest.name === packageName);
+			assert.ok(source, `${packageName} is bundled but has no workspace manifest`);
+			const relativeManifest = `${relative(repoRoot, source.directory)}/package.json`.replaceAll("\\", "/");
+			if (WORKSPACE_PACKAGES.includes(relativeManifest)) {
+				problems.push(
+					`${packageName}: CalVer-stamped through ${relativeManifest} without a published fork alias`,
+				);
+			}
+			// A non-aliased bundled workspace must be declared internal so the install-lock resolves its
+			// closure from the local manifest; otherwise the generator fetches upstream registry metadata
+			// and drags that version's transitive deps (e.g. a different esbuild) into the installer lock.
+			if (!BUNDLED_INTERNAL_WORKSPACES.includes(relativeManifest)) {
+				problems.push(
+					`${packageName}: bundled without a fork alias but not listed in BUNDLED_INTERNAL_WORKSPACES`,
+				);
+			}
+			for (const { directory, manifest } of manifests) {
+				const range = manifest.dependencies?.[packageName];
+				if (typeof range !== "string" || range.startsWith("npm:")) {
+					continue;
+				}
+				if (!semver.satisfies(source.manifest.version, range)) {
+					problems.push(
+						`${manifest.name} (${relative(repoRoot, directory)}) declares ${packageName}@${range}, which its ${source.manifest.version} does not satisfy`,
+					);
+				}
 			}
 		}
-		assert.deepEqual(unaliased, [], `bundled workspaces without a published registry alias: ${unaliased.join(", ")}`);
+		assert.deepEqual(problems, [], problems.join("; "));
 	});
 });

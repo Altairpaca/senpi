@@ -5,11 +5,6 @@ import { registrySourcePackageNames, resolveRegistryPackages } from "./registry-
 
 export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
-	// Chord rides the fork's CalVer lockstep and is published under the fork alias
-	// (`@code-yeongyu/senpi-chord`) like every other bundled runtime workspace: the tarball still
-	// carries the packed copy, but the declared edge has to resolve from the registry because Bun
-	// resolves bundled entries too (issue #1632).
-	"packages/chord/package.json",
 	"packages/agent/package.json",
 	"packages/client/package.json",
 	"packages/coding-agent/package.json",
@@ -20,6 +15,15 @@ export const WORKSPACE_PACKAGES = [
 	"packages/senpi-codemode/package.json",
 	"packages/tui/package.json",
 ];
+
+// Bundled runtime workspaces that ship inside the senpi tarball but do NOT ride the fork's CalVer
+// lockstep: they keep upstream's own release version. The install-lock generator must still treat
+// them as internal (resolving their dependency closure from the local workspace manifest, never
+// fetching upstream registry metadata) so the closure matches the bundled copy; they are exempt
+// from the lockstep version check because their version is not the fork CalVer. chord is here
+// because it is byte-for-byte upstream apart from packaging metadata, so it keeps `@earendil-works/chord`'s
+// own published identity instead of a fork alias (issue #1632).
+export const BUNDLED_INTERNAL_WORKSPACES = ["packages/chord/package.json"];
 
 function writeWorkspaceVersion(file, version, dryRun, log, dryRunLog) {
 	const raw = readFileSync(file, "utf-8");
@@ -72,7 +76,8 @@ export function getPublicWorkspacePackages() {
 // names (publish.mjs rewrites them to `@code-yeongyu/senpi-*` manifests), so the fork's
 // runtime-dependency contract is the union: public-by-flag packages (client/protocol here,
 // everything in upstream-shaped fixtures) plus the fork's registry sources. Private,
-// unpublished workspaces (senpi-server, sqlite-node) stay out.
+// unpublished workspaces (chord, senpi-server, sqlite-node) stay out; chord keeps upstream's own
+// release identity so its declared edges resolve to upstream's published version (issue #1632).
 export function getRuntimeDepsCheckPackages() {
 	return findPackageDirectories()
 		.map((directory) => ({

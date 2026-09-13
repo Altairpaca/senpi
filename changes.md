@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## Pin the bundled chord workspace to upstream's published version (2026-09-12)
+
+### What changed
+
+- `packages/chord/package.json` returns to upstream's own `0.85.1` version instead of the fork CalVer stamp, so the bundled workspace keeps `@earendil-works/chord`'s published release identity.
+
+### Why
+
+- chord is bundled into the senpi tarball but the fork does not publish it. CalVer-stamping it made the packaged manifests declare `@earendil-works/chord@^<CalVer>`, which no registry version answers, so `bun add @code-yeongyu/senpi` failed (issue #1632). Keeping chord on upstream's `0.85.1` — which exists on the registry and is byte-for-byte our bundled copy apart from packaging metadata — makes every declared edge resolvable while the bundled copy shadows it at runtime.
+
+### Why an extension could not handle it
+
+- `packages/chord/package.json` is static manifest data consumed by the package manager and the release/publish pipeline, never reachable from the runtime extension system.
+
+### Expected merge conflict zones
+
+- The `version` field in `packages/chord/package.json`.
+
 ## Scrub VENICE_API_KEY in the hermetic test environments (2026-09-10)
 
 ### What changed
