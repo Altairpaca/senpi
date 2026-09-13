@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-13 - Reset supervisor idle time at occupancy transitions (#1290)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` updates its idle decider when a public client attaches or detaches and when an observed turn starts or settles, not only on timer ticks. The timer remains the shutdown trigger.
+- A clock-controlled subprocess regression exchanges real RPC records between ticks, reconnects successfully, and proves clean exit only after the new continuous idle window expires.
+
+### Why
+
+- A short readiness connection could begin and end between ticks without resetting a previous idle window. The next tick could close the public listener immediately after readiness, producing a Windows named-pipe `ENOENT` before the lifecycle test could open a session. Occupancy transitions must invalidate the old window synchronously.
+
+### Why an extension could not handle it
+
+- Connection occupancy and the shutdown clock belong to the shared supervisor, outside session extensions.
+
+### Expected merge conflict zones
+
+- LOW: the public proxy's attach/detach callbacks and observer event handling in `host-lifecycle.ts`.
+
 ## 2026-09-12 - Queued RPC input carries its source to extension `input` handlers
 
 ### What changed
