@@ -77,6 +77,15 @@ describe("shared mouse input (#1645)", () => {
 		assert.deepEqual(seen, ["a", "b"]);
 		buffer.destroy();
 	});
+	it("resynchronizes at a new escape without leaking its protocol tail", () => {
+		const buffer = new StdinBuffer();
+		const seen: string[] = [];
+		buffer.on("data", (sequence) => seen.push(sequence));
+		buffer.process(`\x1b[<${"1".repeat(65)}`);
+		buffer.process("\x1b[<0;10;5M");
+		assert.deepEqual(seen, ["\x1b[<0;10;5M"]);
+		buffer.destroy();
+	});
 	it("synthesizes click chains with explicit time", () => {
 		const s = new MouseClickSynthesizer();
 		const target = {};

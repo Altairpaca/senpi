@@ -333,9 +333,14 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 		if (this.discardingMouseFragment) {
 			const terminator = str.search(/[\x40-\x7e]/);
-			if (terminator === -1) return;
+			const escapeIndex = str.indexOf(ESC);
+			if (escapeIndex !== -1 && (terminator === -1 || escapeIndex < terminator)) {
+				str = str.slice(escapeIndex);
+			} else {
+				if (terminator === -1) return;
+				str = str.slice(terminator + 1);
+			}
 			this.discardingMouseFragment = false;
-			str = str.slice(terminator + 1);
 		}
 		this.buffer += str;
 

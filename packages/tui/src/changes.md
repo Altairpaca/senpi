@@ -70,7 +70,7 @@
 
 - `packages/tui/src/tui-alt-screen.ts`: four helper bodies delegate to `mouse-input.ts`; fullscreen selection, scrolling, search, and tracking bytes remain unchanged.
 - `packages/tui/src/index.ts`: exports the shared parser, protocol constants, and click synthesizer.
-- `packages/tui/src/stdin-buffer.ts`: retains incomplete owned SGR reports for at most 750 ms and 64 characters, discarding expired tails through a CSI terminator rather than leaking them into keyboard handling.
+- `packages/tui/src/stdin-buffer.ts`: retains incomplete owned SGR reports for at most 750 ms and 64 characters, discarding expired tails through a CSI terminator rather than leaking them into keyboard handling. A new escape boundary resynchronizes without stripping the next report's CSI prefix (pinned by an additional assertion-based RED/GREEN during final review).
 
 ### Why
 
