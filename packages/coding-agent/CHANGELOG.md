@@ -18,6 +18,8 @@
 
 ### Changed
 
+- Compiled Bun binaries load TypeScript extensions through native runtime modules instead of embedding jiti, preserving host-module identity and fresh dependency graphs on reload. Node runtimes retain their existing jiti options and load the importer only when needed ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 - Changed the interactive startup banner to leave system resources out of the compact `[Skills]`, `[Extensions]`, `[Prompts]` and `[Themes]` lines; a section with nothing else to show stays hidden until expanded (Ctrl+O or `--verbose`), where a `system` group now follows the project, user and path groups; autocomplete descriptions tag system resources `[s]` instead of `[t]` (fixes #1640).
 
 ### Fixed
