@@ -26,8 +26,7 @@ const MDN_INLINED_MARKER = "const mdnAtrules = {";
 const ESM_CREATE_REQUIRE_IMPORT = "import { createRequire } from 'module';\n";
 const jsdomDefaultStylesheetRead =
 	/const defaultStyleSheet = fs\.readFileSync\(\s*path\.resolve\(\s*__dirname,\s*["']\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css["']\s*\),\s*(?:\{\s*encoding:\s*["']utf-8["']\s*\}|["']utf8["'])\s*\);/;
-const jsdomSyncWorkerResolve =
-	/const syncWorkerFile = require\.resolve\(\s*["']\.\/xhr-sync-worker\.js["']\s*\);/;
+const jsdomSyncWorkerResolve = /const syncWorkerFile = require\.resolve\(\s*["']\.\/xhr-sync-worker\.js["']\s*\);/;
 
 function serializeJsonFile(path) {
 	return JSON.stringify(JSON.parse(readFileSync(path, "utf8")), null, "\t");
@@ -166,20 +165,40 @@ export function patchJsdomBinaryLookups(nodeModulesRoot) {
 }
 
 export function stageImageGenSkill(repoRoot) {
-	const sourcePath = join(
-		repoRoot,
-		"packages/coding-agent/src/core/extensions/builtin/imagegen/skill/SKILL.md",
-	);
+	const sourcePath = join(repoRoot, "packages/coding-agent/src/core/extensions/builtin/imagegen/skill/SKILL.md");
 	if (!existsSync(sourcePath)) {
 		return false;
 	}
-	const destinationPath = join(
-		repoRoot,
-		"packages/coding-agent/dist/core/extensions/builtin/imagegen/skill/SKILL.md",
-	);
+	const destinationPath = join(repoRoot, "packages/coding-agent/dist/core/extensions/builtin/imagegen/skill/SKILL.md");
 	mkdirSync(dirname(destinationPath), { recursive: true });
 	copyFileSync(sourcePath, destinationPath);
 	return true;
+}
+
+// Row 17 selected only dependency-free TS/JS/JSON heuristics. This is deliberately
+// empty: adding a parser here requires a new approved selection and parity proof.
+const readSummaryCompileAssets = Object.freeze([]);
+export function getReadSummaryCompileAssets() {
+	return readSummaryCompileAssets;
+}
+
+export function measureReadSummaryBinaryDelta({ baselineBytes, candidateBytes, maxDeltaBytes }) {
+	for (const value of [baselineBytes, candidateBytes, maxDeltaBytes]) {
+		if (!Number.isSafeInteger(value) || value < 0) {
+			throw Object.assign(new Error("Invalid read-summary binary byte measurement"), {
+				code: "READ_SUMMARY_BINARY_MEASUREMENT_INVALID",
+			});
+		}
+	}
+	const deltaBytes = candidateBytes - baselineBytes;
+	const measurement = { baselineBytes, candidateBytes, deltaBytes, maxDeltaBytes };
+	if (deltaBytes > maxDeltaBytes) {
+		throw Object.assign(new Error("Read-summary binary delta exceeds the selected asset budget"), {
+			code: "READ_SUMMARY_BINARY_BUDGET_EXCEEDED",
+			...measurement,
+		});
+	}
+	return measurement;
 }
 
 function main() {
@@ -197,6 +216,7 @@ function main() {
 		}
 	}
 	const preparedImageGenSkillCount = stageImageGenSkill(repoRoot) ? 1 : 0;
+	console.log(JSON.stringify({ readSummaryAssets: getReadSummaryCompileAssets() }));
 
 	if (preparedCssTreeCount === 0 && preparedJsdomCount === 0 && preparedImageGenSkillCount === 0) {
 		console.log("[prepare-bun-compile-assets] css-tree, jsdom, and imagegen assets not installed; skipping");

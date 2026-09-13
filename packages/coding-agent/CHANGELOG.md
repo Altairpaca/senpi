@@ -12,7 +12,7 @@
 
 ### Changed
 
-- Default reads of eligible TS/JS/JSON code now share the harness's structural view, with exact offset/limit rereads for edits. Prose, explicit ranges, unsupported input and existing size-limit continuations retain their previous output ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Default reads of eligible TS/JS/JSON code now share the harness's structural view, with exact offset/limit rereads for edits. Prose, explicit ranges, unsupported input and existing size-limit continuations retain their previous output. Standalone packaging reports the empty parser-asset selection and verifies real relocated-read parity and incremental binary size without adding parser dependencies ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Changed the interactive startup banner to leave system resources out of the compact `[Skills]`, `[Extensions]`, `[Prompts]` and `[Themes]` lines; a section with nothing else to show stays hidden until expanded (Ctrl+O or `--verbose`), where a `system` group now follows the project, user and path groups; autocomplete descriptions tag system resources `[s]` instead of `[t]` (fixes #1640).
 
 ### Fixed

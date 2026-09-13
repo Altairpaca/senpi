@@ -1,5 +1,26 @@
 # changes
 
+## 2026-09-13 - Size-gated standalone read parity (#1639)
+
+### What changed
+
+- `scripts/prepare-bun-compile-assets.mjs` reports the immutable empty read-parser asset set and exposes the inclusive incremental-byte budget check. No parser assets or dependencies are installed.
+- `scripts/qa/omp-item1.ts` adds compiled/source parity and missing-asset/budget cases. The read-summary QA modules compile identical-flags baseline/candidate binaries for all six release targets and use a provider-only extension to invoke the actual registered read tool over frozen corpus bytes.
+- `scripts/qa/read-summary-smoke.mjs` supplies the same real-session check to the cross-platform PR workflow. Runtime directories carry only the relocated executable, existing package/theme data, fixture and corpus copies, never a workspace node_modules or grammar tree.
+
+### Why
+
+- `scripts/prepare-bun-compile-assets.mjs` makes the heuristic-only selection explicit rather than allowing an installed parser to change output.
+- `scripts/qa/omp-item1.ts` verifies output bytes, folder identity, omitted coordinates and range rereads instead of counting help/version or metadata as read proof. It deliberately rebuilds a negative binary from a corrupted generated required-theme lookup, requires initialization failure, then distinguishes malformed source's normal raw fallback.
+
+### Why an extension could not handle it
+
+- `scripts/prepare-bun-compile-assets.mjs` and `scripts/qa/omp-item1.ts` own build-time packaging and artifact validation. The QA extension supplies deterministic provider events only; it neither implements nor replaces read.
+
+### Expected merge conflict zones
+
+- `scripts/prepare-bun-compile-assets.mjs`: compile preparation reporting. `scripts/qa/omp-item1.ts`: enumerated QA cases. Existing reader, truncation and native fallback implementations are untouched.
+
 ## 2026-09-13 - Read-summary measurement gate (#1639)
 
 ### What changed
