@@ -2,6 +2,13 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import type { AskUserVariant, QuestionRequest, QuestionResponse } from "./schema.ts";
 
 export const ASK_USER_SETTLED_EVENT = "ask-user:settled";
+export const ASK_USER_ASKED_EVENT = "ask-user:asked";
+
+export type AskUserAskedEvent = {
+	readonly ctx: ExtensionContext;
+	readonly request: QuestionRequest;
+	readonly variant: AskUserVariant;
+};
 
 export type AskUserSettledEvent = {
 	readonly ctx: ExtensionContext;

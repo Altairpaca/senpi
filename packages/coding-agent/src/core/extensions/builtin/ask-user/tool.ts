@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
-import { emitAskUserNotification } from "./notify.ts";
+import { ASK_USER_ASKED_EVENT, type AskUserAskedEvent, emitAskUserNotification } from "./notify.ts";
 import { createPendingQuestion } from "./pending.ts";
 import { getPendingQuestions, type QuestionDialogOptions, registerPendingQuestion } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
@@ -41,7 +41,7 @@ function result(
  * question stays silent: it was dismissed, superseded, or aborted.
  */
 function deliverAnswer(
-	pi: ExtensionAPI,
+	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
 	ctx: ExtensionContext,
 	request: QuestionRequest,
 	response: QuestionResponse,
@@ -53,7 +53,7 @@ function deliverAnswer(
 	});
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
-function emitWake(pi: ExtensionAPI, sessionId: string) {
+function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
 	const entries = getPendingQuestions(sessionId).filter((e) => !e.request.waitForAnswer);
 	const event: WakeSourceStateEvent = {
 		source: "ask-user",
@@ -65,17 +65,25 @@ function emitWake(pi: ExtensionAPI, sessionId: string) {
 	};
 	pi.events.emit(WAKE_SOURCE_STATE_EVENT, event);
 }
-function startQuestion(
-	pi: ExtensionAPI,
+export function startQuestion(
+	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
 	ctx: ExtensionContext,
 	request: QuestionRequest,
 	signal: AbortSignal | undefined,
 	state: AskUserState,
 	variant: "codex" | "claude",
+	{ resuming = false }: { resuming?: boolean } = {},
 ) {
 	const question = ctx.ui.question;
-	if (!question) throw new Error("Question UI is unavailable");
+	if (!question && !resuming) throw new Error("Question UI is unavailable");
 	const sessionId = ctx.sessionManager.getSessionId();
+	const existing = getPendingQuestions(sessionId).find((entry) => entry.request.requestId === request.requestId);
+	if (existing) return existing.completion;
+	const orphaned = (): QuestionResponse => ({
+		status: "orphaned-after-restart",
+		answers: {},
+		unanswered: request.questions.map((question) => question.id),
+	});
 	const controller = new AbortController();
 	const completion = Promise.withResolvers<QuestionResponse>();
 	let settled = false;
@@ -87,6 +95,7 @@ function startQuestion(
 		unregister();
 		signal?.removeEventListener("abort", abort);
 		if (!request.waitForAnswer) emitWake(pi, sessionId);
+		pi.events.emit("herdr:blocked", { active: false, id: request.requestId });
 		completion.resolve(response);
 		// This extension owns the authoritative idle timer (pending.ts), so a UI
 		// bridge that is still waiting learns the outcome only from this abort.
@@ -108,6 +117,13 @@ function startQuestion(
 	const abort = () => cancel();
 	unregister = registerPendingQuestion(sessionId, { request, pending, completion: completion.promise, cancel });
 	if (!request.waitForAnswer) emitWake(pi, sessionId);
+	pi.events.emit(ASK_USER_ASKED_EVENT, { ctx, request, variant } satisfies AskUserAskedEvent);
+	const first = request.questions[0];
+	pi.events.emit("herdr:blocked", {
+		active: true,
+		label: first ? `${first.header} — ${first.question}` : "Question",
+		id: request.requestId,
+	});
 	signal?.addEventListener("abort", abort, { once: true });
 	let draft: { answers: QuestionResponse["answers"]; comment?: string } = { answers: {} };
 	const opts: QuestionDialogOptions = {
@@ -139,10 +155,15 @@ function startQuestion(
 	const fail = (error: unknown) => {
 		if (settled) return;
 		const message = `Question UI failed: ${error instanceof Error ? error.message : String(error)}`;
+		if (resuming) {
+			accept({ ...orphaned(), comment: message });
+			return;
+		}
 		cancel(message);
 		ctx.ui.notify(message, "error");
 	};
 	if (signal?.aborted) abort();
+	else if (!question) accept(orphaned());
 	else {
 		try {
 			question.call(ctx.ui, request, opts).then(accept, fail);
@@ -150,7 +171,7 @@ function startQuestion(
 			fail(error);
 		}
 	}
-	if (!request.waitForAnswer)
+	if (!request.waitForAnswer && !resuming)
 		void completion.promise.then((response) => deliverAnswer(pi, ctx, request, response, variant));
 	return completion.promise;
 }

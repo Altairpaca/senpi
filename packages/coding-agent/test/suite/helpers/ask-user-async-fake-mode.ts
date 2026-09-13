@@ -9,6 +9,7 @@ import { Container, Text, type TUI } from "@earendil-works/pi-tui";
 import { type Mock, vi } from "vitest";
 import type { ExtensionUIContext, ExtensionWidgetOptions } from "../../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { type Theme, theme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
@@ -27,6 +28,8 @@ export type FakeSession = {
 	isStreaming: boolean;
 	isCompacting: boolean;
 	messages: unknown[];
+	settingsManager: SettingsManager;
+	emitExtensionEvent: Mock<(channel: string, data: unknown) => void>;
 	sendUserMessage: Mock<(text: string, options?: { deliverAs?: "steer" | "followUp" }) => Promise<void>>;
 	prompt: Mock<(text: string, options?: object) => Promise<void>>;
 };
@@ -75,6 +78,8 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 		isStreaming: options.isStreaming ?? false,
 		isCompacting: false,
 		messages: [],
+		settingsManager: SettingsManager.inMemory(),
+		emitExtensionEvent: vi.fn(),
 		sendUserMessage: vi.fn(async () => {}),
 		prompt: vi.fn(async () => {}),
 	};
@@ -83,6 +88,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 		editor,
 		defaultEditor: editor,
 		ui: {
+			terminal: { write: vi.fn(), setTitle: vi.fn(), rows: 36, columns: 120 },
 			setFocus: vi.fn((component: unknown) => {
 				focused = component;
 			}),
@@ -91,6 +97,8 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 			requestRender: vi.fn(),
 		},
 		keybindings: new KeybindingsManager(),
+		getNormalTerminalTitle: () => "senpi",
+		questionArrivalEpochMs: Date.now(),
 		runtimeHost: { session },
 		onInputCallback: vi.fn(),
 		handleDebugCommand: vi.fn(),

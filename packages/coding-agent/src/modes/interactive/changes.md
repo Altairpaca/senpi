@@ -1,3 +1,22 @@
+## 2026-09-13 - Question title, arrival bell and host dialog blocked signals (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` inserts the shown question header between tool and extension title layers, restores the title on settlement, and writes one BEL through the terminal abstraction for a fresh arrival when `askUser.bell` is enabled. Blocking questions use the same signals; components never write BEL.
+- The host question bridge compares the original asked timestamp with the UI attachment epoch to suppress bells for hydration, while repeated request IDs reuse completion. Host and local extension select/confirm/input/editor dialogs emit per-ID `herdr:blocked` pairs with cleanup in `finally`; question signals remain owned by the builtin.
+
+### Why
+
+- A pending question should remain visible in the terminal title without repeated alerts on reconnect, and dialog status must clear even when its promise rejects.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns terminal title precedence, terminal output and host dialog mounting; an extension cannot reliably observe UI hydration or resolve the title layer itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: applyTerminalTitle, handleHostUiRequest, createExtensionUIContext, question mount/finish and refreshAsyncWidget. Transport response shapes remain unchanged.
+
 ## 2026-09-13 - Shared answer chord and terminal-aware hint (senpi#1645)
 
 ### What changed

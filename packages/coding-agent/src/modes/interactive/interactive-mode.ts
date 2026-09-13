@@ -837,6 +837,7 @@ type HostUiCapableRuntime = {
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
 	onProgress?: (draft: QuestionDraft) => void;
 	getDeadlineAtMs?: () => number;
+	notifyArrival?: boolean;
 };
 
 /** A waitForAnswer=false question parked behind the collapsed editor widget. */
@@ -1040,6 +1041,8 @@ export class InteractiveMode {
 	private shownQuestionId: string | undefined;
 	private questionSurface: "collapsed" | "list" | "expanded" = "collapsed";
 	private composerDestination: { kind: "chat" } | { kind: "answer"; requestId: string } = { kind: "chat" };
+	private readonly questionArrivalEpochMs = Date.now();
+	private blockingQuestionHeader: string | undefined;
 
 	private get shownQuestion(): AsyncQuestionState | undefined {
 		return this.shownQuestionId === undefined ? undefined : this.pendingQuestions.get(this.shownQuestionId);
@@ -1651,9 +1654,11 @@ export class InteractiveMode {
 	}
 
 	private applyTerminalTitle(): void {
+		const questionHeader = this.shownQuestion?.request.questions[0]?.header ?? this.blockingQuestionHeader;
 		this.ui.terminal.setTitle(
 			this.activeToolTerminalTitle ??
 				this.activeToolExecutionTerminalTitle ??
+				(questionHeader === undefined ? undefined : `? ${questionHeader}`) ??
 				this.extensionTerminalTitle ??
 				this.getNormalTerminalTitle(),
 		);
@@ -2781,10 +2786,21 @@ export class InteractiveMode {
 		};
 	}
 
+	private async withBlockedHostDialog<T>(id: string, label: string, show: () => Promise<T>): Promise<T> {
+		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
+		try {
+			return await show();
+		} finally {
+			this.session.emitExtensionEvent("herdr:blocked", { active: false, id });
+		}
+	}
+
 	private async handleHostUiRequest(request: HostUiRequest): Promise<HostUiResponse | undefined> {
 		switch (request.method) {
 			case "select": {
-				const value = await this.showExtensionSelector(request.title ?? "", request.options ?? []);
+				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
+					this.showExtensionSelector(request.title ?? "", request.options ?? []),
+				);
 				return value === undefined
 					? { type: "extension_ui_response", id: request.id, cancelled: true }
 					: { type: "extension_ui_response", id: request.id, value };
@@ -2793,16 +2809,22 @@ export class InteractiveMode {
 				return {
 					type: "extension_ui_response",
 					id: request.id,
-					confirmed: await this.showExtensionConfirm(request.title ?? "", request.message ?? ""),
+					confirmed: await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
+						this.showExtensionConfirm(request.title ?? "", request.message ?? ""),
+					),
 				};
 			case "input": {
-				const value = await this.showExtensionInput(request.title ?? "", request.placeholder);
+				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
+					this.showExtensionInput(request.title ?? "", request.placeholder),
+				);
 				return value === undefined
 					? { type: "extension_ui_response", id: request.id, cancelled: true }
 					: { type: "extension_ui_response", id: request.id, value };
 			}
 			case "editor": {
-				const value = await this.showExtensionEditor(request.title ?? "", request.prefill);
+				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
+					this.showExtensionEditor(request.title ?? "", request.prefill),
+				);
 				return value === undefined
 					? { type: "extension_ui_response", id: request.id, cancelled: true }
 					: { type: "extension_ui_response", id: request.id, value };
@@ -2830,6 +2852,7 @@ export class InteractiveMode {
 					},
 					{
 						timeout: remainingMs,
+						notifyArrival: request.askedAtMs === undefined || request.askedAtMs >= this.questionArrivalEpochMs,
 						onProgress: (draft) => {
 							lastDraft = draft;
 							if (progressTimer !== undefined) return;
@@ -3511,9 +3534,18 @@ export class InteractiveMode {
 
 	private createExtensionUIContext(): ExtensionUIContext {
 		return {
-			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
-			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
-			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
+			select: (title, options, opts) =>
+				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
+					this.showExtensionSelector(title, options, opts),
+				),
+			confirm: (title, message, opts) =>
+				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
+					this.showExtensionConfirm(title, message, opts),
+				),
+			input: (title, placeholder, opts) =>
+				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
+					this.showExtensionInput(title, placeholder, opts),
+				),
 			// Async answers are delivered by the ask-user extension, not here: the
 			// widget only resolves the question, so the model sees exactly one
 			// framed user message no matter which surface answered.
@@ -3544,7 +3576,8 @@ export class InteractiveMode {
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
 			getEditorText: () => this.getExpandedEditorText(),
-			editor: (title, prefill) => this.showExtensionEditor(title, prefill),
+			editor: (title, prefill) =>
+				this.withBlockedHostDialog(crypto.randomUUID(), title, () => this.showExtensionEditor(title, prefill)),
 			addAutocompleteProvider: (factory) => {
 				this.autocompleteProviderWrappers.push(factory);
 				this.setupAutocompleteProvider();
@@ -3763,6 +3796,8 @@ export class InteractiveMode {
 				opts?.signal?.removeEventListener("abort", onAbort);
 				this.workingMessage = previousWorkingMessage;
 				this.updateWorkingIndicatorMessage();
+				this.blockingQuestionHeader = undefined;
+				this.applyTerminalTitle();
 				this.hideQuestionOverlay();
 				resolve(response);
 			};
@@ -3783,6 +3818,10 @@ export class InteractiveMode {
 			}
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 
+			this.blockingQuestionHeader = request.questions[0]?.header;
+			this.applyTerminalTitle();
+			if (opts?.notifyArrival !== false && this.settingsManager.getAskUserSettings().bell)
+				this.ui.terminal.write("\x07");
 			this.workingMessage = "Waiting for your answer";
 			this.updateWorkingIndicatorMessage();
 			this.askUserQuestion = new AskUserQuestionComponent(request, (response) => finish(response), {
@@ -3859,6 +3898,8 @@ export class InteractiveMode {
 		this.pendingQuestions.set(request.requestId, state);
 		this.pendingOrder.push(request.requestId);
 		this.shownQuestionId ??= request.requestId;
+		if (opts?.notifyArrival !== false && this.settingsManager.getAskUserSettings().bell)
+			this.ui.terminal.write("\x07");
 		opts?.signal?.addEventListener("abort", onAbort, { once: true });
 		this.refreshAsyncWidget();
 		return completion.promise;
@@ -3866,6 +3907,7 @@ export class InteractiveMode {
 
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
 	private refreshAsyncWidget(): void {
+		this.applyTerminalTitle();
 		const state = this.shownQuestion;
 		if (!state || this.questionSurface === "expanded") {
 			this.setExtensionWidget(ASK_USER_WIDGET_KEY, undefined);

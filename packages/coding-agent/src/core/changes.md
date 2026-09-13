@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-13 - Configurable pending-question arrival bell (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts` adds optional `AskUserSettings.bell`; `packages/coding-agent/src/core/settings-manager.ts` resolves it to true by default and honors an explicit false value. `docs/settings.md` documents the bell and pending-title behavior.
+
+### Why
+
+- Question arrivals should be noticeable without forcing an audible signal on users who disable it.
+
+### Why an extension could not handle it
+
+- The core settings manager owns global/project merge precedence and the typed ask-user settings contract consumed by the interactive host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: AskUserSettings; `packages/coding-agent/src/core/settings-manager.ts`: getAskUserSettings.
+
 ## 2026-09-13 - Pending-question cycling keybinding (senpi#1645)
 
 ### What changed

@@ -1,5 +1,25 @@
 # Builtin extensions changes
 
+## 2026-09-13 - Fresh question arrivals and exactly-once blocked lifetime (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts` declares `ask-user:asked`; `ask-user/tool.ts` emits it and `herdr:blocked` after registration, reuses an existing per-session request ID, and emits the inactive signal from its guarded settlement path in both wait modes.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts` routes recovered disk calls through that same pending lifecycle, including orphaned outcomes, while retaining its original one-message delivery path and persisted recovery marker. Restart UI errors become explicit orphaned responses carrying the error, rather than losing it.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts` maps arrival and settlement bus events into distinct Notification kinds. Existing settlement-hook fixtures still assert every prior settlement payload; they now distinguish arrival commands and await outstanding handlers before teardown. Real arrival-command tests cover both wait modes.
+
+### Why
+
+- Every consumer needs one blocked lifetime per request, independent of whether a TUI, RPC or app-server resolves it. Replaying an existing request must not produce another arrival or a competing pending timer.
+
+### Why an extension could not handle it
+
+- The builtin already owns registration, authoritative timeout and answer delivery. Notification and status consumers cannot safely recreate those lifetimes from UI frames or final tool results.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: startQuestion registration/finish; `ask-user/resume.ts`: recovery dispatch; `ask-user/notify.ts`: event exports; `hooks/index.ts`: Notification subscriptions.
+
 ## 2026-09-13 - Expose authoritative ask-user idle deadlines (senpi#1645)
 
 ### What changed
