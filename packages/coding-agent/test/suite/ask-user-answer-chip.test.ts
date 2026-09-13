@@ -81,6 +81,15 @@ describe("ask-user answer chips", () => {
 		const component = new UserMessageComponent(frame);
 		expect(plain(component)).toEqual(["↳ Auth: OAuth"]);
 	});
+	it("keeps the shell prompt-zone markers in their original order", () => {
+		const chip = new UserMessageComponent(frame).render(80);
+		const plainMessage = new UserMessageComponent("Ordinary message").render(80);
+		expect(chip).toHaveLength(1);
+		expect(chip[0]!.startsWith("\x1b]133;A\x07")).toBe(true);
+		expect(chip[0]!.endsWith("\x1b]133;B\x07\x1b]133;C\x07")).toBe(true);
+		expect(plainMessage[0]!.startsWith("\x1b]133;A\x07")).toBe(true);
+		expect(plainMessage.at(-1)!.startsWith("\x1b]133;B\x07\x1b]133;C\x07")).toBe(true);
+	});
 	it("handles press without opening, then toggles the full frame on a single click", () => {
 		const component = new UserMessageComponent(frame);
 		component.render(80);

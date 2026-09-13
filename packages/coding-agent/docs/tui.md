@@ -188,6 +188,8 @@ Open the shown request with empty Enter or `app.question.answer` (defaults `alt+
 
 A valid digit on an empty composer selects the corresponding option of the first unanswered sub-question. A single-question single-select digit or Enter submits immediately; multiple sub-questions advance through the component. `/answer` lists multiple pending requests, `/answer <n>` opens the n-th, and `/answer skip` dismisses the shown request. Esc collapses the component with its draft kept.
 
+An answered question collapses in the transcript to a compact `↳ <header>: <answer>` chip; comments render quoted and dismissed or timed-out questions render `(no answer)`. Click the chip to expand the original message and click again to collapse it. `/answer skip` also tells the agent that you dismissed the question. While a question is pending, the terminal title shows `? <header>`, and `askUser.bell` controls the one-time arrival bell.
+
 Text first typed or pasted into an empty composer binds to the shown request and labels the border `↳ reply to <header>`. Enter sends that comment only to its bound request; the follow-up chord (`alt+enter`, or `ctrl+q` on Windows/WSL) sends an ordinary message instead. Text present before arrival and recalled history stay chat. If a bound request settles, the text is preserved, the label clears with a notice, and the next Enter sends chat rather than answering another request.
 
 ### Overlay Lifecycle
