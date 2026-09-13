@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added optional read-only `ctx.steeringSignal` during tool execution so extensions can observe queued steering without cancelling work or consuming messages; follow-up input remains separate ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
+
 ### Changed
 
 ### Fixed

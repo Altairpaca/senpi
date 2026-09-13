@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-13 - Invocation-scoped steering notification (senpi#1637)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` binds each registered tool invocation to the existing synchronous queue-update event through a separate AbortSignal. Registration precedes the queued-steering check; completion, caller abort and session disposal remove the subscription. Context getters remain live.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the steering queue. Foreground tools need push notification without consuming messages or treating follow-up input as cancellation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns both queue updates and registered tool invocation lifetimes below the extension API; an extension cannot safely subscribe to that queue through the existing context.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: queue-update helpers, disposal, and the two registered-tool wrapper construction sites. Agent-loop queue consumption and cancellation are unchanged.
+
 ## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
 
 ### What changed

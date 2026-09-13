@@ -49,6 +49,12 @@ export async function runEvalCell(
 	let detached = false;
 	let execution: CellExecution;
 	const cell = cellManager.create(invocation.cellId, invocation.input, (error) => execution.cancel(error));
+	const detach = (): boolean => {
+		if (!cellManager.detach(cell)) return false;
+		detached = true;
+		execution.detach();
+		return true;
+	};
 	execution = new CellExecution({
 		callerSignal: invocation.signal,
 		cellId: invocation.cellId,
@@ -58,12 +64,7 @@ export async function runEvalCell(
 						timeoutMs: detachAfterMs,
 						maxPauseGraceMs: foregroundWindowMs,
 						onTimeout: (error: Error) => {
-							if (cellManager.detach(cell)) {
-								detached = true;
-								execution.detach();
-								return;
-							}
-							execution.cancel(error);
+							if (!detach()) execution.cancel(error);
 						},
 					},
 				}
@@ -74,6 +75,16 @@ export async function runEvalCell(
 			bridgeAbortController.abort(error);
 		},
 	});
+	const steeringSignal =
+		detaches && invocation.ctx.mode !== "print" && invocation.ctx.mode !== "json"
+			? invocation.ctx.steeringSignal
+			: undefined;
+	const onSteering = (): void => {
+		if (!steeringSignal?.aborted || detached || !state.active || invocation.signal.aborted) return;
+		// Losing the slot keeps this call foreground; only the existing deadlines/caller may cancel it.
+		detach();
+	};
+	steeringSignal?.addEventListener("abort", onSteering, { once: true });
 	const running = executeCell(
 		options,
 		invocation,
@@ -83,6 +94,7 @@ export async function runEvalCell(
 		execution,
 		bridgeContext,
 		bridgeAbortController,
+		onSteering,
 	);
 	let settleEventEmitted = false;
 	const emitSettled = (outcome: EvalExecutionSettleOutcome): void => {
@@ -110,12 +122,16 @@ export async function runEvalCell(
 			throw error;
 		},
 	);
-	const outcome = await Promise.race([
-		finalized.then((result) => ({ kind: "result" as const, result })),
-		execution.detached.then(() => ({ kind: "detached" as const })),
-	]);
-	if (outcome.kind === "detached") return resultAfterDetach(cellManager.peek(invocation.cellId), invocation.input);
-	return outcome.result;
+	try {
+		const outcome = await Promise.race([
+			finalized.then((result) => ({ kind: "result" as const, result })),
+			execution.detached.then(() => ({ kind: "detached" as const })),
+		]);
+		if (outcome.kind === "detached") return resultAfterDetach(cellManager.peek(invocation.cellId), invocation.input);
+		return outcome.result;
+	} finally {
+		steeringSignal?.removeEventListener("abort", onSteering);
+	}
 }
 
 async function executeCell(
@@ -127,6 +143,7 @@ async function executeCell(
 	execution: CellExecution,
 	bridgeContext: ExtensionContext,
 	bridgeAbortController: AbortController,
+	onReady: () => void,
 ): Promise<AgentToolResult<EvalToolDetails>> {
 	let handler: CellHandler | undefined;
 	try {
@@ -168,6 +185,8 @@ async function executeCell(
 			() => activeHandler.liveResult(),
 			(error) => execution.cancel(error),
 		);
+		// Includes a steer already queued at execute start or received while acquiring the kernel.
+		onReady();
 		if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
 			options.kernelManager.setContext(bridgeContext);
 		}
