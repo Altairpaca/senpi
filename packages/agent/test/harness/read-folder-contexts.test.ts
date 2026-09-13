@@ -21,6 +21,8 @@ describe("read-folder lexical contexts (#1639)", () => {
 		expect(fold(text)).toEqual({ status: "parsed", text, ranges: [{ startLine: 2, endLine: 6, children: [] }] });
 	});
 	it.each([
+		["interface Factory extends Base {", "}"],
+		["type Factory = {", "};"],
 		["const values = Array.from([], (item): () => {", "} => value);"],
 		["type Constructor = new ({", "}) => Value;"],
 		["function factory({", "}) {}"],

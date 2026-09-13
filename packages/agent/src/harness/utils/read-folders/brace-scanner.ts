@@ -1,4 +1,4 @@
-import { controls, expressionKeywords, isCallCallee, type Open } from "./lexical-context.ts";
+import { controls, expressionKeywords, isCallCallee, type Open, signatureDeclarations } from "./lexical-context.ts";
 import { commentSpan, regexSpan, stringSpan, typeArgumentsSpan } from "./lexical-spans.ts";
 import type { ReadFoldSettings, ReadLineRange } from "./types.ts";
 
@@ -21,6 +21,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 	let expressionEnd: boolean | null = false;
 	let importClause = false;
 	let ambiguousAngleDepth: number | undefined;
+	let signatureDeclaration = false;
 	if (source.startsWith("#!")) {
 		const end = source.indexOf("\n");
 		i = end < 0 ? source.length : end;
@@ -50,6 +51,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 					control: false,
 					call: false,
 					valueParameters: false,
+					declaration: false,
 				});
 				template = false;
 				expressionEnd = false;
@@ -129,6 +131,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			beforeWord = previous;
 			previous = source.slice(start, i);
 			expressionEnd = !expressionKeywords.has(previous);
+			if (language === "ts" && signatureDeclarations.has(previous)) signatureDeclaration = true;
 			if (previous === "import") importClause = true;
 			if (previous === "from") importClause = false;
 			continue;
@@ -152,7 +155,9 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			)
 				return fail("ambiguous_binding");
 			const call = char === "(" && isCallCallee(previous, beforeWord);
+			const declaration = signatureDeclaration && !stack.some((open) => open.declaration);
 			const protectedRange =
+				declaration ||
 				(char === "(" && !call && !(previous === "=>" && valueArrow)) ||
 				importClause ||
 				stack.some((open) => open.protected) ||
@@ -173,6 +178,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				control: char === "(" && controls.has(previous),
 				call,
 				valueParameters: char === "(" && stack.at(-1)?.call === true && ["(", ","].includes(previous),
+				declaration,
 			});
 			valueArrow = false;
 			expressionEnd = false;
@@ -192,6 +198,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			if (open.foldable && line - open.line - 1 >= settings.minBodyLines)
 				ranges.push({ startLine: open.line + 1, endLine: line - 1 });
 			valueArrow = open.valueParameters;
+			if (open.declaration) signatureDeclaration = false;
 			expressionEnd = open.control ? false : char === "}" ? null : true;
 			if (char === "}") importClause = false;
 			previous = char;
@@ -221,6 +228,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 		if (!";:,.?=><!~+-*%&|^".includes(char)) return fail("unknown_token");
 		if (char === ";") {
 			importClause = false;
+			signatureDeclaration = false;
 			if (ambiguousAngleDepth === stack.length) ambiguousAngleDepth = undefined;
 		}
 		valueArrow = valueArrow && previous === ")" && char === "=" && next === ">";

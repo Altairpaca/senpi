@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { READ_FOLDER_SELECTION } from "../../../../src/harness/utils/read-folders/index.ts";
+import { READ_FOLDER_SELECTION, selectedReadFolder } from "../../../../src/harness/utils/read-folders/index.ts";
 import { boundaryFixtures } from "./boundary-fixtures.ts";
 import { loadCorpus } from "./corpus.ts";
 import { loadFrozenBaseline, loadReadGate } from "./frozen-baseline.ts";
@@ -190,7 +190,12 @@ export async function bakeoff(options: {
 	const selection = {
 		version: 2,
 		candidate_implementation: "production_folder_segmented_view_and_default_read",
-		default_read_selection: READ_FOLDER_SELECTION,
+		default_read_selection: {
+			wasm: READ_FOLDER_SELECTION.wasm,
+			rawReasons: READ_FOLDER_SELECTION.rawReasons,
+			languages: READ_FOLDER_SELECTION.languages,
+			folder: { id: selectedReadFolder.id, version: selectedReadFolder.version },
+		},
 		candidate_sources_sha256: Object.fromEntries(
 			[
 				"read-folders/brace-scanner.ts",

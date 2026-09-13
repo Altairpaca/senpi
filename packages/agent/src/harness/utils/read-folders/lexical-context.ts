@@ -7,6 +7,7 @@ export type Open = {
 	readonly control: boolean;
 	readonly call: boolean;
 	readonly valueParameters: boolean;
+	readonly declaration: boolean;
 };
 
 export const expressionKeywords = new Set([
@@ -23,6 +24,7 @@ export const expressionKeywords = new Set([
 	"instanceof",
 ]);
 export const controls = new Set(["if", "while", "for", "switch", "catch", "with"]);
+export const signatureDeclarations = new Set(["type", "interface", "enum", "namespace", "module", "declare"]);
 
 /** Only expression callees release argument values; declarations retain parameter protection. */
 export function isCallCallee(previous: string, beforeWord: string): boolean {
