@@ -1,3 +1,11 @@
+export const typedAgentResponse = {
+	text: '{"answer":42}',
+	id: "st_abc123",
+	handle: "agent://st_abc123",
+	run_epoch: 2,
+	agent: "reviewer",
+} as const;
+
 export const malformedHandles: readonly unknown[] = [
 	undefined,
 	null,
