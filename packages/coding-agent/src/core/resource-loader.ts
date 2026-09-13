@@ -1036,18 +1036,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private applyExtensionSourceInfo(extensions: Extension[], metadataByPath: Map<string, PathMetadata>): void {
 		const bundledPackageRoots = this.getBundledExtensionPackageRoots();
 		for (const extension of extensions) {
-			const bundledPackageRoot = bundledPackageRoots.get(extension.resolvedPath);
 			extension.sourceInfo =
-				bundledPackageRoot === undefined
-					? (this.findSourceInfoForPath(extension.path, undefined, metadataByPath) ??
-						this.getDefaultSourceInfoForPath(extension.path))
-					: {
-							path: extension.path,
-							source: "builtin",
-							scope: "system",
-							origin: "top-level",
-							baseDir: bundledPackageRoot,
-						};
+				this.getHarnessExtensionSourceInfo(extension, bundledPackageRoots) ??
+				this.findSourceInfoForPath(extension.path, undefined, metadataByPath) ??
+				this.getDefaultSourceInfoForPath(extension.path);
 			for (const command of extension.commands.values()) {
 				command.sourceInfo = extension.sourceInfo;
 			}
@@ -1423,6 +1415,52 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	private getBundledExtensionEntryPaths(): Set<string> {
 		return new Set(this.getBundledExtensionPackageRoots().keys());
+	}
+
+	/**
+	 * Source info for an extension file the harness itself provides: a bundled extension entry, or a
+	 * global-default shim this loader generated under the agent extensions directory. A file at a shim
+	 * path that no longer carries the generated banner is user-authored and gets no system scope.
+	 */
+	private getHarnessExtensionSourceInfo(
+		extension: Extension,
+		bundledPackageRoots: Map<string, string>,
+	): SourceInfo | undefined {
+		const bundledPackageRoot = bundledPackageRoots.get(extension.resolvedPath);
+		if (bundledPackageRoot !== undefined) {
+			return {
+				path: extension.path,
+				source: "builtin",
+				scope: "system",
+				origin: "top-level",
+				baseDir: bundledPackageRoot,
+			};
+		}
+		if (this.isGeneratedGlobalDefaultExtensionShimPath(extension.resolvedPath)) {
+			return {
+				path: extension.path,
+				source: "builtin",
+				scope: "system",
+				origin: "top-level",
+				baseDir: join(this.agentDir, "extensions"),
+			};
+		}
+		return undefined;
+	}
+
+	private isGeneratedGlobalDefaultExtensionShimPath(resolvedPath: string): boolean {
+		const shimPath = resolve(resolvedPath);
+		const isShimPath = globalDefaultExtensionIds.some(
+			(extensionId) => resolve(getGlobalDefaultExtensionShimPath(this.agentDir, extensionId)) === shimPath,
+		);
+		if (!isShimPath) {
+			return false;
+		}
+		try {
+			return isGeneratedGlobalDefaultExtensionShim(readFileSync(shimPath, "utf-8"));
+		} catch {
+			return false;
+		}
 	}
 
 	/** Resolved entry path of every active bundled extension mapped to the root of the package that ships it. */

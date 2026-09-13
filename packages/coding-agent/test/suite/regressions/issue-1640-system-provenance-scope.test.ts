@@ -1,11 +1,13 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { resolveDiscoveredResourcePaths } from "../../../src/core/discovered-resource-scope.ts";
 import { ExtensionRunner } from "../../../src/core/extensions/runner.ts";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
+import { GENERATED_SHIM_BANNER } from "../../../src/core/generated-shim-banner.ts";
 import { ModelRegistry } from "../../../src/core/model-registry.ts";
 import { DefaultPackageManager } from "../../../src/core/package-manager.ts";
 import { readPiManifest } from "../../../src/core/pi-manifest.ts";
@@ -160,6 +162,34 @@ describe("system provenance scope (#1640)", () => {
 			expect(loader.getSkills().skills.find((skill) => skill.filePath === skillPath)?.sourceInfo).toMatchObject({
 				source: "cli",
 				scope: "system",
+			});
+		});
+
+		it("tags generated global-default shims as system but user-authored agent extensions as user", async () => {
+			const extensionsDir = join(agentDir, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			const shimPath = join(extensionsDir, "diff.js");
+			const diffModule = pathToFileURL(resolve("src", "core", "extensions", "builtin", "diff.ts")).href;
+			writeFileSync(shimPath, `${GENERATED_SHIM_BANNER}export { default } from ${JSON.stringify(diffModule)};\n`);
+			const userPath = join(extensionsDir, "mine.js");
+			writeFileSync(userPath, EXTENSION_SOURCE);
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ enabledBuiltinExtensions: [] }),
+			});
+
+			await loader.reload();
+
+			const extensions = loader.getExtensions().extensions;
+			expect(extensions.find((extension) => extension.path === shimPath)?.sourceInfo).toMatchObject({
+				source: "builtin",
+				scope: "system",
+				baseDir: extensionsDir,
+			});
+			expect(extensions.find((extension) => extension.path === userPath)?.sourceInfo).toMatchObject({
+				source: "auto",
+				scope: "user",
 			});
 		});
 
