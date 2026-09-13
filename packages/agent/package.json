@@ -55,7 +55,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "^2026.9.12-3",
+		"@earendil-works/chord": "0.85.1",
 		"@earendil-works/pi-ai": "^2026.9.12-3",
 		"@earendil-works/pi-telemetry": "^2026.9.12-3",
 		"diff": "9.0.0",

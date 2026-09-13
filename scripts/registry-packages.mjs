@@ -1,5 +1,7 @@
+// Chord is deliberately absent: the fork does not modify it semantically, so it keeps upstream's
+// own release identity and its declared edges resolve to upstream's published version. See
+// bundledWorkspaceRegistryContract() in publish-registry-dependencies.test.mjs.
 export const registryPackageNames = new Map([
-	["@earendil-works/chord", "@code-yeongyu/senpi-chord"],
 	["@earendil-works/pi-ai", "@code-yeongyu/senpi-ai"],
 	["@earendil-works/pi-agent-core", "@code-yeongyu/senpi-agent-core"],
 	["@earendil-works/pi-tui", "@code-yeongyu/senpi-tui"],
