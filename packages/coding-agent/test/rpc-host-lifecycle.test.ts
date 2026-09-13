@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { on, once } from "node:events";
 import {
 	closeSync,
 	existsSync,
@@ -159,6 +160,50 @@ describe("idle exit decision core", () => {
 });
 
 describe("ensureHost-spawned host lifecycle", () => {
+	// #1290: an ensure readiness connection can fit entirely between idle ticks.
+	it("resets the idle window for a connection entirely between timer ticks", async () => {
+		const qa = scratch("clock");
+		const supervisor = spawn(
+			process.execPath,
+			["--import", "tsx", join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
+			{
+				env: {
+					...process.env,
+					...hermeticProviderEnv(),
+					SENPI_CODING_AGENT_DIR: qa.agentDir,
+					SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
+					[HOST_IDLE_EXIT_MS_ENV]: "800",
+				},
+				stdio: ["ignore", "ignore", "pipe", "ipc"],
+			},
+		);
+		const exited = once(supervisor, "exit", { signal: AbortSignal.timeout(30_000) });
+		try {
+			await supervisorMessage(supervisor, "ready");
+			await advanceSupervisorClock(supervisor, 0, true);
+			await advanceSupervisorClock(supervisor, 799, false);
+			const peer = await JsonlPeer.connect(qa.socket);
+			await peer.request({ id: "readiness", type: "get_protocol_info" });
+			const detached = supervisorMessage(supervisor, "detached");
+			peer.destroy();
+			await detached;
+			const result = await advanceSupervisorClock(supervisor, 800, true);
+			expect(result).toMatchObject({ shuttingDown: false });
+			// Reconnect through the real public endpoint, not a process-liveness probe.
+			const next = await JsonlPeer.connect(qa.socket);
+			expect(await next.request({ id: "next", type: "get_protocol_info" })).toMatchObject({ success: true });
+			const nextDetached = supervisorMessage(supervisor, "detached");
+			next.destroy();
+			await nextDetached;
+			expect(await advanceSupervisorClock(supervisor, 1_599, true)).toMatchObject({ shuttingDown: false });
+			expect(await advanceSupervisorClock(supervisor, 1_600, true)).toMatchObject({ shuttingDown: true });
+			expect(await exited).toEqual([0, null]);
+		} finally {
+			supervisor.kill();
+			await exited;
+		}
+	}, 45_000);
+
 	it("exits cleanly after the idle window with no connections and no active turns", async () => {
 		const qa = scratch("idle");
 		const internalBefore = listInternalSocketDirs();
@@ -509,6 +554,20 @@ describe("resolveHostChildLaunch", () => {
 		]);
 	});
 });
+
+async function supervisorMessage(supervisor: ChildProcess, type: string): Promise<RecordValue> {
+	for await (const values of on(supervisor, "message", { signal: AbortSignal.timeout(30_000) })) {
+		const message: unknown = values[0];
+		if (typeof message === "object" && message !== null && "type" in message && message.type === type) return message;
+	}
+	throw new Error(`supervisor closed before ${type}`);
+}
+
+function advanceSupervisorClock(supervisor: ChildProcess, now: number, tick: boolean): Promise<RecordValue> {
+	const advanced = supervisorMessage(supervisor, "clock");
+	supervisor.send({ now, tick });
+	return advanced;
+}
 
 function scratch(label: string): Scratch {
 	// Unix socket paths must stay under the platform sun_path limit (104 bytes on
