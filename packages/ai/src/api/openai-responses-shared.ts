@@ -48,6 +48,7 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { withResponsesCompletionGrace } from "./responses-completion-grace.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 // =============================================================================
@@ -916,7 +917,7 @@ export async function processResponsesStream<TApi extends Api>(
 		}
 	};
 
-	for await (const event of openaiStream) {
+	for await (const event of withResponsesCompletionGrace(openaiStream)) {
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
