@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## 2026-09-13 - Retain question headers for transcript replay (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts` declares the UI-only `ask-user:question` entry `{ requestId, headers }`. `ask-user/tool.ts` appends it once at fresh registration, after the existing-ID guard. It is ordinary custom-entry metadata, not an LLM message or a new question transport field.
+
+### Why
+
+- Existing timeout and dismissal answer frames omit their headers. Retaining a small display record lets the compact answer chip label those outcomes after restart without changing any model-facing text.
+
+### Why an extension could not handle it
+
+- The builtin owns the canonical request ID/header association at registration; the replay renderer only has persisted entries after the pending state is gone.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts`: event/entry exports; `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: registration. `ask-user/format.ts` is unchanged, and tests prove custom metadata is absent from model context.
+
 ## 2026-09-13 - Publish per-request ask-user deadlines (senpi#1645)
 
 ### What changed

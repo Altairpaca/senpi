@@ -1,6 +1,7 @@
 import { Box, Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { AskUserAnswerChip, parseAskUserAnswerFrame } from "./ask-user-answer-chip.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -15,18 +16,21 @@ export class UserMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
+	private readonly answerHeaders: readonly string[];
 
 	constructor(
 		text: string,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		answerHeaders: readonly string[] = [],
 	) {
 		super();
 		this.text = text;
 		this.markdownTheme = markdownTheme;
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
+		this.answerHeaders = answerHeaders;
 		this.rebuild();
 	}
 
@@ -54,7 +58,8 @@ export class UserMessageComponent extends Container {
 				},
 			),
 		);
-		this.addChild(contentBox);
+		const answer = parseAskUserAnswerFrame(this.text);
+		this.addChild(answer ? new AskUserAnswerChip(answer, this.answerHeaders, contentBox) : contentBox);
 	}
 
 	override render(width: number): string[] {

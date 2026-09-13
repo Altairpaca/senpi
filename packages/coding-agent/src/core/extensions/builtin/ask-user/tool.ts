@@ -2,7 +2,13 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
-import { ASK_USER_ASKED_EVENT, type AskUserAskedEvent, emitAskUserNotification } from "./notify.ts";
+import {
+	ASK_USER_ASKED_EVENT,
+	ASK_USER_QUESTION_ENTRY,
+	type AskUserAskedEvent,
+	type AskUserQuestionEntry,
+	emitAskUserNotification,
+} from "./notify.ts";
 import { createPendingQuestion } from "./pending.ts";
 import { getPendingQuestions, type QuestionDialogOptions, registerPendingQuestion } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
@@ -67,7 +73,7 @@ function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
 	pi.events.emit(WAKE_SOURCE_STATE_EVENT, event);
 }
 export function startQuestion(
-	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
+	pi: Pick<ExtensionAPI, "sendUserMessage" | "events" | "appendEntry">,
 	ctx: ExtensionContext,
 	request: QuestionRequest,
 	signal: AbortSignal | undefined,
@@ -117,6 +123,10 @@ export function startQuestion(
 	};
 	const abort = () => cancel();
 	unregister = registerPendingQuestion(sessionId, { request, pending, completion: completion.promise, cancel });
+	pi.appendEntry<AskUserQuestionEntry>(ASK_USER_QUESTION_ENTRY, {
+		requestId: request.requestId,
+		headers: request.questions.map((question) => question.header),
+	});
 	if (!request.waitForAnswer) emitWake(pi, sessionId);
 	pi.events.emit(ASK_USER_ASKED_EVENT, { ctx, request, variant } satisfies AskUserAskedEvent);
 	const first = request.questions[0];

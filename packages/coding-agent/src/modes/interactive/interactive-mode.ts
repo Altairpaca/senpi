@@ -149,6 +149,7 @@ import {
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
+import { getAskUserAnswerHeaders, parseAskUserAnswerFrame } from "./components/ask-user-answer-chip.ts";
 import { matchesAskUserAnswerKey } from "./components/ask-user-answer-key.ts";
 import {
 	ASK_USER_WIDGET_KEY,
@@ -5751,11 +5752,13 @@ export class InteractiveMode {
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
+						const answer = parseAskUserAnswerFrame(textContent);
 						const userComponent = new UserMessageComponent(
 							textContent,
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
 							this.getMarkdownTransformers(),
+							answer ? getAskUserAnswerHeaders(this.sessionManager.getBranch(), answer.requestId) : undefined,
 						);
 						this.chatContainer.addChild(userComponent);
 					}
