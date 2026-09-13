@@ -323,13 +323,17 @@ Fullscreen mode routes normalized press, release, click, move, drag, and wheel e
 import { MouseRegion } from "@earendil-works/pi-tui";
 
 const clickable = new MouseRegion(content, (event) => {
-  if (event.type !== "click" || event.button !== "left") return undefined;
+  if (event.button !== "left") return undefined;
+  if (event.type === "press") return { handled: true };
+  if (event.type !== "click") return undefined;
   expanded = !expanded;
   return { handled: true };
 });
 ```
 
-Unhandled wheel input scrolls the nearest `ScrollView`; unhandled primary-button drags retain transcript selection. OSC 8 links take precedence over parent click regions. `Input`, `Editor`, `SelectList`, and `SettingsList` include fullscreen mouse behavior. Regular mode does not capture mouse input because the terminal owns its scrollback.
+In fullscreen mode, unhandled wheel input scrolls the nearest `ScrollView`; unhandled primary-button drags retain transcript selection. OSC 8 links take precedence over parent click regions. `Input`, `Editor`, `SelectList`, and `SettingsList` include fullscreen mouse behavior.
+
+Regular mode supports scoped capture through `const release = tui.acquireMouseCapture("pending-question")`; the host releases it when the interactive surface closes and reapplies its intent to a replacement renderer after a mode switch. Only an acknowledged, unmodified left press followed by release in the same cell within 500 ms produces a click. Wheel, motion, other buttons, and modified reports are consumed without action. Native selection and scrollback remain unchanged outside the lease; while captured, use the terminal's selection bypass (usually Shift-drag, or Option-drag in iTerm2/Terminal.app). Unknown, stale, resized, or image-bearing frame placement disables click dispatch rather than guessing. Short frames use private cursor-position calibration; after external output the next render appends a fresh frame before recalibration, preserving diagnostics and scrollback. Keyboard paths remain available. This library foundation does not itself enable capture for every regular-mode component.
 
 ## Line Width
 
