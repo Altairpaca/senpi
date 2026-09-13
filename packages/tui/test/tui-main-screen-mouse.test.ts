@@ -10,10 +10,16 @@ import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const tty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-beforeEach(() => Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true }));
+const windowsTerminal = process.env.WT_SESSION;
+beforeEach(() => {
+	Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+	process.env.WT_SESSION = "mouse-test-terminal";
+});
 afterEach(() => {
 	if (tty) Object.defineProperty(process.stdout, "isTTY", tty);
 	else Reflect.deleteProperty(process.stdout, "isTTY");
+	if (windowsTerminal === undefined) delete process.env.WT_SESSION;
+	else process.env.WT_SESSION = windowsTerminal;
 });
 class RecordingTerminal extends VirtualTerminal {
 	readonly writes: string[] = [];
@@ -160,6 +166,34 @@ it("keeps a same-target gesture across a no-op committed render", () => {
 		assert.equal(events.filter((e) => e.type === "click").length, 1);
 	} finally {
 		tui.stop();
+	}
+});
+it("enables Windows Terminal but rejects legacy Windows and Termux", () => {
+	const platform = Object.getOwnPropertyDescriptor(process, "platform");
+	const termux = process.env.TERMUX_VERSION;
+	try {
+		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+		for (const [wt, tx, enabled] of [
+			[undefined, undefined, false],
+			["fixture", undefined, true],
+			["fixture", "fixture", false],
+		] as const) {
+			if (wt === undefined) delete process.env.WT_SESSION;
+			else process.env.WT_SESSION = wt;
+			if (tx === undefined) delete process.env.TERMUX_VERSION;
+			else process.env.TERMUX_VERSION = tx;
+			const { terminal, tui } = setup();
+			try {
+				tui.acquireMouseCapture("pending-question");
+				assert.equal(terminal.writes.includes(MOUSE_TRACKING.inline), enabled);
+			} finally {
+				tui.stop();
+			}
+		}
+	} finally {
+		if (platform) Object.defineProperty(process, "platform", platform);
+		if (termux === undefined) delete process.env.TERMUX_VERSION;
+		else process.env.TERMUX_VERSION = termux;
 	}
 });
 it("does not enable tracking on a non-TTY", () => {

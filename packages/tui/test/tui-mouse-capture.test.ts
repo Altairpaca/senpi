@@ -105,7 +105,9 @@ it("anchors a fresh short frame and invalidates real stdout/stderr writes", asyn
 		}
 	}
 	const old = process.env.PI_TUI_KEYBOARD_PROTOCOL;
+	const windowsTerminal = process.env.WT_SESSION;
 	process.env.PI_TUI_KEYBOARD_PROTOCOL = "0";
+	process.env.WT_SESSION = "mouse-test-terminal";
 	const tty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
 	Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
 	const output: string[] = [];
@@ -129,6 +131,8 @@ it("anchors a fresh short frame and invalidates real stdout/stderr writes", asyn
 		tui.stop();
 		if (old === undefined) delete process.env.PI_TUI_KEYBOARD_PROTOCOL;
 		else process.env.PI_TUI_KEYBOARD_PROTOCOL = old;
+		if (windowsTerminal === undefined) delete process.env.WT_SESSION;
+		else process.env.WT_SESSION = windowsTerminal;
 		if (tty) Object.defineProperty(process.stdout, "isTTY", tty);
 		else Reflect.deleteProperty(process.stdout, "isTTY");
 	});
