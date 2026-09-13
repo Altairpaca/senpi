@@ -1,35 +1,11 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import { RESERVED_AGENT_TOOL } from "../src/bridge/reserved.ts";
-import { type AgentExecuteTool, type EvalAgentResult, runEvalAgent } from "../src/bridges/agent-bridge.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
-import type { EvalStatusEvent, ExecuteTool } from "../src/tool/types.ts";
+import type { EvalStatusEvent } from "../src/tool/types.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
-
-function textResult(text: string, details: unknown = {}): AgentToolResult<unknown> {
-	return { content: [{ type: "text", text }], details };
-}
-
-function withAvailability(executeTool: ExecuteTool, isToolAvailable: (name: string) => boolean): AgentExecuteTool {
-	return Object.assign(executeTool, { isToolAvailable });
-}
-
-type AgentHarness = {
-	readonly executeTool: AgentExecuteTool;
-	readonly taskToolName?: string;
-	readonly signal?: AbortSignal;
-	readonly emitStatus?: (event: EvalStatusEvent) => void;
-};
-
-function invokeAgent(args: unknown, harness: AgentHarness): Promise<EvalAgentResult> {
-	return runEvalAgent(args, {
-		callId: "agent-call-1",
-		taskToolName: harness.taskToolName ?? "task",
-		executeTool: harness.executeTool,
-		...(harness.signal ? { signal: harness.signal } : {}),
-		...(harness.emitStatus ? { emitStatus: harness.emitStatus } : {}),
-	});
-}
+import { invokeAgent, textResult, withAvailability } from "./workpool/agent-harness.ts";
+import { malformedHandles } from "./workpool/handle-fixtures.ts";
 
 describe("agent bridge", () => {
 	it("delegates the reserved call and coalesces task progress in cell updates", async () => {
@@ -47,9 +23,9 @@ describe("agent bridge", () => {
 		const executeTool = withAvailability(
 			async (toolName, params, options) => {
 				calls.push({ toolName, params });
-				options?.onUpdate?.(textResult("starting", { task_id: "st_progress", status: "running" }));
-				options?.onUpdate?.(textResult("done", { task_id: "st_progress", status: "completed" }));
-				return textResult("FAKE_RESULT", { task_id: "st_progress", status: "completed" });
+				options?.onUpdate?.(textResult("starting", { task_id: "st_abcd", run_epoch: 0, status: "running" }));
+				options?.onUpdate?.(textResult("done", { task_id: "st_abcd", run_epoch: 0, status: "completed" }));
+				return textResult("FAKE_RESULT", { task_id: "st_abcd", run_epoch: 0, status: "completed" });
 			},
 			(name) => name === "task",
 		);
@@ -79,7 +55,7 @@ describe("agent bridge", () => {
 			ok: true,
 			value: { text: "FAKE_RESULT" },
 		});
-		expect(evalResult.details.statusEvents).toEqual([{ op: "agent", id: "st_progress", status: "completed" }]);
+		expect(evalResult.details.statusEvents).toEqual([{ op: "agent", id: "st_abcd", status: "completed" }]);
 	});
 
 	it.each([
@@ -203,7 +179,11 @@ describe("agent bridge", () => {
 		const executeTool = withAvailability(
 			async (_toolName, value) => {
 				params = value;
-				return textResult("Started task", { task_id: "st_detail_123", status: "running" });
+				return textResult("Other st_deadbeef before st_abcdef", {
+					task_id: "st_123abc",
+					run_epoch: 3,
+					status: "running",
+				});
 			},
 			() => true,
 		);
@@ -213,21 +193,34 @@ describe("agent bridge", () => {
 
 		// Then
 		expect(params).toEqual({ prompt: "x", run_in_background: true });
-		expect(value).toEqual({ text: "Started task", id: "st_detail_123", handle: "agent://st_detail_123" });
+		expect(value).toEqual({
+			text: "Other st_deadbeef before st_abcdef",
+			id: "st_123abc",
+			handle: "agent://st_123abc",
+			run_epoch: 3,
+		});
 	});
 
-	it("falls back to extracting a background id from task text", async () => {
-		// Given
+	it.each(malformedHandles)("rejects malformed legacy handle details %j without prose fallback", async (details) => {
+		// Given: several plausible prose IDs must never become a successful handle.
 		const executeTool = withAvailability(
-			async () => textResult("Started task st_text_456 (running)"),
+			async () => textResult("Started st_deadbeef; related st_abcdef", details),
 			() => true,
 		);
+		// When / Then
+		await expect(invokeAgent({ prompt: "x", handle: true }, { executeTool })).rejects.toMatchObject({
+			code: "invalid_task_handle",
+		});
+	});
 
-		// When
-		const value = await invokeAgent({ prompt: "x", handle: true }, { executeTool });
-
-		// Then
-		expect(value).toMatchObject({ id: "st_text_456", handle: "agent://st_text_456" });
+	it("rejects misleading-success task errors even with valid typed identity", async () => {
+		const executeTool = withAvailability(
+			async () => ({ ...textResult("Started st_123abc", { task_id: "st_123abc", run_epoch: 0, isError: true }) }),
+			() => true,
+		);
+		await expect(invokeAgent({ prompt: "x", handle: true }, { executeTool })).rejects.toMatchObject({
+			code: "invalid_task_handle",
+		});
 	});
 
 	it("synthesizes defensive progress events from known and unknown details", async () => {
@@ -237,7 +230,7 @@ describe("agent bridge", () => {
 			async (_toolName, _params, options) => {
 				options?.onUpdate?.(textResult("tick", {}));
 				options?.onUpdate?.(
-					textResult("done", { task_id: "st_known", status: "completed", subagent_type: "reviewer" }),
+					textResult("done", { task_id: "st_cdef", run_epoch: 1, status: "completed", subagent_type: "reviewer" }),
 				);
 				return textResult("ok");
 			},
@@ -250,7 +243,7 @@ describe("agent bridge", () => {
 		// Then
 		expect(events).toEqual([
 			{ op: "agent", id: "lane", status: "running" },
-			{ op: "agent", id: "st_known", status: "completed", agent: "reviewer" },
+			{ op: "agent", id: "st_cdef", status: "completed", agent: "reviewer" },
 		]);
 	});
 

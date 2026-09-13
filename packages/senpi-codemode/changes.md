@@ -1,5 +1,26 @@
 # senpi-codemode fork changes
 
+## 2026-09-13 - Typed task handles and host workpool sugar (#1646)
+
+### What changed
+
+- `src/bridges/agent-bridge.ts` validates structural `task_id`/`run_epoch` details and removes all final-handle prose fallback. Background failures raise `invalid_task_handle`; foreground text/schema behavior is unchanged.
+- The JS/Python/Ruby/Julia preludes forward `workpool` create/push/close/inspect/cancel through the existing host-tool surface and retain only an opaque pool ID. Task handles retain the host epoch in every language.
+- `src/bridge/http-server.ts`, `src/tool/cell-handler.ts`, and the kernel error transports preserve typed error codes. Missing workpool hosts produce `workpool_unavailable`.
+- The eval helper documentation describes engine ownership and explicit close; `scripts/qa/omp-item2.ts` exercises all kernels and the separately built local O2 plugin without paid calls.
+
+### Why
+
+- Multiple task IDs in prose must not bind the wrong task, and kernel reset must not become the owner of engine work. A convenience adapter cannot select a worker default or emulate missing aggregate support.
+
+### Why an extension could not handle it
+
+- These bridge result boundaries and embedded prelude globals are owned by codemode. The engine itself remains an external host tool; no orchestration package is imported by product code.
+
+### Expected merge conflict zones
+
+- LOW: agent result validation, prelude helper installation, typed error forwarding, and helper documentation. No kernel scheduler, reserved bridge, task polling, or isolation changes.
+
 ## 2026-09-13 - Steering detaches eligible foreground evaluations (#1637)
 
 ### What changed

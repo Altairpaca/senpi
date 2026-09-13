@@ -4,7 +4,11 @@
 
 ### Breaking Changes
 
+- Background `agent()` handles require typed host `task_id` and `run_epoch` details; legacy prose-only responses raise `invalid_task_handle` ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+
 ### Added
+
+- JS, Python, Ruby, and Julia expose host-owned `workpool` sugar with opaque pool IDs and unchanged tool receipts, without kernel scheduling ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
 - Interactive foreground eval cells detach on queued steering without cancelling their computation or in-flight tools. An occupied detached slot keeps the call waiting ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
 

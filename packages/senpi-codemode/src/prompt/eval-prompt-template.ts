@@ -57,8 +57,10 @@ tool_schema(name?) → dict
 completion(prompt, model?="default", system?=None, schema?=None) → str | dict
     Oneshot, stateless. \`model\`: \`"smol"\` fast | \`"default"\` session | \`"slow"\` most capable. \`schema\` (JSON-Schema) → parsed structured output.
 {{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", model?=None, label?=None, schema?=None, handle?=False) → str | dict
-    Run a subagent → final output. \`agent\` picks a discovered agent. \`schema\` as in completion(). \`handle\` → workflow node { text, output, handle: \`agent://<id>\`, id, agent } (parsed under \`data\` with \`schema\`).
-{{/if}}parallel(thunks) → list
+    Run a subagent → final output. \`agent\` picks a discovered agent. \`schema\` as in completion(). \`handle\` → workflow node { text, output, handle: \`agent://<id>\`, id, run_epoch, agent } (parsed under \`data\` with \`schema\`).
+{{/if}}workpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }
+    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.
+parallel(thunks) → list
     Thunks through a bounded pool (as wide as a \`task\` batch), input order kept; a throwing thunk propagates.
 pipeline(items, ...stages) → list
     Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.

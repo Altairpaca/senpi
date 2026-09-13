@@ -181,7 +181,13 @@ describe.skipIf(!(await hasPython3()))("Python prelude parity", () => {
 			token: "agent-token",
 			onCall: async (request) => {
 				calls.push(request);
-				return { text: '{"answer":42}', id: "st_agent", handle: "agent://st_agent", agent: "reviewer" };
+				return {
+					text: '{"answer":42}',
+					id: "st_abc123",
+					handle: "agent://st_abc123",
+					run_epoch: 2,
+					agent: "reviewer",
+				};
 			},
 			onEmit: async () => {},
 			onCompletion: async () => "unused",
