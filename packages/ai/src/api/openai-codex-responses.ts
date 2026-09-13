@@ -69,6 +69,7 @@ import {
 	clampMaxForOpenAI,
 	OPENAI_RESPONSES_RESERVED_BODY_KEYS,
 } from "./simple-options.ts";
+import { startWebSocketLiveness } from "./websocket-liveness.ts";
 
 // ============================================================================
 // Configuration
@@ -912,10 +913,12 @@ const OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06";
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000;
 const SESSION_WEBSOCKET_MAX_AGE_MS = 55 * 60 * 1000;
 
-type WebSocketEventType = "open" | "message" | "error" | "close";
+type WebSocketEventType = "open" | "message" | "error" | "close" | "ping" | "pong";
 type WebSocketListener = (event: unknown) => void;
 
 interface WebSocketLike {
+	readonly readyState?: number;
+	ping?(data?: string): void;
 	close(code?: number, reason?: string): void;
 	send(data: string): void;
 	addEventListener(type: WebSocketEventType, listener: WebSocketListener): void;
@@ -933,6 +936,7 @@ interface CachedWebSocketConnection {
 	busy: boolean;
 	createdAt: number;
 	idleTimer?: ReturnType<typeof setTimeout>;
+	parkedCloseListener?: WebSocketListener;
 	continuation?: CachedWebSocketContinuationState;
 }
 
@@ -950,7 +954,7 @@ export function resetOpenAICodexWebSocketDebugStats(sessionId?: string): void {
 
 export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
 	const closeEntry = (entry: CachedWebSocketConnection) => {
-		if (entry.idleTimer) clearTimeout(entry.idleTimer);
+		unparkSessionWebSocket(entry);
 		closeWebSocketSilently(entry.socket, 1000, "debug_close");
 	};
 	if (sessionId) {
@@ -982,6 +986,7 @@ async function getWebSocketConstructor(env?: ProviderEnv): Promise<WebSocketCons
 	if (typeof process !== "undefined" && process.versions?.bun) {
 		const WebSocketWithProxy = class implements WebSocketLike {
 			private readonly socket: WebSocketLike;
+			ping?: (data?: string) => void;
 			constructor(url: string | URL, options?: string | string[] | Record<string, unknown>) {
 				let _opts: Record<string, unknown> = {};
 				if (Array.isArray(options) || typeof options === "string") {
@@ -998,6 +1003,14 @@ async function getWebSocketConstructor(env?: ProviderEnv): Promise<WebSocketCons
 					url,
 					{ ..._opts, ...(proxyUrl ? { proxy: proxyUrl.toString() } : {}) },
 				]) as WebSocketLike;
+				const innerPing = this.socket.ping;
+				if (typeof innerPing === "function") {
+					this.ping = (data?: string) => innerPing.call(this.socket, data);
+				}
+			}
+
+			get readyState(): number | undefined {
+				return getWebSocketReadyState(this.socket);
 			}
 
 			close(code?: number, reason?: string): void {
@@ -1066,17 +1079,51 @@ function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "do
 	} catch {}
 }
 
-function scheduleSessionWebSocketExpiry(sessionId: string, accountId: string, entry: CachedWebSocketConnection): void {
+function evictSessionWebSocket(
+	sessionId: string,
+	accountId: string,
+	entry: CachedWebSocketConnection,
+	reason: string,
+): void {
+	unparkSessionWebSocket(entry);
+	closeWebSocketSilently(entry.socket, 1000, reason);
+	const accountEntries = websocketSessionCache.get(sessionId);
+	if (accountEntries?.get(accountId) === entry) accountEntries.delete(accountId);
+	if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
+}
+
+function unparkSessionWebSocket(entry: CachedWebSocketConnection): void {
 	if (entry.idleTimer) {
 		clearTimeout(entry.idleTimer);
+		entry.idleTimer = undefined;
 	}
+	if (entry.parkedCloseListener) {
+		entry.socket.removeEventListener("close", entry.parkedCloseListener);
+		entry.socket.removeEventListener("error", entry.parkedCloseListener);
+		entry.parkedCloseListener = undefined;
+	}
+}
+
+/**
+ * Parks a connection between requests. The idle TTL is the only eviction the
+ * cache had; a server or network close while parked must evict immediately,
+ * because a WHATWG `send()` on a closed socket discards the frame silently and
+ * the next request would then wait out the whole stream-start watchdog.
+ */
+function parkSessionWebSocket(sessionId: string, accountId: string, entry: CachedWebSocketConnection): void {
+	unparkSessionWebSocket(entry);
+	entry.busy = false;
 	entry.idleTimer = setTimeout(() => {
 		if (entry.busy) return;
-		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
-		const accountEntries = websocketSessionCache.get(sessionId);
-		if (accountEntries?.get(accountId) === entry) accountEntries.delete(accountId);
-		if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
+		evictSessionWebSocket(sessionId, accountId, entry, "idle_timeout");
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
+	const onParkedClose: WebSocketListener = () => {
+		if (entry.busy) return;
+		evictSessionWebSocket(sessionId, accountId, entry, "parked_close");
+	};
+	entry.parkedCloseListener = onParkedClose;
+	entry.socket.addEventListener("close", onParkedClose);
+	entry.socket.addEventListener("error", onParkedClose);
 }
 
 async function connectWebSocket(
@@ -1183,10 +1230,7 @@ async function acquireWebSocket(
 	let accountEntries = websocketSessionCache.get(sessionId);
 	const cached = accountEntries?.get(accountId);
 	if (cached) {
-		if (cached.idleTimer) {
-			clearTimeout(cached.idleTimer);
-			cached.idleTimer = undefined;
-		}
+		unparkSessionWebSocket(cached);
 		if (!cached.busy && isWebSocketSessionExpired(cached)) {
 			closeWebSocketSilently(cached.socket, 1000, "connection_age_limit");
 			accountEntries?.delete(accountId);
@@ -1205,8 +1249,7 @@ async function acquireWebSocket(
 						if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
 						return;
 					}
-					cached.busy = false;
-					scheduleSessionWebSocketExpiry(sessionId, accountId, cached);
+					parkSessionWebSocket(sessionId, accountId, cached);
 				},
 			};
 		}
@@ -1248,8 +1291,7 @@ async function acquireWebSocket(
 				if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
 				return;
 			}
-			entry.busy = false;
-			scheduleSessionWebSocketExpiry(sessionId, accountId, entry);
+			parkSessionWebSocket(sessionId, accountId, entry);
 		},
 	};
 }
@@ -1329,7 +1371,15 @@ async function* parseWebSocket(
 		resolve();
 	};
 
+	const liveness = startWebSocketLiveness(socket, (error) => {
+		failed = error;
+		done = true;
+		closeWebSocketSilently(socket, 1000, "liveness_timeout");
+		wake();
+	});
+
 	const onMessage: WebSocketListener = (event) => {
+		liveness.noteActivity();
 		void (async () => {
 			let text: string | null = null;
 			try {
@@ -1422,6 +1472,7 @@ async function* parseWebSocket(
 			throw new Error("WebSocket stream closed before response.completed");
 		}
 	} finally {
+		liveness.stop();
 		socket.removeEventListener("message", onMessage);
 		socket.removeEventListener("error", onError);
 		socket.removeEventListener("close", onClose);

@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- OpenAI Codex and OpenAI Responses WebSocket streams now run a ping/pong liveness heartbeat (ping after 30 s of silence, dead after two unanswered pings), so a half-open connection fails as a provider stall in about 70 s and takes the same-model retry instead of freezing the turn for the full 300 s watchdog; on Bun a parked Codex WebSocket that the server closed is no longer reused (the proxy-aware wrapper now exposes `readyState`, and parked sockets evict themselves on `close`/`error`), which was the deterministic five-minute stall reported on gpt-5.6-sol ([#1648](https://github.com/code-yeongyu/senpi/issues/1648)).
+
 ### Removed
 
 ## [2026.9.13] - 2026-09-13
