@@ -425,7 +425,7 @@ A `project_trust` handler must return `{ trusted: "yes" | "no" | "undecided" }`.
 
 #### resources_discover
 
-Fired after `session_start` so extensions can contribute additional skill, prompt, and theme paths.
+Fired after `session_start` so extensions can contribute additional skill, prompt, theme, and hook config paths.
 The startup path uses `reason: "startup"`. Reload uses `reason: "reload"`.
 
 ```typescript
@@ -436,6 +436,23 @@ pi.on("resources_discover", async (event, _ctx) => {
     skillPaths: ["/path/to/skills"],
     promptPaths: ["/path/to/prompts"],
     themePaths: ["/path/to/themes"],
+  };
+});
+```
+
+Each entry in `skillPaths`, `promptPaths`, `themePaths`, and `hookPaths` is a `ResourceDiscoverEntry`: either a path string or `{ path, scope? }`.
+
+A bare string inherits its scope from the contributing extension. It becomes `system` when the extension is builtin, or when the extension comes from a system package (see [`pi.system`](packages.md#creating-a-pi-package)) and the path lies inside that package. Otherwise the path keeps the `temporary` scope contributed paths have always had.
+
+Use the object form to pin the scope explicitly, for example when a system extension surfaces data the user owns:
+
+```typescript
+pi.on("resources_discover", async () => {
+  return {
+    skillPaths: [
+      "/path/inside/this/package/skills", // inherits the extension's scope
+      { path: join(homedir(), "my-skills"), scope: "user" }, // pinned
+    ],
   };
 });
 ```
@@ -1846,14 +1863,14 @@ Each entry has this shape:
   sourceInfo: {
     path: string;
     source: string;
-    scope: "user" | "project" | "temporary";
+    scope: "user" | "project" | "temporary" | "system";
     origin: "package" | "top-level";
     baseDir?: string;
   };
 }
 ```
 
-Use `sourceInfo` as the canonical provenance field. Do not infer ownership from command names or from ad hoc path parsing.
+Use `sourceInfo` as the canonical provenance field. Do not infer ownership from command names or from ad hoc path parsing. The `system` scope marks resources the harness itself provides: builtin and bundled extensions, the generated global-default extension shims in the agent extensions directory, command-line packages whose manifest declares `pi.system`, and what those contribute.
 
 Built-in interactive commands (like `/model` and `/settings`) are not included here. They are handled only in interactive
 mode and would not execute if sent via `prompt`.
@@ -1954,7 +1971,7 @@ const all = pi.getAllTools();
 //   description: "Read file contents...",
 //   parameters: ...,
 //   promptGuidelines: ["Use read to examine files instead of cat or sed."],
-//   sourceInfo: { path: "<builtin:read>", source: "builtin", scope: "temporary", origin: "top-level" }
+//   sourceInfo: { path: "<builtin:read>", source: "builtin", scope: "system", origin: "top-level" }
 // }, ...]
 const builtinTools = all.filter((t) => t.sourceInfo.source === "builtin");
 const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.sourceInfo.source !== "sdk");
