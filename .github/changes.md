@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-13 - Verify split workers with the release compiler
+
+### What changed
+
+- `.github/workflows/session-worker-compile.yml` pins Bun 1.4.2, runs the parsed-argv contracts and both relocation strategies, and watches release scripts, package metadata, Bun/RPC sources and dependency locks. Ubuntu, macOS and Windows remain mandatory matrix legs.
+
+### Why
+
+- `.github/workflows/session-worker-compile.yml` must exercise the compiler version and graph inputs used by standalone releases, including the Windows embedded-worker path contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/session-worker-compile.yml` configures CI before any runtime extension exists.
+
+### Expected merge conflict zones
+
+- The path filters, Bun setup and test steps in `.github/workflows/session-worker-compile.yml`.
+
 ## Pin Bun CI and release builds to 1.4.2 (2026-09-08)
 
 ### What changed
