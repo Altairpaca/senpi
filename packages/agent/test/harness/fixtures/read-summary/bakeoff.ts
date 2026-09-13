@@ -1,0 +1,239 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createReadTool } from "../../../../../coding-agent/src/core/tools/read.ts";
+import { measurePrototypeBinary } from "./binary-sizes.ts";
+import { boundaryFixtures } from "./boundary-fixtures.ts";
+import { languages, loadCorpus } from "./corpus.ts";
+import { heuristic } from "./heuristic.ts";
+import { annotate, compareOmp, retainedSourceExact } from "./oracle.ts";
+import { runReference, tokenize } from "./reference.ts";
+import { type Sample, selectEngine, sha256, validBoundaries } from "./scorer.ts";
+
+export async function bakeoff(options: {
+	readonly input: string;
+	readonly manifestHash: string;
+	readonly omp: string;
+	readonly out: string;
+}) {
+	const startedAt = new Date().toISOString();
+	const out = dirname(options.out);
+	const { corpus, entries, manifestSha256 } = loadCorpus(options.input, options.manifestHash);
+	for (const dir of ["raw", "omp", "candidate", "synthetic"]) mkdirSync(join(out, dir), { recursive: true });
+	const json = (name: string, value: unknown) => writeFileSync(join(out, name), `${JSON.stringify(value, null, 2)}\n`);
+	const synthetic = boundaryFixtures().map((fixture) => {
+		const ext =
+			fixture.language === "python"
+				? "py"
+				: fixture.language === "rust"
+					? "rs"
+					: fixture.language === "markdown"
+						? "md"
+						: fixture.language;
+		const file = join(out, "synthetic", `${fixture.id}.${ext}`);
+		writeFileSync(file, fixture.source);
+		return { ...fixture, file, sha256: sha256(fixture.source), path: fixture.id };
+	});
+	const all = [...entries, ...synthetic];
+	const reference = runReference(options.omp, all);
+	json("reference-command.json", {
+		command: reference.command,
+		readToolSha256: reference.readToolSha256,
+		settings: reference.settings,
+	});
+	// Freeze source-derived annotations before executing or scoring any candidate.
+	const annotations = all.map((entry) => {
+		const ref = reference.results.find((result) => result.id === entry.id);
+		if (!ref) throw new Error("reference_unavailable");
+		if (ref.sourceSha256 !== entry.sha256) throw new Error("reference_source_hash_mismatch");
+		return {
+			id: entry.id,
+			source_sha256: entry.sha256,
+			ranges: annotate(entry.source, entry.language, ref.nodes),
+			reference_annotation_errors: ref.annotationErrors,
+		};
+	});
+	const annotationsHash = sha256(JSON.stringify(annotations));
+	json("source-annotations.json", { sha256: annotationsHash, annotations });
+	const rawTool = createReadTool(options.input);
+	const rows = [];
+	for (const entry of all) {
+		const ref = reference.results.find((result) => result.id === entry.id);
+		const annotation = annotations.find((item) => item.id === entry.id);
+		if (!ref || !annotation) throw new Error("missing_reference_or_annotation");
+		if (sha256(readFileSync(entry.file)) !== entry.sha256) throw new Error("stale_corpus_hash");
+		const rawStart = performance.now();
+		const rawResult = await rawTool.execute(entry.id, { path: entry.file });
+		const rawMs = performance.now() - rawStart;
+		const raw = rawResult.content
+			.filter((content) => content.type === "text")
+			.map((content) => content.text)
+			.join("\n");
+		const candidateStart = performance.now();
+		const candidate = heuristic(entry.source, entry.language);
+		const candidateMs = performance.now() - candidateStart;
+		const exact = retainedSourceExact(entry.source, candidate);
+		const valid = validBoundaries({
+			source: entry.source,
+			folds: candidate.folds,
+			allowed: annotation.ranges,
+			retainedExact: exact,
+		});
+		writeFileSync(join(out, "raw", `${entry.id}.txt`), raw);
+		writeFileSync(join(out, "omp", `${entry.id}.txt`), ref.text);
+		writeFileSync(join(out, "candidate", `${entry.id}.txt`), candidate.text);
+		json(`omp/${entry.id}.json`, ref.result);
+		rows.push({
+			entry,
+			raw,
+			candidate,
+			omp: ref.text,
+			rawMs,
+			candidateMs,
+			ompMs: ref.latencyMs,
+			valid,
+			exact,
+			allowed: annotation.ranges,
+			referenceComparison: compareOmp(entry.source, ref.text, annotation.ranges),
+		});
+	}
+	json(
+		"output-bindings.json",
+		rows.map((row) => ({
+			id: row.entry.id,
+			source_sha256: row.entry.sha256,
+			raw_sha256: sha256(row.raw),
+			omp_sha256: sha256(row.omp),
+			candidate_sha256: sha256(row.candidate.text),
+		})),
+	);
+	const tokens = tokenize(
+		options.omp,
+		rows.flatMap((row) => [row.raw, row.omp, row.candidate.text]),
+	);
+	const samples = rows.map((row, index) => ({
+		...row,
+		rawTokens: tokens[index * 3],
+		ompTokens: tokens[index * 3 + 1],
+		candidateTokens: tokens[index * 3 + 2],
+	}));
+	json("boundaries.json", {
+		annotations_sha256: annotationsHash,
+		source_oracle:
+			"TypeScript 6.0.2 AST; Python ast; Rust source AST matches plus byte verification, independent of summary rendering",
+		limitations:
+			"Rust source parser is shared with omp, not an independent parser. Unannotated omp sibling folds are recorded, never promoted to candidate truth.",
+		files: samples.map((row) => ({
+			id: row.entry.id,
+			sha256: row.entry.sha256,
+			synthetic: row.entry.id.startsWith("boundary-"),
+			allowed: row.allowed,
+			candidate: row.candidate.folds,
+			retained_exact: row.exact,
+			valid: row.valid,
+			omp: row.referenceComparison,
+		})),
+	});
+	const selections = languages.map((language) => {
+		if (language === "markdown")
+			return { language, engine: "raw", status: "prose_exempt", reason: "markdown_and_txt_remain_raw" };
+		const real = samples.filter((row) => row.entry.language === language && !row.entry.id.startsWith("boundary-"));
+		const invalid = samples.filter((row) => row.entry.language === language && !row.valid).map((row) => row.entry.id);
+		const scored: Sample[] = real.map((row) => ({
+			path: row.entry.file,
+			source: row.entry.source,
+			sha256: row.entry.sha256,
+			folds: row.candidate.folds,
+			allowed: row.allowed,
+			retainedExact: row.exact,
+			rawTokens: row.rawTokens,
+			ompTokens: row.ompTokens,
+			candidateTokens: row.candidateTokens,
+		}));
+		const result = selectEngine({
+			samples: scored,
+			referenceAvailable: true,
+			tokenizerExact: true,
+			embeddedBytes: 0,
+			budget: corpus.max_embedded_delta_bytes,
+		});
+		if (language === "go")
+			return {
+				language,
+				...result,
+				reason: "measurement_blocked_insufficient_corpus (2 tracked Go files, both <100 lines)",
+				owner_action: "additional source corpus under OQ1",
+				measured_files: 0,
+			};
+		return {
+			language,
+			...result,
+			...(invalid.length ? { engine: "raw", status: "pending_owner", reason: "wasm_candidate_pending_owner" } : {}),
+			measured_files: real.length,
+			invalid_boundaries: invalid,
+			heuristic_rejection: invalid.length ? "invalid_boundaries" : result.reason,
+			total_saved_tokens: real.reduce((n, row) => n + row.rawTokens - row.candidateTokens, 0),
+		};
+	});
+	const csv = [
+		"id,language,sha256,synthetic,source_bytes,raw_tokens,omp_tokens,candidate_tokens,saved_token_fraction,omp_saved_token_fraction,raw_ms,omp_ms,candidate_ms,valid_boundaries,candidate_reason",
+	];
+	for (const row of samples)
+		csv.push(
+			[
+				row.entry.id,
+				row.entry.language,
+				row.entry.sha256,
+				row.entry.id.startsWith("boundary-"),
+				Buffer.byteLength(row.entry.source),
+				row.rawTokens,
+				row.ompTokens,
+				row.candidateTokens,
+				(row.rawTokens - row.candidateTokens) / row.rawTokens,
+				(row.rawTokens - row.ompTokens) / row.rawTokens,
+				row.rawMs,
+				row.ompMs,
+				row.candidateMs,
+				row.valid,
+				row.candidate.reason,
+			].join(","),
+		);
+	writeFileSync(join(out, "per-file.csv"), `${csv.join("\n")}\n`);
+	json("corpus.json", { ...corpus, input_manifest_sha256: manifestSha256, tokenizer: reference.tokenizer });
+	const binary = measurePrototypeBinary(out);
+	json("binary-sizes.json", binary);
+	const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+	const selection = {
+		version: 1,
+		gate_status: "OQ1_unresolved_defaults_used",
+		wasm_enabled: false,
+		status: "frozen_measurement_with_per_language_raw_fallbacks",
+		head_sha: head,
+		startedAt,
+		finishedAt: new Date().toISOString(),
+		corpus_sha256: sha256(readFileSync(join(out, "corpus.json"))),
+		annotations_sha256: annotationsHash,
+		tokenizer: reference.tokenizer,
+		max_embedded_delta_bytes: corpus.max_embedded_delta_bytes,
+		grammar_pins: "grammar-pins.json",
+		output_bindings_sha256: sha256(readFileSync(join(out, "output-bindings.json"))),
+		raw_reader_sha256: sha256(
+			readFileSync(new URL("../../../../../coding-agent/src/core/tools/read.ts", import.meta.url)),
+		),
+		reference_reader_sha256: reference.readToolSha256,
+		settings: reference.settings,
+		languages: selections,
+		prose_control: samples
+			.filter((row) => row.entry.language === "markdown")
+			.map((row) => ({
+				id: row.entry.id,
+				rawTokens: row.rawTokens,
+				ompTokens: row.ompTokens,
+				candidateTokens: row.candidateTokens,
+			})),
+		caveat:
+			"Evaluation defaults only, not approved WASM packaging. Go raw is the lead-authorized per-language shortfall outcome. Native/reference runtime is excluded from senpi distribution.",
+	};
+	writeFileSync(options.out, `${JSON.stringify(selection, null, 2)}\n`);
+	return selection;
+}

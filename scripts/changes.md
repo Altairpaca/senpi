@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-13 - Read-summary measurement gate (#1639)
+
+### What changed
+
+- `scripts/qa/omp-item1.ts`: adds actual-read bake-off and invalid-measurement entry points backed by test-only adapters in `packages/agent/test/harness/fixtures/read-summary/`.
+
+### Why
+
+- `scripts/qa/omp-item1.ts` records source identity, independent boundary checks, exact token savings and prototype binary deltas before any production read-engine selection.
+
+### Why an extension could not handle it
+
+- `scripts/qa/omp-item1.ts` is offline QA orchestration, not a runtime feature. It deliberately makes no production reader or dependency changes.
+
+### Expected merge conflict zones
+
+- `scripts/qa/omp-item1.ts` is a new fork-only measurement script. Existing build and reader code is unchanged.
+
 ## 2026-09-12 - Chord keeps upstream's release identity instead of the fork CalVer
 
 ### What changed
