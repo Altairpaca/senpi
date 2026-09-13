@@ -1,3 +1,23 @@
+## 2026-09-13 - Structural default reads with exact range fallback
+
+### What changed
+
+- `packages/agent/src/harness/tools/read.ts`: default construction injects the frozen folder and composes the shared view only after the existing truncator accepts the input. Explicit ranges and optional-folder absence preserve verbatim reads; cancellation is checked before folding.
+- `packages/agent/src/harness/utils/segmented-read-view.ts`: adds the shared default-read eligibility adapter without duplicating rendering or footer policy.
+- `packages/agent/src/harness/utils/read-folders/index.ts`: exposes eligibility from the frozen language selection so custom folders cannot bypass prose/unsupported exemptions.
+
+### Why
+
+- `packages/agent/src/harness/tools/read.ts` must match the coding-agent reader's default summary and exact offset/limit rereads without altering existing truncation inclusivity or edit anchors.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/tools/read.ts` is the lower-level injectable tool used without the coding-agent extension runtime; both readers must call the same pure implementation.
+
+### Expected merge conflict zones
+
+- LOW: imports, default options and the text-output branch in `packages/agent/src/harness/tools/read.ts`. Preserve the raw/truncation branches and both truncate modules unchanged.
+
 ## 2026-09-13 - Measured folders and shared segmented read views
 
 ### What changed

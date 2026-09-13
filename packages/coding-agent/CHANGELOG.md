@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Default reads of eligible TS/JS/JSON code now share the harness's structural view, with exact offset/limit rereads for edits. Prose, explicit ranges, unsupported input and existing size-limit continuations retain their previous output ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
 ### Fixed
 
 ### Removed

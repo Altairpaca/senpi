@@ -6,9 +6,11 @@
 
 ### Added
 
-- Added dependency-free measured TS/JS/JSON read folders and a pure source-preserving segmented-view API with bounded breadth-first unfolding. Built-in read execution is unchanged ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Added dependency-free measured TS/JS/JSON read folders and a pure source-preserving segmented-view API with bounded breadth-first unfolding ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Changed
+
+- Default reads of eligible code now use structural views with exact offset/limit rereads. Prose, explicit ranges, unsupported input and existing size-limit fallbacks remain verbatim; callers can inject a folder or omit it from custom options to retain raw reads ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
 

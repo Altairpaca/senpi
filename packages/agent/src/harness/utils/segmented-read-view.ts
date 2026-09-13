@@ -1,5 +1,7 @@
+import { isReadSummaryPath } from "./read-folders/index.ts";
 import {
 	READ_FOLD_SETTINGS,
+	type ReadFolder,
 	type ReadFolderResult,
 	type ReadFoldRange,
 	type ReadLineRange,
@@ -35,6 +37,30 @@ export type SegmentedReadView =
 			readonly rendered: RenderedReadView;
 	  }
 	| { readonly status: "no_summary"; readonly reason: ReadSummaryFallback };
+
+/** Compose only untruncated default text reads; each reader owns its existing raw path. */
+export function createDefaultReadSummary(input: {
+	readonly path: string;
+	readonly text: string;
+	readonly offset?: number;
+	readonly limit?: number;
+	readonly folder?: ReadFolder;
+	readonly truncated: boolean;
+}): RenderedReadView | undefined {
+	const { path, text, offset, limit, folder, truncated } = input;
+	if (!folder || offset !== undefined || limit !== undefined || truncated || !isReadSummaryPath(path))
+		return undefined;
+	if (text.includes("\0") || text.split("\n").length < READ_FOLD_SETTINGS.minTotalLines) return undefined;
+	const view = createSegmentedReadView({ text, parsed: folder.fold({ path, text, settings: READ_FOLD_SETTINGS }) });
+	switch (view.status) {
+		case "summary":
+			return view.rendered;
+		case "no_summary":
+			return undefined;
+		default:
+			return view satisfies never;
+	}
+}
 
 export class InvalidReadSegmentsError extends Error {
 	readonly code = "invalid_segments";

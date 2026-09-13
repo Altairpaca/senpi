@@ -53,6 +53,12 @@ function languageForPath(path: string): Language | undefined {
 	}
 }
 
+/** Reader eligibility stays bound to the frozen selection even with a custom folder. */
+export function isReadSummaryPath(path: string): boolean {
+	const language = languageForPath(path);
+	return language !== undefined && READ_FOLDER_SELECTION.languages[language] === "heuristic";
+}
+
 function hierarchy(ranges: readonly ReadLineRange[]): readonly ReadFoldRange[] | undefined {
 	// Builder-owned arrays; no caller-owned ranges are sorted or mutated.
 	type Node = ReadLineRange & { readonly children: Node[] };
