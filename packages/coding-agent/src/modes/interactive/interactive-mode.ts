@@ -3951,6 +3951,7 @@ export class InteractiveMode {
 			{
 				tui: this.ui,
 				timeoutMs: state.timeoutMs,
+				initialDraft: state.draft,
 				onProgress: (draft) => {
 					state.draft = draft;
 					state.onProgress?.(draft);

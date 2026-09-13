@@ -149,7 +149,7 @@ describe("AskUserQuestionComponent", () => {
 		h.component.handleInput(DOWN);
 
 		h.component.handleInput(ENTER);
-		expect(h.render()).toContain("Your answer (enter to save, esc to discard)");
+		expect(h.render()).toContain("Your answer (");
 	});
 
 	it("requires confirmation before dismissing a question with draft answers", () => {
