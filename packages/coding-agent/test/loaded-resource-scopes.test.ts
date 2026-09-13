@@ -4,6 +4,7 @@ import {
 	buildResourceScopeGroups,
 	getDisplaySourceInfo,
 	getResourceScopeGroup,
+	getScopeAutocompleteTag,
 	isSystemResource,
 } from "../src/modes/interactive/loaded-resource-scopes.ts";
 
@@ -55,6 +56,13 @@ describe("loaded resource scopes", () => {
 		expect([...(groups[0]?.packages.keys() ?? [])]).toEqual(["npm:pi-x"]);
 		expect(groups[3]?.paths.map((item) => item.path)).toEqual([builtin.path, systemPackage.path]);
 		expect(groups[3]?.packages.size).toBe(0);
+	});
+
+	it("abbreviates every scope for autocomplete tags, system included", () => {
+		expect(getScopeAutocompleteTag("user")).toBe("u");
+		expect(getScopeAutocompleteTag("project")).toBe("p");
+		expect(getScopeAutocompleteTag("temporary")).toBe("t");
+		expect(getScopeAutocompleteTag("system")).toBe("s");
 	});
 
 	it("labels system resources as system in diagnostics", () => {
