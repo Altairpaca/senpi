@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-13 - Centralize standalone provider registration
+
+### What changed
+
+- `packages/coding-agent/src/bun/runtime-modules.ts` synchronously registers Bedrock, Cursor, Devin and bundled OAuth once per isolate, preserving later overrides on repeat calls.
+- `packages/coding-agent/src/bun/runtime-setup.ts` delegates registration to that entry.
+- `packages/coding-agent/src/bun/cli.ts` retains sandbox -> runtime setup -> CLI order and removes the separate `register-cursor-agent.ts` import; that redundant file is deleted.
+
+### Why
+
+- Variable-specifier imports cannot resolve implementations absent from a relocated compiled binary, and launcher registration does not initialize worker-isolate module state.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/bun/runtime-setup.ts` and `packages/coding-agent/src/bun/cli.ts` establish startup state before extensions run; static bundle membership belongs to the entry graph.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/bun/runtime-setup.ts` registration calls and `packages/coding-agent/src/bun/cli.ts` startup imports.
+
 ## 2026-09-12 - Clear the ask-user own-answer editor when advancing to the next question
 
 ### What changed

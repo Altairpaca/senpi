@@ -16,6 +16,8 @@
 
 - Added the TUI foundation for host-leased regular-mode mouse clicks, with fail-closed frame anchoring and private cursor-position calibration; native selection and scrollback remain unchanged when no lease is active ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
+- Added `@code-yeongyu/senpi/bun-runtime` with synchronous, once-per-isolate provider and OAuth registration for standalone Bun consumers; later provider overrides survive repeated registration ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 - Added optional read-only `ctx.steeringSignal` during tool execution so extensions can observe queued steering without cancelling work or consuming messages; follow-up input remains separate ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
 
 - Added `scopedEntries: true` to the `resources_discover` event so a handler can feature-detect that the host accepts `{ path, scope }` entries and fall back to plain paths on older hosts (fixes #1655).
@@ -32,6 +34,8 @@
 
 - Fixed the goal monitor parking on the ask-user idle-timeout setting instead of the earliest pending question deadline, so a shorter request no longer waits for a longer one; typing in an answer now extends that park without adding continuation prompts ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
+- Fixed shared RPC hosts expiring an old idle window after a short readiness connection, which could remove the Windows named pipe before the client attached (part of #1290).
+- Fixed missing Bedrock, Cursor, and Devin implementations in relocated standalone binaries by registering bundled modules in both the launcher and shared-session workers ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 - Fixed the ask-user question dialog carrying a committed own-answer into the next question: after answering a question with typed text, the next question's editor no longer shows the previous answer's text and pressing Enter again no longer submits it as the next question's own answer.
 - Fixed the remaining focus traps in the ask-user question dialog: committing an own answer now lands on the next question's option list instead of leaving the editor open; Up/Down, Tab/Shift+Tab and Backspace-on-empty leave the own-answer editor (Left/Right move its cursor); the Submit tab's review rows are navigable (Up from the comment highlights the last answer, Enter on a row jumps back to that question, Left/Right move the comment cursor once it has text); Backspace on the option list clears the answer instead of opening the editor; Esc inside the own-answer editor of an async question returns to the options instead of collapsing it; and re-expanding an async question restores its draft answers and comment.
 
