@@ -161,6 +161,7 @@ describe("async ask-user question in the interactive TUI", () => {
 	it("moves the wake source 1 -> 0 and delivers exactly one framed message per answer", async () => {
 		const delivery = await createAskUserDelivery();
 		harnesses.push(delivery.harness);
+		vi.useFakeTimers({ toFake: ["Date"], now: 0 });
 		const fake = createFakeInteractiveMode({ isStreaming: true });
 		const ctx = delivery.context(tuiQuestion(fake), false);
 
@@ -173,7 +174,11 @@ describe("async ask-user question in the interactive TUI", () => {
 		);
 		expect(result.details).toMatchObject({ accepted: true, status: "pending" });
 		expect(delivery.wakeEvents).toEqual([
-			{ source: "ask-user", activeCount: 1, items: [{ id: "tc-async", description: "Library" }] },
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "tc-async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
 		]);
 		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (1 unanswered)");
 
@@ -181,7 +186,11 @@ describe("async ask-user question in the interactive TUI", () => {
 		await fake.submitEditorText("just use bun");
 		await settled;
 		expect(delivery.wakeEvents).toEqual([
-			{ source: "ask-user", activeCount: 1, items: [{ id: "tc-async", description: "Library" }] },
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "tc-async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
 			{ source: "ask-user", activeCount: 0, items: [] },
 		]);
 		// Exactly one framed message, delivered by the extension and not by the widget.
