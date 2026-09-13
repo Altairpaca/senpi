@@ -81,6 +81,7 @@ import {
 import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -3987,19 +3988,29 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private handleAnswerCommand(argument: string): void {
+	private async handleAnswerCommand(argument: string): Promise<void> {
 		const state = this.shownQuestion;
 		if (!state) {
 			this.showStatus("No question is pending.");
 			return;
 		}
 		if (argument === "skip") {
-			state.finish({
+			const response: QuestionResponse = {
 				status: "cancelled",
 				answers: state.draft.answers ?? {},
 				unanswered: unansweredIds(state.request, state.draft),
-			});
+			};
+			state.finish(response);
+			await state.completion;
 			this.showStatus("The user dismissed the question.");
+			// Ordinary cancellation/abort stays silent in the builtin. Only this
+			// explicit command acknowledges dismissal, including on host bridges.
+			await this.session.sendUserMessage(
+				formatUserMessage(response, state.request.requestId, state.request.questions),
+				{
+					deliverAs: this.session.isStreaming ? "steer" : "followUp",
+				},
+			);
 			return;
 		}
 		if (argument !== "") {
@@ -4710,7 +4721,7 @@ export class InteractiveMode {
 				}
 				if (text === "/answer" || text.startsWith("/answer ")) {
 					this.editor.setText("");
-					this.handleAnswerCommand(text.slice("/answer".length).trim());
+					await this.handleAnswerCommand(text.slice("/answer".length).trim());
 					return;
 				}
 				if (text === "/hotkeys") {

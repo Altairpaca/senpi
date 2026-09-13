@@ -107,15 +107,23 @@ describe("pending-question keyboard model", () => {
 		await Promise.resolve();
 		expect(q.settled).toHaveBeenCalledWith(expect.objectContaining({ status: "answered" }));
 	});
-	it("/answer skip cancels only the shown request", async () => {
-		const h = mount();
-		const first = h.ask();
-		const second = h.ask("Deploy");
-		await h.fake.submitEditorText("/answer skip");
-		await Promise.resolve();
-		expect(first.settled).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
-		expect(second.settled).not.toHaveBeenCalled();
-	});
+	it.each([true, false])(
+		"/answer skip cancels only the shown request and acknowledges it while streaming=%s",
+		async (isStreaming) => {
+			const h = mount();
+			h.fake.session.isStreaming = isStreaming;
+			const first = h.ask();
+			const second = h.ask("Deploy");
+			await h.fake.submitEditorText("/answer skip");
+			await Promise.resolve();
+			expect(first.settled).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
+			expect(second.settled).not.toHaveBeenCalled();
+			expect(h.fake.session.sendUserMessage).toHaveBeenCalledExactlyOnceWith(
+				"[Answer to question Auth]\nThe user dismissed the question.",
+				{ deliverAs: isStreaming ? "steer" : "followUp" },
+			);
+		},
+	);
 	it("/answer with two requests opens a two-row SelectList", async () => {
 		const h = mount();
 		h.ask();
