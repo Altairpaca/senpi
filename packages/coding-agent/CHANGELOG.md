@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed the ask-user question dialog carrying a committed own-answer into the next question: after answering a question with typed text, the next question's editor no longer shows the previous answer's text and pressing Enter again no longer submits it as the next question's own answer.
+
 ### Removed
 
 ## [2026.9.13] - 2026-09-13
