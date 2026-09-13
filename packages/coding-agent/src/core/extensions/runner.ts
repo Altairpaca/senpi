@@ -1768,7 +1768,7 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
+					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason, scopedEntries: true };
 					const handlerResult = await handler(event, this.createContext(ext.path));
 					const result = handlerResult as ResourcesDiscoverResult | undefined;
 

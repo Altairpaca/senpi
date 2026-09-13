@@ -6,7 +6,11 @@
 
 ### Added
 
+- Added the TUI foundation for host-leased regular-mode mouse clicks, with fail-closed frame anchoring and private cursor-position calibration; native selection and scrollback remain unchanged when no lease is active ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
 - Added optional read-only `ctx.steeringSignal` during tool execution so extensions can observe queued steering without cancelling work or consuming messages; follow-up input remains separate ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
+
+- Added `scopedEntries: true` to the `resources_discover` event so a handler can feature-detect that the host accepts `{ path, scope }` entries and fall back to plain paths on older hosts (fixes #1655).
 
 - Added the `system` provenance scope for resources the harness itself provides: builtin and bundled extensions resolve to it in every runtime, a command-line package whose `package.json` declares `"pi": { "system": true }` keeps it through CLI precedence (the flag is ignored for packages installed through settings), and `resources_discover` results may now be `{ path, scope }` entries, with bare paths inheriting `system` from a builtin or system-package contributor and staying `temporary` otherwise (fixes #1640).
 
