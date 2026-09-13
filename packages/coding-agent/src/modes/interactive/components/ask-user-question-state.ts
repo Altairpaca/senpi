@@ -33,6 +33,8 @@ export class AskUserQuestionState {
 	activeIndex = 0;
 	highlightIndex = 0;
 	focus: QuestionFocus = "options";
+	/** Highlighted row on the Submit tab: a review row per question, then the comment editor. */
+	submitRowIndex: number;
 	notice: string | undefined;
 	comment: string | undefined;
 	private dismissPending = false;
@@ -41,6 +43,7 @@ export class AskUserQuestionState {
 
 	constructor(request: QuestionRequest) {
 		this.request = request;
+		this.submitRowIndex = this.commentRowIndex;
 	}
 
 	get activeQuestion(): QuestionRequest["questions"][number] {
@@ -60,6 +63,14 @@ export class AskUserQuestionState {
 		return this.focus === "submit" ? this.request.questions.length : this.activeIndex;
 	}
 
+	get commentRowIndex(): number {
+		return this.request.questions.length;
+	}
+
+	get isCommentFocused(): boolean {
+		return this.focus === "submit" && this.submitRowIndex === this.commentRowIndex;
+	}
+
 	switchQuestion(delta: number): void {
 		this.switchTab(delta);
 	}
@@ -68,33 +79,56 @@ export class AskUserQuestionState {
 		const count = this.request.questions.length + 1;
 		const next = (this.activeTabIndex + delta + count) % count;
 		if (next === this.request.questions.length) {
-			this.focus = "submit";
+			this.enterSubmit();
 		} else {
-			this.focus = "options";
-			this.activeIndex = next;
-			this.highlightIndex = 0;
+			this.jumpToQuestion(next);
 		}
-		this.dismissPending = false;
-		this.notice = undefined;
 	}
 
 	advance(): void {
 		if (this.activeIndex + 1 < this.request.questions.length) {
-			this.activeIndex += 1;
-			this.highlightIndex = 0;
-			this.notice = undefined;
-			this.dismissPending = false;
+			this.jumpToQuestion(this.activeIndex + 1);
 			return;
 		}
-		this.focus = "submit";
+		this.enterSubmit();
+	}
+
+	jumpToQuestion(index: number): void {
+		this.focus = "options";
+		this.activeIndex = index;
 		this.highlightIndex = 0;
-		this.notice = undefined;
-		this.dismissPending = false;
+		this.clearTransient();
+	}
+
+	enterSubmit(): void {
+		this.focus = "submit";
+		this.submitRowIndex = this.commentRowIndex;
+		this.highlightIndex = 0;
+		this.clearTransient();
 	}
 
 	returnToOptions(): void {
+		this.leaveOwnAnswer(0);
+	}
+
+	/** Close the own-answer editor and highlight `row` of the active question. */
+	leaveOwnAnswer(row: number): void {
 		this.focus = "options";
-		this.highlightIndex = 0;
+		this.highlightIndex = Math.min(Math.max(0, row), this.ownAnswerRowIndex);
+		this.clearTransient();
+	}
+
+	/** Move the Submit-tab highlight by `delta`, clamped to the review rows and the comment editor. */
+	moveSubmitRow(delta: number): void {
+		this.submitRowIndex = Math.min(Math.max(0, this.submitRowIndex + delta), this.commentRowIndex);
+		this.clearTransient();
+	}
+
+	focusComment(): void {
+		this.submitRowIndex = this.commentRowIndex;
+	}
+
+	private clearTransient(): void {
 		this.notice = undefined;
 		this.dismissPending = false;
 	}
@@ -163,6 +197,24 @@ export class AskUserQuestionState {
 		if (trimmed === "") this.texts.delete(questionId);
 		else this.texts.set(questionId, trimmed);
 		this.notice = undefined;
+	}
+
+	clearAnswer(questionId: string): void {
+		this.selected.delete(questionId);
+		this.texts.delete(questionId);
+		this.notice = undefined;
+	}
+
+	/** Seed selections, own texts and the comment from a previously captured draft. */
+	restoreDraft(draft: QuestionDraft): void {
+		for (const question of this.request.questions) {
+			const answer = draft.answers?.[question.id];
+			if (!answer) continue;
+			const selected = answer.selected.filter((label) => question.options.some((option) => option.label === label));
+			if (selected.length > 0) this.selected.set(question.id, selected);
+			if (answer.text !== undefined && answer.text.trim() !== "") this.texts.set(question.id, answer.text.trim());
+		}
+		if (draft.comment !== undefined && draft.comment.trim() !== "") this.comment = draft.comment;
 	}
 
 	answers(): QuestionAnswers {
