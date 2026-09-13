@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { htmlToMarkdown, htmlToText } from "../../src/core/extensions/builtin/webfetch/webfetch/content.ts";
 import {
@@ -38,11 +38,24 @@ describe("webfetch base-implementation goldens", () => {
 				// Given: verbatim legacy fixtures or deterministic URL, malformed, and size boundaries.
 				const html = readFileSync(new URL(`${fixture}.html`, fixtureDirectory), "utf8");
 				const goldenPath = new URL(`${fixture}.${format}.golden`, fixtureDirectory);
+				let expected = readFileSync(goldenPath, "utf8");
+				// Allowed delta only: fixture 8 already has absolute URLs from Readability.
+				// Fixture 9 resolves guide/image against finalUrl and preserves #section.
+				// Fixture 10 resolves all three destinations against the first base href.
+				if (format === "md" && (fixture === "09-explicit-urls" || fixture === "10-base-redirect")) {
+					const base = fixture === "10-base-redirect" ? new URL("../assets/", finalUrl).href : finalUrl;
+					expected = expected.replace(
+						/\]\((\.\.\/guide|images\/example\.png|#section)\)/g,
+						(match, value: string) => {
+							if (value.startsWith("#") && base === finalUrl) return match;
+							return `](${new URL(value, base).href})`;
+						},
+					);
+				}
 				// When
 				const actual = format === "md" ? htmlToMarkdown(html, finalUrl) : htmlToText(html, finalUrl);
-				// Then: generation is explicitly opt-in, on the unchanged jsdom implementation only.
-				if (process.env.WEBFETCH_WRITE_BASE_GOLDENS === "1") writeFileSync(goldenPath, `${actual}\n`);
-				expect(normalize(actual)).toBe(normalize(readFileSync(goldenPath, "utf8")));
+				// Then: no normalization of actual destinations can hide a URL regression.
+				expect(normalize(actual)).toBe(normalize(expected));
 			});
 		}
 	}
