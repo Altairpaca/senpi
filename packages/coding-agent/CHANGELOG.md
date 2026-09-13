@@ -6,6 +6,11 @@
 
 ### Added
 
+
+- Added `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` to the extension session environment, exposing the session working directory and authoritative goal-store file to kernels and shell children while clearing inherited stale values (fixes #1663).
+
+
+
 - Added a pending-question queue in the interactive TUI: concurrent async questions stay open instead of superseding one another, the widget shows the pending count with `+N more`, `alt+down` cycles requests from an empty composer, and each request keeps its own draft and idle deadline ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
 - Added a faster answer path: a valid digit on an empty composer answers the shown question (a single-question single-select request submits immediately), `alt+up` joins `alt+a` for opening it, `/answer` lists or opens a specific request, and typed or pasted text binds to one request with a `↳ reply to <header>` composer label ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
@@ -13,6 +18,7 @@
 - Added question arrival signals: a `? <header>` terminal-title layer while a question is pending, a one-time terminal bell controlled by the new `askUser.bell` setting (default true), an `ask-user:asked` bus event with a matching `ask-user-asked` Notification hook, and `herdr:blocked` active/inactive pairs for questions and host dialogs. Reconnect replay and hydration do not repeat these signals ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
 - Added compact answered-question chips in the transcript: an answered, commented, dismissed or timed-out question renders as `↳ <header>: <answer>` and expands to the original message on click ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
 
 - Added the TUI foundation for host-leased regular-mode mouse clicks, with fail-closed frame anchoring and private cursor-position calibration; native selection and scrollback remain unchanged when no lease is active ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
