@@ -1,5 +1,23 @@
 # TUI delta rendering fork changes
 
+## 2026-09-13 - Lease intent and fail-closed mouse geometry
+
+### What changed
+
+- `packages/tui/src/tui.ts`: adds idempotent capture leases, lifecycle blockers, placement epochs, and committed-frame anchors; unknown, stale, resized, and image-bearing frames cannot resolve mouse rows.
+
+### Why
+
+- `packages/tui/src/tui.ts`: inline clicks need reliable frame placement without changing renderer defaults or taking permanent terminal ownership.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: committed frame geometry, hardware cursor placement, and renderer lifecycle are private renderer state.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: one fullRender hook, resize/replay/insert-scroll/multiplexer epoch increments, and stop bookkeeping. Terminal input routing is untouched.
+
 ## 2026-09-13 - Share mouse protocol parsing and retain owned fragments
 
 ### What changed
