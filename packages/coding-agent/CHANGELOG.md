@@ -6,11 +6,19 @@
 
 ### Added
 
+- Added optional read-only `ctx.steeringSignal` during tool execution so extensions can observe queued steering without cancelling work or consuming messages; follow-up input remains separate ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
+
+- Added the `system` provenance scope for resources the harness itself provides: builtin and bundled extensions resolve to it in every runtime, a command-line package whose `package.json` declares `"pi": { "system": true }` keeps it through CLI precedence (the flag is ignored for packages installed through settings), and `resources_discover` results may now be `{ path, scope }` entries, with bare paths inheriting `system` from a builtin or system-package contributor and staying `temporary` otherwise (fixes #1640).
+
 ### Changed
 
 - Default reads of eligible TS/JS/JSON code now share the harness's structural view, with exact offset/limit rereads for edits. Prose, explicit ranges, unsupported input and existing size-limit continuations retain their previous output ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Changed the interactive startup banner to leave system resources out of the compact `[Skills]`, `[Extensions]`, `[Prompts]` and `[Themes]` lines; a section with nothing else to show stays hidden until expanded (Ctrl+O or `--verbose`), where a `system` group now follows the project, user and path groups; autocomplete descriptions tag system resources `[s]` instead of `[t]` (fixes #1640).
 
 ### Fixed
+
+- Fixed the ask-user question dialog carrying a committed own-answer into the next question: after answering a question with typed text, the next question's editor no longer shows the previous answer's text and pressing Enter again no longer submits it as the next question's own answer.
+- Fixed the remaining focus traps in the ask-user question dialog: committing an own answer now lands on the next question's option list instead of leaving the editor open; Up/Down, Tab/Shift+Tab and Backspace-on-empty leave the own-answer editor (Left/Right move its cursor); the Submit tab's review rows are navigable (Up from the comment highlights the last answer, Enter on a row jumps back to that question, Left/Right move the comment cursor once it has text); Backspace on the option list clears the answer instead of opening the editor; Esc inside the own-answer editor of an async question returns to the options instead of collapsing it; and re-expanding an async question restores its draft answers and comment.
 
 ### Removed
 

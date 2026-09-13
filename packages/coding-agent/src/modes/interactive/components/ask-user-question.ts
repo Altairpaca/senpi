@@ -1,7 +1,7 @@
 /**
  * Ask-user question overlay: tab bar of question headers, numbered options
- * with descriptions, per-question own-answer editor, one always-visible
- * comment editor, submit footer and a countdown chip. Layout lives in
+ * with descriptions, per-question own-answer editor, a Submit tab with review
+ * rows and the comment editor, submit footer and a countdown chip. Layout lives in
  * ask-user-question-render.ts, interaction rules in ask-user-question-state.ts
  * and key dispatch in ask-user-question-keys.ts.
  */
@@ -36,6 +36,8 @@ export interface AskUserQuestionOptions {
 	timeoutMs?: number;
 	/** Draft notification on every selection or keystroke (drives the idle timer). */
 	onProgress?: (draft: QuestionDraft) => void;
+	/** Answers and comment captured earlier (an async question re-expanded from its widget). */
+	initialDraft?: QuestionDraft;
 }
 
 export class AskUserQuestionComponent extends Container implements Focusable {
@@ -100,6 +102,11 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 
+		if (opts.initialDraft) {
+			this.state.restoreDraft(opts.initialDraft);
+			if (this.state.comment !== undefined) this.commentInput.setValue(this.state.comment);
+		}
+
 		const timeoutMs = opts.timeoutMs ?? request.timeoutMs;
 		if (timeoutMs > 0) {
 			this.countdown = new CountdownTimer(
@@ -144,6 +151,7 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 
 	private commitOwnAnswer(): void {
 		this.state.setOwnAnswer(this.state.activeQuestion.id, this.ownAnswerInput.getValue());
+		this.ownAnswerInput.setValue("");
 		this.emitProgress();
 	}
 
@@ -183,7 +191,7 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 
 	private applyFocusFlags(): void {
 		this.ownAnswerInput.focused = this._focused && this.state.focus === "own-answer";
-		this.commentInput.focused = this._focused && this.state.focus === "submit";
+		this.commentInput.focused = this._focused && this.state.isCommentFocused;
 	}
 
 	private updateTitle(): void {

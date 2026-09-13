@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-09-13 - Steering detaches eligible foreground evaluations (#1637)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts` subscribes to the invocation's steering-only signal before acquiring a kernel, checks queued steering at readiness, and reuses the idle watchdog's successful detach transition. Failed steering admission preserves the foreground wait without cancellation. The listener is removed when the foreground call returns or rejects.
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts` refuses a detach when its language already has a detached owner, preserving the existing one-slot limit at the transition itself.
+
+### Why
+
+- Queued steering should release the interactive turn without killing computation or in-flight bridge work. Boot-time steering must not be lost, and a colliding detach must not replace another cell's ownership.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts` owns the foreground wait and cancellation separation; `packages/senpi-codemode/src/tool/detached-cell-manager.ts` owns atomic detached admission. Neither transition is replaceable from a consumer extension.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/tool/run-eval-cell.ts` around idle detachment, kernel readiness, and foreground settlement.
+- LOW: `packages/senpi-codemode/src/tool/detached-cell-manager.ts` around `detach()` admission. No kernel queue, capacity setting, or deadline duration changes.
+
 ## 2026-09-11 - Column-capped eval output keeps a recovery artifact
 
 ### What changed

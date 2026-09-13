@@ -54,16 +54,18 @@ export function renderQuestionList(state: AskUserQuestionState): string[] {
 }
 
 export function renderSubmitSummary(state: AskUserQuestionState): string[] {
-	return state.request.questions.map((question) => {
+	return state.request.questions.map((question, index) => {
+		const highlighted = state.focus === "submit" && state.submitRowIndex === index;
+		const prefix = highlighted ? theme.fg("accent", "→ ") : "  ";
 		const answer = state.answers()[question.id];
-		if (!answer) return theme.fg("warning", `${question.header}: unanswered`);
+		if (!answer) return `${prefix}${theme.fg("warning", `${question.header}: unanswered`)}`;
 		const value = answer.selected.length > 0 ? answer.selected.join(", ") : (answer.text ?? "");
-		return `${question.header}: ${value}`;
+		return `${prefix}${question.header}: ${value}`;
 	});
 }
 
 export function renderOwnAnswerLabel(): string {
-	return theme.fg("muted", "Your answer (enter to save, esc to discard)");
+	return theme.fg("muted", "Your answer (enter to save, ↑↓ back to options, esc to discard)");
 }
 
 export function renderCommentLabel(): string {
@@ -87,10 +89,23 @@ export function renderSubmitLine(state: AskUserQuestionState): string {
 
 export function renderHintsLine(state: AskUserQuestionState): string {
 	if (state.focus === "submit") {
+		if (!state.isCommentFocused) {
+			return (
+				rawKeyHint("enter", "edit answer") +
+				"  " +
+				rawKeyHint("↑↓", "move") +
+				"  " +
+				rawKeyHint("tab", "next question") +
+				"  " +
+				rawKeyHint("esc", "back")
+			);
+		}
 		return (
 			rawKeyHint("enter", "submit") +
 			"  " +
-			rawKeyHint("←/shift+tab", "back") +
+			rawKeyHint("↑", "review answers") +
+			"  " +
+			rawKeyHint("shift+tab", "back") +
 			"  " +
 			rawKeyHint("tab", "next question") +
 			"  " +
@@ -101,9 +116,11 @@ export function renderHintsLine(state: AskUserQuestionState): string {
 		return (
 			rawKeyHint("enter", "save and next") +
 			"  " +
-			rawKeyHint("esc", "discard") +
+			rawKeyHint("↑↓", "back to options") +
 			"  " +
-			rawKeyHint("shift+enter", "new line")
+			rawKeyHint("tab", "next question") +
+			"  " +
+			rawKeyHint("esc", "discard")
 		);
 	}
 	return (

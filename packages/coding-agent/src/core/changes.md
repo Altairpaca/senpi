@@ -1,5 +1,49 @@
 # changes
 
+## 2026-09-13 - Invocation-scoped steering notification (senpi#1637)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` binds each registered tool invocation to the existing synchronous queue-update event through a separate AbortSignal. Registration precedes the queued-steering check; completion, caller abort and session disposal remove the subscription. Context getters remain live.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the steering queue. Foreground tools need push notification without consuming messages or treating follow-up input as cancellation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns both queue updates and registered tool invocation lifetimes below the extension API; an extension cannot safely subscribe to that queue through the existing context.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: queue-update helpers, disposal, and the two registered-tool wrapper construction sites. Agent-loop queue consumption and cancellation are unchanged.
+
+## 2026-09-13 - `system` provenance scope for harness-provided resources (senpi#1640)
+
+### What changed
+
+- `packages/coding-agent/src/core/source-info.ts`: `SourceScope` is now `"user" | "project" | "temporary" | "system"`. `system` marks resources the harness itself provides: `<builtin:*>` and bundled extensions, command-line packages whose manifest declares `pi.system`, and what those contribute.
+- `packages/coding-agent/src/core/pi-manifest.ts`: `PiManifest.system?: boolean`, read from `pkg.pi.system` only when it is a boolean; any other type is ignored.
+- `packages/coding-agent/src/core/package-manager.ts`: `collectPackageResources` reads the manifest up front and flips `metadata.scope` from `temporary` to `system` when `manifest.system === true`. Only command-line packages carry the `temporary` scope here, so a package installed through settings keeps its `user`/`project` scope and cannot hide itself from the trust surface. The local `SourceScope` alias is gone in favour of the `source-info.ts` type; `InstalledSourceScope` excludes `system` as well as `temporary`, and the update filter skips both.
+- `packages/coding-agent/src/core/resource-loader.ts`: the CLI metadata loop collapses into one `cliMetadata` helper that keeps `source: "cli", scope: "system", origin: "top-level", baseDir: <package root>` for resources that resolved to `system`, and `source: "cli", scope: "temporary"` for everything else, so CLI precedence over settings packages is unchanged. `getDefaultSourceInfoForPath` returns `scope: "system"` for `<builtin:*>` paths. `applyExtensionSourceInfo` resolves bundled extensions to `source: "builtin", scope: "system"` with the bundled package root as `baseDir`, using the new `getBundledExtensionPackageRoots` (which `getBundledExtensionEntryPaths` now wraps), and the generated global-default shims (`diff.js`, `files.js`, `prompt-url-widget.js`, `tps.js` under the agent extensions directory) to the same `system` scope while they still carry the generated banner (`getHarnessExtensionSourceInfo`, `isGeneratedGlobalDefaultExtensionShimPath`); a user-authored file at a shim path keeps the `user` scope.
+- `packages/coding-agent/src/core/agent-session.ts`: `resources_discover` results go through `resolveDiscoveredResourcePaths` instead of the removed `buildExtensionResourcePaths` / `getExtensionSourceLabel` methods.
+- `packages/coding-agent/src/core/discovered-resource-scope.ts` (new, fork-only): `DiscoveredResourceEntry`, `getExtensionSourceLabel` and `resolveDiscoveredResourcePaths`. An entry with an explicit `scope` keeps it; a bare path becomes `system` when the contributor is builtin, or is a system package and the path lies inside that package root; otherwise it stays `temporary`.
+- `packages/coding-agent/src/modes/app-server/server/skills.ts` (fork-only): `mapSkillScope` maps `system` to the app-server `system` skill scope, next to `temporary`.
+
+### Why
+
+- Resources only knew user, project and temporary scopes, so builtin extensions and the package a distribution launcher passes with `--extension` were filed as ad-hoc paths next to the user's own `-e` files. The harness needs a scope of its own so the banner, diagnostics and app-server can tell its resources from the user's.
+
+### Why an extension could not handle it
+
+- Scope is assigned by the loader and package manager before any extension runs, and `SourceScope` is the host-owned provenance contract those consumers read. An extension can pin a scope on the paths it contributes, but it cannot change how its own package or the builtins are classified.
+
+### Expected merge conflict zones
+
+- MEDIUM: the CLI metadata loop in `DefaultResourceLoader` (`cliMetadata` replaces five identical `for` loops), `getDefaultSourceInfoForPath`, `applyExtensionSourceInfo` and `getBundledExtensionEntryPaths` / `getBundledExtensionPackageRoots` in `packages/coding-agent/src/core/resource-loader.ts`.
+- MEDIUM: `collectPackageResources` (manifest read moved above the filter branch) and the `InstalledSourceScope` alias plus the update filter in `packages/coding-agent/src/core/package-manager.ts`.
+- LOW: the `SourceScope` union in `packages/coding-agent/src/core/source-info.ts`; the `system` field in `packages/coding-agent/src/core/pi-manifest.ts`; the `extendResources` call site in `packages/coding-agent/src/core/agent-session.ts` where the two private helpers were removed.
+
 ## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
 
 ### What changed

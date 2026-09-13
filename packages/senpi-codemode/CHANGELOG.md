@@ -6,6 +6,8 @@
 
 ### Added
 
+- Interactive foreground eval cells detach on queued steering without cancelling their computation or in-flight tools. An occupied detached slot keeps the call waiting ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
+
 ### Changed
 
 ### Fixed

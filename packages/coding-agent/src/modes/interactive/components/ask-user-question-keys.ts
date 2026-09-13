@@ -20,6 +20,14 @@ export interface AskUserKeyHandlerContext {
 	updateAll(): void;
 }
 
+type Keybindings = ReturnType<typeof getKeybindings>;
+
+const DEL = "\x7f";
+
+function isPrintable(data: string): boolean {
+	return data.length === 1 && data >= " " && data !== DEL;
+}
+
 export function handleAskUserKeyInput(ctx: AskUserKeyHandlerContext, data: string): void {
 	const kb = getKeybindings();
 	if (matchesKey(data, "ctrl+c")) {
@@ -37,7 +45,14 @@ export function handleAskUserKeyInput(ctx: AskUserKeyHandlerContext, data: strin
 	handleOptionsKey(ctx, data, kb);
 }
 
-function handleOwnAnswerKey(ctx: AskUserKeyHandlerContext, data: string, kb: ReturnType<typeof getKeybindings>): void {
+/** Navigation out of the editor saves typed text but never wipes an existing answer with an empty editor. */
+function saveTypedOwnAnswer(ctx: AskUserKeyHandlerContext): void {
+	if (ctx.ownAnswerInput.getValue().trim() !== "") ctx.commitOwnAnswer();
+	else ctx.ownAnswerInput.setValue("");
+}
+
+function handleOwnAnswerKey(ctx: AskUserKeyHandlerContext, data: string, kb: Keybindings): void {
+	const state = ctx.state;
 	if (matchesKey(data, "ctrl+enter")) {
 		ctx.commitOwnAnswer();
 		ctx.attemptSubmit();
@@ -45,13 +60,36 @@ function handleOwnAnswerKey(ctx: AskUserKeyHandlerContext, data: string, kb: Ret
 	}
 	if (kb.matches(data, "tui.select.confirm") || data === "\n") {
 		ctx.commitOwnAnswer();
-		ctx.state.advance();
+		state.advance();
 		ctx.updateAll();
 		return;
 	}
 	if (kb.matches(data, "tui.select.cancel")) {
-		if (ctx.state.request.waitForAnswer) ctx.state.returnToOptions();
-		else ctx.finish("cancelled");
+		ctx.ownAnswerInput.setValue("");
+		state.leaveOwnAnswer(state.ownAnswerRowIndex);
+		ctx.updateAll();
+		return;
+	}
+	if (kb.matches(data, "tui.select.up")) {
+		saveTypedOwnAnswer(ctx);
+		state.leaveOwnAnswer(state.ownAnswerRowIndex - 1);
+		ctx.updateAll();
+		return;
+	}
+	if (kb.matches(data, "tui.select.down")) {
+		saveTypedOwnAnswer(ctx);
+		state.leaveOwnAnswer(state.ownAnswerRowIndex);
+		ctx.updateAll();
+		return;
+	}
+	if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
+		saveTypedOwnAnswer(ctx);
+		state.switchTab(matchesKey(data, "tab") ? 1 : -1);
+		ctx.updateAll();
+		return;
+	}
+	if (matchesKey(data, "backspace") && ctx.ownAnswerInput.getValue() === "") {
+		state.leaveOwnAnswer(state.ownAnswerRowIndex);
 		ctx.updateAll();
 		return;
 	}
@@ -59,33 +97,60 @@ function handleOwnAnswerKey(ctx: AskUserKeyHandlerContext, data: string, kb: Ret
 	ctx.emitProgress();
 }
 
-function handleSubmitKey(ctx: AskUserKeyHandlerContext, data: string, kb: ReturnType<typeof getKeybindings>): void {
-	if (matchesKey(data, "ctrl+enter") || kb.matches(data, "tui.input.submit") || data === "\n") {
+function handleSubmitKey(ctx: AskUserKeyHandlerContext, data: string, kb: Keybindings): void {
+	const state = ctx.state;
+	if (matchesKey(data, "ctrl+enter")) {
 		ctx.attemptSubmit();
 		return;
 	}
+	if (kb.matches(data, "tui.input.submit") || data === "\n") {
+		if (state.isCommentFocused) ctx.attemptSubmit();
+		else {
+			state.jumpToQuestion(state.submitRowIndex);
+			ctx.updateAll();
+		}
+		return;
+	}
 	if (kb.matches(data, "tui.select.cancel")) {
-		if (ctx.state.request.waitForAnswer) ctx.state.returnToOptions();
+		if (state.request.waitForAnswer) state.returnToOptions();
 		else ctx.finish("cancelled");
 		ctx.updateAll();
 		return;
 	}
-	if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) {
-		ctx.state.switchTab(-1);
+	if (kb.matches(data, "tui.select.up") || kb.matches(data, "tui.select.down")) {
+		state.moveSubmitRow(kb.matches(data, "tui.select.up") ? -1 : 1);
 		ctx.updateAll();
 		return;
 	}
-	if (matchesKey(data, "tab") || matchesKey(data, "right")) {
-		ctx.state.switchTab(1);
+	if (matchesKey(data, "shift+tab") || matchesKey(data, "tab")) {
+		state.switchTab(matchesKey(data, "tab") ? 1 : -1);
 		ctx.updateAll();
 		return;
+	}
+	const commentHasText = ctx.commentInput.getValue() !== "";
+	if (matchesKey(data, "left") || matchesKey(data, "right")) {
+		if (!state.isCommentFocused || !commentHasText) {
+			state.switchTab(matchesKey(data, "right") ? 1 : -1);
+			ctx.updateAll();
+			return;
+		}
+	}
+	if (matchesKey(data, "backspace") && state.isCommentFocused && !commentHasText) {
+		state.moveSubmitRow(-1);
+		ctx.updateAll();
+		return;
+	}
+	if (!state.isCommentFocused) {
+		if (!isPrintable(data)) return;
+		state.focusComment();
 	}
 	ctx.commentInput.handleInput(data);
-	ctx.state.comment = ctx.commentInput.getValue();
+	state.comment = ctx.commentInput.getValue();
+	ctx.updateAll();
 	ctx.emitProgress();
 }
 
-function handleOptionsKey(ctx: AskUserKeyHandlerContext, data: string, kb: ReturnType<typeof getKeybindings>): void {
+function handleOptionsKey(ctx: AskUserKeyHandlerContext, data: string, kb: Keybindings): void {
 	const state = ctx.state;
 	if (matchesKey(data, "ctrl+enter")) {
 		ctx.attemptSubmit();
@@ -116,6 +181,12 @@ function handleOptionsKey(ctx: AskUserKeyHandlerContext, data: string, kb: Retur
 		ctx.updateAll();
 		return;
 	}
+	if (matchesKey(data, "backspace")) {
+		state.clearAnswer(state.activeQuestion.id);
+		ctx.emitProgress();
+		ctx.updateAll();
+		return;
+	}
 	if (data.length === 1 && data >= "1" && data <= "9") {
 		const option = state.activeQuestion.options[Number(data) - 1];
 		if (option) {
@@ -138,11 +209,11 @@ function handleOptionsKey(ctx: AskUserKeyHandlerContext, data: string, kb: Retur
 		return;
 	}
 	if (data === "c") {
-		state.focus = "submit";
+		state.enterSubmit();
 		ctx.updateAll();
 		return;
 	}
-	if (data.length === 1 && data >= " " && data !== "c") {
+	if (isPrintable(data)) {
 		ctx.openOwnAnswer(data);
 		ctx.updateAll();
 	}

@@ -174,6 +174,7 @@ import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { FavoriteModelsSelectorComponent } from "./components/favorite-models-selector.ts";
 import { FooterComponent, formatTokens } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
+import { LoadedResourceSection } from "./components/loaded-resource-section.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
 import {
@@ -217,6 +218,18 @@ import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./gr
 import type { InteractiveSession } from "./interactive-host-runtime.ts";
 import { restoreInteractiveStderr, takeOverInteractiveStderr } from "./interactive-stderr-guard.ts";
 import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-command.ts";
+import {
+	buildResourceScopeGroups,
+	type DisplaySourceInfo,
+	formatResourceScopeGroups,
+	getDisplaySourceInfo,
+	getScopeAutocompleteTag,
+	isPackageSourceInfo,
+	isSystemResource,
+	type ResourceScopeGroupFormat,
+	type ResourceScopeGroups,
+	type ScopedResource,
+} from "./loaded-resource-scopes.ts";
 import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
@@ -1170,7 +1183,7 @@ export class InteractiveMode {
 			return undefined;
 		}
 
-		const scopePrefix = sourceInfo.scope === "user" ? "u" : sourceInfo.scope === "project" ? "p" : "t";
+		const scopePrefix = getScopeAutocompleteTag(sourceInfo.scope);
 		const source = sourceInfo.source.trim();
 
 		if (source === "auto" || source === "local" || source === "cli") {
@@ -2146,122 +2159,20 @@ export class InteractiveMode {
 		});
 	}
 
-	private getDisplaySourceInfo(sourceInfo?: SourceInfo): {
-		label: string;
-		scopeLabel?: string;
-		color: "accent" | "muted";
-	} {
-		const source = sourceInfo?.source ?? "local";
-		const scope = sourceInfo?.scope ?? "project";
-		if (source === "local") {
-			if (scope === "user") {
-				return { label: "user", color: "muted" };
-			}
-			if (scope === "project") {
-				return { label: "project", color: "muted" };
-			}
-			if (scope === "temporary") {
-				return { label: "path", scopeLabel: "temp", color: "muted" };
-			}
-			return { label: "path", color: "muted" };
-		}
-
-		if (source === "cli") {
-			return {
-				label: "path",
-				scopeLabel: scope === "temporary" ? "temp" : undefined,
-				color: "muted",
-			};
-		}
-
-		const scopeLabel =
-			scope === "user" ? "user" : scope === "project" ? "project" : scope === "temporary" ? "temp" : undefined;
-		return { label: source, scopeLabel, color: "accent" };
-	}
-
-	private getScopeGroup(sourceInfo?: SourceInfo): "user" | "project" | "path" {
-		const source = sourceInfo?.source ?? "local";
-		const scope = sourceInfo?.scope ?? "project";
-		if (source === "cli" || scope === "temporary") return "path";
-		if (scope === "user") return "user";
-		if (scope === "project") return "project";
-		return "path";
+	private getDisplaySourceInfo(sourceInfo?: SourceInfo): DisplaySourceInfo {
+		return getDisplaySourceInfo(sourceInfo);
 	}
 
 	private isPackageSource(sourceInfo?: SourceInfo): boolean {
-		const source = sourceInfo?.source ?? "";
-		return source.startsWith("npm:") || source.startsWith("git:");
+		return isPackageSourceInfo(sourceInfo);
 	}
 
-	private buildScopeGroups(items: Array<{ path: string; sourceInfo?: SourceInfo }>): Array<{
-		scope: "user" | "project" | "path";
-		paths: Array<{ path: string; sourceInfo?: SourceInfo }>;
-		packages: Map<string, Array<{ path: string; sourceInfo?: SourceInfo }>>;
-	}> {
-		const groups: Record<
-			"user" | "project" | "path",
-			{
-				scope: "user" | "project" | "path";
-				paths: Array<{ path: string; sourceInfo?: SourceInfo }>;
-				packages: Map<string, Array<{ path: string; sourceInfo?: SourceInfo }>>;
-			}
-		> = {
-			user: { scope: "user", paths: [], packages: new Map() },
-			project: { scope: "project", paths: [], packages: new Map() },
-			path: { scope: "path", paths: [], packages: new Map() },
-		};
-
-		for (const item of items) {
-			const groupKey = this.getScopeGroup(item.sourceInfo);
-			const group = groups[groupKey];
-			const source = item.sourceInfo?.source ?? "local";
-
-			if (this.isPackageSource(item.sourceInfo)) {
-				const list = group.packages.get(source) ?? [];
-				list.push(item);
-				group.packages.set(source, list);
-			} else {
-				group.paths.push(item);
-			}
-		}
-
-		return [groups.project, groups.user, groups.path].filter(
-			(group) => group.paths.length > 0 || group.packages.size > 0,
-		);
+	private buildScopeGroups(items: readonly ScopedResource[]): ResourceScopeGroups[] {
+		return buildResourceScopeGroups(items);
 	}
 
-	private formatScopeGroups(
-		groups: Array<{
-			scope: "user" | "project" | "path";
-			paths: Array<{ path: string; sourceInfo?: SourceInfo }>;
-			packages: Map<string, Array<{ path: string; sourceInfo?: SourceInfo }>>;
-		}>,
-		options: {
-			formatPath: (item: { path: string; sourceInfo?: SourceInfo }) => string;
-			formatPackagePath: (item: { path: string; sourceInfo?: SourceInfo }, source: string) => string;
-		},
-	): string {
-		const lines: string[] = [];
-
-		for (const group of groups) {
-			lines.push(`  ${theme.fg("accent", group.scope)}`);
-
-			const sortedPaths = [...group.paths].sort((a, b) => a.path.localeCompare(b.path));
-			for (const item of sortedPaths) {
-				lines.push(theme.fg("dim", `    ${options.formatPath(item)}`));
-			}
-
-			const sortedPackages = Array.from(group.packages.entries()).sort(([a], [b]) => a.localeCompare(b));
-			for (const [source, items] of sortedPackages) {
-				lines.push(`    ${theme.fg("mdLink", source)}`);
-				const sortedPackagePaths = [...items].sort((a, b) => a.path.localeCompare(b.path));
-				for (const item of sortedPackagePaths) {
-					lines.push(theme.fg("dim", `      ${options.formatPackagePath(item, source)}`));
-				}
-			}
-		}
-
-		return lines.join("\n");
+	private formatScopeGroups(groups: readonly ResourceScopeGroups[], options: ResourceScopeGroupFormat): string {
+		return formatResourceScopeGroups(groups, options);
 	}
 
 	private findSourceInfoForPath(p: string, sourceInfos: Map<string, SourceInfo>): SourceInfo | undefined {
@@ -2358,26 +2269,28 @@ export class InteractiveMode {
 		const sectionHeader = (name: string, color: ThemeColor = "mdHeading") => theme.fg(color, `[${name}]`);
 		const formatCompactList = (items: string[], options?: { sort?: boolean }): string => {
 			const labels = items.map((item) => item.trim()).filter((item) => item.length > 0);
+			if (labels.length === 0) {
+				return "";
+			}
 			if (options?.sort !== false) {
 				labels.sort((a, b) => a.localeCompare(b));
 			}
 			return theme.fg("dim", `  ${labels.join(", ")}`);
 		};
+		// System resources are left out of the compact body; a section with nothing else to show stays
+		// hidden until the listing is expanded, where the system group lists them.
 		const addLoadedSection = (
 			name: string,
 			collapsedBody: string,
 			expandedBody = collapsedBody,
 			color: ThemeColor = "mdHeading",
 		): void => {
-			const section = new ExpandableText(
-				() => `${sectionHeader(name, color)}\n${collapsedBody}`,
-				() => `${sectionHeader(name, color)}\n${expandedBody}`,
+			const section = new LoadedResourceSection(
+				collapsedBody.length === 0 ? "" : `${sectionHeader(name, color)}\n${collapsedBody}`,
+				`${sectionHeader(name, color)}\n${expandedBody}`,
 				this.getStartupExpansionState(),
-				0,
-				0,
 			);
 			this.loadedResourcesContainer.addChild(section);
-			this.loadedResourcesContainer.addChild(new Spacer(1));
 		};
 
 		const skillsResult = this.session.resourceLoader.getSkills();
@@ -2445,7 +2358,9 @@ export class InteractiveMode {
 					formatPath: (item) => this.formatDisplayPath(item.path),
 					formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
 				});
-				const skillCompactList = formatCompactList(skills.map((skill) => skill.name));
+				const skillCompactList = formatCompactList(
+					skills.filter((skill) => !isSystemResource(skill.sourceInfo)).map((skill) => skill.name),
+				);
 				addLoadedSection("Skills", skillCompactList, skillList);
 			}
 
@@ -2468,7 +2383,11 @@ export class InteractiveMode {
 						return template ? `/${template.name}` : this.formatDisplayPath(item.path);
 					},
 				});
-				const promptCompactList = formatCompactList(templates.map((template) => `/${template.name}`));
+				const promptCompactList = formatCompactList(
+					templates
+						.filter((template) => !isSystemResource(template.sourceInfo))
+						.map((template) => `/${template.name}`),
+				);
 				addLoadedSection("Prompts", promptCompactList, templateList);
 			}
 
@@ -2479,7 +2398,11 @@ export class InteractiveMode {
 					formatPackagePath: (item) =>
 						this.formatExtensionDisplayPath(this.getShortPath(item.path, item.sourceInfo)),
 				});
-				const extensionCompactList = formatCompactList(this.getCompactExtensionLabels(extensions));
+				const extensionCompactList = formatCompactList(
+					this.getCompactExtensionLabels(
+						extensions.filter((extension) => !isSystemResource(extension.sourceInfo)),
+					),
+				);
 				addLoadedSection("Extensions", extensionCompactList, extList, "mdHeading");
 			}
 
@@ -2498,10 +2421,12 @@ export class InteractiveMode {
 					formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
 				});
 				const themeCompactList = formatCompactList(
-					customThemes.map(
-						(loadedTheme) =>
-							loadedTheme.name ?? this.getCompactPathLabel(loadedTheme.sourcePath!, loadedTheme.sourceInfo),
-					),
+					customThemes
+						.filter((loadedTheme) => !isSystemResource(loadedTheme.sourceInfo))
+						.map(
+							(loadedTheme) =>
+								loadedTheme.name ?? this.getCompactPathLabel(loadedTheme.sourcePath!, loadedTheme.sourceInfo),
+						),
 				);
 				addLoadedSection("Themes", themeCompactList, themeList);
 			}
@@ -3951,6 +3876,7 @@ export class InteractiveMode {
 			{
 				tui: this.ui,
 				timeoutMs: state.timeoutMs,
+				initialDraft: state.draft,
 				onProgress: (draft) => {
 					state.draft = draft;
 					state.onProgress?.(draft);

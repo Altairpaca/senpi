@@ -67,7 +67,7 @@ import type {
 	SessionManager,
 } from "../session-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
-import type { SourceInfo } from "../source-info.ts";
+import type { SourceInfo, SourceScope } from "../source-info.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
@@ -476,6 +476,11 @@ export interface ExtensionContext {
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
+	/**
+	 * Invocation-scoped notification that steering is queued. Never a cancellation signal.
+	 * Available during tool execution; follow-up messages do not trigger it.
+	 */
+	readonly steeringSignal?: AbortSignal;
 	/** Abort the current agent operation */
 	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */
@@ -844,13 +849,21 @@ export interface ResourcesDiscoverEvent {
 	reason: "startup" | "reload";
 }
 
+/**
+ * A resource path contributed by `resources_discover`. A bare string inherits its scope from the
+ * contributing extension: `system` when that extension is builtin, or when it is a system package
+ * and the path lies inside the package; `temporary` otherwise. The object form pins the scope
+ * explicitly, e.g. `{ path, scope: "user" }` for user-owned data a system extension surfaces.
+ */
+export type ResourceDiscoverEntry = string | { path: string; scope?: SourceScope };
+
 /** Result from resources_discover event handler */
 export interface ResourcesDiscoverResult {
-	skillPaths?: string[];
-	promptPaths?: string[];
-	themePaths?: string[];
+	skillPaths?: ResourceDiscoverEntry[];
+	promptPaths?: ResourceDiscoverEntry[];
+	themePaths?: ResourceDiscoverEntry[];
 	/** Hook config paths discovered after initial session_start; visible to later hooks and reloads. */
-	hookPaths?: string[];
+	hookPaths?: ResourceDiscoverEntry[];
 }
 
 // ============================================================================

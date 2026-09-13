@@ -1,3 +1,73 @@
+## 2026-09-13 - Ask-user overlay: no focus traps in the own-answer and Submit editors, draft restore on re-expansion (senpi#1641)
+
+### What changed
+
+- `components/ask-user-question-state.ts`: `advance()` and `switchTab()` route through `jumpToQuestion()` /
+  `enterSubmit()`, so moving to the next question always lands on its option list (focus `options`) instead of
+  leaving the own-answer editor open. New `submitRowIndex` highlights one review row on the Submit tab or the
+  comment editor (`commentRowIndex`, `isCommentFocused`), with `moveSubmitRow()` / `focusComment()`.
+  `leaveOwnAnswer(row)` closes the editor onto a chosen row, `clearAnswer()` drops a question's selection/text,
+  and `restoreDraft()` seeds selections, own texts and the comment from a `QuestionDraft`.
+- `components/ask-user-question-keys.ts`: own-answer editor exits — Up/Down save the text and return to the
+  option list (Up highlights the row above, Down keeps the own-answer row), Tab/Shift+Tab save and switch tab,
+  Backspace on an empty editor returns to the list, Esc discards and returns to the list in both modes;
+  Left/Right stay cursor movement. Submit tab — Up/Down walk the review rows and the comment editor, Enter on a
+  row jumps to that question, a printable character on a row types into the comment, Left/Right move the
+  comment cursor when it has text (tab switch only when empty or a row is highlighted), Backspace on an empty
+  comment moves to the last row. Option list — Backspace clears the active answer; the printable check no
+  longer admits DEL (0x7f), so Backspace never opens the own-answer editor.
+- `components/ask-user-question-render.ts`: review rows carry the `→` highlight; own-answer label and the
+  hints line describe the real exits (the single-line `Input` never supported the advertised `shift+enter`).
+- `components/ask-user-question.ts`: `AskUserQuestionOptions.initialDraft` seeds the state and the comment
+  `Input`; `commitOwnAnswer()` resets the editor (from senpi#1634); the comment `Input` is focused only while
+  the comment row is highlighted.
+- `interactive-mode.ts`: `expandPendingQuestion()` passes the pending `state.draft` as `initialDraft`, so an
+  async question re-expanded after Esc shows the selections and comment captured before the collapse.
+- Tests: `test/suite/ask-user-question-{own-answer-focus,submit-focus,reachability}.test.ts` (shared
+  `ask-user-question-focus-support.ts`); the reachability guard walks every key sequence up to depth 3 in both
+  modes and fails when Tab, Esc or Up is silently swallowed.
+
+### Why
+
+- After senpi#1576 the overlay still trapped focus: the own-answer editor kept focus on the next question,
+  Up/Down/Tab did nothing inside either editor, Left/Right switched tabs from the comment, Backspace opened the
+  editor from the option list, and an async re-expansion lost the draft. The user report was "once you are in
+  the text box you cannot get out, and pressing Up on the Submit tab feels like it should do something".
+
+### Why an extension could not handle it
+
+- The question overlay is an in-tree interactive component driven by `interactive-mode.ts`; extensions only
+  receive the resolved `QuestionResponse` and cannot change the key model or the focus state of the TUI.
+
+### Expected merge conflict zones
+
+- `components/ask-user-question-keys.ts` `handleOwnAnswerKey` / `handleSubmitKey` and
+  `ask-user-question-state.ts` `advance()` if upstream reworks the ask-user key model; the async single-question
+  guard (`waitForAnswer && questions.length === 1`) is intentionally unchanged pending the pending-blocks plan.
+
+## 2026-09-13 - Compact startup banner omits system resources; `system` group in the expanded listing (senpi#1640)
+
+### What changed
+
+- `interactive-mode.ts`: `showLoadedResources` filters `system`-scoped skills, prompts, extensions and themes out of the compact `[Skills]` / `[Prompts]` / `[Extensions]` / `[Themes]` lists (`isSystemResource`), `formatCompactList` returns `""` for an empty list, and `addLoadedSection` builds a `LoadedResourceSection` (empty collapsed text when the compact body is empty) instead of an `ExpandableText` plus trailing `Spacer`. The bodies of `getDisplaySourceInfo`, `getScopeGroup`, `buildScopeGroups` and `formatScopeGroups` are gone: the first three private methods now delegate to `loaded-resource-scopes.ts`, `getScopeGroup` was removed outright, and `isPackageSource` delegates to `isPackageSourceInfo`.
+- `loaded-resource-scopes.ts` (new, fork-only): `ResourceScopeGroup` gains `system`, `GROUP_ORDER` is `project, user, path, system`, plus `isSystemResource`, `isPackageSourceInfo`, `getResourceScopeGroup`, `buildResourceScopeGroups`, `formatResourceScopeGroups` and `getDisplaySourceInfo` (which labels a `system` resource `system`), so the grouping logic is unit-testable outside `InteractiveMode`.
+- `components/loaded-resource-section.ts` (new, fork-only): the `LoadedResourceSection` container that renders nothing while collapsed with an empty body and adds its own `Spacer` when it has text.
+- `components/config-selector.ts`: `ResourceGroup.scope` is typed as `SourceScope` instead of the inline three-member union; behaviour is unchanged.
+- `interactive-mode.ts` `getAutocompleteSourceTag` and `loaded-resource-scopes.ts` `getScopeAutocompleteTag` (follow-up, senpi#1640): the `$skill` / slash autocomplete prefix is now exhaustive over `SourceScope`, so system resources show `[s]` instead of falling back to the temporary `[t]` tag.
+
+### Why
+
+- A distribution that ships its own builtin package filled the compact banner with resources the user did not add and cannot toggle, hiding the user's own skills and extensions in the noise. The expanded view (Ctrl+O / `--verbose`) still shows everything, under a `system` group after project, user and path.
+
+### Why an extension could not handle it
+
+- The startup banner is built inside `InteractiveMode.showLoadedResources` from the loader's resource lists; no extension hook can filter or regroup what it prints.
+
+### Expected merge conflict zones
+
+- MEDIUM: `showLoadedResources` (`formatCompactList`, `addLoadedSection` and the four compact-list call sites) and the removed `getDisplaySourceInfo` / `getScopeGroup` / `buildScopeGroups` / `formatScopeGroups` bodies in `interactive-mode.ts`, along with the new `loaded-resource-scopes.ts` and `loaded-resource-section.ts` imports.
+- LOW: the `ResourceGroup` interface and `SourceScope` import in `components/config-selector.ts`.
+
 ## 2026-09-12 - Upstream sync: status spinners in the editor border, mouse toggles, renderer-only tool cards
 
 ### What changed

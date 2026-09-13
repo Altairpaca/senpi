@@ -741,7 +741,11 @@ function createExtension(extensionPath: string, resolvedPath: string, registrati
 	return {
 		path: extensionPath,
 		resolvedPath,
-		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
+		sourceInfo: createSyntheticSourceInfo(extensionPath, {
+			source,
+			baseDir,
+			scope: source === "builtin" ? "system" : "temporary",
+		}),
 		handlers: new Map(),
 		tools: new Map(),
 		removedToolHints: new Map(),

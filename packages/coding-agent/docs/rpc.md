@@ -1326,7 +1326,7 @@ Each command has:
 - `sourceInfo`: Provenance metadata for the owning resource (present for all sources, including extensions):
   - `path`: Absolute file path to the command source
   - `source`: Source identifier string (for example `"auto"` for auto-discovered locations, `"local"` for settings entries, `"cli"` for CLI paths, `"builtin"`, `"sdk"`, or a package source)
-  - `scope`: `"user"`, `"project"`, or `"temporary"`
+  - `scope`: `"user"`, `"project"`, `"temporary"`, or `"system"` (harness-provided: builtin and bundled extensions, command-line packages declaring `pi.system`, and what they contribute)
   - `origin`: `"package"` or `"top-level"`
   - `baseDir`: Base directory of the owning resource (optional)
 

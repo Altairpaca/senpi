@@ -1,5 +1,48 @@
 # Core Extensions Changes
 
+## 2026-09-13 - Optional steering-specific tool signal (senpi#1637)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.steeringSignal`, separate from cancellation.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` accepts an optional invocation-context factory and disposes its scope in `finally`, including thrown and detached results. Callers without the factory retain their prior context behavior.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` lets foreground tools observe steering without polling or cancelling work.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` is the shared invocation boundary for built-in and extension tools, so it can remove session-owned subscriptions at settlement.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned context contract.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` adapts every registered tool before execution, outside an individual extension's lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.signal` neighbours.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: wrapper signatures and the execute call; tool-result metadata handling remains unchanged.
+
+## 2026-09-13 - `system` scope for builtin extensions and scoped `resources_discover` entries (senpi#1640)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `createExtension` passes `scope: source === "builtin" ? "system" : "temporary"` to `createSyntheticSourceInfo`, so a `<builtin:*>` extension starts out as `system` instead of `temporary`.
+- `packages/coding-agent/src/core/extensions/types.ts`: new `ResourceDiscoverEntry = string | { path: string; scope?: SourceScope }`; `ResourcesDiscoverResult.skillPaths` / `promptPaths` / `themePaths` / `hookPaths` are `ResourceDiscoverEntry[]` instead of `string[]`. A bare string inherits its scope from the contributor; the object form pins it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitResourcesDiscover` returns `DiscoveredResourceEntry[]` (`{ path, extensionPath, scope? }`, from the fork-only `packages/coding-agent/src/core/discovered-resource-scope.ts`) and normalises each handler entry through a local `toEntry`, keeping `scope` only when the handler set one. `agent-session.ts` resolves the final scope with `resolveDiscoveredResourcePaths`.
+
+### Why
+
+- Builtin extensions are part of the harness and should carry the new `system` scope from creation, and a system extension that surfaces user-owned data (for example a skills directory under the home folder) needs a way to say those paths are `user`, not `system`.
+
+### Why an extension could not handle it
+
+- The loader owns the synthetic source info of builtins, and the runner owns the shape of `resources_discover` results before `agent-session.ts` sees them. An extension can only fill in the entries; it cannot widen the result type or re-scope its own registration.
+
+### Expected merge conflict zones
+
+- MEDIUM: `emitResourcesDiscover` in `packages/coding-agent/src/core/extensions/runner.ts` (return type, the four accumulator arrays, `toEntry` and the four `push` lines).
+- LOW: `ResourceDiscoverEntry` / `ResourcesDiscoverResult` and the `SourceScope` import in `packages/coding-agent/src/core/extensions/types.ts`; the `createSyntheticSourceInfo` call in `createExtension` in `packages/coding-agent/src/core/extensions/loader.ts`.
+
 ## 2026-09-10 - ctx.editAssistantMessage
 
 ### What changed
