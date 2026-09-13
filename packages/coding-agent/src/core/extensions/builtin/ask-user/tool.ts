@@ -60,6 +60,7 @@ function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
 		activeCount: entries.length,
 		items: entries.map((e) => ({
 			id: e.request.requestId,
+			deadlineAtMs: e.pending.deadlineAtMs,
 			description: e.request.questions.map((q) => q.header).join(", "),
 		})),
 	};
@@ -135,6 +136,7 @@ export function startQuestion(
 		onProgress: (progress) => {
 			draft = { ...draft, ...progress, answers: progress.answers ?? draft.answers };
 			pending.touch(draft);
+			if (!request.waitForAnswer) emitWake(pi, sessionId);
 		},
 	};
 	const accept = (response: QuestionResponse) => {

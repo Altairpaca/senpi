@@ -1,5 +1,23 @@
 # Builtin extensions changes
 
+## 2026-09-13 - Publish per-request ask-user deadlines (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` adds optional `WakeSourceStateItem.deadlineAtMs`. `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` publishes each authoritative pending deadline and re-emits wake state after async UI progress touches the idle timer.
+
+### Why
+
+- A pending count alone cannot tell the goal monitor which request expires first or that typing extended a deadline.
+
+### Why an extension could not handle it
+
+- The ask-user builtin owns the pending state machine and its progress callback; outside consumers do not have those authoritative deadlines.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: WakeSourceStateItem; `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: emitWake and onProgress. Goal-side handling is tracked in `goal/changes.md`.
+
 ## 2026-09-13 - Fresh question arrivals and exactly-once blocked lifetime (senpi#1645)
 
 ### What changed
