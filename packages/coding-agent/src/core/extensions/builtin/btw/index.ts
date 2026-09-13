@@ -1,3 +1,4 @@
+import { matchesKey } from "@earendil-works/pi-tui";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
@@ -5,7 +6,6 @@ import { BtwPanel } from "./panel.ts";
 import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
 
 const WIDGET_KEY = "btw";
-const ESCAPE = "";
 
 interface ActiveBtw {
 	controller: AbortController;
@@ -48,6 +48,12 @@ export default function btwExtension(pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			const question = args.trim();
 			if (!question) {
+				// Bare /btw is the explicit off switch: it closes the panel (or cancels an
+				// in-flight side query) without interrupting the main turn the way Escape does.
+				if (active) {
+					dismiss(ctx, { abort: true });
+					return;
+				}
 				ctx.ui.notify("Usage: /btw <question>", "warning");
 				return;
 			}
@@ -75,7 +81,8 @@ export default function btwExtension(pi: ExtensionAPI) {
 					return panel.component;
 				});
 				entry.unsubscribeEscape = ctx.ui.onTerminalInput((data) => {
-					if (active !== entry || data !== ESCAPE) return undefined;
+					// matchesKey accepts the raw byte plus kitty CSI-u / modifyOtherKeys encodings.
+					if (active !== entry || !matchesKey(data, "escape")) return undefined;
 					dismiss(ctx, { abort: true });
 					return undefined;
 				});
