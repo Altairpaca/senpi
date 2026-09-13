@@ -767,6 +767,183 @@ export abstract class TuiBase extends Container {
 		}
 	}
 
+	private mouseLeases = new Map<symbol, string>();
+	private mouseBlockers = new Set<"suspended" | "external-editor" | "shutting-down">();
+	protected placementEpoch = 0;
+	protected anchor: {
+		kind: "unknown" | "cleared" | "viewport" | "cpr";
+		frameTopScreenRow?: number;
+		epoch: number;
+		rows: number;
+		columns: number;
+	} = { kind: "unknown", epoch: 0, rows: 0, columns: 0 };
+	private mouseCommittedLineCount = 0;
+	private mouseAnchorPending = false;
+	private mouseWriteUnsubscribe?: () => void;
+	protected mouseExternalWritePending = false;
+
+	/** Host-owned intent. A replacement renderer starts with no leases. */
+	acquireMouseCapture(reason: string): () => void {
+		const token = Symbol(reason);
+		const first = this.mouseLeases.size === 0;
+		this.mouseLeases.set(token, reason);
+		if (first) {
+			this.mouseWriteUnsubscribe ??= this.terminal.observeExternalWrites?.(() => {
+				this.placementEpoch++;
+				this.mouseExternalWritePending = true;
+			});
+			this.applyMouseTracking(this.mouseCaptureEnabled);
+			this.calibrateMouseAnchor();
+		}
+		return () => {
+			if (!this.mouseLeases.delete(token)) return;
+			if (this.mouseLeases.size === 0) this.applyMouseTracking(false);
+		};
+	}
+
+	private resetMouseCaptureState(): void {
+		this.mouseLeases.clear();
+		this.mouseBlockers.clear();
+		this.mouseWriteUnsubscribe?.();
+		this.mouseWriteUnsubscribe = undefined;
+		this.placementEpoch++;
+	}
+
+	protected get mouseCaptureEnabled(): boolean {
+		return this.mouseLeases.size > 0 && this.mouseBlockers.size === 0;
+	}
+
+	protected applyMouseTracking(_enabled: boolean): void {}
+
+	protected getMouseLayoutRoots(): readonly Component[] {
+		return [...this.getMountedRoots(), ...this.renderedOverlayLayouts.map((layout) => layout.entry.component)];
+	}
+
+	protected setMouseBlocker(name: "suspended" | "external-editor" | "shutting-down", on: boolean): void {
+		if (this.mouseBlockers.has(name) === on) return;
+		if (on) this.mouseBlockers.add(name);
+		else this.mouseBlockers.delete(name);
+		this.placementEpoch++;
+		this.applyMouseTracking(this.mouseCaptureEnabled);
+	}
+
+	protected noteFullRender(clear: boolean): void {
+		this.placementEpoch++;
+		this.anchor = {
+			kind: clear ? "cleared" : "unknown",
+			frameTopScreenRow: clear ? 0 : undefined,
+			epoch: this.placementEpoch,
+			rows: this.terminal.rows,
+			columns: this.terminal.columns,
+		};
+		this.mouseCommittedLineCount = this.previousLines.length;
+		this.noteCommittedMouseFrame();
+		this.calibrateMouseAnchor();
+	}
+
+	/** Called only after the renderer has published its geometry and bytes. */
+	protected noteCommittedMouseFrame(): void {
+		if (this.mouseCommittedLineCount !== this.previousLines.length) this.placementEpoch++;
+		this.mouseCommittedLineCount = this.previousLines.length;
+		if (this.previousLines.some(isImageLine)) {
+			this.placementEpoch++;
+			this.anchor.kind = "unknown";
+			return;
+		}
+		if (this.previousLines.length >= this.terminal.rows) {
+			this.anchor = {
+				kind: "viewport",
+				epoch: this.placementEpoch,
+				rows: this.terminal.rows,
+				columns: this.terminal.columns,
+			};
+		} else if (
+			this.anchor.epoch !== this.placementEpoch ||
+			this.anchor.rows !== this.terminal.rows ||
+			this.anchor.columns !== this.terminal.columns
+		) {
+			this.anchor = {
+				kind: "unknown",
+				epoch: this.placementEpoch,
+				rows: this.terminal.rows,
+				columns: this.terminal.columns,
+			};
+		}
+	}
+
+	/** Never block a frame on terminal protocol negotiation or a missing reply. */
+	protected calibrateMouseAnchor(): void {
+		if (
+			!this.mouseCaptureEnabled ||
+			this.stopped ||
+			this.mouseAnchorPending ||
+			this.mouseExternalWritePending ||
+			!this.terminal.queryCursorPosition ||
+			this.previousLines.length === 0 ||
+			this.previousLines.some(isImageLine)
+		)
+			return;
+		if (
+			this.anchor.kind !== "unknown" &&
+			this.anchor.epoch === this.placementEpoch &&
+			this.anchor.rows === this.terminal.rows &&
+			this.anchor.columns === this.terminal.columns
+		)
+			return;
+		const epoch = this.placementEpoch;
+		const rows = this.terminal.rows;
+		const columns = this.terminal.columns;
+		const hardwareCursorRow = this.hardwareCursorRow;
+		const lineCount = this.previousLines.length;
+		this.mouseAnchorPending = true;
+		void this.terminal.queryCursorPosition().then((position) => {
+			this.mouseAnchorPending = false;
+			if (
+				!position ||
+				this.stopped ||
+				!this.mouseCaptureEnabled ||
+				epoch !== this.placementEpoch ||
+				rows !== this.terminal.rows ||
+				columns !== this.terminal.columns ||
+				hardwareCursorRow !== this.hardwareCursorRow ||
+				lineCount !== this.previousLines.length
+			)
+				return;
+			const top = position.row - 1 - hardwareCursorRow;
+			if (
+				!Number.isSafeInteger(top) ||
+				top < 0 ||
+				top + lineCount > rows ||
+				!Number.isSafeInteger(position.column) ||
+				position.column < 1 ||
+				// Some emulators report the pending-wrap cell just past the right edge.
+				position.column > columns + 1 ||
+				(position.page !== undefined && position.page !== 1)
+			)
+				return;
+			this.anchor = { kind: "cpr", frameTopScreenRow: top, epoch, rows, columns };
+		});
+	}
+
+	/** Input rows are one-based; the returned committed frame line is zero-based. */
+	protected resolveFrameLine(screenRow: number): number | undefined {
+		const anchor = this.anchor;
+		if (
+			anchor.kind === "unknown" ||
+			anchor.epoch !== this.placementEpoch ||
+			anchor.rows !== this.terminal.rows ||
+			anchor.columns !== this.terminal.columns ||
+			screenRow < 1 ||
+			screenRow > anchor.rows
+		)
+			return undefined;
+		const line =
+			anchor.kind === "viewport"
+				? this.previousViewportTop + screenRow - 1
+				: screenRow - 1 - (anchor.frameTopScreenRow ?? 0);
+		return line >= 0 && line < this.previousLines.length ? line : undefined;
+	}
+
 	protected resetRenderState(): void {}
 
 	protected beforeTerminalStart(): void {}
@@ -1203,6 +1380,7 @@ export abstract class TuiBase extends Container {
 			this.terminal.write("\x1b[?2031l");
 		}
 		this.beforeTerminalStop(options);
+		this.resetMouseCaptureState();
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit.
 		// Skipped when the screen is preserved for another renderer taking over this terminal.
 		if (!options.preserveScreen && this.previousLines.length > 0) {
@@ -2022,6 +2200,7 @@ export abstract class TuiBase extends Container {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+		this.placementEpoch++;
 	}
 
 	private renderScrollbackReplay(
@@ -2061,6 +2240,7 @@ export abstract class TuiBase extends Container {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+		this.placementEpoch++;
 	}
 
 	private renderMuxViewportRepaint(
@@ -2101,6 +2281,7 @@ export abstract class TuiBase extends Container {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+		this.placementEpoch++;
 		return true;
 	}
 
@@ -2206,6 +2387,7 @@ export abstract class TuiBase extends Container {
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 		const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height;
+		if (widthChanged || heightChanged) this.placementEpoch++;
 		const previousBufferLength = this.previousHeight > 0 ? this.previousViewportTop + this.previousHeight : height;
 		let prevViewportTop = heightChanged ? Math.max(0, previousBufferLength - height) : this.previousViewportTop;
 		let viewportTop = prevViewportTop;
@@ -2283,6 +2465,7 @@ export abstract class TuiBase extends Container {
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
 			this.previousHeight = height;
+			this.noteFullRender(clear);
 		};
 
 		const debugRedraw = process.env.PI_DEBUG_REDRAW === "1";

@@ -432,6 +432,7 @@ The startup path uses `reason: "startup"`. Reload uses `reason: "reload"`.
 pi.on("resources_discover", async (event, _ctx) => {
   // event.cwd - current working directory
   // event.reason - "startup" | "reload"
+  // event.scopedEntries - true: this host accepts { path, scope } entries (absent on older hosts)
   return {
     skillPaths: ["/path/to/skills"],
     promptPaths: ["/path/to/prompts"],
@@ -444,14 +445,15 @@ Each entry in `skillPaths`, `promptPaths`, `themePaths`, and `hookPaths` is a `R
 
 A bare string inherits its scope from the contributing extension. It becomes `system` when the extension is builtin, or when the extension comes from a system package (see [`pi.system`](packages.md#creating-a-pi-package)) and the path lies inside that package. Otherwise the path keeps the `temporary` scope contributed paths have always had.
 
-Use the object form to pin the scope explicitly, for example when a system extension surfaces data the user owns:
+Use the object form to pin the scope explicitly, for example when a system extension surfaces data the user owns. Hosts that accept the object form set `event.scopedEntries` to `true`; a host that predates it omits the field and would treat an object as a path string, so an extension that must load on both returns plain paths when the field is absent:
 
 ```typescript
-pi.on("resources_discover", async () => {
+pi.on("resources_discover", async (event) => {
+  const userSkills = join(homedir(), "my-skills");
   return {
     skillPaths: [
       "/path/inside/this/package/skills", // inherits the extension's scope
-      { path: join(homedir(), "my-skills"), scope: "user" }, // pinned
+      event.scopedEntries ? { path: userSkills, scope: "user" } : userSkills, // pinned where supported
     ],
   };
 });

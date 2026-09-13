@@ -228,6 +228,7 @@ import {
 	type DisplaySourceInfo,
 	formatResourceScopeGroups,
 	getDisplaySourceInfo,
+	getScopeAutocompleteTag,
 	isPackageSourceInfo,
 	isSystemResource,
 	type ResourceScopeGroupFormat,
@@ -1203,7 +1204,7 @@ export class InteractiveMode {
 			return undefined;
 		}
 
-		const scopePrefix = sourceInfo.scope === "user" ? "u" : sourceInfo.scope === "project" ? "p" : "t";
+		const scopePrefix = getScopeAutocompleteTag(sourceInfo.scope);
 		const source = sourceInfo.source.trim();
 
 		if (source === "auto" || source === "local" || source === "cli") {

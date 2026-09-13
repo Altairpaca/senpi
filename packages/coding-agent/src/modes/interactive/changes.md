@@ -173,6 +173,7 @@
 - `loaded-resource-scopes.ts` (new, fork-only): `ResourceScopeGroup` gains `system`, `GROUP_ORDER` is `project, user, path, system`, plus `isSystemResource`, `isPackageSourceInfo`, `getResourceScopeGroup`, `buildResourceScopeGroups`, `formatResourceScopeGroups` and `getDisplaySourceInfo` (which labels a `system` resource `system`), so the grouping logic is unit-testable outside `InteractiveMode`.
 - `components/loaded-resource-section.ts` (new, fork-only): the `LoadedResourceSection` container that renders nothing while collapsed with an empty body and adds its own `Spacer` when it has text.
 - `components/config-selector.ts`: `ResourceGroup.scope` is typed as `SourceScope` instead of the inline three-member union; behaviour is unchanged.
+- `interactive-mode.ts` `getAutocompleteSourceTag` and `loaded-resource-scopes.ts` `getScopeAutocompleteTag` (follow-up, senpi#1640): the `$skill` / slash autocomplete prefix is now exhaustive over `SourceScope`, so system resources show `[s]` instead of falling back to the temporary `[t]` tag.
 
 ### Why
 
