@@ -801,6 +801,14 @@ export abstract class TuiBase extends Container {
 		};
 	}
 
+	private resetMouseCaptureState(): void {
+		this.mouseLeases.clear();
+		this.mouseBlockers.clear();
+		this.mouseWriteUnsubscribe?.();
+		this.mouseWriteUnsubscribe = undefined;
+		this.placementEpoch++;
+	}
+
 	protected get mouseCaptureEnabled(): boolean {
 		return this.mouseLeases.size > 0 && this.mouseBlockers.size === 0;
 	}
@@ -1372,11 +1380,7 @@ export abstract class TuiBase extends Container {
 			this.terminal.write("\x1b[?2031l");
 		}
 		this.beforeTerminalStop(options);
-		this.mouseLeases.clear();
-		this.mouseBlockers.clear();
-		this.mouseWriteUnsubscribe?.();
-		this.mouseWriteUnsubscribe = undefined;
-		this.placementEpoch++;
+		this.resetMouseCaptureState();
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit.
 		// Skipped when the screen is preserved for another renderer taking over this terminal.
 		if (!options.preserveScreen && this.previousLines.length > 0) {
