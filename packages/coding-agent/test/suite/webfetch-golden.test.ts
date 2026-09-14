@@ -19,6 +19,9 @@ const fixtures = [
 	"10-base-redirect",
 	"11-malformed",
 	"12-multibyte",
+	"13-omitted-body",
+	"14-html-in-comment-script",
+	"15-fragment",
 ] as const;
 // Recorded final URL: fixture 10 is served after /fixtures/base/start redirects here.
 const finalUrl = "https://example.test/fixtures/base/final";
@@ -55,6 +58,24 @@ describe("webfetch base-implementation goldens", () => {
 				// When
 				const actual = format === "md" ? htmlToMarkdown(html, finalUrl) : htmlToText(html, finalUrl);
 				// Then: no normalization of actual destinations can hide a URL regression.
+				expect(normalize(actual)).toBe(normalize(expected));
+			});
+		}
+	}
+
+	for (const [fixture, omitted, condition] of [
+		["13-omitted-body", /<\/?(?:html|head)>/g, "html and head tags are omitted"],
+		["14-html-in-comment-script", /<!--.*?-->/, "only the script contains an html string"],
+		["14-html-in-comment-script", /<script>.*?<\/script>/, "only the comment contains an html string"],
+	] as const) {
+		for (const format of ["md", "txt"] as const) {
+			it(`preserves ${format} output when ${condition}`, () => {
+				// Given: these variants were independently compared with the same jsdom goldens.
+				const html = readFileSync(new URL(`${fixture}.html`, fixtureDirectory), "utf8").replace(omitted, "");
+				const expected = readFileSync(new URL(`${fixture}.${format}.golden`, fixtureDirectory), "utf8");
+				// When
+				const actual = format === "md" ? htmlToMarkdown(html, finalUrl) : htmlToText(html, finalUrl);
+				// Then
 				expect(normalize(actual)).toBe(normalize(expected));
 			});
 		}

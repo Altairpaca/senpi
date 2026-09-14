@@ -11,8 +11,22 @@ function resolveWebUrl(value: string, base: string): URL | undefined {
 
 /** Parse inert HTML without installing globals, running scripts, or loading resources. */
 export function parseWebDocument(html: string, url: string): Document {
-	const source = /<html(?:\s|>)/i.test(html) ? html : `<html><head></head><body>${html}</body></html>`;
-	const { document } = parseHTML(source);
+	const parsed = parseHTML(html).document;
+	const document =
+		parsed.documentElement?.localName === "html"
+			? parsed
+			: parseHTML(`<html><head></head><body>${html}</body></html>`).document;
+	// LinkeDOM synthesizes missing containers, but does not move their content.
+	const head = document.head;
+	const body = document.body;
+	for (const node of Array.from(document.documentElement.childNodes)) {
+		if (node !== head && node !== body) body.appendChild(node);
+	}
+	// An omitted head leaves leading metadata in the fragment/body as well.
+	for (const element of Array.from(body.children)) {
+		if (!element.matches("base, link, meta, title, style, script, noscript, template")) break;
+		head.appendChild(element);
+	}
 	return applyWebDocumentUrl(document, url);
 }
 

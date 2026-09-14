@@ -2,6 +2,25 @@
 
 Vendored from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) (see `external-versions.json`).
 
+## 2026-09-14 - Preserve optional document tags during inert parsing
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/parse-web-document.ts` detects the HTML root from the parsed tree, moves root-level content into the synthesized body, and places leading metadata in the head. Comments and script strings cannot masquerade as document roots.
+- Six additional jsdom-generated goldens and independently baseline-checked omitted-root, comment-only, and script-only variants cover both output formats without changing existing goldens.
+
+### Why
+
+- LinkeDOM creates missing head/body containers without relocating content, which previously produced successful empty webfetch responses for documents with omitted body tags.
+
+### Why an extension could not handle it
+
+- Both converter paths consume the private parsed document before external extensions receive tool output.
+
+### Expected merge conflict zones
+
+- Document structure normalization in `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/parse-web-document.ts`.
+
 ## 2026-09-13 - Inert DOM conversion with explicit URL identity
 
 ### What changed
