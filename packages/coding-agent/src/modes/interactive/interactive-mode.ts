@@ -4803,15 +4803,13 @@ export class InteractiveMode {
 					return;
 				}
 				if (this.isExtensionCommand(text)) {
+					// No optimistic echo: the command runs inside AgentSession.prompt() and
+					// never becomes a canonical user message, so the bubble would only sit
+					// next to the command's own UI (e.g. the /btw panel) until the handler
+					// resolved, then vanish. Matches handleFollowUp's command dispatch.
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
-					const pendingEchoId = this.optimisticUserEchoes.begin(text);
-					try {
-						await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
-					} catch (error) {
-						this.optimisticUserEchoes.reject(pendingEchoId);
-						throw error;
-					}
+					await this.session.prompt(text);
 					return;
 				}
 
@@ -4846,13 +4844,7 @@ export class InteractiveMode {
 					if (this.isExtensionCommand(text)) {
 						this.editor.addToHistory?.(text);
 						this.editor.setText("");
-						const pendingEchoId = this.optimisticUserEchoes.begin(text);
-						try {
-							await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
-						} catch (error) {
-							this.optimisticUserEchoes.reject(pendingEchoId);
-							throw error;
-						}
+						await this.session.prompt(text);
 					} else {
 						this.queueCompactionSubmission(text, "steer");
 					}
@@ -6487,13 +6479,18 @@ export class InteractiveMode {
 		const images = this.takeSubmissionImages(text);
 
 		// Alt+Enter queues a follow-up message (waits until agent finishes).
-		// Extension commands never reach this branch: the compaction branch above
-		// dispatches them while compacting, and otherwise prompt() runs them
-		// immediately. The followUp behavior here applies only to ordinary text,
-		// prompt template expansion, and queueing.
+		// Extension commands are dispatched without an optimistic echo here too,
+		// mirroring the Enter path: the command runs inside AgentSession.prompt()
+		// immediately and renders its own UI (e.g. the /btw panel), so an echo
+		// bubble would duplicate it. The followUp echo applies only to ordinary
+		// text, prompt template expansion, and queueing.
 		if (this.session.isStreaming) {
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
+			if (this.isExtensionCommand(text)) {
+				await this.session.prompt(text);
+				return;
+			}
 			const pendingEchoId = this.beginUserEcho(text, images);
 			try {
 				await this.session.prompt(text, {
