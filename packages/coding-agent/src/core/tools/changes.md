@@ -1,5 +1,9 @@
 # core/tools changes
 
+## Align Cursor grep output with the engine-backed renderer (2026-09-14)
+
+- Cursor `pi_grep` calls now use the supported grep schema and the engine renderer's structured footer.
+
 ## Restore grep to the registered tool surface (2026-09-14)
 
 ### What changed

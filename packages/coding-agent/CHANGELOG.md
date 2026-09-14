@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Retired the `GrepOperations` override hook from `GrepToolOptions` in favor of the engine-backed grep implementation, and aligned Cursor `pi_grep` frames with the new `pattern`/`path`/`glob`/`ignoreCase`/`literal`/`context`/`limit` contract. Unknown Cursor flags are ignored with a debug log. The tool always returns the structured footer and `details` v1 contract ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
+
 - Restored `grep` as a default eval-only tool, callable with `tool.grep({ pattern, path })` and discoverable through `tool_schema`. Direct model calls return an eval hint without executing; sessions without eval retain direct grep access, and existing hooks and permissions still apply ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
 
 - `tool_search` is now side-effect-free: it lists up to five matching deferred tools with their parameter schemas and never activates them; calling a listed tool by name activates it on that first call, so the "callable from your NEXT turn" round trip is gone and the request's tools array only changes when a tool is genuinely used. Results are gated on query-term coverage and a relative score floor, so an incidental word match no longer surfaces unrelated tools, and a query naming an eval-only or removed tool (`bash`, `monitor`, ...) answers with that tool's redirect hint instead of "No tools matched" ([#1682](https://github.com/code-yeongyu/senpi/issues/1682)).
