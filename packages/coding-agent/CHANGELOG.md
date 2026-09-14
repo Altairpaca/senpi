@@ -20,6 +20,8 @@
 
 - `generate_image` is registered as a deferred (search-exposed) tool: it no longer ships its ~1K-token schema on every request and activates on the first by-name call; the bundled imagegen skill names it ([#1682](https://github.com/code-yeongyu/senpi/issues/1682)).
 
+- Standalone binaries load codemode from the staged on-disk package instead of embedding a second copy; the sidecar includes its JS parser dependency and retains the bun-1-4 skill ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 - Replaced webfetch's browser-emulation dependency with inert LinkeDOM parsing, preserving reader output and omitted document tags while resolving relative article links and images against the final response URL and retiring CSS/XHR compile assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 
 - Compiled Bun binaries load TypeScript extensions through native runtime modules instead of embedding jiti, preserving host-module identity and fresh dependency graphs on reload. Computed imports and requires share their generation, unused graphs can be reclaimed, native data imports keep Bun's loaders, and parser errors retain source locations. Node runtimes retain their existing jiti options and load only their own importer when needed ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).

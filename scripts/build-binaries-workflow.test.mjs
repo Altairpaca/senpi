@@ -54,7 +54,7 @@ describe("binary release workflow", () => {
 			resourceLoader,
 			/node_modules["'`]\s*,\s*["'`]@code-yeongyu["'`]\s*,\s*["'`]senpi-codemode["'`]\s*,\s*["'`]package\.json/,
 		);
-		assert.match(resourceLoader, /resolveBinaryFactory/);
-		assert.match(resourceLoader, /require\(["'`]@code-yeongyu\/senpi-codemode["'`]\)/);
+		assert.doesNotMatch(resourceLoader, /resolveBinaryFactory/);
+		assert.doesNotMatch(resourceLoader, /require\(["'`]@code-yeongyu\/senpi-codemode["'`]\)/);
 	});
 });

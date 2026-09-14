@@ -39,6 +39,26 @@
 
 - LOW: `copyPublishDependencies` in `scripts/prepare-senpi-bundled-workspaces.mjs` (now a one-line delegate) and its `scripts/prepare-senpi-bundled-workspaces-copy.test.mjs` nested-entry assertion.
 
+## 2026-09-14 - Ship standalone codemode once
+
+### What changed
+
+- `scripts/copy-codemode-sidecar.mjs` carries codemode's JS parser dependency beside its source tree; host API dependencies remain supplied by the extension importer.
+- `scripts/smoke-standalone-binary.mjs` bounds child processes and reports explicit codemode loading diagnostics before checking the exactly-one-enabled inventory contract.
+- A sibling release-graph regression rejects positive codemode contributions, including workspace-relative metafile paths. Copier and inventory tests cover required skill/parser files, stale payload replacement, duplicates, and disabled entries.
+
+### Why
+
+- `scripts/copy-codemode-sidecar.mjs` must make the on-disk extension runnable without the removed bundled factory. `scripts/smoke-standalone-binary.mjs` must distinguish missing payloads from successful relocation (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/copy-codemode-sidecar.mjs` stages release files before startup; `scripts/smoke-standalone-binary.mjs` verifies the standalone artifact externally.
+
+### Expected merge conflict zones
+
+- Payload copying in `scripts/copy-codemode-sidecar.mjs` and RPC validation in `scripts/smoke-standalone-binary.mjs`.
+
 ## 2026-09-13 - Retire webfetch compile-asset workarounds
 
 ### What changed
