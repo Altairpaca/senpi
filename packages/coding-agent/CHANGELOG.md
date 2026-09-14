@@ -6,14 +6,21 @@
 
 ### Added
 
+- Added a builtin herdr lifecycle reporter: pending questions and host dialogs mark the pane blocked with their label, active turns/subagents/monitors remain working, and settlement restores idle. It coexists with herdr's managed integration, defers to loaded user-authored `herdr-*` reporters, and releases the pane only on quit. Extensions can inspect the optional read-only `ctx.loadedExtensionPaths` list ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
 ### Changed
 
 - Default reads of eligible JSON now share the harness's structural view, with exact offset/limit rereads for edits. JavaScript and TypeScript remain raw after the declaration-safe production candidate missed their requalified quality thresholds. Prose, explicit ranges and existing size-limit continuations retain their previous output. Binary parity uses the publishing workflow's complete split entry graph and shipping autoload behavior; the read feature adds no parser dependency ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Replaced webfetch's browser-emulation dependency with inert LinkeDOM parsing, preserving reader output and omitted document tags while resolving relative article links and images against the final response URL and retiring CSS/XHR compile assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 
 ### Fixed
 
 - Prevented declaration signatures and their descendants from being hidden by direct or enclosing structural folds, and made frozen replay reject tokenizer-byte drift before reporting exact counts ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Preserved arrow-return object types in read signatures, restored the bake-off's explicit raw comparator, and froze default-read languages from the production folder/view rather than the prototype ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Fixed Enter on multi-select question options to toggle the highlighted choice without advancing, including option 1; empty own-answer commits preserve selections, and hints direct users to Tab and Submit when done (#8249).
+- Fixed `/btw` showing its question twice in the interactive TUI: extension commands no longer paint an optimistic user bubble while their handler runs on either submit path (Enter and Alt+Enter follow-up while streaming), so only the side-question panel shows the question during the stream.
+- Fixed the `/btw` panel having no off switch: a bare `/btw` now dismisses the panel (or cancels the in-flight side query), Escape is matched through the shared key matcher so it also works under the kitty keyboard protocol (and kitty key-release events are ignored so they cannot cancel the query), and the panel footer names both.
 
 ### Removed
 

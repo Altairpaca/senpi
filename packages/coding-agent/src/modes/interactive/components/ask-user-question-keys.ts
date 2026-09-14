@@ -227,17 +227,16 @@ function activateHighlighted(ctx: AskUserKeyHandlerContext, confirm: boolean): v
 	}
 	const option = state.activeQuestion.options[state.highlightIndex];
 	if (!option) return;
-	if (!confirm || !state.activeQuestion.multiSelect) {
-		state.activateOption(state.activeQuestion.id, option.label);
-	}
+	state.activateOption(state.activeQuestion.id, option.label);
 	ctx.emitProgress();
 	ctx.updateAll();
 	if (confirm) {
 		if (!state.activeQuestion.multiSelect && state.request.questions.length === 1) {
 			ctx.attemptSubmit();
-		} else {
+		} else if (!state.activeQuestion.multiSelect) {
 			state.advance();
 			ctx.updateAll();
 		}
+		/* multi-select + Enter: toggle only, do not advance — user presses Tab/Submit when done */
 	}
 }
