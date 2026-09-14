@@ -13,6 +13,8 @@
 - Default reads of eligible JSON now share the harness's structural view, with exact offset/limit rereads for edits. JavaScript and TypeScript remain raw after the declaration-safe production candidate missed their requalified quality thresholds. Prose, explicit ranges and existing size-limit continuations retain their previous output. Binary parity uses the publishing workflow's complete split entry graph and shipping autoload behavior; the read feature adds no parser dependency ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Replaced webfetch's browser-emulation dependency with inert LinkeDOM parsing, preserving reader output and omitted document tags while resolving relative article links and images against the final response URL and retiring CSS/XHR compile assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 
+- Compiled Bun binaries load TypeScript extensions through native runtime modules instead of embedding jiti, preserving host-module identity and fresh dependency graphs on reload. Computed imports and requires share their generation, unused graphs can be reclaimed, native data imports keep Bun's loaders, and parser errors retain source locations. Node runtimes retain their existing jiti options and load only their own importer when needed ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 
 ### Fixed
 
@@ -20,6 +22,9 @@
 - Preserved arrow-return object types in read signatures, restored the bake-off's explicit raw comparator, and froze default-read languages from the production folder/view rather than the prototype ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Fixed Enter on multi-select question options to toggle the highlighted choice without advancing, including option 1; empty own-answer commits preserve selections, and hints direct users to Tab and Submit when done (#8249).
 - Fixed `/btw` showing its question twice in the interactive TUI: extension commands no longer paint an optimistic user bubble while their handler runs on either submit path (Enter and Alt+Enter follow-up while streaming), so only the side-question panel shows the question during the stream.
+
+- Fixed the `Tip:` line reading as part of the block above it: every tip surface — the startup header and the working-status row — now renders one blank line above the tip ([#1680](https://github.com/code-yeongyu/senpi/issues/1680)).
+
 - Fixed the `/btw` panel having no off switch: a bare `/btw` now dismisses the panel (or cancels the in-flight side query), Escape is matched through the shared key matcher so it also works under the kitty keyboard protocol (and kitty key-release events are ignored so they cannot cancel the query), and the panel footer names both.
 
 ### Removed
