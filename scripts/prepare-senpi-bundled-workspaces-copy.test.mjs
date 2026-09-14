@@ -108,7 +108,8 @@ describe("copyPublishDependencies", () => {
 		// When
 		copyPublishDependencies(tempDir);
 
-		// Then: the transitive dependency rides along with its parent's directory copy.
+		// Then: the transitive dependency is staged at its manifest path (from the copy nested
+		// under the parent in the install; the parent's own copy excludes installer nesting).
 		assert.equal(
 			JSON.parse(
 				readFileSync(
