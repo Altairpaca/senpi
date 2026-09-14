@@ -142,6 +142,82 @@ describe("optimistic pending user echo", () => {
 		expect(order).toEqual(["prompt:/btw hi"]);
 	});
 
+	it("dispatches an extension command without an echo on the Alt+Enter streaming path", async () => {
+		const order: string[] = [];
+		const Controller = getControllerConstructor();
+		const optimisticUserEchoes = new Controller((text) => {
+			order.push(`render:${text}`);
+			return { replace: () => {}, remove: () => order.push(`remove:${text}`) };
+		});
+		const context = {
+			setComposerReply: () => {},
+			getExpandedEditorText: () => "/btw hi",
+			isExtensionCommand: (text: string) => text.startsWith("/btw"),
+			session: {
+				isCompacting: false,
+				isStreaming: true,
+				prompt: async (text: string) => {
+					order.push(`prompt:${text}`);
+				},
+			},
+			takeSubmissionImages: () => [],
+			beginUserEcho: (text: string) => {
+				order.push(`echo:${text}`);
+				return "echo-id";
+			},
+			updatePendingMessagesDisplay: () => {},
+			ui: { requestRender: () => {} },
+			optimisticUserEchoes,
+			editor: { addToHistory: () => {}, setText: () => {} },
+		};
+		const followUp = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "handleFollowUp");
+		if (typeof followUp !== "function") throw new Error("InteractiveMode.handleFollowUp is missing");
+
+		await followUp.call(context);
+
+		// Alt+Enter while the main turn streams must mirror the Enter path: the command
+		// runs inside AgentSession.prompt() and renders its own panel, so no echo.
+		expect(order).toEqual(["prompt:/btw hi"]);
+	});
+
+	it("still paints an optimistic echo for ordinary text on the Alt+Enter streaming path", async () => {
+		const order: string[] = [];
+		const Controller = getControllerConstructor();
+		const optimisticUserEchoes = new Controller((text) => {
+			order.push(`render:${text}`);
+			return { replace: () => {}, remove: () => {} };
+		});
+		const context = {
+			setComposerReply: () => {},
+			getExpandedEditorText: () => "queued follow-up",
+			isExtensionCommand: () => false,
+			session: {
+				isCompacting: false,
+				isStreaming: true,
+				prompt: async () => {
+					order.push("prompt");
+				},
+			},
+			takeSubmissionImages: () => [],
+			beginUserEcho: (text: string) => {
+				order.push(`echo:${text}`);
+				return "echo-id";
+			},
+			updatePendingMessagesDisplay: () => {
+				order.push("update-pending");
+			},
+			ui: { requestRender: () => {} },
+			optimisticUserEchoes,
+			editor: { addToHistory: () => {}, setText: () => {} },
+		};
+		const followUp = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "handleFollowUp");
+		if (typeof followUp !== "function") throw new Error("InteractiveMode.handleFollowUp is missing");
+
+		await followUp.call(context);
+
+		expect(order).toEqual(["echo:queued follow-up", "prompt", "update-pending"]);
+	});
+
 	it("renders synchronously before prompt work starts", async () => {
 		const { controller, rendered } = createController();
 		const requestStarted = vi.fn();
