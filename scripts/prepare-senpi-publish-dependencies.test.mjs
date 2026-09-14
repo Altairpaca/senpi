@@ -121,6 +121,23 @@ describe("stagePublishDependencies", () => {
 		assert.throws(() => stagePublishDependencies(tempDir, internalPackageNames), /Missing .*node_modules\/x@2\.0\.0 for node_modules\/x/);
 	});
 
+	it("removes a stale copy of an optional entry that no installed package matches", () => {
+		// Given: the staged tree still carries platform-opt@2 from an earlier graph; the manifest
+		// wants 3.0.0 and nothing installed provides it.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-stale-optional-"));
+		writePackage(join(tempDir, "packages", "coding-agent"), "platform-opt", "2.0.0");
+		writeManifest(tempDir, {
+			"": { optionalDependencies: { "platform-opt": "3.0.0" } },
+			"node_modules/platform-opt": { version: "3.0.0", optional: true },
+		});
+
+		// When
+		stagePublishDependencies(tempDir, internalPackageNames);
+
+		// Then: the wrong version is gone rather than packed under the manifest's name.
+		assert.equal(existsSync(join(tempDir, "packages", "coding-agent", "node_modules", "platform-opt")), false);
+	});
+
 	it("keeps a materialized optional package in place when the root install lacks it", () => {
 		// Given: publish.mjs downloaded a platform optional straight into the staged tree.
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-optional-"));

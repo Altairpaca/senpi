@@ -108,6 +108,9 @@ export function stagePublishDependencies(repoRoot, internalPackageNames) {
 
 		const sourcePath = locateInstalledPackage(repoRoot, chain, entry, targetPath);
 		if (sourcePath === undefined) {
+			// Nothing installed matches the manifest: a copy left at the target by an earlier
+			// graph must not be packed as if it were this entry.
+			rmSync(targetPath, { recursive: true, force: true });
 			if (optional) continue;
 			const expected = typeof entry?.version === "string" ? `@${entry.version}` : "";
 			throw new Error(
