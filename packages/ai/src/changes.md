@@ -1,3 +1,50 @@
+## Responses completion-phase watchdog: a dropped terminal event is a stall, not a five-minute wait (2026-09-13)
+
+### What changed
+
+- `packages/ai/src/api/responses-completion-grace.ts` (new): `withResponsesCompletionGrace(stream, graceMs = RESPONSES_COMPLETION_GRACE_MS)` wraps a Responses event stream. It counts `response.output_item.added` / `response.output_item.done`; once at least one item is done and none is open, waiting for the next event is bounded by the grace (60 s). On expiry it throws `ResponsesCompletionStallError` (`Provider stream stalled after the last output item: response.completed timed out after <n>ms`) and releases the source iterator without awaiting it. While an item is open, or before the first item is done, it imposes no deadline.
+- `packages/ai/src/api/openai-responses-shared.ts`: `processResponsesStream` iterates `withResponsesCompletionGrace(openaiStream)`, so every Responses transport (SSE and WebSocket; OpenAI, Codex, Azure, gateways) gets the watchdog.
+- `packages/ai/src/utils/retry.ts`: `PROVIDER_STREAM_STALL_ERROR_PATTERN` accepts the wording; "timed out" also satisfies the turn retry gate.
+- Tests: `packages/ai/test/responses-completion-grace.test.ts` (stall after grace; no deadline while an item is open or before the first done; continues when a new item is added; end to end through the Codex SSE stream the assistant message ends as a stall that both classifiers accept).
+
+### Why
+
+- The second stall class behind senpi#1648: about a quarter of the local `Idle timeout waiting for provider stream after 300000ms` incidents had a complete tool call or message in the message and then silence — the server had finished generating but `response.completed` never arrived. A healthy server sends the terminal event within milliseconds of the last `output_item.done`, so silence in that phase is a dropped event or a dead path, not the model thinking; it deserves a short grace, not the full idle budget. The WebSocket liveness heartbeat only covers Bun WebSocket transports; this covers SSE and Node as well.
+
+### Why an extension could not handle it
+
+- The phase (which items are open) is only visible inside the shared stream processor; an extension sees the assistant message after the idle watchdog has already spent five minutes.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/responses-completion-grace.ts` has no upstream counterpart.
+- LOW: one import plus the `for await` head in `packages/ai/src/api/openai-responses-shared.ts` `processResponsesStream`; one alternation in `packages/ai/src/utils/retry.ts`.
+
+## Codex WebSocket liveness: no more five-minute stalls on dead connections (2026-09-13)
+
+### What changed
+
+- `packages/ai/src/api/websocket-liveness.ts` (new): a ping/pong heartbeat for one WebSocket request. After `WEBSOCKET_LIVENESS_PING_INTERVAL_MS` (30 s) without any inbound frame it sends a ping; when `WEBSOCKET_LIVENESS_MAX_UNANSWERED_PINGS` (2) consecutive pings each go `WEBSOCKET_LIVENESS_PONG_TIMEOUT_MS` (20 s) without a pong, ping, or message, it reports `WebSocketLivenessError` (`WebSocket liveness timeout after <n>ms (<k> pings unanswered)`). Runtimes whose WebSocket has no `ping()` - Node's WHATWG client - get an inert monitor. Bun's client exposes `ping()` and dispatches `ping`/`pong` events, so the omo native binary gets the heartbeat.
+- `packages/ai/src/api/openai-codex-responses.ts`: `parseWebSocket` runs the heartbeat for the life of the request and fails the stream with the liveness error (socket closed `liveness_timeout`). `WebSocketLike` gains optional `readyState` and `ping`; the Bun proxy-aware wrapper forwards both, so `isWebSocketReusable` sees the inner socket's state on Bun. Parked connections are now watched: `parkSessionWebSocket` attaches `close`/`error` listeners that evict the cache entry immediately (`parked_close`), `unparkSessionWebSocket` detaches them on reuse, and the idle TTL goes through the same `evictSessionWebSocket`.
+- `packages/ai/src/api/openai-responses.ts`: `parseWebSocket` runs the same heartbeat; this transport had no idle bound of its own at all.
+- `packages/ai/src/utils/retry.ts`: `PROVIDER_STREAM_STALL_ERROR_PATTERN` accepts the liveness wording, so the failure takes the bounded same-model stall retry like the agent-loop idle timeout does.
+- Tests: `packages/ai/test/openai-codex-websocket-liveness.test.ts` (dead after two unanswered pings well inside the idle budget; pongs alone keep a silent stream alive; no ping API leaves the idle timeout in charge; a parked socket that closes is evicted even without `readyState`), `packages/ai/test/openai-codex-websocket-bun-wrapper.test.ts` (the Bun wrapper never reuses a closed or non-open parked socket), and two classifier rows in `retry.test.ts`.
+
+### Why
+
+- A user report: gpt-5.6-sol turns froze for five minutes at a time. Both provider watchdogs are 300 s (idle, and stream-start since #1276), and nothing else could tell a dead transport from a slow model, so every stall cost the whole budget before the retry that fixes it (senpi#1648). Local session logs held 60 such `Idle timeout waiting for provider stream after 300000ms` incidents on sol/astra streams, each recovered by the next retry within 10-35 s.
+- On Bun the failure was deterministic: `WebSocketWithProxy` hid `readyState`, so `isWebSocketReusable` returned true for a parked socket the server had already closed, and a WHATWG `send()` on a closed socket discards the frame silently (measured on Bun 1.4.2), leaving the request to wait out the stream-start watchdog. Nothing observed a close on a parked socket; only the 5-minute TTL evicted it. Codex CLI gets a write error from tungstenite in the same situation and reconnects at once.
+
+### Why an extension could not handle it
+
+- The WebSocket cache, the reuse check, and the frame reader are internals of the provider stream implementation; an extension sees only the assistant-message error five minutes later.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/websocket-liveness.ts` has no upstream counterpart.
+- MEDIUM: `packages/ai/src/api/openai-codex-responses.ts` `WebSocketLike`/`CachedWebSocketConnection` types, the Bun wrapper class, `parkSessionWebSocket`/`unparkSessionWebSocket`/`evictSessionWebSocket` (replacing `scheduleSessionWebSocketExpiry`), the two `release` closures in `acquireWebSocket`, and the `liveness` lines in `parseWebSocket`.
+- LOW: `packages/ai/src/api/openai-responses.ts` `WebSocketLike` and the `liveness` lines in `parseWebSocket`; `packages/ai/src/utils/retry.ts` one alternation in `PROVIDER_STREAM_STALL_ERROR_PATTERN`.
+
 ## Cursor context ceilings come from the server, not the capability table (2026-09-12)
 
 ### What changed
@@ -54,6 +101,25 @@
 
 - `packages/ai/src/model.ts`: the `compat` conditional type chain gains a `devin-agent` arm.
 - Everything under `packages/ai/src/api/devin-agent/`, `packages/ai/src/api/devin-agent.ts`, `packages/ai/proto/devin/cascade.proto` and `packages/ai/src/providers/devin*` are fork-owned files with no upstream counterpart.
+
+## Devin static module override (2026-09-13)
+
+### What changed
+
+- `packages/ai/src/api/devin-agent.lazy.ts` accepts a typed module override before its existing variable-specifier fallback, including for wrappers created before registration.
+- `packages/ai/src/devin-provider.ts` exposes the concrete streaming functions as a static module shape for standalone bundles.
+
+### Why
+
+- A relocated Bun binary cannot resolve a variable-specifier import whose implementation is not embedded.
+
+### Why an extension could not handle it
+
+- The lazy loader and its module state belong to the AI package, while static bundle membership is determined before extensions run.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/devin-agent.lazy.ts` loader and override setter; both files are fork-only.
 
 ## Devin Cascade model transport (2026-09-12)
 

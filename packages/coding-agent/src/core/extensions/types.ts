@@ -453,6 +453,8 @@ export interface ExtensionContext {
 	agentDir: string;
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
+	/** Absolute goal-store path for this session; reading it does not create the file. */
+	readonly goalStoreFile?: string;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -847,6 +849,12 @@ export interface ResourcesDiscoverEvent {
 	type: "resources_discover";
 	cwd: string;
 	reason: "startup" | "reload";
+	/**
+	 * Capability signal: this host accepts `{ path, scope }` entries in the result. Hosts that
+	 * predate scoped entries omit the field, so a handler that must run on both returns plain
+	 * paths when it is absent.
+	 */
+	scopedEntries: true;
 }
 
 /**

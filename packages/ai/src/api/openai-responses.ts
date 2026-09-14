@@ -29,6 +29,7 @@ import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions, clampMaxForOpenAI, OPENAI_RESPONSES_RESERVED_BODY_KEYS } from "./simple-options.ts";
+import { startWebSocketLiveness } from "./websocket-liveness.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06";
@@ -37,10 +38,11 @@ const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000;
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 
-type WebSocketEventType = "open" | "message" | "error" | "close";
+type WebSocketEventType = "open" | "message" | "error" | "close" | "ping" | "pong";
 type WebSocketListener = (event: unknown) => void;
 
 interface WebSocketLike {
+	ping?(data?: string): void;
 	close(code?: number, reason?: string): void;
 	send(data: string): void;
 	addEventListener(type: WebSocketEventType, listener: WebSocketListener): void;
@@ -741,7 +743,14 @@ async function* parseWebSocket(socket: WebSocketLike, signal?: AbortSignal): Asy
 		pending = null;
 		resolve();
 	};
+	const liveness = startWebSocketLiveness(socket, (error) => {
+		failed = error;
+		done = true;
+		closeWebSocketSilently(socket, 1000, "liveness_timeout");
+		wake();
+	});
 	const onMessage: WebSocketListener = (event) => {
+		liveness.noteActivity();
 		void (async () => {
 			if (!event || typeof event !== "object" || !("data" in event)) return;
 			const text = await decodeWebSocketData((event as { data?: unknown }).data);
@@ -795,6 +804,7 @@ async function* parseWebSocket(socket: WebSocketLike, signal?: AbortSignal): Asy
 		if (failed) throw failed;
 		if (!sawCompletion) throw new Error("WebSocket stream closed before response.completed");
 	} finally {
+		liveness.stop();
 		socket.removeEventListener("message", onMessage);
 		socket.removeEventListener("error", onError);
 		socket.removeEventListener("close", onClose);

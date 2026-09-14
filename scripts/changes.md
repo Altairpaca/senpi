@@ -1,5 +1,61 @@
 # changes
 
+## 2026-09-13 - Report entry-graph sizes on success
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` prints each declared entry's file count on success so a green run still reports the `./harness/session` size.
+
+### Why
+
+- The session budget is a cost contract. A silent pass hid the 132-file AI-barrel regression until the script was run by hand.
+
+### Why an extension could not handle it
+
+- Entry-graph walking is a commit-time source import check. Extensions cannot change which modules the checker walks.
+
+### Expected merge conflict zones
+
+- LOW: the success `console.log` in `scripts/check-entry-graphs.mjs`.
+
+## 2026-09-13 - Share compiled standalone entry graphs
+
+### What changed
+
+- `scripts/build-binaries.sh` adds `--splitting` immediately after `--compile` in both platform branches, retaining minification, names, autoload isolation and all four explicit entries.
+- `scripts/build-binaries-flags.test.mjs` checks parsed release/package argv. `scripts/session-worker-compile.test.ts` characterizes split and unsplit relocated production clients with two live workers, shared-memory acknowledgments and native exits.
+
+### Why
+
+- `scripts/build-binaries.sh` previously embedded duplicate copies of the shared session-worker graph. Splitting shares those bytes without changing the runtime worker-entry contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/build-binaries.sh` selects embedded entry graphs at compile time, before runtime extensions exist.
+
+### Expected merge conflict zones
+
+- The Windows and non-Windows compile argv in `scripts/build-binaries.sh`.
+
+## 2026-09-13 - Keep Bun provider registration outside Node bundles
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` resolves literal `bun/runtime-modules` imports to an empty module only in its Node esbuild graph.
+- Bundle coverage tests require positive implementation bytes reachable from both compiled entries; relocated binary probes consume terminal assistant errors in classic and shared RPC.
+
+### Why
+
+- esbuild follows literal imports even inside the worker's `isBunBinary` branch and would otherwise inline all three Node-only provider modules and the AWS SDK into its unsplit Node worker.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` establishes distribution bundle membership at build time, before extension execution.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs` plugin list and Bun-only import resolver.
+
 ## 2026-09-12 - Chord keeps upstream's release identity instead of the fork CalVer
 
 ### What changed

@@ -182,7 +182,15 @@ Use `handle.unfocus()` when a visible overlay should stop owning input and let T
 
 When the agent asks a blocking question (`waitForAnswer: true`), a full-screen overlay appears with a tab for each question and a final Submit tab. Use digits or arrows to choose options, Space to toggle multi-select choices, and Enter to confirm and advance. The Submit tab contains the optional comment editor and accepts partial answers after confirmation; unanswered questions are reported back as unanswered. Esc backs out of an editor or asks for confirmation before discarding a draft.
 
-For async questions (`waitForAnswer: false`), a widget appears above the editor while the agent keeps working: the unanswered count with a countdown, the first unanswered question with its options (and how many more questions wait behind it), and a hint listing every way in. Open the full overlay with Enter on an empty editor, with `/answer`, or with the `app.question.answer` shortcut (default `alt+a`, shown as `option+a` on macOS, rebindable in `keybindings.json`; on macOS the Option-composed glyph of the bound letter also works, so the shortcut needs no terminal settings change). Esc collapses the overlay back to the widget with your draft kept. Typing a reply in the editor and pressing Enter sends it as a comment instead.
+Async questions (`waitForAnswer: false`) queue above the editor without taking focus or replacing earlier requests. The widget shows the pending count, the shown question and options, its countdown, and `+N more`. `alt+down` cycles requests from an empty composer; Tab still completes and Shift+Tab still cycles thinking. Each request keeps its own draft and idle deadline.
+
+Open the shown request with empty Enter or `app.question.answer` (defaults `alt+up` and `alt+a`, shown as Option on macOS). A pending question wins the shared `alt+up` chord; without one it restores queued messages. Windows/WSL dequeue uses `alt+q` instead. The hint prefers `alt+a` in tmux, Apple Terminal, Warp and VS Code; the macOS `å` fallback still works. Rebind either action in `keybindings.json`.
+
+A valid digit on an empty composer selects the corresponding option of the first unanswered sub-question. A single-question single-select digit or Enter submits immediately; multiple sub-questions advance through the component. `/answer` lists multiple pending requests, `/answer <n>` opens the n-th, and `/answer skip` dismisses the shown request. Esc collapses the component with its draft kept.
+
+An answered question collapses in the transcript to a compact `↳ <header>: <answer>` chip; comments render quoted and dismissed or timed-out questions render `(no answer)`. Click the chip to expand the original message and click again to collapse it. `/answer skip` also tells the agent that you dismissed the question. While a question is pending, the terminal title shows `? <header>`, and `askUser.bell` controls the one-time arrival bell.
+
+Text first typed or pasted into an empty composer binds to the shown request and labels the border `↳ reply to <header>`. Enter sends that comment only to its bound request; the follow-up chord (`alt+enter`, or `ctrl+q` on Windows/WSL) sends an ordinary message instead. Text present before arrival and recalled history stay chat. If a bound request settles, the text is preserved, the label clears with a notice, and the next Enter sends chat rather than answering another request.
 
 ### Overlay Lifecycle
 
@@ -323,13 +331,17 @@ Fullscreen mode routes normalized press, release, click, move, drag, and wheel e
 import { MouseRegion } from "@earendil-works/pi-tui";
 
 const clickable = new MouseRegion(content, (event) => {
-  if (event.type !== "click" || event.button !== "left") return undefined;
+  if (event.button !== "left") return undefined;
+  if (event.type === "press") return { handled: true };
+  if (event.type !== "click") return undefined;
   expanded = !expanded;
   return { handled: true };
 });
 ```
 
-Unhandled wheel input scrolls the nearest `ScrollView`; unhandled primary-button drags retain transcript selection. OSC 8 links take precedence over parent click regions. `Input`, `Editor`, `SelectList`, and `SettingsList` include fullscreen mouse behavior. Regular mode does not capture mouse input because the terminal owns its scrollback.
+In fullscreen mode, unhandled wheel input scrolls the nearest `ScrollView`; unhandled primary-button drags retain transcript selection. OSC 8 links take precedence over parent click regions. `Input`, `Editor`, `SelectList`, and `SettingsList` include fullscreen mouse behavior.
+
+Regular mode supports scoped capture through `const release = tui.acquireMouseCapture("pending-question")`; the host releases it when the interactive surface closes and reapplies its intent to a replacement renderer after a mode switch. Only an acknowledged, unmodified left press followed by release in the same cell within 500 ms produces a click. Wheel, motion, other buttons, and modified reports are consumed without action. Native selection and scrollback remain unchanged outside the lease; while captured, use the terminal's selection bypass (usually Shift-drag, or Option-drag in iTerm2/Terminal.app). Unknown, stale, resized, or image-bearing frame placement disables click dispatch rather than guessing. Short frames use private cursor-position calibration; after external output the next render appends a fresh frame before recalibration, preserving diagnostics and scrollback. Keyboard paths remain available. This library foundation does not itself enable capture for every regular-mode component.
 
 ## Line Width
 

@@ -286,6 +286,28 @@ describe("system provenance scope (#1640)", () => {
 	});
 
 	describe("resources_discover entries", () => {
+		it("advertises scoped entry support on the event so handlers can feature-detect it", async () => {
+			const seen: unknown[] = [];
+			const factory: ExtensionFactory = (pi) => {
+				pi.on("resources_discover", (event) => {
+					seen.push(event);
+					return undefined;
+				});
+			};
+			const extensionsResult = await createTestExtensionsResult([{ factory, path: "<test:capability>" }], cwd);
+			const runner = new ExtensionRunner(
+				extensionsResult.extensions,
+				extensionsResult.runtime,
+				cwd,
+				SessionManager.inMemory(),
+				ModelRegistry.inMemory(AuthStorage.inMemory()),
+			);
+
+			await runner.emitResourcesDiscover(cwd, "startup");
+
+			expect(seen).toEqual([{ type: "resources_discover", cwd, reason: "startup", scopedEntries: true }]);
+		});
+
 		it("accepts string paths and { path, scope } objects from one handler", async () => {
 			const factory: ExtensionFactory = (pi) => {
 				pi.on("resources_discover", () => ({

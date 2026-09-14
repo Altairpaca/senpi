@@ -269,8 +269,11 @@ Canonical reservations and worker capacity remain held until native exit, includ
 The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
 plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
 file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
-`src/modes/rpc/session-worker.ts` as an explicit entrypoint; Node bundles must ship `session-worker.js` beside the
-chunk containing its worker client. Third-party/rebranded Bun wrappers must pass the published
+`src/modes/rpc/session-worker.ts` as an explicit entrypoint. Bun 1.4.2 supports `--compile --splitting`
+with `--minify --keep-names`; standalone release and package binary builds use these flags to share code
+between embedded entries. Splitting does not change the worker-entry define contract below.
+Node bundles must ship `session-worker.js` beside the chunk containing its worker client.
+Third-party/rebranded Bun wrappers must pass the published
 `dist/modes/rpc/session-worker.js` as an additional compile entry, set an explicit `--root`, and set
 `--define=SENPI_RPC_SESSION_WORKER_ENTRY='"./<worker-path-relative-to-root>"'`. The define is a build-time
 contract, not an environment variable. Its path must match Bun's embedded entry name, not the source machine's
@@ -1326,7 +1329,7 @@ Each command has:
 - `sourceInfo`: Provenance metadata for the owning resource (present for all sources, including extensions):
   - `path`: Absolute file path to the command source
   - `source`: Source identifier string (for example `"auto"` for auto-discovered locations, `"local"` for settings entries, `"cli"` for CLI paths, `"builtin"`, `"sdk"`, or a package source)
-  - `scope`: `"user"`, `"project"`, or `"temporary"`
+  - `scope`: `"user"`, `"project"`, `"temporary"`, or `"system"` (harness-provided: builtin and bundled extensions, command-line packages declaring `pi.system`, and what they contribute)
   - `origin`: `"package"` or `"top-level"`
   - `baseDir`: Base directory of the owning resource (optional)
 
