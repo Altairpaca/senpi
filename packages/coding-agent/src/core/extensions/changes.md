@@ -1,5 +1,23 @@
 # Core Extensions Changes
 
+## 2026-09-14 - Declarative eval-only tool exposure (#1678)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `"eval"` to ToolExposure, documents registry availability with model-facing withholding, and preserves that value in normalizeToolExposure with the same lazy-activation default as direct tools.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` must preserve a tool's declared eval exposure so session policy can hide it from direct calls without removing it from the executable catalog.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns the public ToolDefinition contract and shared normalizer; an extension cannot extend their accepted values for other consumers.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: ToolExposure, ToolDefinition.exposure and normalizeToolExposure. Preserve the eval value and the existing search metadata behavior.
+
 ## 2026-09-14 - Register herdr with host-owned loaded extension paths (senpi#1645)
 
 ### What changed
