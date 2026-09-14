@@ -111,3 +111,31 @@ fn chunk_boundary_count_files_and_regex_options() {
     o.pattern = "^needle$".into();
     assert_eq!(c.search(&o).counts.matches, Some(520));
 }
+
+#[test]
+fn files_searched_counts_sorted_prefix_up_to_cap() {
+    let c = Corpus::new();
+    c.put("a.ts", "needle\n");
+    c.put("b.ts", "no\n");
+    c.put("c.ts", "needle\n");
+    c.put("d.ts", "no\n");
+    c.put("e.ts", "needle\n");
+    c.put("f.ts", "no\n");
+    c.put("nul.bin", b"needle\n\0");
+    let mut o = c.options();
+    o.max_count = Some(2);
+    o.max_count_per_file = Some(1);
+    let r = c.search(&o);
+    assert_eq!(
+        r.files_searched, 3,
+        "cap is satisfied at c.ts, the third sorted candidate"
+    );
+    o.max_count = None;
+    o.max_count_per_file = None;
+    let r = c.search(&o);
+    assert_eq!(
+        r.files_searched, 7,
+        "completed search counts binary-skipped candidates"
+    );
+    assert_eq!(r.skipped_binary, 1);
+}

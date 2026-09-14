@@ -199,7 +199,6 @@ pub(super) fn search_slice(
         rows: collector.rows.into_values().collect(),
         matching: collector.matching,
         per_file_limit: collector.overflow && options.max_count_per_file == Some(budget),
-        searched: true,
         prefix: oversized,
         ..FileResult::default()
     })

@@ -14,7 +14,6 @@ pub(super) struct FileResult {
     pub(super) rows: Vec<GrepMatch>,
     pub(super) matching: u32,
     pub(super) per_file_limit: bool,
-    pub(super) searched: bool,
     pub(super) prefix: bool,
     pub(super) skipped_oversized: bool,
     pub(super) binary: bool,

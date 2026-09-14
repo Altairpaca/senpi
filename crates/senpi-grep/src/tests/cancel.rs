@@ -87,5 +87,5 @@ fn timeout_keeps_only_completed_ordered_prefix() {
     assert!(r.timed_out);
     assert_eq!(r.counts.files, 1);
     assert_eq!(r.matches[0].path, "a.ts");
-    assert_eq!(r.files_searched, 1);
+    assert_eq!(r.files_searched, 0, "timeout counts only fully committed chunks");
 }

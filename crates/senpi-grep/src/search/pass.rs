@@ -9,8 +9,15 @@ use std::time::Instant;
 
 const SEARCH_CHUNK: usize = 256;
 
+fn committed_units(result: &GrepResult, options: &GrepOptions) -> u32 {
+    if options.mode() == GrepMode::Content {
+        result.counts.matches.unwrap_or(0)
+    } else {
+        result.counts.files
+    }
+}
+
 fn commit_file(result: &mut GrepResult, mut file: FileResult, candidate: &Candidate, options: &GrepOptions) {
-    result.files_searched += u32::from(file.searched);
     result.prefix_searched += u32::from(file.prefix);
     result.skipped_oversized += u32::from(file.skipped_oversized);
     result.skipped_binary += u32::from(file.binary);
@@ -89,14 +96,27 @@ pub fn search(options: &GrepOptions, cancel: &CancelToken) -> Result<GrepResult,
         Some(cap) => (cap as usize).saturating_add(1).clamp(1, SEARCH_CHUNK),
         None => SEARCH_CHUNK,
     };
+    let mut cap_prefix = None;
+    let mut complete_chunk_files = 0u32;
     'chunks: for chunk in candidates.files.chunks(chunk_size) {
         let files: Vec<_> = chunk
             .par_iter()
             .map(|candidate| search_one(candidate, options, &regex, cancel))
             .collect();
+        let mut committed = 0u32;
         for (candidate, file) in chunk.iter().zip(files) {
             match file {
-                Ok(file) => commit_file(&mut result, file, candidate, options),
+                Ok(file) => {
+                    commit_file(&mut result, file, candidate, options);
+                    committed += 1;
+                    if cap_prefix.is_none()
+                        && options
+                            .max_count
+                            .is_some_and(|cap| committed_units(&result, options) >= cap)
+                    {
+                        cap_prefix = Some(complete_chunk_files + committed);
+                    }
+                }
                 Err(_) if cancel.is_aborted() => return Err(GrepError::Aborted),
                 Err(_) if cancel.timed_out() => {
                     result.timed_out = true;
@@ -108,7 +128,15 @@ pub fn search(options: &GrepOptions, cancel: &CancelToken) -> Result<GrepResult,
                 break 'chunks;
             }
         }
+        complete_chunk_files += committed;
     }
+    result.files_searched = if result.timed_out {
+        complete_chunk_files
+    } else if result.limit_reached {
+        cap_prefix.unwrap_or(complete_chunk_files)
+    } else {
+        candidates.files.len() as u32
+    };
     if cancel.is_aborted() {
         return Err(GrepError::Aborted);
     }
