@@ -22,6 +22,28 @@
 - LOW: `packages/coding-agent/src/core/tools/read.ts` imports, options and text-output branch. Keep both truncate modules and existing edit matching unchanged.
 - LOW: `packages/coding-agent/src/core/tools/index.ts` selected-folder import and read option construction in the three factories.
 
+## Re-export the grep tool from its engine-backed module (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/grep.ts`: reduced to `export * from "./grep/index.ts"`. The tool implementation now lives in the `grep/` directory (engine contract, native and ripgrep engines, pattern ladder, formatting, renderer), and this file stays as the import path every existing caller already uses.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the engine-backed tool is several modules, not one file, and callers plus extension consumers import it by this path; keeping the module as a re-export moves the implementation without breaking those imports (Refs #1678).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the builtin tool factory is constructed by core session setup, so its module boundary cannot be relocated from an extension.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/tools/grep.ts` resolves to this re-export on sync; upstream edits to the old single-file implementation must be replayed inside `packages/coding-agent/src/core/tools/grep/` instead.
+
+## Align Cursor grep output with the engine-backed renderer (2026-09-14)
+
+- Cursor `pi_grep` calls now use the supported grep schema and the engine renderer's structured footer.
+
 ## Restore grep to the registered tool surface (2026-09-14)
 
 ### What changed
