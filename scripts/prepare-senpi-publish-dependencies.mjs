@@ -2,37 +2,13 @@
 // Stages the registry runtime closure of packages/coding-agent/publish-deps.lock.json into
 // packages/coding-agent/node_modules so the packed tarball is self-contained. The staged
 // tree mirrors the manifest exactly, whatever layout the developer's package manager
-// produced: every node_modules/... entry (top-level AND nested) lands at its manifest path
-// with the manifest version, and anything the manifest does not list is pruned.
+// produced: every entry lands at the placement resolvePublishPlacements() derives from the
+// manifest (nested entries included) with the manifest version, and anything the manifest
+// does not place is pruned.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
-
-// "node_modules/a/node_modules/@s/b" -> ["a", "@s/b"]. Anything that is not a chain of
-// package directories (the root "", workspace paths, dot entries) yields undefined.
-export function lockPathPackageChain(lockPath) {
-	const parts = lockPath.split("/");
-	const chain = [];
-	let index = 0;
-	while (index < parts.length) {
-		if (parts[index] !== "node_modules") return undefined;
-		const name = parts[index + 1];
-		if (!name || name.startsWith(".")) return undefined;
-		if (name.startsWith("@")) {
-			const scopedName = parts[index + 2];
-			if (!scopedName) return undefined;
-			chain.push(`${name}/${scopedName}`);
-			index += 3;
-		} else {
-			chain.push(name);
-			index += 2;
-		}
-	}
-	return chain.length > 0 ? chain : undefined;
-}
-
-function chainLockPath(chain) {
-	return chain.map((name) => `node_modules/${name}`).join("/");
-}
+import { dirname, join, relative, sep } from "node:path";
+import { chainLockPath, resolvePublishPlacements } from "./prepare-senpi-publish-placements.mjs";
+export { lockPathPackageChain } from "./prepare-senpi-publish-placements.mjs";
 
 function listPackageDirectories(nodeModulesDir) {
 	const packages = [];
@@ -117,29 +93,9 @@ export function stagePublishDependencies(repoRoot, internalPackageNames) {
 	const codingAgentDir = join(repoRoot, "packages/coding-agent");
 	const codingAgentNodeModules = join(codingAgentDir, "node_modules");
 
-	// The manifest keeps the root lock's placements: a dependency npm resolved workspace-locally
-	// appears as packages/coding-agent/node_modules/<pkg>, which is the staged tree's own
-	// node_modules/<pkg>. Parents are staged before their nested entries (depth order) so a
-	// nested copy lands inside the freshly copied parent instead of being wiped by it.
-	const workspacePrefix = "packages/coding-agent/";
-	const stagedByPath = new Map();
-	for (const [manifestPath, entry] of Object.entries(manifest.packages ?? {})) {
-		const lockPath = manifestPath.startsWith(workspacePrefix) ? manifestPath.slice(workspacePrefix.length) : manifestPath;
-		const chain = lockPathPackageChain(lockPath);
-		if (!chain || internalPackageNames.has(chain[0])) continue;
-		const previous = stagedByPath.get(lockPath);
-		if (previous && previous.entry?.version !== entry?.version) {
-			throw new Error(
-				`publish-deps.lock.json places ${previous.entry?.version} and ${entry?.version} of ${chain.at(-1)} at the same staged path ${lockPath}; regenerate the manifest.`,
-			);
-		}
-		stagedByPath.set(lockPath, { lockPath, chain, entry });
-	}
-	const stagedEntries = [...stagedByPath.values()].sort(
-		(a, b) => a.chain.length - b.chain.length || a.lockPath.localeCompare(b.lockPath),
-	);
-
-	pruneUnlistedPackages(codingAgentNodeModules, new Set(stagedEntries.map(({ lockPath }) => lockPath)), internalPackageNames);
+	// Placements come depth-first: a parent is staged before its nested entries so a nested
+	// copy lands inside the freshly copied parent instead of being wiped by it.
+	const stagedEntries = resolvePublishPlacements(manifest.packages ?? {}, internalPackageNames);
 
 	for (const { lockPath, chain, entry } of stagedEntries) {
 		const optional = entry && typeof entry === "object" && entry.optional === true;
@@ -162,8 +118,14 @@ export function stagePublishDependencies(repoRoot, internalPackageNames) {
 
 		rmSync(targetPath, { recursive: true, force: true });
 		mkdirSync(dirname(targetPath), { recursive: true });
-		cpSync(sourcePath, targetPath, { recursive: true });
+		// Only the package itself: whatever the installer nested inside it is its own placement,
+		// not the manifest's, and would shadow the entries staged here.
+		cpSync(sourcePath, targetPath, {
+			recursive: true,
+			filter: (source) => !relative(sourcePath, source).split(sep).includes("node_modules"),
+		});
 	}
 
+	pruneUnlistedPackages(codingAgentNodeModules, new Set(stagedEntries.map(({ lockPath }) => lockPath)), internalPackageNames);
 	return manifest;
 }

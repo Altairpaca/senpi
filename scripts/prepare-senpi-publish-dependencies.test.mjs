@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { lockPathPackageChain, stagePublishDependencies } from "./prepare-senpi-publish-dependencies.mjs";
+import { stagePublishDependencies } from "./prepare-senpi-publish-dependencies.mjs";
 
 const internalPackageNames = new Set(["@earendil-works/pi-ai"]);
 let tempDir;
@@ -33,23 +33,13 @@ function stagedVersion(root, lockPath) {
 	return existsSync(packageJson) ? JSON.parse(readFileSync(packageJson, "utf8")).version : undefined;
 }
 
-describe("lockPathPackageChain", () => {
-	it("splits top-level, scoped and nested lock paths and rejects everything else", () => {
-		assert.deepEqual(lockPathPackageChain("node_modules/typebox"), ["typebox"]);
-		assert.deepEqual(lockPathPackageChain("node_modules/@scope/pkg"), ["@scope/pkg"]);
-		assert.deepEqual(lockPathPackageChain("node_modules/a/node_modules/@scope/b"), ["a", "@scope/b"]);
-		for (const rejected of ["", "packages/coding-agent", "node_modules/.bin", "node_modules/@scope", "node_modules/a/dist"]) {
-			assert.equal(lockPathPackageChain(rejected), undefined, rejected);
-		}
-	});
-});
-
 describe("stagePublishDependencies", () => {
 	it("stages a nested manifest entry from the installer-hoisted copy and prunes packages the manifest dropped", () => {
 		// Given: bun hoisted htmlparser2's entities@7 to the root, while the staged tree still
 		// carries entities@8 and parse5 from the previous (jsdom) graph plus a stale nested dep.
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-nested-"));
 		writePackage(tempDir, "htmlparser2", "10.1.0");
+		writePackage(join(tempDir, "node_modules", "htmlparser2"), "installer-extra");
 		writePackage(tempDir, "entities", "7.0.1");
 		const stagedRoot = join(tempDir, "packages", "coding-agent");
 		writePackage(stagedRoot, "entities", "8.0.0");
@@ -77,6 +67,7 @@ describe("stagePublishDependencies", () => {
 		assert.equal(stagedVersion(tempDir, "node_modules/entities"), undefined);
 		assert.equal(stagedVersion(tempDir, "node_modules/parse5"), undefined);
 		assert.equal(stagedVersion(tempDir, "node_modules/htmlparser2/node_modules/stale-nested"), undefined);
+		assert.equal(stagedVersion(tempDir, "node_modules/htmlparser2/node_modules/installer-extra"), undefined);
 		assert.equal(stagedVersion(tempDir, "node_modules/@earendil-works/pi-ai"), "1.0.0");
 		assert.equal(stagedVersion(tempDir, "node_modules/@aws-sdk/token-providers"), "3.1127.0");
 		assert.equal(stagedVersion(tempDir, "node_modules/@aws-sdk/credential-provider-sso/node_modules/@aws-sdk/token-providers"), "3.1129.0");
@@ -101,24 +92,25 @@ describe("stagePublishDependencies", () => {
 		assert.equal(stagedVersion(tempDir, "node_modules/a"), "1.0.0");
 	});
 
-	it("stages workspace-local manifest placements into the same tree and rejects conflicting versions", () => {
-		// Given: npm resolved diff workspace-locally, so the manifest keeps packages/coding-agent/node_modules/diff.
+	it("stages the workspace-local copy at the top level and re-nests the root copy under its dependent", () => {
+		// Given: npm resolved diff@9 workspace-locally and diff@8 at the root for old-consumer;
+		// bun hoisted 9 and nested 8 under the consumer.
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-workspace-local-"));
 		writePackage(tempDir, "diff", "9.0.0");
+		writePackage(writePackage(tempDir, "old-consumer"), "diff", "8.0.0");
 		writeManifest(tempDir, {
-			"": { dependencies: { diff: "9.0.0" } },
-			"packages/coding-agent/node_modules/diff": { version: "9.0.0" },
-		});
-		stagePublishDependencies(tempDir, internalPackageNames);
-		assert.equal(stagedVersion(tempDir, "node_modules/diff"), "9.0.0");
-
-		// ...but two versions at what becomes one staged path cannot be packed.
-		writeManifest(tempDir, {
-			"": { dependencies: { diff: "9.0.0" } },
+			"": { dependencies: { diff: "9.0.0", "old-consumer": "1.0.0" } },
 			"node_modules/diff": { version: "8.0.0" },
+			"node_modules/old-consumer": { version: "1.0.0", dependencies: { diff: "^8" } },
 			"packages/coding-agent/node_modules/diff": { version: "9.0.0" },
 		});
-		assert.throws(() => stagePublishDependencies(tempDir, internalPackageNames), /8\.0\.0 and 9\.0\.0 of diff at the same staged path node_modules\/diff/);
+
+		// When
+		stagePublishDependencies(tempDir, internalPackageNames);
+
+		// Then
+		assert.equal(stagedVersion(tempDir, "node_modules/diff"), "9.0.0");
+		assert.equal(stagedVersion(tempDir, "node_modules/old-consumer/node_modules/diff"), "8.0.0");
 	});
 
 	it("fails loudly with the expected version when no installed copy matches the manifest", () => {

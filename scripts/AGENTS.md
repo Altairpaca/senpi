@@ -63,8 +63,10 @@ ships `dist/index.js` (build before staging); `sourceOnly: true` ships `src/` (o
 requires `native/index.js` and a platform prebuild. The tarball is fully self-contained: `copyPublishDependencies` (delegating to
 `prepare-senpi-publish-dependencies.mjs`) stages the ENTIRE runtime closure from
 `publish-deps.lock.json` into `packages/coding-agent/node_modules` so the staged tree mirrors that
-manifest exactly — nested entries included, version-matched against the installed copy, unlisted
-leftovers pruned — regardless of how the developer's package manager hoisted `node_modules`, and
+manifest exactly — nested entries included, npm's workspace-local placements at the top level with a
+conflicting root copy re-nested under its dependents (`prepare-senpi-publish-placements.mjs`),
+version-matched against the installed copy, unlisted leftovers pruned — regardless of how the
+developer's package manager hoisted `node_modules`, and
 `stagePublishManifest` rewrites `bundleDependencies` to every platform-portable staged
 package while original `dependencies` keys stay intact, pointing through npm aliases to
 fork-owned `@code-yeongyu/senpi-*` packages (npm packs original import paths; Bun resolves
