@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Enter on multi-select question options to toggle the highlighted choice without advancing, including option 1; empty own-answer commits preserve selections, and hints direct users to Tab and Submit when done (#8249).
+
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13
