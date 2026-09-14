@@ -21,6 +21,24 @@
 
 - The Eval-only tools section in `packages/coding-agent/docs/settings.md`, shell guidance in `packages/coding-agent/docs/windows.md`, Declarative Fields in `packages/coding-agent/docs/extensions.md`, and Unreleased entries in `packages/coding-agent/CHANGELOG.md`.
 
+## 2026-09-14 - Parse native extension import expressions
+
+### What changed
+
+- `packages/coding-agent/package.json` promotes the already-locked `es-module-lexer` 2.1.0 to an exact runtime dependency. Generated root, publish and installer locks reflect that edge; jiti remains a Node runtime dependency.
+
+### Why
+
+- `packages/coding-agent/package.json` supplies a small synchronous import lexer for the Bun-only transformer. Computed imports must be redirected structurally, including nested expressions and import attributes, without embedding jiti or a full JavaScript compiler.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` declares the host importer's dependencies before extension source is loaded.
+
+### Expected merge conflict zones
+
+- The runtime dependency list in `packages/coding-agent/package.json`; regenerate locks rather than hand-merging them.
+
 ## 2026-09-13 - Retire the heavyweight webfetch DOM dependency
 
 ### What changed
