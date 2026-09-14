@@ -68,6 +68,9 @@ export async function enumerateCandidates({
 	const binaryPaths = new Set<string>();
 	// Scan the entire normal-size file, including NULs after rg's first search buffer.
 	for (const root of roots) {
+		// rg ignores --max-filesize for explicit file roots (the facade's second phase).
+		// Oversized roots must be classified solely by the bounded prefix pass.
+		if ((candidates.get(root.path)?.size ?? 0) > MAX_FILE_BYTES) continue;
 		const output = await run(
 			[
 				"-a",

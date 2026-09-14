@@ -55,7 +55,7 @@ function formatGrepResult(
 		}
 	}
 
-	const matchLimit = result.details?.matchLimitReached;
+	const matchLimit = result.details?.totalLimitReached ? result.details.matchCount : undefined;
 	const truncation = result.details?.truncation;
 	const linesTruncated = result.details?.linesTruncated;
 	if (matchLimit || truncation?.truncated || linesTruncated) {
