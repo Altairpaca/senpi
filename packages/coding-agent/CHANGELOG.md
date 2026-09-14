@@ -6,7 +6,11 @@
 
 ### Added
 
+- Added `exposure: "eval"` to tool definitions: enabled tools remain registered and callable inside eval while hidden from direct model calls whenever eval is available. Built-in `bash`, `powershell` and `grep` declare this exposure; explicit SDK `evalOnlyToolNames` overrides still take precedence ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
+
 ### Changed
+
+- Restored `grep` as a default eval-only tool, callable with `tool.grep({ pattern, path })` and discoverable through `tool_schema`. Direct model calls return an eval hint without executing; sessions without eval retain direct grep access, and existing hooks and permissions still apply ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
 
 - Replaced webfetch's browser-emulation dependency with inert LinkeDOM parsing, preserving reader output and omitted document tags while resolving relative article links and images against the final response URL and retiring CSS/XHR compile assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 

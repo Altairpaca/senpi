@@ -2765,7 +2765,7 @@ Tools promoted via search are tied to your extension's identity. If your extensi
 
 Add these fields to `pi.registerTool(...)`:
 
-- **`exposure`**: `"direct" | "search"`. Default is `"direct"` (tool is auto-activated immediately). Use `"search"` for large catalogs.
+- **`exposure`**: `"direct" | "search" | "eval"`. Default is `"direct"` (tool is auto-activated immediately). Use `"search"` for large catalogs. Use `"eval"` to keep a tool registered and enabled while withholding it from the model's direct tool list whenever `eval` is available. It remains callable as `tool.<name>(...)` inside eval and discoverable through `tool_schema`; direct model calls return an eval-form hint instead of executing it. Without `eval` (including a child allowlist that omits it), otherwise enabled tools stay directly callable. Built-in `bash`, `powershell` and `grep` declare `"eval"`. The SDK's explicit `evalOnlyToolNames` override still replaces the default policy.
 - **`searchText`**: Supplemental text indexed by `tool_search`. Never sent to the model. Useful for domain terms that don't belong in the tool description.
 - **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
 - **`searchGroup`**: Organizational filter group. Defaults to your extension's label.

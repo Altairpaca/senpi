@@ -794,7 +794,8 @@ export function normalizeToolExposure(
 	searchGroup?: string;
 	allowLazyActivation: boolean;
 } {
-	const exposure: ToolExposure = definition.exposure === "search" || definition.exposure === "eval" ? definition.exposure : "direct";
+	const exposure: ToolExposure =
+		definition.exposure === "search" || definition.exposure === "eval" ? definition.exposure : "direct";
 	return {
 		exposure,
 		searchText: exposure === "search" ? definition.searchText : undefined,

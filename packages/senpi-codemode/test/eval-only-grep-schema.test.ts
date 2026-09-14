@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import { createGrepToolDefinition } from "@code-yeongyu/senpi";
+import { describe, expect, it, vi } from "vitest";
 import { runEvalSchema } from "../src/bridges/schema-bridge.ts";
 
 const GREP_HINT = 'tool.grep({ pattern: "...", path: "..." })';
@@ -20,8 +20,7 @@ describe("eval-only grep codemode surface", () => {
 		const schema = runEvalSchema({ name: "grep" }, { listTools: () => session.getAllTools() });
 		const listed = runEvalSchema({}, { listTools: () => session.getAllTools() });
 
-		expect(schema).toMatchObject({ name: "grep" });
-		expect(schema.parameters).toMatchObject({ properties: { pattern: expect.anything() } });
+		expect(schema).toMatchObject({ name: "grep", parameters: { properties: { pattern: expect.anything() } } });
 		expect(listed).toEqual({ tools: ["grep"] });
 		expect(session.getActiveToolNames()).not.toContain("grep");
 		expect(session.removedToolHints.grep).toContain("tool.grep(");
