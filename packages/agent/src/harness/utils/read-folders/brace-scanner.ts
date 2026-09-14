@@ -1,18 +1,14 @@
 import { HeaderProtection } from "./header-protection.ts";
 import { controls, expressionKeywords, isCallCallee, type Open, signatureDeclarations } from "./lexical-context.ts";
 import { commentSpan, lineCommentEnd, regexSpan, stringSpan, typeArgumentsSpan } from "./lexical-spans.ts";
-import type { ReadFoldSettings, ReadLineRange } from "./types.ts";
-
-type Scan =
-	| { readonly status: "parsed"; readonly ranges: readonly ReadLineRange[] }
-	| { readonly status: "parse_failure"; readonly reason: string };
+import type { ReadBraceScan, ReadFoldSettings, ReadLineRange } from "./types.ts";
 
 /** Measured row-17 brace lexer, restricted to the three selected languages. */
-export function scanBraces(source: string, language: "ts" | "js" | "json", settings: ReadFoldSettings): Scan {
+export function scanBraces(source: string, language: "ts" | "js" | "json", settings: ReadFoldSettings): ReadBraceScan {
 	const ranges: ReadLineRange[] = [];
 	const stack: Open[] = [];
 	const headers = new HeaderProtection();
-	const fail = (reason: string): Scan => ({ status: "parse_failure", reason });
+	const fail = (reason: string): ReadBraceScan => ({ status: "parse_failure", reason });
 	let line = 1;
 	let i = 0;
 	let template = false;

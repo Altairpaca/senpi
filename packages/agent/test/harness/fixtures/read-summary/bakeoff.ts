@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { READ_FOLDER_SELECTION, selectedReadFolder } from "../../../../src/harness/utils/read-folders/index.ts";
+import type { BakeoffOptions } from "./bakeoff-types.ts";
 import { boundaryFixtures } from "./boundary-fixtures.ts";
 import { candidateSourceHashes } from "./candidate-source-hashes.ts";
 import { loadCorpus } from "./corpus.ts";
@@ -15,14 +16,7 @@ import { readRawBaseline } from "./raw-baseline.ts";
 import { runReference, tokenize } from "./reference.ts";
 import { sha256, validBoundaries } from "./scorer.ts";
 
-export async function bakeoff(options: {
-	readonly input: string;
-	readonly manifestHash: string;
-	readonly omp: string;
-	readonly out: string;
-	readonly baseline?: string;
-	readonly gate?: string;
-}) {
+export async function bakeoff(options: BakeoffOptions) {
 	const startedAt = new Date().toISOString();
 	const out = dirname(options.out);
 	const { corpus, entries, manifestSha256 } = loadCorpus(options.input, options.manifestHash);

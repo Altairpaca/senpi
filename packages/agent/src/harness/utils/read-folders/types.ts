@@ -9,6 +9,9 @@ export const READ_FOLD_SETTINGS = Object.freeze({
 /** Internal policy constants, not a user-configurable settings surface. */
 export type ReadFoldSettings = typeof READ_FOLD_SETTINGS;
 export type ReadLineRange = { readonly startLine: number; readonly endLine: number };
+export type ReadBraceScan =
+	| { readonly status: "parsed"; readonly ranges: readonly ReadLineRange[] }
+	| { readonly status: "parse_failure"; readonly reason: string };
 /** Inclusive, 1-based omitted interiors. Children exclude their parent's boundary lines. */
 export type ReadFoldRange = ReadLineRange & { readonly children: readonly ReadFoldRange[] };
 export type ReadFolderInput = {
