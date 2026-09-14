@@ -3,13 +3,14 @@ use crate::{GrepError, GrepOptions, GrepWarning};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::types::TypesBuilder;
 use ignore::{WalkBuilder, WalkState};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 #[derive(Debug)]
 pub(crate) struct Candidate {
+    // Canonical identity used for both deduplication and reading.
     pub path: PathBuf,
     pub display: String,
 }
@@ -102,8 +103,8 @@ pub(crate) fn display_path(path: &Path, cwd: &Path) -> String {
 
 pub(crate) fn order_candidates(files: &mut Vec<Candidate>) {
     files.sort_by(|a, b| a.display.as_bytes().cmp(b.display.as_bytes()));
-    // Sort by display first so overlapping roots pick a stable alias;
-    // completion order cannot choose it. Dedup is by admitted walk path.
+    // Sort by display first so each canonical identity keeps its smallest
+    // alias, regardless of root order or visitor completion order.
     let mut seen = HashSet::new();
     files.retain(|file| seen.insert(file.path.clone()));
 }
@@ -126,15 +127,17 @@ pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Can
     let types = types.build().map_err(|e| GrepError::UnknownType(e.to_string()))?;
     let cwd = Path::new(&options.cwd);
     let mut result = Candidates::default();
-    let mut roots = Vec::new();
+    let mut roots = HashMap::new();
     let mut existing = 0;
     let mut single_file = false;
     for root in &options.paths {
-        match fs::metadata(root) {
-            Ok(metadata) => {
+        match fs::metadata(root)
+            .and_then(|metadata| fs::canonicalize(root).map(|canonical| (metadata, canonical)))
+        {
+            Ok((metadata, canonical)) => {
                 existing += 1;
                 single_file = metadata.is_file();
-                roots.push(root);
+                roots.insert(Path::new(root), canonical);
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => result.missing.push(root.clone()),
             Err(error) => {
@@ -164,7 +167,7 @@ pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Can
     let files = Mutex::new(Vec::new());
     let warnings = Mutex::new(Vec::new());
     let gitignore = options.gitignore.unwrap_or(true);
-    let mut builder = WalkBuilder::from_iter(roots);
+    let mut builder = WalkBuilder::from_iter(roots.keys());
     builder
         .threads(std::thread::available_parallelism().map_or(1, |n| n.get()))
         .hidden(!options.hidden.unwrap_or(true))
@@ -202,11 +205,14 @@ pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Can
             if !globs.accepts(Path::new(&display)) || types.matched(path, false).is_ignore() {
                 return WalkState::Continue;
             }
-            // Admit the walk path as-is. Canonicalizing every candidate on
-            // Darwin is tens of milliseconds for a medium tree and swamps the
-            // search; overlapping roots still dedup on the absolute walk path.
+            // Walk depth identifies the exact root even when roots overlap.
+            // With links disabled below roots, appending relative components
+            // gives canonical identity without a filesystem call per file.
+            let root = path.ancestors().nth(entry.depth()).unwrap();
+            let mut canonical = roots[root].clone();
+            canonical.extend(path.strip_prefix(root).unwrap().components());
             files.lock().unwrap().push(Candidate {
-                path: path.to_path_buf(),
+                path: canonical,
                 display,
             });
             if let Some(error) = entry.error() {
