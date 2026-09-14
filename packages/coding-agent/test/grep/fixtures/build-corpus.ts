@@ -47,9 +47,10 @@ export async function buildCorpus(
 	if (options.git !== false) {
 		await execFileAsync("git", ["init", "-q"], { cwd: root });
 		await execFileAsync("git", ["add", "-A"], { cwd: root });
-		// CI runners carry no git identity and a developer machine may force commit signing;
-		// the fixture commit only exists to make .gitignore semantics real. Identity env vars
-		// outrank `-c user.*`, so set them here rather than relying on the ambient config.
+		// CI runners carry no git identity, and a developer machine may force commit signing or
+		// point core.hooksPath at hooks this throwaway repo must not run; the fixture commit only
+		// exists to make .gitignore semantics real. Identity env vars outrank `-c user.*`, so set
+		// them here rather than relying on the ambient config.
 		const env = {
 			...process.env,
 			GIT_AUTHOR_NAME: "grep corpus",
@@ -57,7 +58,8 @@ export async function buildCorpus(
 			GIT_COMMITTER_NAME: "grep corpus",
 			GIT_COMMITTER_EMAIL: "corpus@example.invalid",
 		};
-		await execFileAsync("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "corpus"], { cwd: root, env });
+		const isolate = ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"];
+		await execFileAsync("git", [...isolate, "commit", "-qm", "corpus"], { cwd: root, env });
 	}
 	return { root, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
