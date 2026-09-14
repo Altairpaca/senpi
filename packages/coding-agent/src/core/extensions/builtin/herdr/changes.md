@@ -1,5 +1,23 @@
 # Herdr builtin reporter changes
 
+## 2026-09-14 - Wire the registered factory to the host context (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` exports the default factory, reads `ctx.loadedExtensionPaths` at session start, and reads at most 400 bytes from matching files with a finally-closed file descriptor. Injected dependencies remain available for deterministic protocol tests.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` must defer to actually loaded user-authored reporters, including event-only extensions, without mistaking the managed integration for one or reading entire extension files.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` is the extension implementation. Its required host discovery handoff is documented in `core/extensions/changes.md`; it does not inspect user settings or modify installed extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts`: default factory dependencies and session-start deferral. The reducer and transport are unchanged.
+
 ## 2026-09-13 - Isolated lifecycle reporter foundation (senpi#1645)
 
 ### What changed

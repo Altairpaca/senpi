@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
-import type { Socket } from "node:net";
+import { closeSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
+import { createConnection, type Socket } from "node:net";
 import { join, win32 } from "node:path";
 import { debuglog } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
@@ -8,14 +8,32 @@ import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
 import { initialHerdrState, isHerdrBlockedEvent, reduceHerdrState, selectHerdrReport } from "./herdr-state.ts";
 
 export interface HerdrDependencies {
-	getLoadedExtensionPaths: () => readonly string[];
+	getLoadedExtensionPaths: (ctx: ExtensionContext) => readonly string[];
 	readHeader: (path: string) => string;
 	now: () => number;
 	connect: (path: string) => Socket;
 	debug?: (message: string) => void;
 }
 
-/** The host supplies loaded paths after discovery; registration is a separate integration step. */
+export default function herdrExtension(pi: ExtensionAPI): void {
+	createHerdrExtension({
+		getLoadedExtensionPaths: (ctx) => ctx.loadedExtensionPaths ?? [],
+		readHeader: (path) => {
+			const file = openSync(path, "r");
+			try {
+				const header = Buffer.alloc(400);
+				const length = readSync(file, header, 0, header.length, 0);
+				return header.toString("utf8", 0, length);
+			} finally {
+				closeSync(file);
+			}
+		},
+		now: Date.now,
+		connect: createConnection,
+	})(pi);
+}
+
+/** Read host-owned discovery state only after all extensions have loaded. */
 export function createHerdrExtension(deps: HerdrDependencies) {
 	return (pi: Pick<ExtensionAPI, "on" | "events">): void => {
 		const debug = deps.debug ?? debuglog("senpi:herdr");
@@ -73,7 +91,7 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			const socketPath = process.env.HERDR_SOCKET_PATH;
 			const paneId = process.env.HERDR_PANE_ID;
 			if (process.env.HERDR_ENV !== "1" || !socketPath || !paneId) return;
-			if (hasUserReporter(deps, debug)) {
+			if (hasUserReporter(deps, ctx, debug)) {
 				deferred = true;
 				debug("Herdr builtin deferred to a loaded user reporter");
 				return;
@@ -133,8 +151,8 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 	};
 }
 
-function hasUserReporter(deps: HerdrDependencies, debug: (message: string) => void): boolean {
-	return deps.getLoadedExtensionPaths().some((path) => {
+function hasUserReporter(deps: HerdrDependencies, ctx: ExtensionContext, debug: (message: string) => void): boolean {
+	return deps.getLoadedExtensionPaths(ctx).some((path) => {
 		if (!/^herdr-.*\.(ts|js|mjs)$/.test(win32.basename(path))) return false;
 		try {
 			return !Buffer.from(deps.readHeader(path)).subarray(0, 400).includes("HERDR_INTEGRATION_ID=");
