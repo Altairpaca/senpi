@@ -1102,6 +1102,14 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
+### ctx.loadedExtensionPaths
+
+Optional read-only list of resolved paths for every successfully loaded extension, including event-only extensions. Builtin and inline factories retain synthetic identifiers such as `<builtin:herdr>`. The runner resolves file paths against the session working directory and provides this list to event, command, and tool contexts; older hosts and hand-built contexts may omit it.
+
+The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, active turns/subagents/monitors as `working`, and otherwise `idle`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
+
+To avoid competing lifecycle reporters, it defers to a loaded user-authored `herdr-*.ts`, `.js`, or `.mjs` file. A managed file whose first 400 bytes contain `HERDR_INTEGRATION_ID=` does not trigger deferral: herdr's managed `herdr-agent-state.ts` can remain installed. Remove your own reporter from the loaded extensions if you want the builtin to take over; no user files are changed automatically.
+
 ### ctx.isProjectTrusted()
 
 Returns whether project-local trust is active for the current session context. This includes temporary trust decisions and CLI trust overrides, not just saved decisions in the global trust store.
