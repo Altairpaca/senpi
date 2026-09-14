@@ -3,7 +3,7 @@
 ### What changed
 
 - New `packages/coding-agent/src/modes/interactive/tips/tip-line.ts` appends a tip as a `Spacer(1)` followed by its `Text`, so every surface that shows a tip renders one blank line above it.
-- `packages/coding-agent/src/modes/interactive/tips/startup-header.ts` and both working-tip paths in `showStatusIndicator` (embedded spinner and standalone status row) append through it instead of adding the tip `Text` directly.
+- `packages/coding-agent/src/modes/interactive/tips/startup-header.ts` and both working-tip paths of `showStatusIndicator` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (embedded spinner and standalone status row) append through it instead of adding the tip `Text` directly.
 
 ### Why
 
@@ -15,7 +15,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the `appendStartupHeader` body and the two tip `addChild` calls in `showStatusIndicator`; upstream pi ships no tips.
+- LOW: the `appendStartupHeader` body and the two tip `addChild` calls in `showStatusIndicator` (`packages/coding-agent/src/modes/interactive/interactive-mode.ts`); upstream pi ships no tips.
 
 ## 2026-09-13 - Extension commands paint no optimistic user echo
 
