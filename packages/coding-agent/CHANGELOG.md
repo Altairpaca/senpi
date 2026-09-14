@@ -28,6 +28,8 @@
 
 - Fixed deferred (search-exposed) tools never activating by name in sessions without the tool-search builtin: the session now promotes the tool itself when no catalog activator claims it ([#1682](https://github.com/code-yeongyu/senpi/issues/1682)).
 
+- Fixed the standalone Node bundle builder's Bun-only imports and native package boundaries, and prevented shared-session workers from entering the supervisor CLI after bundling ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 - Fixed Enter on multi-select question options to toggle the highlighted choice without advancing, including option 1; empty own-answer commits preserve selections, and hints direct users to Tab and Submit when done (#8249).
 
 - Fixed `/btw` showing its question twice in the interactive TUI: extension commands no longer paint an optimistic user bubble while their handler runs on either submit path (Enter and Alt+Enter follow-up while streaming), so only the side-question panel shows the question during the stream.
