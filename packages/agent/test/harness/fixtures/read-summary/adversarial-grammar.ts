@@ -38,8 +38,14 @@ const contexts: readonly Context[] = [
 	ts("decorator", (v) => `@decorate(${v})\nclass Example {}`),
 	ts("method-decorator", (v) => `class Example {\n@decorate(${v})\nmethod() {}\n}`),
 	ts("keyof-return", (v) => `const example = ${v};\nfunction choose(): keyof ${types} { throw 0; }`),
-	ts("typeof-return", (v) => `const example = ${v};\nfunction choose(): (typeof registry)[keyof ${types}] { throw 0; }`),
-	ts("mapped-return", (v) => `const example = ${v};\nfunction choose(): { [K in keyof ${types}]: number } { throw 0; }`),
+	ts(
+		"typeof-return",
+		(v) => `const example = ${v};\nfunction choose(): (typeof registry)[keyof ${types}] { throw 0; }`,
+	),
+	ts(
+		"mapped-return",
+		(v) => `const example = ${v};\nfunction choose(): { [K in keyof ${types}]: number } { throw 0; }`,
+	),
 	ts("satisfies-return", (v) => `function choose() {\nreturn ${v} satisfies ${types};\n}`),
 	ts("as-const-return", (v) => `function choose() {\nreturn (${v}) as const;\n}`),
 ];
@@ -47,13 +53,16 @@ const envelopes = [
 	{ name: "direct", wrap: (source: string) => source },
 	{ name: "function", wrap: (source: string) => `function outer() {\n${source}\nreturn 0;\n}` },
 	{ name: "arrow", wrap: (source: string) => `const outer = () => {\n${source}\nreturn 0;\n};` },
-	{ name: "nested", wrap: (source: string) => `function outer() {\nfunction middle() {\n${source}\nreturn 0;\n}\nreturn middle;\n}` },
+	{
+		name: "nested",
+		wrap: (source: string) => `function outer() {\nfunction middle() {\n${source}\nreturn 0;\n}\nreturn middle;\n}`,
+	},
 ];
 export function adversarialPrograms() {
 	return contexts.flatMap((context) =>
 		values.flatMap((value, index) =>
 			envelopes.flatMap((envelope) =>
-				(context.language === "js" ? ["js", "ts"] as const : ["ts"] as const).map((language) => ({
+				(context.language === "js" ? (["js", "ts"] as const) : (["ts"] as const)).map((language) => ({
 					name: `${context.name}/${index}/${envelope.name}/${language}`,
 					language,
 					source: envelope.wrap(context.wrap(value)),

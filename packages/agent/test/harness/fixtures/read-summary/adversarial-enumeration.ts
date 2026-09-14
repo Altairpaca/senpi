@@ -43,5 +43,11 @@ export function enumerateBoundaries() {
 		}
 		if (errors.length) counterexamples.push({ name: program.name, source, errors });
 	}
-	return { programs: programs.length, grammarSha256: sha256(JSON.stringify(programs)), emittedRanges, protectedPrograms, counterexamples };
+	return {
+		programs: programs.length,
+		grammarSha256: sha256(JSON.stringify(programs)),
+		emittedRanges,
+		protectedPrograms,
+		counterexamples,
+	};
 }
