@@ -117,15 +117,27 @@ export function stagePublishDependencies(repoRoot, internalPackageNames) {
 	const codingAgentDir = join(repoRoot, "packages/coding-agent");
 	const codingAgentNodeModules = join(codingAgentDir, "node_modules");
 
-	// Parents are staged before their nested entries (depth order) so a nested copy lands
-	// inside the freshly copied parent instead of being wiped by it.
-	const stagedEntries = [];
-	for (const [lockPath, entry] of Object.entries(manifest.packages ?? {})) {
+	// The manifest keeps the root lock's placements: a dependency npm resolved workspace-locally
+	// appears as packages/coding-agent/node_modules/<pkg>, which is the staged tree's own
+	// node_modules/<pkg>. Parents are staged before their nested entries (depth order) so a
+	// nested copy lands inside the freshly copied parent instead of being wiped by it.
+	const workspacePrefix = "packages/coding-agent/";
+	const stagedByPath = new Map();
+	for (const [manifestPath, entry] of Object.entries(manifest.packages ?? {})) {
+		const lockPath = manifestPath.startsWith(workspacePrefix) ? manifestPath.slice(workspacePrefix.length) : manifestPath;
 		const chain = lockPathPackageChain(lockPath);
 		if (!chain || internalPackageNames.has(chain[0])) continue;
-		stagedEntries.push({ lockPath, chain, entry });
+		const previous = stagedByPath.get(lockPath);
+		if (previous && previous.entry?.version !== entry?.version) {
+			throw new Error(
+				`publish-deps.lock.json places ${previous.entry?.version} and ${entry?.version} of ${chain.at(-1)} at the same staged path ${lockPath}; regenerate the manifest.`,
+			);
+		}
+		stagedByPath.set(lockPath, { lockPath, chain, entry });
 	}
-	stagedEntries.sort((a, b) => a.chain.length - b.chain.length || a.lockPath.localeCompare(b.lockPath));
+	const stagedEntries = [...stagedByPath.values()].sort(
+		(a, b) => a.chain.length - b.chain.length || a.lockPath.localeCompare(b.lockPath),
+	);
 
 	pruneUnlistedPackages(codingAgentNodeModules, new Set(stagedEntries.map(({ lockPath }) => lockPath)), internalPackageNames);
 

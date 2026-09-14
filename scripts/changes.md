@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `scripts/prepare-senpi-publish-dependencies.mjs` (new) owns `stagePublishDependencies`: every `node_modules/...` entry of `publish-deps.lock.json`, top-level and nested, is staged at its manifest path from a version-matched installed copy (same nesting under the root install, hoisted at the root, already staged in place, or nested under another dependent), and staged packages the manifest does not list are pruned at every nesting level.
+- `scripts/prepare-senpi-publish-dependencies.mjs` (new) owns `stagePublishDependencies`: every `node_modules/...` entry of `publish-deps.lock.json`, top-level and nested, plus npm's workspace-local placements (`packages/coding-agent/node_modules/<pkg>`, which are the staged tree's own `node_modules/<pkg>`; two versions at one staged path fail loudly), is staged at its manifest path from a version-matched installed copy (same nesting under the root install, hoisted at the root, already staged in place, or nested under another dependent), and staged packages the manifest does not list are pruned at every nesting level.
 - `scripts/prepare-senpi-bundled-workspaces.mjs` `copyPublishDependencies` delegates to that module with the internal workspace set; the bundled and vendored workspace staging is unchanged.
 
 ### Why

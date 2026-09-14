@@ -101,6 +101,26 @@ describe("stagePublishDependencies", () => {
 		assert.equal(stagedVersion(tempDir, "node_modules/a"), "1.0.0");
 	});
 
+	it("stages workspace-local manifest placements into the same tree and rejects conflicting versions", () => {
+		// Given: npm resolved diff workspace-locally, so the manifest keeps packages/coding-agent/node_modules/diff.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-workspace-local-"));
+		writePackage(tempDir, "diff", "9.0.0");
+		writeManifest(tempDir, {
+			"": { dependencies: { diff: "9.0.0" } },
+			"packages/coding-agent/node_modules/diff": { version: "9.0.0" },
+		});
+		stagePublishDependencies(tempDir, internalPackageNames);
+		assert.equal(stagedVersion(tempDir, "node_modules/diff"), "9.0.0");
+
+		// ...but two versions at what becomes one staged path cannot be packed.
+		writeManifest(tempDir, {
+			"": { dependencies: { diff: "9.0.0" } },
+			"node_modules/diff": { version: "8.0.0" },
+			"packages/coding-agent/node_modules/diff": { version: "9.0.0" },
+		});
+		assert.throws(() => stagePublishDependencies(tempDir, internalPackageNames), /8\.0\.0 and 9\.0\.0 of diff at the same staged path node_modules\/diff/);
+	});
+
 	it("fails loudly with the expected version when no installed copy matches the manifest", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-mismatch-"));
 		writePackage(tempDir, "x", "1.0.0");
