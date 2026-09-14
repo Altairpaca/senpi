@@ -18,6 +18,24 @@
 
 - `.github/workflows/ci.yml`: workspace build and script-test steps.
 
+## 2026-09-14 - Run the grep contract suite against the native engine on linux
+
+### What changed
+
+- `.github/workflows/ci.yml`: added the `grep-native-contract` job (ubuntu-latest). It reads the toolchain channel from `rust-toolchain.toml`, caches cargo state with `Swatinem/rust-cache`, builds `senpi-grep` with `cargo build --release --locked` plus a `napi build --platform --release` addon, resolves the generated `senpi_grep.*.node` by glob, and runs `test/grep` twice in the same job - once with `SENPI_GREP_ENGINE=native` against that addon and once with `SENPI_GREP_ENGINE=rg`. The native leg writes a vitest JSON report that is asserted to contain the native contract file with every case passed and none skipped. The job joins the `check-and-test` fan-in gate and its summary; the three coding-agent shards and the Windows jobs are unchanged.
+
+### Why
+
+- `.github/workflows/ci.yml`: the shards only ever exercise the ripgrep fallback, so the native engine could regress undetected. Building the addon inside CI and running the shared contract suite under both engines is the only gate that proves engine parity on a clean machine (Refs #1678).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection, the Rust toolchain, native addon builds and job-level required-status wiring are CI configuration evaluated long before any Senpi runtime or extension loader exists.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `jobs` map and the `check-and-test` `needs` list in `.github/workflows/ci.yml` whenever upstream restructures CI.
+
 ## 2026-09-13 - Verify split workers with the release compiler
 
 ### What changed

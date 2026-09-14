@@ -47,7 +47,17 @@ export async function buildCorpus(
 	if (options.git !== false) {
 		await execFileAsync("git", ["init", "-q"], { cwd: root });
 		await execFileAsync("git", ["add", "-A"], { cwd: root });
-		await execFileAsync("git", ["commit", "-qm", "corpus"], { cwd: root });
+		// CI runners carry no git identity and a developer machine may force commit signing;
+		// the fixture commit only exists to make .gitignore semantics real. Identity env vars
+		// outrank `-c user.*`, so set them here rather than relying on the ambient config.
+		const env = {
+			...process.env,
+			GIT_AUTHOR_NAME: "grep corpus",
+			GIT_AUTHOR_EMAIL: "corpus@example.invalid",
+			GIT_COMMITTER_NAME: "grep corpus",
+			GIT_COMMITTER_EMAIL: "corpus@example.invalid",
+		};
+		await execFileAsync("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "corpus"], { cwd: root, env });
 	}
 	return { root, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
