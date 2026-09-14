@@ -69,6 +69,31 @@ async function createProbeHarness(options: ProbeHarnessOptions = {}) {
 	};
 }
 
+describe("default grep surface (#1678)", () => {
+	it("lists builtin grep for codemode without exposing it directly when eval is registered", async () => {
+		const { harness } = await createProbeHarness();
+		try {
+			expect(harness.session.getAllTools().map(({ name }) => name)).toContain("grep");
+			expect(harness.session.getActiveToolNames()).not.toContain("grep");
+			const result = await harness.session.executeTool("grep", { pattern: "x" });
+			expect(textOf(result)).toBe("No matches found");
+			expect(harness.session.getActiveToolNames()).not.toContain("grep");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("activates builtin grep by default without eval", async () => {
+		const { harness } = await createProbeHarness({ withEval: false });
+		try {
+			expect(harness.session.getActiveToolNames()).toContain("grep");
+			expect(textOf(await harness.session.executeTool("grep", { pattern: "x" }))).toBe("No matches found");
+		} finally {
+			harness.cleanup();
+		}
+	});
+});
+
 describe("policy", () => {
 	it("withholds an eval-exposed extension tool while eval is present, but executes it", async () => {
 		const { harness } = await createProbeHarness();

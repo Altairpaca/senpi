@@ -234,7 +234,7 @@ import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinki
 import { resetTimings, time } from "./timings.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
-import { createAllToolDefinitions, temporarilyDisabledToolNames } from "./tools/index.ts";
+import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -7547,12 +7547,9 @@ export class AgentSession {
 				}),
 			})),
 		].filter((tool) => isAllowedTool(tool.definition.name));
-		// Withheld tools stay in _baseToolDefinitions (and therefore in _toolRegistry, which
-		// getRegisteredTool serves to the Cursor exec bridge) but are dropped from the model-facing
-		// definitions so they never reach the prompt. See temporarilyDisabledToolNames.
 		const definitionRegistry = new Map<string, ToolDefinitionEntry>(
 			Array.from(this._baseToolDefinitions.entries())
-				.filter(([name]) => isAllowedTool(name) && !temporarilyDisabledToolNames.has(name))
+				.filter(([name]) => isAllowedTool(name))
 				.map(([name, definition]) => [
 					name,
 					{
@@ -7614,17 +7611,12 @@ export class AgentSession {
 			return exposure === "direct" || exposure === "eval";
 		};
 
-		// A withheld tool is dropped from the DEFAULT selection only. An explicit activeToolNames
-		// request names the tool deliberately, and callers that do so (tests, SDK embedders,
-		// filesystem-policy wiring) still expect it to activate.
-		const hasExplicitActiveToolNames = options?.activeToolNames !== undefined;
 		const nextActiveToolNames = (
 			options?.activeToolNames
 				? [...options.activeToolNames]
 				: [...(this._requestedActiveToolNames ?? previousActiveToolNames)]
 		).filter((name) => {
 			if (!isAllowedTool(name)) return false;
-			if (!hasExplicitActiveToolNames && temporarilyDisabledToolNames.has(name)) return false;
 			const previousRegistrationIds = options?.previousActiveToolRegistrationIds;
 			if (!previousRegistrationIds) return true;
 			const current = this._toolDefinitions.get(name);
@@ -7711,7 +7703,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", "bash", "edit", "write", "grep"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
