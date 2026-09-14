@@ -1,5 +1,17 @@
 use napi_derive::napi;
 
+mod cancel;
+mod matcher;
+mod options;
+mod search;
+mod walk;
+
+pub use cancel::CancelToken;
+pub use options::{
+    GrepCounts, GrepError, GrepFileCount, GrepMatch, GrepMode, GrepOptions, GrepResult, GrepWarning,
+};
+pub use search::search;
+
 /// Native ABI version. This is INTENTIONALLY decoupled from the package/CalVer
 /// version: it identifies the shape of the native surface (exports + signatures)
 /// that the TypeScript loader requires. Bump it ONLY on a backward-incompatible
@@ -18,11 +30,4 @@ pub fn senpi_grep_abi_sentinel() -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn abi_sentinel_matches_abi_version() {
-        assert_eq!(senpi_grep_abi_sentinel(), NATIVE_GREP_ABI_VERSION);
-    }
-}
+mod tests;

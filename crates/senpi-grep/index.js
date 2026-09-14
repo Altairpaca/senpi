@@ -588,3 +588,4 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding
 module.exports.__senpiGrepAbi1 = nativeBinding.__senpiGrepAbi1
+module.exports.GrepMode = nativeBinding.GrepMode
