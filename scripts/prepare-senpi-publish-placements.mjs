@@ -84,9 +84,16 @@ export function resolvePublishPlacements(packages, internalPackageNames) {
 	function placementsOf(manifestPath) {
 		const known = placementsByPath.get(manifestPath);
 		if (known) return known;
-		const { chain } = splitManifestPath(manifestPath);
+		const { prefix, chain } = splitManifestPath(manifestPath);
 		if (!losers.has(manifestPath)) {
-			const placements = [chainLockPath(chain)];
+			// A nested entry follows its manifest parent wherever that parent is placed: it is
+			// the parent's own resolution and must move (or multiply) with it.
+			const name = chain.at(-1);
+			const parentPath = chain.length > 1 ? `${prefix}${chainLockPath(chain.slice(0, -1))}` : undefined;
+			const placements =
+				parentPath !== undefined && packages[parentPath]
+					? placementsOf(parentPath).map((parent) => `${parent}/node_modules/${name}`)
+					: [chainLockPath(chain)];
 			placementsByPath.set(manifestPath, placements);
 			return placements;
 		}
@@ -118,5 +125,6 @@ export function resolvePublishPlacements(packages, internalPackageNames) {
 			staged.set(lockPath, { lockPath, chain: lockPathPackageChain(lockPath), entry });
 		}
 	}
+	// Parent before child: shallower placements first, then a stable order within a depth.
 	return [...staged.values()].sort((a, b) => a.chain.length - b.chain.length || a.lockPath.localeCompare(b.lockPath));
 }

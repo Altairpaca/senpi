@@ -19,7 +19,7 @@ describe("lockPathPackageChain", () => {
 });
 
 describe("resolvePublishPlacements", () => {
-	it("keeps nested and workspace-local entries at their manifest paths, depth first, and skips internal workspaces", () => {
+	it("keeps nested and workspace-local entries at their manifest paths, parents before children, and skips internal workspaces", () => {
 		const placements = resolvePublishPlacements(
 			{
 				"": { dependencies: { htmlparser2: "10.1.0", diff: "9.0.0" } },
@@ -93,6 +93,27 @@ describe("resolvePublishPlacements", () => {
 				"node_modules/zod": "4.4.3",
 				"node_modules/@modelcontextprotocol/sdk/node_modules/zod": "3.25.76",
 				"node_modules/pinned/node_modules/zod": "3.22.4",
+			},
+		);
+	});
+
+	it("moves a relocated root copy's own nested resolutions with it", () => {
+		// consumer resolved the root x@1, which carries its own nested y@1; the workspace-local
+		// x@2 takes the top-level slot, so the old x and ITS y must both land under consumer.
+		assert.deepEqual(
+			placementsOf({
+				"node_modules/consumer": pkg("1.0.0", { x: "1.0.0" }),
+				"node_modules/x": pkg("1.0.0", { y: "1.0.0" }),
+				"node_modules/x/node_modules/y": pkg("1.0.0"),
+				"node_modules/y": pkg("2.0.0"),
+				"packages/coding-agent/node_modules/x": pkg("2.0.0"),
+			}),
+			{
+				"node_modules/consumer": "1.0.0",
+				"node_modules/x": "2.0.0",
+				"node_modules/y": "2.0.0",
+				"node_modules/consumer/node_modules/x": "1.0.0",
+				"node_modules/consumer/node_modules/x/node_modules/y": "1.0.0",
 			},
 		);
 	});

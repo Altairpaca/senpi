@@ -121,6 +121,43 @@ describe("stagePublishDependencies", () => {
 		assert.throws(() => stagePublishDependencies(tempDir, internalPackageNames), /Missing .*node_modules\/x@2\.0\.0 for node_modules\/x/);
 	});
 
+	it("keeps a child whose only matching copy sits inside the parent being replaced", () => {
+		// Given: the root install has parent@1 without its children, while the staged tree
+		// already holds parent@1 with the only copies of a required and an optional child.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-staged-only-child-"));
+		writePackage(tempDir, "parent");
+		const stagedParent = writePackage(join(tempDir, "packages", "coding-agent"), "parent");
+		writePackage(stagedParent, "child", "1.5.0");
+		writePackage(stagedParent, "opt-child", "2.5.0");
+		writeManifest(tempDir, {
+			"": { dependencies: { parent: "1.0.0" } },
+			"node_modules/parent": { version: "1.0.0" },
+			"node_modules/parent/node_modules/child": { version: "1.5.0" },
+			"node_modules/parent/node_modules/opt-child": { version: "2.5.0", optional: true },
+		});
+
+		// When
+		stagePublishDependencies(tempDir, internalPackageNames);
+
+		// Then: both children survive the parent's replacement at their manifest versions.
+		assert.equal(stagedVersion(tempDir, "node_modules/parent"), "1.0.0");
+		assert.equal(stagedVersion(tempDir, "node_modules/parent/node_modules/child"), "1.5.0");
+		assert.equal(stagedVersion(tempDir, "node_modules/parent/node_modules/opt-child"), "2.5.0");
+	});
+
+	it("reports a candidate whose package.json is not valid JSON instead of treating it as absent", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-stage-broken-manifest-"));
+		const brokenDir = join(tempDir, "packages", "coding-agent", "node_modules", "platform-opt");
+		mkdirSync(brokenDir, { recursive: true });
+		writeFileSync(join(brokenDir, "package.json"), "{ not json");
+		writeManifest(tempDir, {
+			"": { optionalDependencies: { "platform-opt": "3.0.0" } },
+			"node_modules/platform-opt": { version: "3.0.0", optional: true },
+		});
+
+		assert.throws(() => stagePublishDependencies(tempDir, internalPackageNames), /platform-opt\/package\.json is not valid JSON/);
+	});
+
 	it("removes a stale copy of an optional entry that no installed package matches", () => {
 		// Given: the staged tree still carries platform-opt@2 from an earlier graph; the manifest
 		// wants 3.0.0 and nothing installed provides it.

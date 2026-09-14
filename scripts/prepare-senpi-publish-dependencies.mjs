@@ -5,7 +5,8 @@
 // produced: every entry lands at the placement resolvePublishPlacements() derives from the
 // manifest (nested entries included) with the manifest version, and anything the manifest
 // does not place is pruned.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { chainLockPath, resolvePublishPlacements } from "./prepare-senpi-publish-placements.mjs";
 export { lockPathPackageChain } from "./prepare-senpi-publish-placements.mjs";
@@ -27,12 +28,22 @@ function listPackageDirectories(nodeModulesDir) {
 	return packages;
 }
 
+// Only "no package here" is a non-match; a manifest that exists but cannot be read or
+// parsed is a broken installation and surfaces as such.
 function installedPackageMatches(packageDir, entry) {
+	const manifestPath = join(packageDir, "package.json");
+	let source;
+	try {
+		source = readFileSync(manifestPath, "utf8");
+	} catch (error) {
+		if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+		throw error;
+	}
 	let installed;
 	try {
-		installed = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
-	} catch {
-		return false;
+		installed = JSON.parse(source);
+	} catch (error) {
+		throw new Error(`${manifestPath} is not valid JSON: ${error.message}`);
 	}
 	return typeof entry?.version !== "string" || installed.version === entry.version;
 }
@@ -84,6 +95,16 @@ function pruneUnlistedPackages(nodeModulesDir, manifestLockPaths, internalPackag
 	}
 }
 
+function copyPackage(sourcePath, targetPath) {
+	mkdirSync(dirname(targetPath), { recursive: true });
+	// Only the package itself: whatever the installer nested inside it is its own placement,
+	// not the manifest's, and would shadow the entries staged here.
+	cpSync(sourcePath, targetPath, {
+		recursive: true,
+		filter: (source) => !relative(sourcePath, source).split(sep).includes("node_modules"),
+	});
+}
+
 export function stagePublishDependencies(repoRoot, internalPackageNames) {
 	// Staging manifest for the bundled publish tree. NOT npm-shrinkwrap.json: shipping a
 	// file named npm-shrinkwrap.json breaks bundleDependencies installs (see the guard in
@@ -93,19 +114,12 @@ export function stagePublishDependencies(repoRoot, internalPackageNames) {
 	const codingAgentDir = join(repoRoot, "packages/coding-agent");
 	const codingAgentNodeModules = join(codingAgentDir, "node_modules");
 
-	// Placements come depth-first: a parent is staged before its nested entries so a nested
-	// copy lands inside the freshly copied parent instead of being wiped by it.
-	const stagedEntries = resolvePublishPlacements(manifest.packages ?? {}, internalPackageNames);
-
-	for (const { lockPath, chain, entry } of stagedEntries) {
+	// Every source is located before anything is replaced: a child's only matching copy may
+	// sit inside the parent about to be replaced (materialized optionals live there).
+	const plan = [];
+	for (const { lockPath, chain, entry } of resolvePublishPlacements(manifest.packages ?? {}, internalPackageNames)) {
 		const optional = entry && typeof entry === "object" && entry.optional === true;
 		const targetPath = join(codingAgentDir, lockPath);
-		if (chain.length > 1 && !existsSync(join(codingAgentDir, chainLockPath(chain.slice(0, -1)), "package.json"))) {
-			// The parent was optional and absent; its nested closure is absent with it.
-			if (optional) continue;
-			throw new Error(`Missing staged parent for ${lockPath}. Run npm install before publishing.`);
-		}
-
 		const sourcePath = locateInstalledPackage(repoRoot, chain, entry, targetPath);
 		if (sourcePath === undefined) {
 			// Nothing installed matches the manifest: a copy left at the target by an earlier
@@ -117,18 +131,35 @@ export function stagePublishDependencies(repoRoot, internalPackageNames) {
 				`Missing ${join(repoRoot, "node_modules", chain[chain.length - 1])}${expected} for ${lockPath}. Run npm install before publishing.`,
 			);
 		}
-		if (sourcePath === targetPath) continue;
-
-		rmSync(targetPath, { recursive: true, force: true });
-		mkdirSync(dirname(targetPath), { recursive: true });
-		// Only the package itself: whatever the installer nested inside it is its own placement,
-		// not the manifest's, and would shadow the entries staged here.
-		cpSync(sourcePath, targetPath, {
-			recursive: true,
-			filter: (source) => !relative(sourcePath, source).split(sep).includes("node_modules"),
-		});
+		plan.push({ lockPath, chain, optional, targetPath, sourcePath });
 	}
 
-	pruneUnlistedPackages(codingAgentNodeModules, new Set(stagedEntries.map(({ lockPath }) => lockPath)), internalPackageNames);
+	// Parent before child (placements come shallowest first), so a nested copy lands inside
+	// the freshly staged parent. Replacing a parent would take the copies located inside it
+	// with it, so those are set aside first and staged from there.
+	const salvageRoot = mkdtempSync(join(tmpdir(), "senpi-publish-stage-"));
+	try {
+		for (const [index, step] of plan.entries()) {
+			if (step.chain.length > 1 && !existsSync(join(codingAgentDir, chainLockPath(step.chain.slice(0, -1)), "package.json"))) {
+				// The parent was optional and absent; its nested closure is absent with it.
+				if (step.optional) continue;
+				throw new Error(`Missing staged parent for ${step.lockPath}. Run npm install before publishing.`);
+			}
+			if (step.sourcePath === step.targetPath) continue;
+			const inside = `${step.targetPath}${sep}`;
+			for (const [laterIndex, later] of plan.entries()) {
+				if (laterIndex <= index || !later.sourcePath.startsWith(inside)) continue;
+				const salvaged = join(salvageRoot, String(laterIndex));
+				copyPackage(later.sourcePath, salvaged);
+				later.sourcePath = salvaged;
+			}
+			rmSync(step.targetPath, { recursive: true, force: true });
+			copyPackage(step.sourcePath, step.targetPath);
+		}
+	} finally {
+		rmSync(salvageRoot, { recursive: true, force: true });
+	}
+
+	pruneUnlistedPackages(codingAgentNodeModules, new Set(plan.map(({ lockPath }) => lockPath)), internalPackageNames);
 	return manifest;
 }
