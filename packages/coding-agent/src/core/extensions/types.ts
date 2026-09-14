@@ -451,6 +451,8 @@ export interface ExtensionContext {
 	cwd: string;
 	/** Agent state directory (settings, logs, sessions) resolved for this session. */
 	agentDir: string;
+	/** Resolved paths of loaded extensions, including synthetic builtin/inline identifiers. */
+	readonly loadedExtensionPaths?: readonly string[];
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
 	/** Absolute goal-store path for this session; reading it does not create the file. */

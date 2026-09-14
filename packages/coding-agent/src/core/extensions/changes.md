@@ -1,5 +1,29 @@
 # Core Extensions Changes
 
+## 2026-09-14 - Register herdr with host-owned loaded extension paths (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.loadedExtensionPaths`, including event-only extensions and synthetic factory identifiers.
+- `packages/coding-agent/src/core/extensions/runner.ts` supplies a guarded lazy getter from the resolved paths it already tracks, so relative discovery paths remain usable outside the process cwd.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` registers `herdr` immediately after `ask-user`. The builtin reads the host list at session start, inspects only the first 400 bytes of matching reporter files, and defers only to user-authored reporters. `docs/extensions.md` documents the handoff and coexistence policy.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` exposes the discovery result without making older hand-built contexts incompatible.
+- `packages/coding-agent/src/core/extensions/runner.ts` includes loaded event-only extensions that would be invisible to tool/command enumeration; otherwise a user reporter and the builtin could compete for pane state.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned contract; extension factories cannot inspect co-loaded extensions themselves.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns discovery identities and context lifetime guards. The lifecycle reporter itself remains an extension, not a new host service.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.agentDir` neighbors; keep the field optional and read-only.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createContext()` getter list; preserve `assertActive()` and resolved paths.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: imports and the registration after `ask-user`; retain other builtin ordering.
+
 
 ## 2026-09-13 - Optional authoritative session goal-store path (senpi#1663)
 

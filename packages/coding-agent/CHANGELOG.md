@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added a builtin herdr lifecycle reporter: pending questions and host dialogs mark the pane blocked with their label, active turns/subagents/monitors remain working, and settlement restores idle. It coexists with herdr's managed integration, defers to loaded user-authored `herdr-*` reporters, and releases the pane only on quit. Extensions can inspect the optional read-only `ctx.loadedExtensionPaths` list ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
 ### Changed
 
 - Replaced webfetch's browser-emulation dependency with inert LinkeDOM parsing, preserving reader output and omitted document tags while resolving relative article links and images against the final response URL and retiring CSS/XHR compile assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
