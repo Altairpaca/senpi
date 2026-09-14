@@ -1,3 +1,22 @@
+## 2026-09-14 - Clickable pending-question widget (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` renders sanitized, width-bounded option buttons with two-cell gaps, wrapping between buttons. It records the emitted spans and claims left presses without activating; single clicks route option, own-answer, expand and queue-next callbacks. The host can enable a terminal-specific selection-bypass hint.
+- Visibility coverage now asserts every wrapped option remains available rather than pinning the former single truncated options line. Keyboard behavior is unchanged.
+
+### Why
+
+- Pending choices should expose direct click targets without guessing columns from repeated labels or activating on a drag.
+
+### Why an extension could not handle it
+
+- The host-owned widget owns its rendered cells and hit testing. An extension cannot attach geometry to its committed layout.
+
+### Expected merge conflict zones
+
+- The fork-owned widget render and countdown update methods; no renderer or keyboard-dispatch changes in this increment.
+
 ## 2026-09-13 - Extension commands paint no optimistic user echo
 
 ### What changed
