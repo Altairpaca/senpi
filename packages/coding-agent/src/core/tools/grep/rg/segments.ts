@@ -13,8 +13,10 @@ function planSegments(ordered: Candidate[], request: GrepEngineRequest): Candida
 	for (const candidate of ordered) {
 		const previous = segments.at(-1);
 		if (
+			!candidate.binary &&
 			candidate.size <= MAX_FILE_BYTES &&
 			previous &&
+			!previous[0].binary &&
 			previous[0].size <= MAX_FILE_BYTES &&
 			previous[0].root === candidate.root &&
 			(request.maxCount === undefined || previous.length < CAPPED_BATCH_SIZE)
@@ -25,7 +27,12 @@ function planSegments(ordered: Candidate[], request: GrepEngineRequest): Candida
 	return segments;
 }
 
-function admitFiles(files: Map<string, FileRows>, request: GrepEngineRequest, result: GrepEngineResult): void {
+function admitFiles(
+	files: Map<string, FileRows>,
+	request: GrepEngineRequest,
+	result: GrepEngineResult,
+): Candidate | undefined {
+	let lastCommitted: Candidate | undefined;
 	const segmentFiles = [...files.values()].sort((a, b) => pathOrder(a.candidate.display, b.candidate.display));
 	for (const file of segmentFiles) {
 		const rows = [...file.rows.values()].sort((a, b) => a.line - b.line || (a.column ?? 0) - (b.column ?? 0));
@@ -46,6 +53,7 @@ function admitFiles(files: Map<string, FileRows>, request: GrepEngineRequest, re
 		const available = request.mode === "files" ? 1 : Math.min(matching.length, perFileCap);
 		if (admitted.length < available) result.limitReached = true;
 		if (admitted.length === 0) continue;
+		lastCommitted = file.candidate;
 		result.counts.files++;
 		if (result.counts.matches !== null) result.counts.matches += admitted.length;
 		if (request.mode === "count" || request.mode === "files")
@@ -70,6 +78,7 @@ function admitFiles(files: Map<string, FileRows>, request: GrepEngineRequest, re
 			}
 		}
 	}
+	return lastCommitted;
 }
 
 export async function searchSegments({
@@ -94,9 +103,16 @@ export async function searchSegments({
 	for (const [segmentIndex, segment] of segments.entries()) {
 		check();
 		const first = segment[0];
+		if (first.binary) {
+			result.filesSearched = first.ordinal;
+			continue;
+		}
 		const oversized = first.size > MAX_FILE_BYTES;
 		const prefix = oversized ? await readSearchablePrefix(first, result, check) : undefined;
-		if (oversized && prefix === undefined) continue;
+		if (oversized && prefix === undefined) {
+			result.filesSearched = first.ordinal;
+			continue;
+		}
 
 		const { files, segmentBinary, onEvent } = collectSegmentRows(segment, request, oversized);
 		matcherRan = true;
@@ -106,9 +122,12 @@ export async function searchSegments({
 		// Nothing from a partially completed segment is visible before this point.
 		if (oversized) result.prefixSearched++;
 		result.skippedBinary += segmentBinary.size;
-		admitFiles(files, request, result);
+		const lastCommitted = admitFiles(files, request, result);
+		result.filesSearched = segment[segment.length - 1].ordinal;
 		const admittedCount = request.mode === "files" ? result.counts.files : (result.counts.matches ?? 0);
 		if (request.maxCount !== undefined && admittedCount >= request.maxCount) {
+			// A segment may have searched beyond the cap; only the admitted prefix counts.
+			if (lastCommitted) result.filesSearched = lastCommitted.ordinal;
 			if (segmentIndex < segments.length - 1) result.limitReached = true;
 			break;
 		}

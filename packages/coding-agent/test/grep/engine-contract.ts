@@ -134,6 +134,23 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 			expect(result.matches.map((row) => row.path)).toEqual(["alias/b.ts", "alias/nested/a.ts", "alias/z.ts"]);
 			expect(result.filesSearched).toBe(3);
 		});
+		it("files_searched_counts_all_candidates_including_binary", async () => {
+			const root = await corpus();
+			for (const mode of ["content", "count", "files"] as const) {
+				const result = await search(root, { mode });
+				expect(result.filesSearched).toBe(14);
+				expect(result.skippedBinary).toBe(2);
+			}
+		});
+		it("files_searched_is_sorted_prefix_under_cap", async () => {
+			const root = await corpus();
+			expect((await search(root, { maxCount: 3, maxCountPerFile: 1 })).filesSearched).toBe(5);
+			// The satisfying file is inside a normal-size segment, not at its boundary.
+			const small = await tree({ "a.ts": "needle\n", "b.ts": "needle\n", "z.ts": "needle\n" });
+			for (const mode of ["content", "count", "files"] as const) {
+				expect((await search(small, { mode, maxCount: 1 })).filesSearched).toBe(1);
+			}
+		});
 		it("binary_nul_anywhere_skips_file_all_modes", async () => {
 			const root = await corpus();
 			for (const mode of ["content", "count", "files"] as const) {
@@ -303,7 +320,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 					glob: ["*.ts"],
 				});
 				expect(result.matches.map((row) => row.path)).toEqual(["000.ts"]);
-				expect(result.filesSearched).toBe(500);
+				expect(result.filesSearched).toBe(1);
 				const searches = tracked.calls.filter((args) => args.includes("--json"));
 				expect(searches).toHaveLength(1);
 				expect(searches[0].filter((arg) => arg.startsWith("/") && arg.endsWith(".ts"))).toHaveLength(200);
@@ -357,6 +374,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 				});
 				expect(segments).toBe(2);
 				expect(result.matches).toHaveLength(200);
+				expect(result.filesSearched).toBe(200);
 				expect(result.matches.map((row) => row.path)).toEqual(
 					Array.from({ length: 200 }, (_, i) => `${String(i).padStart(3, "0")}.ts`).sort(byteOrder),
 				);
@@ -388,6 +406,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 					const result = await engine.search({ pattern: "needle", paths: [root], cwd: root, timeoutMs: 100 });
 					expect(result.timedOut).toBe(true);
 					expect(result.matches).toEqual([]);
+					expect(result.filesSearched).toBe(0);
 					expect(child?.exitCode).toBe(0);
 				} finally {
 					if (child && child.exitCode === null && child.signalCode === null) {

@@ -16,6 +16,9 @@ export interface Candidate {
 	display: string;
 	root: Root;
 	size: number;
+	/** One-based position in the complete filtered candidate order, including binary files. */
+	ordinal: number;
+	binary: boolean;
 }
 
 export async function resolveRoots(request: GrepEngineRequest, result: GrepEngineResult): Promise<Root[]> {
@@ -50,7 +53,7 @@ export async function enumerateCandidates({
 	check: () => void;
 	result: GrepEngineResult;
 }): Promise<Candidate[]> {
-	const candidates = new Map<string, Candidate>();
+	const candidates = new Map<string, Omit<Candidate, "ordinal" | "binary">>();
 	for (const root of roots) {
 		const output = await run(["--files", "--null", "--sort", "path", ...walk, "--", root.path], root.cwd);
 		for (const path of output.toString("utf8").split("\0").filter(Boolean)) {
@@ -64,7 +67,6 @@ export async function enumerateCandidates({
 				candidates.set(canonical, { absolute, canonical, display, root, size: info.size });
 		}
 	}
-	result.filesSearched = candidates.size;
 	const binaryPaths = new Set<string>();
 	// Scan the entire normal-size file, including NULs after rg's first search buffer.
 	for (const root of roots) {
@@ -95,6 +97,6 @@ export async function enumerateCandidates({
 	}
 	result.skippedBinary = [...binaryPaths].filter((path) => candidates.has(path)).length;
 	return [...candidates.values()]
-		.filter((candidate) => !binaryPaths.has(candidate.canonical))
-		.sort((a, b) => pathOrder(a.display, b.display));
+		.sort((a, b) => pathOrder(a.display, b.display))
+		.map((candidate, index) => ({ ...candidate, ordinal: index + 1, binary: binaryPaths.has(candidate.canonical) }));
 }
