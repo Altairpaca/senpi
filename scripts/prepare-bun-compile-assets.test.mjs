@@ -56,6 +56,12 @@ it("leaves legacy dependency files untouched when preparing imagegen assets", ()
 	const source = join(tempDir, "node_modules/css-tree/lib/data-patch.js");
 	mkdirSync(dirname(source), { recursive: true });
 	writeFileSync(source, "export default 42;\n");
+	const patch = join(tempDir, "node_modules/css-tree/data/patch.json");
+	mkdirSync(dirname(patch), { recursive: true });
+	writeFileSync(patch, JSON.stringify({ properties: { fixture: { syntax: "<number>" } } }));
+	const skill = join(tempDir, "packages/coding-agent/src/core/extensions/builtin/imagegen/skill/SKILL.md");
+	mkdirSync(dirname(skill), { recursive: true });
+	writeFileSync(skill, "fixture skill\n");
 	const before = readFileSync(source);
 	// When
 	const result = spawnSync(process.execPath, [new URL("./prepare-bun-compile-assets.mjs", import.meta.url).pathname], {
