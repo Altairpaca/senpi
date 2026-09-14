@@ -13,6 +13,7 @@ import { cancellationParity } from "./support/read-summary-cancel.ts";
 import {
 	assertSummary,
 	invocation,
+	jsonSource,
 	privateDir,
 	readerNames,
 	readers,
@@ -62,14 +63,14 @@ describe("structural read parity (#1639)", () => {
 	);
 	it("injects the frozen selection in both default factories", () =>
 		privateDir(async (cwd) => {
-			// Given a supported source file; when the default factories read it; then both summarize.
-			await writeFile(join(cwd, "x.js"), source());
-			assertSummary(textOutput(await createReadTool(cwd).execute("default", { path: "x.js" })));
+			// Given a selected JSON file; when the default factories read it; then both summarize.
+			await writeFile(join(cwd, "x.json"), jsonSource());
+			assertSummary(textOutput(await createReadTool(cwd).execute("default", { path: "x.json" })));
 			assertSummary(
 				textOutput(
 					await createHarnessRead().execute(
 						"default",
-						{ path: "x.js" },
+						{ path: "x.json" },
 						() => {},
 						{ env: new NodeExecutionEnv({ cwd }) },
 						invocation,
@@ -78,12 +79,11 @@ describe("structural read parity (#1639)", () => {
 				),
 			);
 		}));
-	it("summarizes exactly 100 source lines and selected JS/JSON but not 99", () =>
+	it("keeps requalified JS raw and summarizes selected JSON", () =>
 		privateDir(async (cwd) => {
 			const tools = readers(cwd);
 			for (const [path, text, summary] of [
-				["x.js", source(99), false],
-				["x.js", source(100), true],
+				["x.js", source(100), false],
 				["x.ts", source(), false],
 				[
 					"x.json",
@@ -105,7 +105,7 @@ describe("structural read parity (#1639)", () => {
 		}));
 	it("keeps the selected folder when normal session construction supplies image and policy options", () =>
 		privateDir(async (cwd) => {
-			await writeFile(join(cwd, "x.js"), source());
+			await writeFile(join(cwd, "x.json"), jsonSource());
 			const options = {
 				read: { autoResizeImages: false, filesystemPolicy: async () => ({ allow: true as const }) },
 			};
@@ -115,7 +115,7 @@ describe("structural read parity (#1639)", () => {
 				...createReadOnlyTools(cwd, options).filter((tool) => tool.name === "read"),
 			];
 			assert.equal(tools.length, 3);
-			for (const tool of tools) assertSummary(textOutput(await tool.execute("session", { path: "x.js" })));
+			for (const tool of tools) assertSummary(textOutput(await tool.execute("session", { path: "x.json" })));
 		}));
 	it("keeps image detection ahead of folding, even when the file is named js", () =>
 		privateDir(async (cwd) => {

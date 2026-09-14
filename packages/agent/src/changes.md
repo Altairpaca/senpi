@@ -1,9 +1,29 @@
+## 2026-09-14 - Declaration-safe read qualification (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/header-protection.ts` tracks class/function headers and protected parameter, binding and nested declaration intervals until a proven implementation body.
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` rejects every candidate range that overlaps those intervals and fails raw when a type/operator boundary cannot be proved.
+- `packages/agent/src/harness/utils/read-folders/{index,lexical-context,lexical-spans}.ts` freeze the requalified JSON-only default while retaining safe JS/TS candidates for measurement.
+
+### Why
+
+- Declaration text inside class heritage, return types or nested headers must remain visible even when a numerically valid outer body range would contain it. The conservative candidate no longer meets the JavaScript quality threshold, so JavaScript must ship raw.
+
+### Why an extension could not handle it
+
+- The shared folder and default-language registry run below extensions in both read implementations; only this layer can prevent unsafe ranges from reaching the renderer.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` lexical state and `index.ts` frozen selection. Preserve overlap rejection and JSON-only enablement during upstream integration.
+
 ## 2026-09-13 - Corrective production read selection (#1639)
 
 ### What changed
 
 - `packages/agent/src/harness/tools/read.ts` reuses `FileError("aborted")` after fresh bytes and before folding.
-- `packages/agent/src/harness/utils/read-folders/index.ts` binds production measurements: JS/JSON defaults are selected, while the retained TS candidate is excluded from default reads after missing the quality threshold.
+- `packages/agent/src/harness/utils/read-folders/index.ts` originally bound JS/JSON defaults; the 2026-09-14 requalification above supersedes that selection and keeps JS/TS raw.
 - `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` protects arrow-return signatures and classifies definite call arguments, balanced brace-free type arguments and comparison scopes without dropping ambiguity guards.
 - `packages/agent/src/harness/utils/segmented-read-view.ts` proves renderer exhaustiveness while preserving runtime invalid-segment errors.
 

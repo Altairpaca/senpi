@@ -17,8 +17,8 @@ const startedAt = new Date().toISOString();
 try {
 	const control = readSummaryControl();
 	const files = [
+		{ ...control, id: "javascript-raw", path: "javascript.js" },
 		control,
-		{ id: "json", path: "data.json", content: JSON.stringify(Array.from({ length: 20 }, () => Array.from({ length: 12 }, (_, i) => i)), null, 2) },
 		{ ...control, id: "typescript-raw", path: "typescript.ts" },
 		{ ...control, id: "unsupported", path: "unsupported.rs" },
 	];
@@ -31,7 +31,7 @@ try {
 	const binary = await readSurface(binaryLayout.command, binaryDirectory, files);
 	assert.deepEqual(binary.records, source.records);
 	assert.deepEqual(binary.fresh, source.fresh);
-	assert(source.records[0].elided.length > 0);
+	assert.deepEqual(source.records[0].elided, []);
 	assert(source.records[1].elided.length > 0);
 	assert.deepEqual(source.records[2].elided, []);
 	assert.deepEqual(source.records[3].elided, []);

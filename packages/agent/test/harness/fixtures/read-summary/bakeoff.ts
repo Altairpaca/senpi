@@ -3,11 +3,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { READ_FOLDER_SELECTION, selectedReadFolder } from "../../../../src/harness/utils/read-folders/index.ts";
 import { boundaryFixtures } from "./boundary-fixtures.ts";
+import { candidateSourceHashes } from "./candidate-source-hashes.ts";
 import { loadCorpus } from "./corpus.ts";
 import { loadFrozenBaseline, loadReadGate } from "./frozen-baseline.ts";
 import { selectLanguages } from "./language-selections.ts";
 import { annotate, compareOmp, retainedSourceExact } from "./oracle.ts";
+import { typescriptOracle } from "./oracle-typescript.ts";
 import { productionCandidate } from "./production-candidate.ts";
+import { qualifySignatures } from "./qualification.ts";
 import { readRawBaseline } from "./raw-baseline.ts";
 import { runReference, tokenize } from "./reference.ts";
 import { sha256, validBoundaries } from "./scorer.ts";
@@ -49,16 +52,17 @@ export async function bakeoff(options: {
 		settings: reference.settings,
 	});
 	// Freeze source-derived annotations before executing or scoring any candidate.
-	const annotations =
-		frozen?.annotations ??
-		all.map((entry) => {
+	const annotations = all.map((entry) => {
 			const ref = reference.results.find((result) => result.id === entry.id);
 			if (!ref) throw new Error("reference_unavailable");
 			if (ref.sourceSha256 !== entry.sha256) throw new Error("reference_source_hash_mismatch");
 			return {
 				id: entry.id,
 				source_sha256: entry.sha256,
-				ranges: annotate(entry.source, entry.language, ref.nodes),
+				ranges: frozen && entry.language === "rust"
+					? frozen.annotations.find((item) => item.id === entry.id)?.ranges ?? []
+					: annotate(entry.source, entry.language, ref.nodes),
+				protected: ["ts", "tsx", "js"].includes(entry.language) ? typescriptOracle(entry.source, entry.language).protected : [],
 				reference_annotation_errors: ref.annotationErrors,
 			};
 		});
@@ -80,12 +84,9 @@ export async function bakeoff(options: {
 		const candidate = await productionCandidate(options.input, entry.file, entry.source);
 		const candidateMs = performance.now() - candidateStart;
 		const exact = retainedSourceExact(entry.source, candidate);
-		const valid = validBoundaries({
-			source: entry.source,
-			folds: candidate.folds,
-			allowed: annotation.ranges,
-			retainedExact: exact,
-		});
+		const boundaryInput = { source: entry.source, allowed: annotation.ranges, protected: annotation.protected, retainedExact: exact };
+		const valid = validBoundaries({ ...boundaryInput, folds: candidate.folds }) &&
+			candidate.discoveredFolds.every((fold) => validBoundaries({ ...boundaryInput, folds: [fold] }));
 		writeFileSync(join(out, "raw", `${entry.id}.txt`), raw);
 		writeFileSync(join(out, "omp", `${entry.id}.txt`), ref.text);
 		writeFileSync(join(out, "candidate", `${entry.id}.txt`), candidate.text);
@@ -108,6 +109,7 @@ export async function bakeoff(options: {
 			valid,
 			exact,
 			allowed: annotation.ranges,
+			protected: annotation.protected,
 			referenceComparison: compareOmp(entry.source, ref.text, annotation.ranges),
 		});
 	}
@@ -125,6 +127,7 @@ export async function bakeoff(options: {
 	const tokens = tokenize(
 		options.omp,
 		rows.flatMap((row) => [row.raw, row.omp, row.candidate.text, row.candidate.defaultReadText]),
+		reference.tokenizer,
 	);
 	const samples = rows.map((row, index) => ({
 		...row,
@@ -144,6 +147,8 @@ export async function bakeoff(options: {
 			sha256: row.entry.sha256,
 			synthetic: row.entry.id.startsWith("boundary-"),
 			allowed: row.allowed,
+			protected: row.protected,
+			discovered: row.candidate.discoveredFolds,
 			candidate: row.candidate.folds,
 			fallback_reason: row.candidate.fallback_reason,
 			scanned_folds: row.candidate.scanned_folds,
@@ -153,7 +158,9 @@ export async function bakeoff(options: {
 			omp: row.referenceComparison,
 		})),
 	});
-	const selections = selectLanguages(samples, corpus.max_embedded_delta_bytes);
+	const adversarial = qualifySignatures();
+	json("adversarial-boundaries.json", adversarial);
+	const selections = selectLanguages(samples, corpus.max_embedded_delta_bytes, adversarial);
 	const csv = [
 		"id,language,sha256,synthetic,source_bytes,raw_tokens,omp_tokens,candidate_tokens,saved_token_fraction,omp_saved_token_fraction,raw_ms,omp_ms,candidate_ms,valid_boundaries,candidate_reason,fallback_reason,scanned_folds,emitted_folds,minimum_oracle_skeleton_lines,default_read_tokens",
 	];
@@ -196,18 +203,7 @@ export async function bakeoff(options: {
 			languages: READ_FOLDER_SELECTION.languages,
 			folder: { id: selectedReadFolder.id, version: selectedReadFolder.version },
 		},
-		candidate_sources_sha256: Object.fromEntries(
-			[
-				"read-folders/brace-scanner.ts",
-				"read-folders/lexical-context.ts",
-				"read-folders/lexical-spans.ts",
-				"read-folders/types.ts",
-				"segmented-read-view.ts",
-			].map((path) => [
-				path,
-				sha256(readFileSync(new URL(`../../../../src/harness/utils/${path}`, import.meta.url))),
-			]),
-		),
+		candidate_sources_sha256: candidateSourceHashes(),
 		tree_sha: execFileSync("git", ["write-tree"], { encoding: "utf8" }).trim(),
 		binary_measurement: "omp-item1 --case compiled-parity (release graph, all shipped targets)",
 		gate_status: "OQ1_unresolved_defaults_used",
@@ -221,6 +217,8 @@ export async function bakeoff(options: {
 		finishedAt: new Date().toISOString(),
 		corpus_sha256: sha256(readFileSync(join(out, "corpus.json"))),
 		annotations_sha256: annotationsHash,
+		adversarial_boundaries_sha256: sha256(readFileSync(join(out, "adversarial-boundaries.json"))),
+		oracle_mode: "requalified_source_AST_with_protected_intervals",
 		tokenizer: reference.tokenizer,
 		max_embedded_delta_bytes: corpus.max_embedded_delta_bytes,
 		grammar_pins: "grammar-pins.json",

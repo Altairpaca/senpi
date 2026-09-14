@@ -1,5 +1,6 @@
+import { HeaderProtection } from "./header-protection.ts";
 import { controls, expressionKeywords, isCallCallee, type Open, signatureDeclarations } from "./lexical-context.ts";
-import { commentSpan, regexSpan, stringSpan, typeArgumentsSpan } from "./lexical-spans.ts";
+import { commentSpan, lineCommentEnd, regexSpan, stringSpan, typeArgumentsSpan } from "./lexical-spans.ts";
 import type { ReadFoldSettings, ReadLineRange } from "./types.ts";
 
 type Scan =
@@ -10,6 +11,7 @@ type Scan =
 export function scanBraces(source: string, language: "ts" | "js" | "json", settings: ReadFoldSettings): Scan {
 	const ranges: ReadLineRange[] = [];
 	const stack: Open[] = [];
+	const headers = new HeaderProtection();
 	const fail = (reason: string): Scan => ({ status: "parse_failure", reason });
 	let line = 1;
 	let i = 0;
@@ -17,6 +19,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 	let templateDepth = 0;
 	let previous = "";
 	let beforeWord = "";
+	let wordLine = 1;
 	let valueArrow = false;
 	let expressionEnd: boolean | null = false;
 	let importClause = false;
@@ -47,6 +50,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 					line,
 					foldable: false,
 					protected: true,
+					signature: false,
 					interpolation: true,
 					control: false,
 					call: false,
@@ -67,14 +71,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			continue;
 		}
 		if (char === "/" && next === "/") {
-			while (
-				i < source.length &&
-				source[i] !== "\n" &&
-				source[i] !== "\r" &&
-				source[i] !== "\u2028" &&
-				source[i] !== "\u2029"
-			)
-				i++;
+			i = lineCommentEnd(source, i);
 			continue;
 		}
 		if (char === "/" && next === "*") {
@@ -90,6 +87,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			) {
 				ranges.push({ startLine: line + 1, endLine: line + span.newlines - 1 });
 			}
+			if (source.startsWith("/**", i) || source.startsWith("/*!", i)) headers.protect(line, line + span.newlines);
 			line += span.newlines;
 			i = span.end;
 			continue;
@@ -130,6 +128,8 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			while (/[A-Za-z_$0-9]/.test(source[i] ?? "")) i++;
 			beforeWord = previous;
 			previous = source.slice(start, i);
+			wordLine = line;
+			if (!headers.word(previous, beforeWord, stack.length, line, language === "ts")) return fail("unproved_header");
 			expressionEnd = !expressionKeywords.has(previous);
 			if (language === "ts" && signatureDeclarations.has(previous)) signatureDeclaration = true;
 			if (previous === "import") importClause = true;
@@ -154,16 +154,19 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				!stack.at(-1)?.call
 			)
 				return fail("ambiguous_binding");
+			const body = headers.open(char, stack.length, previous, line);
+			if (!headers.punctuation(char, stack.length, line)) return fail("unproved_header");
 			const call = char === "(" && isCallCallee(previous, beforeWord);
 			const declaration = signatureDeclaration && !stack.some((open) => open.declaration);
-			const protectedRange =
-				declaration ||
-				(char === "(" && !call && !(previous === "=>" && valueArrow)) ||
-				importClause ||
-				stack.some((open) => open.protected) ||
+			const signature = declaration || headers.active || stack.some((open) => open.signature) ||
+				(char === "[" && stack.at(-1)?.classBody === true) || importClause ||
 				["const", "let", "var", "export", "type", "#", "!"].includes(previous) ||
 				(language !== "json" && [":", "<", "&", "|"].includes(previous)) ||
 				(language === "ts" && previous === "=>" && !valueArrow);
+			const protectedRange =
+				signature ||
+				(char === "(" && !call && !(previous === "=>" && valueArrow)) ||
+				stack.some((open) => open.protected);
 			const foldable =
 				templateDepth === 0 &&
 				char !== "(" &&
@@ -172,8 +175,11 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			stack.push({
 				char,
 				line,
+				headerLine: char === "(" ? wordLine : line,
+				classBody: body === "class",
 				foldable,
 				protected: protectedRange,
+				signature,
 				interpolation: false,
 				control: char === "(" && controls.has(previous),
 				call,
@@ -195,6 +201,8 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				i++;
 				continue;
 			}
+			if (open.signature) headers.protect(open.headerLine ?? open.line, line);
+			if (char === ")" && !open.call && !open.control) headers.closedParameters(stack.length, open.headerLine ?? open.line);
 			if (open.foldable && line - open.line - 1 >= settings.minBodyLines)
 				ranges.push({ startLine: open.line + 1, endLine: line - 1 });
 			valueArrow = open.valueParameters;
@@ -231,10 +239,12 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			signatureDeclaration = false;
 			if (ambiguousAngleDepth === stack.length) ambiguousAngleDepth = undefined;
 		}
+		if (!headers.punctuation(char === "=" && next === ">" ? "=>" : char, stack.length, line)) return fail("unproved_header");
 		valueArrow = valueArrow && previous === ")" && char === "=" && next === ">";
 		previous = char === "=" && next === ">" ? "=>" : char;
 		i += previous === "=>" ? 2 : 1;
 		expressionEnd = char === "." ? null : false;
 	}
-	return template || templateDepth || stack.length ? fail("unbalanced_delimiters") : { status: "parsed", ranges };
+	return template || templateDepth || stack.length || headers.unfinished
+		? fail("unbalanced_or_unproved_header") : { status: "parsed", ranges: headers.filter(ranges) };
 }

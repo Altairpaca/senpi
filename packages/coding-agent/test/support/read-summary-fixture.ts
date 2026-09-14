@@ -33,6 +33,13 @@ export const interiorFolder: ReadFolder = Object.freeze({
 export function textOutput(result: { content: readonly { type: string; text?: string }[] }): string {
 	return result.content.flatMap((part) => (part.type === "text" ? [part.text ?? ""] : [])).join("\n");
 }
+export function jsonSource(): string {
+	return JSON.stringify(
+		Array.from({ length: 20 }, (_, n) => Array.from({ length: 12 }, (_, i) => `body-${n}-${i} brace } {`)),
+		null,
+		2,
+	);
+}
 export function source(total = 160): string {
 	const body = (n: number) =>
 		[

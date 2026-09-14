@@ -7,6 +7,7 @@ export type Sample = {
 	readonly sha256: string;
 	readonly folds: readonly Fold[];
 	readonly allowed: readonly Fold[];
+	readonly protected?: readonly Fold[];
 	readonly rawTokens: number;
 	readonly ompTokens: number;
 	readonly candidateTokens: number;
@@ -29,7 +30,10 @@ export type Selection = {
 export function sha256(source: string | Uint8Array): string {
 	return createHash("sha256").update(source).digest("hex");
 }
-export function validBoundaries(sample: Pick<Sample, "source" | "folds" | "allowed" | "retainedExact">): boolean {
+export function overlaps(left: Fold, right: Fold): boolean {
+	return left.start <= right.end && left.end >= right.start;
+}
+export function validBoundaries(sample: Pick<Sample, "source" | "folds" | "allowed" | "protected" | "retainedExact">): boolean {
 	let previousEnd = 0;
 	for (const fold of sample.folds) {
 		if (
@@ -38,6 +42,7 @@ export function validBoundaries(sample: Pick<Sample, "source" | "folds" | "allow
 			fold.start <= previousEnd ||
 			fold.end < fold.start ||
 			fold.end > sample.source.split("\n").length ||
+			sample.protected?.some((header) => overlaps(fold, header)) ||
 			!sample.allowed.some((range) => range.start === fold.start && range.end === fold.end)
 		)
 			return false;

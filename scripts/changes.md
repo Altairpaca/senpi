@@ -1,13 +1,32 @@
 # changes
 
+## 2026-09-14 - Bind read QA to publishing compile behavior (#1639)
+
+### What changed
+
+- `scripts/qa/read-summary-build.mjs` parses both compile commands from `scripts/build-binaries.sh`, requires their platform-neutral flags and entries to agree, and relocates only target/output arguments.
+- `scripts/qa/read-summary-{parity,smoke}.mjs` exercise the requalified JSON default and explicit JavaScript raw control through source and relocated executables.
+
+### Why
+
+- The publishing workflow invokes the shell recipe without runtime package.json autoload. QA must measure and execute those shipping flags rather than the separate package convenience recipe.
+
+### Why an extension could not handle it
+
+- Compile entrypoints and autoload flags are fixed before startup; runtime extensions cannot establish binary parity.
+
+### Expected merge conflict zones
+
+- MEDIUM: `scripts/qa/read-summary-build.mjs` release argv extraction. Keep `scripts/build-binaries.sh` as the authority reached by `.github/workflows/build-binaries.yml`.
+
 ## 2026-09-13 - Reconcile read QA with the release graph (#1639)
 
 ### What changed
 
 - `scripts/prepare-bun-compile-assets.mjs` removes the self-declared empty read asset accessor/output; transitive feature bundle inputs now establish dependency isolation.
-- `scripts/qa/read-summary-build.mjs` derives compile argv from the package release script, checks identical baseline/candidate contracts and executes version smoke from an explicitly staged distribution layout.
+- `scripts/qa/read-summary-build.mjs` originally derived compile argv from the package convenience script; the 2026-09-14 correction above now consumes the publishing shell recipe.
 - `scripts/qa/omp-item1.ts` runs the production folder/view bake-off, recording potential candidate output separately from the actual selected default-read output. The raw comparator explicitly omits a folder.
-- `scripts/qa/read-summary-smoke.mjs` records final-HEAD JS/JSON summary and TS raw behavior on the source and relocated binary. The real rebuilt missing-theme binary remains the initialization-failure proof.
+- `scripts/qa/read-summary-smoke.mjs` records final-HEAD JS/TS raw and JSON summary behavior on the source and relocated binary. The real rebuilt missing-theme binary remains the initialization-failure proof.
 - `scripts/qa/read-summary-rpc.mjs` awaits the exact source-process exit with a 60-second kill fence, avoiding a timing-luck failure on loaded CI filesystems without polling.
 
 ### Why

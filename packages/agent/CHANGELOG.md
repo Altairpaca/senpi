@@ -10,10 +10,12 @@
 
 ### Changed
 
-- Default reads of eligible JS/JSON code now use structural views with exact offset/limit rereads. TypeScript remains raw after the production candidate missed its measured quality threshold. Prose, explicit ranges and existing size-limit fallbacks remain verbatim; callers can inject a folder or omit it from custom options to retain raw reads ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Requalified structural reads against declaration-protected source annotations. JSON remains selected; JavaScript now stays raw after the conservative candidate fell below 90% of the reference median, matching TypeScript's safe raw fallback ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Default reads of eligible JSON now use structural views with exact offset/limit rereads. JavaScript and TypeScript remain raw after the requalified production candidate missed their measured quality thresholds. Prose, explicit ranges and existing size-limit fallbacks remain verbatim; callers can inject a folder or omit it from custom options to retain raw reads ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
 
+- Protected class heritage, parameters, type/operator returns, decorators, bindings and nested declaration headers from overlapping folds; frozen bake-off replay now verifies the tokenizer installation and ships its selection receipt in-tree ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Preserved arrow-return object types in read-folder signatures and reused structured file cancellation before folding. Production measurements use an explicit raw comparator and the actual shared folder/view ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Removed

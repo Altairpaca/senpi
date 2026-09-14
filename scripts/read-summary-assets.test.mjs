@@ -13,12 +13,11 @@ import * as rpc from "./qa/read-summary-rpc.mjs";
 // #1639: a heuristic selection must not gain an install-dependent parser.
 describe("read-summary compile contract", () => {
 	it("uses the release entry graph and compile flags", () => {
-		// Given the actual package release recipe; this compares argv, not command prose.
-		const pkg = JSON.parse(readFileSync(join(build.repository, "packages/coding-agent/package.json"), "utf8"));
-		const args = pkg.scripts["build:binary"].split(" && ").find((part) => part.startsWith("bun build ")).split(/\s+/).slice(2);
+		// Given the publishing contract; output relocation must not change its entry/flag graph.
+		const args = build.releaseCompileArgs(build.repository, "first/senpi");
 		args[args.indexOf("--outfile") + 1] = resolve("read-parity/senpi");
-		// When deriving the argv used by QA; then no release worker or flag can be omitted.
-		assert.deepEqual(build.releaseCompileArgs(build.repository, "read-parity/senpi"), ["bun", "build", ...args]);
+		assert.deepEqual(build.releaseCompileArgs(build.repository, "read-parity/senpi"), args);
+		assert(!args.includes("--compile-autoload-package-json"));
 	});
 	it("correlates parallel read results by invocation identity, not completion order", () => {
 		// Given real RPC event shapes arriving in reverse order.
@@ -77,13 +76,11 @@ describe("read-summary compile contract", () => {
 	});
 
 	it("derives changed release entries and quoted argv without a copied contract", () => {
-		// Given an execution-owned package recipe with a distinct entry and a quoted path.
+		// Given an execution-owned publishing recipe with a distinct entry and a quoted path.
 		const root = mkdtempSync(join(tmpdir(), "read-release-argv-"));
 		try {
-			mkdirSync(join(root, "packages/coding-agent"), { recursive: true });
-			writeFileSync(join(root, "packages/coding-agent/package.json"), JSON.stringify({ scripts: {
-				"build:binary": 'bun run prepare && bun build --compile --splitting "./worker with space.ts" --outfile old && bun run copy-assets',
-			} }));
+			mkdirSync(join(root, "scripts"));
+			writeFileSync(join(root, "scripts/build-binaries.sh"), ['bun build --compile --splitting "./worker with space.ts" --outfile old', 'bun build --compile --splitting "./worker with space.ts" --outfile old.exe'].join("\n"));
 			// When deriving the candidate argv; then release changes and output paths survive as individual arguments.
 			assert.deepEqual(build.releaseCompileArgs(root, join(root, "new output")), ["bun", "build", "--compile", "--splitting", "./worker with space.ts", "--outfile", join(root, "new output")]);
 		} finally {

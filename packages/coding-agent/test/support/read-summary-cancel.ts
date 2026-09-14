@@ -9,10 +9,10 @@ import { createReadTool } from "../../src/core/tools/read.ts";
 import {
 	assertSummary,
 	invocation,
+	jsonSource,
 	privateDir,
 	readerNames,
 	readers,
-	source,
 	textOutput,
 } from "./read-summary-fixture.ts";
 
@@ -32,8 +32,8 @@ async function bounded<T>(signal: Promise<T>): Promise<T> {
 
 export async function cancellationParity() {
 	return privateDir(async (cwd) => {
-		const path = join(cwd, "source.js");
-		await writeFile(path, source());
+		const path = join(cwd, "source.json");
+		await writeFile(path, jsonSource());
 		const receipts = [];
 		for (const name of readerNames) {
 			const early = new AbortController();
@@ -94,7 +94,7 @@ export async function cancellationParity() {
 					await bounded(started.promise);
 					controller.abort();
 					controller.abort();
-					const freshText = `${source()}\nconst cycle = ${cycle};`;
+					const freshText = JSON.stringify({ values: JSON.parse(jsonSource()), cycle }, null, 2);
 					await writeFile(path, freshText);
 					const fresh = readers(cwd, { folder });
 					assertSummary(textOutput(await fresh.read(name, { path })));

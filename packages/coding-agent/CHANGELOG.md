@@ -8,10 +8,11 @@
 
 ### Changed
 
-- Default reads of eligible JS/JSON code now share the harness's structural view, with exact offset/limit rereads for edits. TypeScript remains raw after the conservative production candidate missed its measured quality threshold. Prose, explicit ranges and existing size-limit continuations retain their previous output. Binary parity uses the release package's complete split entry graph and required adjacent data; the read feature adds no parser dependency ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Default reads of eligible JSON now share the harness's structural view, with exact offset/limit rereads for edits. JavaScript and TypeScript remain raw after the declaration-safe production candidate missed their requalified quality thresholds. Prose, explicit ranges and existing size-limit continuations retain their previous output. Binary parity uses the publishing workflow's complete split entry graph and shipping autoload behavior; the read feature adds no parser dependency ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
 
+- Prevented declaration signatures and their descendants from being hidden by direct or enclosing structural folds, and made frozen replay reject tokenizer-byte drift before reporting exact counts ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Preserved arrow-return object types in read signatures, restored the bake-off's explicit raw comparator, and froze default-read languages from the production folder/view rather than the prototype ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Removed

@@ -8,10 +8,10 @@ export const READ_FOLDER_SELECTION = Object.freeze({
 	head: "2a56d5ed9b1d6db1fbe68567e1e67db9e9a030ee",
 	selectionSha256: "b6f231b520423fb55922287ef7bb37c6d5f041be35fc53794b81ad8f31e87b1a",
 	wasm: false,
-	rawReasons: Object.freeze({ ts: "wasm_candidate_pending_owner" } as const),
+	rawReasons: Object.freeze({ ts: "wasm_candidate_pending_owner", js: "wasm_candidate_pending_owner" } as const),
 	languages: Object.freeze({
 		ts: "raw",
-		js: "heuristic",
+		js: "raw",
 		json: "heuristic",
 		tsx: "unsupported",
 		python: "unsupported",
@@ -118,4 +118,4 @@ function fold({ path, text, settings }: ReadFolderInput): ReadFolderResult {
 	}
 }
 
-export const selectedReadFolder: ReadFolder = Object.freeze({ id: "measured-brace", version: "2", fold });
+export const selectedReadFolder: ReadFolder = Object.freeze({ id: "measured-brace", version: "3", fold });

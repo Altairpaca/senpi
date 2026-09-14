@@ -7,13 +7,14 @@ import {
 } from "../../../../src/harness/utils/read-folders/index.ts";
 import { createSegmentedReadView } from "../../../../src/harness/utils/segmented-read-view.ts";
 import type { Prototype } from "./heuristic.ts";
+import type { Fold } from "./scorer.ts";
 
 /** Measure the shipping folder/view and check it against the actual default read tool. */
 export async function productionCandidate(
 	cwd: string,
 	path: string,
 	source: string,
-): Promise<Prototype & { readonly defaultReadText: string }> {
+): Promise<Prototype & { readonly defaultReadText: string; readonly discoveredFolds: readonly Fold[] }> {
 	const parsed = selectedReadFolder.fold({ path, text: source, settings: READ_FOLD_SETTINGS });
 	const view = createSegmentedReadView({ text: source, parsed });
 	const result = await createReadTool(cwd).execute("production-candidate", { path });
@@ -23,6 +24,7 @@ export async function productionCandidate(
 		.join("\n");
 	const queue = parsed.status === "parsed" ? [...parsed.ranges] : [];
 	for (let i = 0; i < queue.length; i++) queue.push(...queue[i].children);
+	const discoveredFolds = queue.map((range) => ({ start: range.startLine, end: range.endLine }));
 	switch (view.status) {
 		case "summary":
 			assert.equal(
@@ -31,6 +33,7 @@ export async function productionCandidate(
 				"Production read violates its frozen selection",
 			);
 			return {
+				discoveredFolds,
 				text: view.rendered.text,
 				defaultReadText: text,
 				folds: view.rendered.elidedRanges.map((range) => ({ start: range.startLine, end: range.endLine })),
@@ -41,6 +44,7 @@ export async function productionCandidate(
 			assert.equal(text, source, "Production raw fallback changed source bytes");
 			const reason = parsed.status === "parse_failure" ? parsed.reason : view.reason;
 			return {
+				discoveredFolds,
 				text,
 				defaultReadText: text,
 				folds: [],

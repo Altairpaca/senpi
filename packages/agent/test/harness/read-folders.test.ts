@@ -144,7 +144,7 @@ describe("selected read folders (#1639)", () => {
 		expect(Object.isFrozen(agent.selectedReadFolder)).toBe(true);
 		expect(agent.READ_FOLDER_SELECTION.languages).toEqual({
 			ts: "raw",
-			js: "heuristic",
+			js: "raw",
 			json: "heuristic",
 			tsx: "unsupported",
 			python: "unsupported",
@@ -154,13 +154,16 @@ describe("selected read folders (#1639)", () => {
 			txt: "prose_exempt",
 		});
 		expect(agent.READ_FOLDER_SELECTION.head).toMatch(/^[a-f0-9]{40}$/);
-		expect(agent.READ_FOLDER_SELECTION.rawReasons.ts).toBe("wasm_candidate_pending_owner");
+		expect(agent.READ_FOLDER_SELECTION.rawReasons).toEqual({
+			ts: "wasm_candidate_pending_owner",
+			js: "wasm_candidate_pending_owner",
+		});
 		expect(agent.READ_FOLDER_SELECTION.wasm).toBe(false);
 		expect(agent.selectedReadFolder.id).toBe("measured-brace");
-		expect(agent.selectedReadFolder.version).toBe("2");
+		expect(agent.selectedReadFolder.version).toBe("3");
 	});
 
-	it.each(["ts", "js"])("preserves complete lexical spans and exact sibling coordinates in %s", (language) => {
+	it.each(["ts", "js"])("does not let an enclosing fold consume nested callback signatures in %s", (language) => {
 		// Given templates with nested interpolation, escaped strings, comments, regex and division.
 		const source = Array.from({ length: 20 }, (_, i) =>
 			[
@@ -174,35 +177,25 @@ describe("selected read folders (#1639)", () => {
 				"}",
 			].join("\n"),
 		).join("\n");
-		// When lexing; then every range is independently known to be exactly a complete body.
-		const result = fold(source, `file.${language}`);
-		expect(result).toEqual({
-			status: "parsed",
-			text: source,
-			ranges: Array.from({ length: 20 }, (_, i) => ({ startLine: i * 8 + 2, endLine: i * 8 + 7, children: [] })),
-		});
+		// When lexing, each outer body overlaps a callback header and cannot be a safe omission.
+		expect(fold(source, `file.${language}`)).toEqual({ status: "parsed", text: source, ranges: [] });
 	});
 
 	it("builds nested one-class ranges without consuming method headers", () => {
 		// Given the frozen one-class case.
 		const fixture = boundaryFixtures().find((f) => f.id === "boundary-ts-one-class");
 		if (!fixture) throw new Error("Missing frozen fixture");
-		// When scanning; then coordinates derive directly from the fixture's source layout.
+		// When scanning; then overlap protection rejects the enclosing class fold,
+		// while independently proven method implementation bodies remain available.
 		const result = fold(fixture.source);
 		expect(result).toEqual({
 			status: "parsed",
 			text: fixture.source,
-			ranges: [
-				{
-					startLine: 2,
-					endLine: 161,
-					children: Array.from({ length: 20 }, (_, i) => ({
-						startLine: i * 8 + 3,
-						endLine: i * 8 + 8,
-						children: [],
-					})),
-				},
-			],
+			ranges: Array.from({ length: 20 }, (_, i) => ({
+				startLine: i * 8 + 3,
+				endLine: i * 8 + 8,
+				children: [],
+			})),
 		});
 	});
 
@@ -249,7 +242,9 @@ describe("selected read folders (#1639)", () => {
 		// Given header syntax sharing the same brace tokens as an implementation body.
 		const text = `${start}\na,\nb,\nc,\nd,\ne\n${end}`;
 		// When scanning; then declaration header members cannot become elisions.
-		expect(fold(text)).toEqual({ status: "parsed", text, ranges: [] });
+		const result = fold(text);
+		if (result.status === "parsed") expect(result).toEqual({ status: "parsed", text, ranges: [] });
+		else expect(result.status).toBe("parse_failure");
 	});
 
 	it.each([

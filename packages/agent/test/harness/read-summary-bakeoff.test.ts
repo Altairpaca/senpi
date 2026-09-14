@@ -37,14 +37,12 @@ describe("read-summary bake-off gate (#1639)", () => {
 	it("keeps the raw comparator verbatim when the public default read summarizes", async () => {
 		// Given a foldable file and the actual integrated reader, not a replacement tool.
 		const cwd = await mkdtemp(join(tmpdir(), "read-raw-baseline-"));
-		const path = join(cwd, "input.js");
-		const source = Array.from({ length: 20 }, (_, i) =>
-			[
-				`function example${i}() {`,
-				...Array.from({ length: 6 }, () => '  const longValue = "raw comparator source bytes";'),
-				"}",
-			].join("\n"),
-		).join("\n");
+		const path = join(cwd, "input.json");
+		const source = JSON.stringify(
+			Array.from({ length: 20 }, () => Array.from({ length: 12 }, () => "raw comparator source bytes")),
+			null,
+			2,
+		);
 		try {
 			await writeFile(path, source);
 			const defaultRead = await createReadTool(cwd).execute("default-control", { path });

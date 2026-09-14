@@ -45,7 +45,7 @@ export async function readSurface(command, directory, files) {
 		for (const file of files) {
 			writeFileSync(join(directory, file.path), file.content);
 			const full = await session.read([{ id: `${file.id}-default`, args: { path: file.path } }]);
-			assert.deepEqual(full.identity.folder, { id: "measured-brace", version: "2" });
+			assert.deepEqual(full.identity.folder, { id: "measured-brace", version: "3" });
 			assert.equal(full.identity.selection.wasm, false);
 			const output = text(full.results[0].result);
 			const elided = output.split("\n").includes("\u2026") ? ranges(output) : [];
@@ -95,17 +95,13 @@ export async function readSurface(command, directory, files) {
 }
 
 export function readSummaryControl() {
-	const content = Array.from({ length: 20 }, (_, i) =>
-		[`function sibling${i}() {`, ...Array.from({ length: 6 }, (_, j) => `  const value${j} = ${i + j};`), "}"].join(
-			"\n",
-		),
-	).join("\n");
+	const content = JSON.stringify(Array.from({ length: 20 }, () => Array.from({ length: 12 }, (_, i) => i)), null, 2);
 	return {
 		id: "positive-control",
-		path: "positive-control.js",
+		path: "positive-control.json",
 		content,
 		sha256: createHash("sha256").update(content).digest("hex"),
-		language: "js",
+		language: "json",
 	};
 }
 

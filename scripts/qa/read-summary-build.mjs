@@ -10,19 +10,22 @@ import { parseArgs } from "node:util";
 import { parse } from "shell-quote";
 import { measureReadSummaryBinaryDelta } from "../prepare-bun-compile-assets.mjs";
 
-/** Execute the release package's argv, never a second hand-maintained entry/flag recipe. */
+/** Consume the shell recipe reached by Build Binaries, not the different package build:binary mode. */
 export function releaseCompileArgs(root, output) {
-	const manifest = JSON.parse(readFileSync(join(root, "packages/coding-agent/package.json"), "utf8"));
-	const tokens = parse(manifest.scripts["build:binary"]);
-	const start = tokens.findIndex((token, index) => token === "bun" && tokens[index + 1] === "build");
-	assert(start >= 0, "Release script must contain bun build");
-	const end = tokens.findIndex((token, index) => index > start && typeof token !== "string");
-	const argv = tokens.slice(start, end < 0 ? undefined : end);
-	assert(argv.includes("--compile"));
-	const outfile = argv.indexOf("--outfile");
-	assert(outfile >= 0 && outfile + 1 < argv.length, "Release compile must name its output");
-	argv[outfile + 1] = resolve(output);
-	return argv;
+	const script = readFileSync(join(root, "scripts/build-binaries.sh"), "utf8").replace(/\\\r?\n/g, " ");
+	const commands = script.split("\n").filter((line) => /^\s*bun build --compile\b/.test(line));
+	assert.equal(commands.length, 2, "Expected both publishing platform compile contracts");
+	const contracts = commands.map((command) => {
+		const tokens = parse(command, (name) => `$${name}`);
+		assert(tokens.every((token) => typeof token === "string"), "Release compile must be a single argv");
+		const argv = tokens.filter((token) => !token.startsWith("--target="));
+		const outfile = argv.indexOf("--outfile");
+		assert(outfile >= 0 && outfile + 1 < argv.length, "Release compile must name its output");
+		argv[outfile + 1] = resolve(output);
+		return argv;
+	});
+	assert.deepEqual(contracts[0], contracts[1], "Publishing platform compile contracts diverge");
+	return contracts[0];
 }
 export const binaryTargets = Object.freeze([
 	"darwin-arm64",

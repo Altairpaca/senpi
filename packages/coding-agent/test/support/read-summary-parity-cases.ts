@@ -11,6 +11,7 @@ import { createSegmentedReadView } from "../../../agent/src/harness/utils/segmen
 import {
 	assertSummary,
 	interiorFolder,
+	jsonSource,
 	privateDir,
 	readerNames,
 	readers,
@@ -20,8 +21,8 @@ import {
 
 export async function summaryParity() {
 	return privateDir(async (cwd) => {
-		const text = source();
-		await writeFile(join(cwd, "source.js"), text);
+		const text = jsonSource();
+		await writeFile(join(cwd, "source.json"), text);
 		const tools = readers(cwd);
 		assert.deepEqual(tools.coding.parameters, tools.harness.parameters);
 		assert.deepEqual(Object.keys(tools.coding.parameters.properties).sort(), ["limit", "offset", "path"]);
@@ -39,13 +40,13 @@ export async function summaryParity() {
 		}
 		const view = createSegmentedReadView({
 			text,
-			parsed: selectedReadFolder.fold({ path: "source.js", text, settings: READ_FOLD_SETTINGS }),
+			parsed: selectedReadFolder.fold({ path: "source.json", text, settings: READ_FOLD_SETTINGS }),
 		});
 		assert.equal(view.status, "summary");
 		if (view.status !== "summary") throw new Error("Fixture must summarize");
 		const outputs = await Promise.all(
 			readerNames.map(async (name) => {
-				const output = textOutput(await tools.read(name, { path: "source.js" }));
+				const output = textOutput(await tools.read(name, { path: "source.json" }));
 				assert.deepEqual(assertSummary(output), view.rendered.footer.rereads);
 				assert.equal(output, view.rendered.text);
 				return { name, output, segments: view.segments, ranges: view.rendered.elidedRanges };
@@ -65,20 +66,20 @@ export async function fallbackParity() {
 			return base + "x".repeat(size - Buffer.byteLength(base));
 		};
 		const cases = [
-			{ name: "99", text: source(99), path: "x.js", summary: false },
-			{ name: "100", text, path: "x.js", summary: true },
-			{ name: "offset-1", text, path: "x.js", input: { offset: 1 }, summary: false },
-			{ name: "limit", text, path: "x.js", input: { limit: 100 }, summary: false },
-			{ name: "limit-0", text, path: "x.js", input: { limit: 0 }, summary: false },
-			{ name: "2000", text: long(2000), path: "x.js", summary: true },
-			{ name: "2000-terminal-newline", text: `${long(2000)}\n`, path: "x.js", summary: true },
-			{ name: "2001", text: long(2001), path: "x.js", summary: false },
-			{ name: "51200", text: bytes(51200), path: "x.js", summary: true },
-			{ name: "51201", text: bytes(51201), path: "x.js", summary: false },
-			{ name: "huge-single-line", text: "x".repeat(60000), path: "x.js", summary: false },
-			{ name: "both-thresholds", text: long(3000), path: "x.js", summary: false },
+			{ name: "99", text: source(99), path: "x.json", summary: false },
+			{ name: "100", text, path: "x.json", summary: true },
+			{ name: "offset-1", text, path: "x.json", input: { offset: 1 }, summary: false },
+			{ name: "limit", text, path: "x.json", input: { limit: 100 }, summary: false },
+			{ name: "limit-0", text, path: "x.json", input: { limit: 0 }, summary: false },
+			{ name: "2000", text: long(2000), path: "x.json", summary: true },
+			{ name: "2000-terminal-newline", text: `${long(2000)}\n`, path: "x.json", summary: true },
+			{ name: "2001", text: long(2001), path: "x.json", summary: false },
+			{ name: "51200", text: bytes(51200), path: "x.json", summary: true },
+			{ name: "51201", text: bytes(51201), path: "x.json", summary: false },
+			{ name: "huge-single-line", text: "x".repeat(60000), path: "x.json", summary: false },
+			{ name: "both-thresholds", text: long(3000), path: "x.json", summary: false },
 			{ name: "large.txt", text: long(2500), path: "large.txt", summary: false },
-			{ name: "binary", text: `${text}\0`, path: "x.js", summary: false },
+			{ name: "binary", text: `${text}\0`, path: "x.json", summary: false },
 			...[
 				"txt",
 				"md",
@@ -88,6 +89,7 @@ export async function fallbackParity() {
 				"mkd",
 				"mkdn",
 				"mdx",
+				"js",
 				"ts",
 				"tsx",
 				"jsx",
@@ -145,7 +147,7 @@ export async function fallbackParity() {
 
 export async function folderFallbacks() {
 	return privateDir(async (cwd) => {
-		const path = join(cwd, "source.js");
+		const path = join(cwd, "source.json");
 		await writeFile(path, source());
 		const options = [
 			{},

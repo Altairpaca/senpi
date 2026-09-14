@@ -37,6 +37,12 @@ export function typeArgumentsSpan(source: string, start: number): Span | undefin
 	return undefined;
 }
 
+export function lineCommentEnd(source: string, start: number): number {
+	let end = start;
+	while (end < source.length && !/[\n\r\u2028\u2029]/.test(source[end])) end++;
+	return end;
+}
+
 export function commentSpan(source: string, start: number): Span | undefined {
 	let newlines = 0;
 	for (let i = start; i < source.length; i++) {

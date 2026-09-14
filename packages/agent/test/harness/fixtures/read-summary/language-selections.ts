@@ -21,12 +21,14 @@ type ScoredRow = {
 	readonly minimumOracleSkeleton: number;
 };
 
-export function selectLanguages(samples: readonly ScoredRow[], budget: number) {
+export function selectLanguages(samples: readonly ScoredRow[], budget: number,
+	adversarial: readonly { readonly id: string; readonly language: string; readonly valid: boolean }[] = []) {
 	return languages.map((language) => {
 		if (language === "markdown")
 			return { language, engine: "raw", status: "prose_exempt", reason: "markdown_and_txt_remain_raw" };
 		const real = samples.filter((row) => row.entry.language === language && !row.entry.id.startsWith("boundary-"));
-		const invalid = samples.filter((row) => row.entry.language === language && !row.valid).map((row) => row.entry.id);
+		const invalid = [...samples.filter((row) => row.entry.language === language && !row.valid).map((row) => row.entry.id),
+			...adversarial.filter((row) => row.language === language && !row.valid).map((row) => row.id)];
 		const scored: Sample[] = real.map((row) => ({
 			path: row.entry.file,
 			source: row.entry.source,

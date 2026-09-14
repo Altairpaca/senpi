@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import * as ts from "@typescript/typescript6";
 import { z } from "zod";
 import type { Prototype } from "./heuristic.ts";
+import { typescriptOracle } from "./oracle-typescript.ts";
 import type { SourceNode } from "./reference.ts";
 import { type Fold, sha256 } from "./scorer.ts";
 
@@ -50,46 +50,7 @@ export function annotate(source: string, language: string, rustNodes: readonly S
 				throw error;
 			}
 		}
-		const kind =
-			language === "tsx"
-				? ts.ScriptKind.TSX
-				: language === "js"
-					? ts.ScriptKind.JS
-					: language === "json"
-						? ts.ScriptKind.JSON
-						: ts.ScriptKind.TS;
-		const file = ts.createSourceFile(`input.${language}`, source, ts.ScriptTarget.Latest, true, kind);
-		const line = (pos: number) => file.getLineAndCharacterOfPosition(pos).line + 1;
-		const visit = (node: ts.Node) => {
-			const children = node.getChildren(file);
-			const open = children.find(
-				(c) => c.kind === ts.SyntaxKind.OpenBraceToken || c.kind === ts.SyntaxKind.OpenBracketToken,
-			);
-			const close = children.findLast(
-				(c) => c.kind === ts.SyntaxKind.CloseBraceToken || c.kind === ts.SyntaxKind.CloseBracketToken,
-			);
-			if (open && close && node.kind !== ts.SyntaxKind.NamedImports && node.kind !== ts.SyntaxKind.NamedExports)
-				add(line(open.getStart(file)) + 1, line(close.getStart(file)) - 1, "body");
-			node.forEachChild(visit);
-		};
-		visit(file);
-		// Consecutive import declarations are a source-annotated sibling run.
-		let imports: ts.Statement[] = [];
-		const flushImports = () => {
-			if (imports.length >= 3)
-				add(line(imports[1].getStart(file)), line(imports[imports.length - 2].end - 1), "sibling");
-			imports = [];
-		};
-		for (const statement of file.statements) {
-			if (ts.isImportDeclaration(statement)) imports.push(statement);
-			else flushImports();
-		}
-		flushImports();
-		const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source);
-		for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-			if (token === ts.SyntaxKind.MultiLineCommentTrivia)
-				add(line(scanner.getTokenPos()) + 1, line(scanner.getTextPos() - 1) - 1, "comment");
-		}
+		ranges.push(...typescriptOracle(source, language).allowed);
 	}
 	const lines = source.split("\n");
 	return ranges

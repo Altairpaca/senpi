@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { sha256 } from "./scorer.ts";
+import { verifyTokenizer } from "./tokenizer-identity.ts";
 
 const nodeSchema = z.object({
 	text: z.string(),
@@ -102,7 +103,8 @@ writeFileSync(${JSON.stringify(response)},JSON.stringify({settings:Object.fromEn
 	}
 }
 
-export function tokenize(root: string, texts: readonly string[]): number[] {
+export function tokenize(root: string, texts: readonly string[], identity: z.infer<typeof referenceSchema>["tokenizer"]): number[] {
+	verifyTokenizer(root, identity);
 	const program = `import { encode } from ${JSON.stringify(pathToFileURL(join(root, "node_modules/gpt-tokenizer/esm/encoding/o200k_base.js")).href)};
 import { readFileSync } from "node:fs";
 console.log(JSON.stringify(JSON.parse(readFileSync(0,"utf8")).map(text=>encode(text).length)));`;

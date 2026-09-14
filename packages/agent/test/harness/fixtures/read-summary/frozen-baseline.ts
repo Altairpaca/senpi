@@ -22,8 +22,8 @@ const annotationSchema = z.object({
 	reference_annotation_errors: z.array(z.string()),
 });
 
-// Reuse the actual ReadTool captures verbatim when the experiment changes only
-// its candidate. The oracle and comparator are frozen, not recomputed or mocked.
+// Authenticate original ReadTool captures and historical annotations. The caller
+// recomputes the corrected TS/JS/JSON oracle; historical ranges are not its authority.
 export function loadFrozenBaseline(root: string) {
 	const selection = z
 		.object({

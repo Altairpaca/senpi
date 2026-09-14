@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { assertSummary, privateDir, readerNames, readers, source, textOutput } from "./read-summary-fixture.ts";
+import { assertSummary, jsonSource, privateDir, readerNames, readers, textOutput } from "./read-summary-fixture.ts";
 
 export async function summaryRereadEdit() {
 	return privateDir(async (cwd) => {
 		const receipts = [];
 		for (const name of readerNames)
 			for (const ending of ["\n", "\r\n"]) {
-				const path = join(cwd, `${name}.js`);
-				const original = `${source()}\nconst literal = "\u2026";\n`.replaceAll("\n", ending);
+				const path = join(cwd, `${name}.json`);
+				const original = `${JSON.stringify({ values: JSON.parse(jsonSource()), literal: "\u2026" }, null, 2)}\n`.replaceAll("\n", ending);
 				await writeFile(path, original);
 				const tools = readers(cwd);
 				const output = textOutput(await tools.read(name, { path }));
@@ -32,11 +32,11 @@ export async function summaryRereadEdit() {
 				await tools.edit(name, {
 					path,
 					edits: [
-						{ oldText: 'const literal = "\u2026";', newText: 'const literal = "real source ellipsis edited";' },
+						{ oldText: '  "literal": "\u2026"', newText: '  "literal": "real source ellipsis edited"' },
 					],
 				});
 				assert(
-					textOutput(await tools.read(name, { path })).includes('const literal = "real source ellipsis edited";'),
+					textOutput(await tools.read(name, { path })).includes('  "literal": "real source ellipsis edited"'),
 				);
 				receipts.push({
 					reader: name,
@@ -55,8 +55,8 @@ export async function syntheticEditRefusal() {
 	return privateDir(async (cwd) => {
 		const receipts = [];
 		for (const name of readerNames) {
-			const path = join(cwd, `${name}.js`);
-			const text = `${source()}\nconst literal = "\u2026";`;
+			const path = join(cwd, `${name}.json`);
+			const text = JSON.stringify({ values: JSON.parse(jsonSource()), literal: "\u2026" }, null, 2);
 			await writeFile(path, text);
 			const tools = readers(cwd);
 			const output = textOutput(await tools.read(name, { path }));

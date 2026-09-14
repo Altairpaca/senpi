@@ -1,8 +1,11 @@
 export type Open = {
 	readonly char: "{" | "[" | "(";
 	readonly line: number;
+	readonly headerLine?: number;
+	readonly classBody?: boolean;
 	readonly foldable: boolean;
 	readonly protected: boolean;
+	readonly signature: boolean;
 	readonly interpolation: boolean;
 	readonly control: boolean;
 	readonly call: boolean;
