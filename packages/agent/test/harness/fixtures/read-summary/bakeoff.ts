@@ -53,19 +53,22 @@ export async function bakeoff(options: {
 	});
 	// Freeze source-derived annotations before executing or scoring any candidate.
 	const annotations = all.map((entry) => {
-			const ref = reference.results.find((result) => result.id === entry.id);
-			if (!ref) throw new Error("reference_unavailable");
-			if (ref.sourceSha256 !== entry.sha256) throw new Error("reference_source_hash_mismatch");
-			return {
-				id: entry.id,
-				source_sha256: entry.sha256,
-				ranges: frozen && entry.language === "rust"
-					? frozen.annotations.find((item) => item.id === entry.id)?.ranges ?? []
+		const ref = reference.results.find((result) => result.id === entry.id);
+		if (!ref) throw new Error("reference_unavailable");
+		if (ref.sourceSha256 !== entry.sha256) throw new Error("reference_source_hash_mismatch");
+		return {
+			id: entry.id,
+			source_sha256: entry.sha256,
+			ranges:
+				frozen && entry.language === "rust"
+					? (frozen.annotations.find((item) => item.id === entry.id)?.ranges ?? [])
 					: annotate(entry.source, entry.language, ref.nodes),
-				protected: ["ts", "tsx", "js"].includes(entry.language) ? typescriptOracle(entry.source, entry.language).protected : [],
-				reference_annotation_errors: ref.annotationErrors,
-			};
-		});
+			protected: ["ts", "tsx", "js"].includes(entry.language)
+				? typescriptOracle(entry.source, entry.language).protected
+				: [],
+			reference_annotation_errors: ref.annotationErrors,
+		};
+	});
 	const annotationsHash = sha256(JSON.stringify(annotations));
 	json("source-annotations.json", { sha256: annotationsHash, annotations });
 	const rows = [];
@@ -84,8 +87,14 @@ export async function bakeoff(options: {
 		const candidate = await productionCandidate(options.input, entry.file, entry.source);
 		const candidateMs = performance.now() - candidateStart;
 		const exact = retainedSourceExact(entry.source, candidate);
-		const boundaryInput = { source: entry.source, allowed: annotation.ranges, protected: annotation.protected, retainedExact: exact };
-		const valid = validBoundaries({ ...boundaryInput, folds: candidate.folds }) &&
+		const boundaryInput = {
+			source: entry.source,
+			allowed: annotation.ranges,
+			protected: annotation.protected,
+			retainedExact: exact,
+		};
+		const valid =
+			validBoundaries({ ...boundaryInput, folds: candidate.folds }) &&
 			candidate.discoveredFolds.every((fold) => validBoundaries({ ...boundaryInput, folds: [fold] }));
 		writeFileSync(join(out, "raw", `${entry.id}.txt`), raw);
 		writeFileSync(join(out, "omp", `${entry.id}.txt`), ref.text);

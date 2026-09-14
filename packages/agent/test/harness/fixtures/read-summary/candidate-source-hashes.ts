@@ -11,8 +11,10 @@ const paths = [
 ] as const;
 
 export function candidateSourceHashes() {
-	return Object.fromEntries(paths.map((path) => [
-		path,
-		sha256(readFileSync(new URL(`../../../../src/harness/utils/${path}`, import.meta.url))),
-	]));
+	return Object.fromEntries(
+		paths.map((path) => [
+			path,
+			sha256(readFileSync(new URL(`../../../../src/harness/utils/${path}`, import.meta.url))),
+		]),
+	);
 }

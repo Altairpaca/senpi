@@ -23,11 +23,19 @@ function tokenizerFixture() {
 	hash.update("/package.json").update(files["package.json"]);
 	hash.update("esm/bpeRanks/o200k_base.js").update(files["esm/bpeRanks/o200k_base.js"]);
 	hash.update("esm/encoding/o200k_base.js").update(files["esm/encoding/o200k_base.js"]);
-	return { root, packageRoot, identity: {
-		name: "gpt-tokenizer", version: "4.0.0", encoding: "o200k_base", exact: true as const,
-		files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)])),
-		packageSha256: hash.digest("hex"), lockIntegrity: "fixture-only",
-	} };
+	return {
+		root,
+		packageRoot,
+		identity: {
+			name: "gpt-tokenizer",
+			version: "4.0.0",
+			encoding: "o200k_base",
+			exact: true as const,
+			files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)])),
+			packageSha256: hash.digest("hex"),
+			lockIntegrity: "fixture-only",
+		},
+	};
 }
 
 describe("frozen tokenizer execution identity (#1639)", () => {
@@ -35,7 +43,9 @@ describe("frozen tokenizer execution identity (#1639)", () => {
 		const { root, identity } = tokenizerFixture();
 		try {
 			expect(tokenize(root, ["ab", ""], identity)).toEqual([2, 0]);
-		} finally { rmSync(root, { recursive: true, force: true }); }
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 	it.each([
 		["package.json", '{"name":"gpt-tokenizer","version":"4.0.1","type":"module"}'],
@@ -47,6 +57,8 @@ describe("frozen tokenizer execution identity (#1639)", () => {
 		try {
 			writeFileSync(join(packageRoot, file), bytes);
 			expect(() => tokenize(root, ["ab"], identity)).toThrow("tokenizer_identity_drift");
-		} finally { rmSync(root, { recursive: true, force: true }); }
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

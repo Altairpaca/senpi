@@ -103,7 +103,11 @@ writeFileSync(${JSON.stringify(response)},JSON.stringify({settings:Object.fromEn
 	}
 }
 
-export function tokenize(root: string, texts: readonly string[], identity: z.infer<typeof referenceSchema>["tokenizer"]): number[] {
+export function tokenize(
+	root: string,
+	texts: readonly string[],
+	identity: z.infer<typeof referenceSchema>["tokenizer"],
+): number[] {
 	verifyTokenizer(root, identity);
 	const program = `import { encode } from ${JSON.stringify(pathToFileURL(join(root, "node_modules/gpt-tokenizer/esm/encoding/o200k_base.js")).href)};
 import { readFileSync } from "node:fs";

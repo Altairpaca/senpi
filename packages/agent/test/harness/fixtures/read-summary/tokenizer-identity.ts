@@ -11,8 +11,13 @@ type TokenizerIdentity = z.infer<typeof referenceSchema>["tokenizer"];
 export function verifyTokenizer(root: string, expected: TokenizerIdentity): void {
 	const directory = join(root, "node_modules/gpt-tokenizer");
 	const pkg = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
-	if (expected.name !== "gpt-tokenizer" || expected.encoding !== "o200k_base"
-		|| pkg.name !== expected.name || pkg.version !== expected.version) throw new Error("tokenizer_identity_drift");
+	if (
+		expected.name !== "gpt-tokenizer" ||
+		expected.encoding !== "o200k_base" ||
+		pkg.name !== expected.name ||
+		pkg.version !== expected.version
+	)
+		throw new Error("tokenizer_identity_drift");
 	for (const [path, hash] of Object.entries(expected.files)) {
 		if (sha256(readFileSync(join(directory, path))) !== hash) throw new Error("tokenizer_identity_drift");
 	}
@@ -20,7 +25,8 @@ export function verifyTokenizer(root: string, expected: TokenizerIdentity): void
 	// Preserve the original capture's filename hashing convention exactly.
 	const files = readdirSync(directory, { recursive: true, withFileTypes: true })
 		.filter((entry) => entry.isFile())
-		.map((entry) => `${entry.parentPath.slice(directory.length + 1)}/${entry.name}`).sort();
+		.map((entry) => `${entry.parentPath.slice(directory.length + 1)}/${entry.name}`)
+		.sort();
 	for (const path of files) hash.update(path).update(readFileSync(`${directory}/${path}`));
 	if (hash.digest("hex") !== expected.packageSha256) throw new Error("tokenizer_identity_drift");
 }

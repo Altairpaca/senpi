@@ -9,7 +9,11 @@ export async function summaryRereadEdit() {
 		for (const name of readerNames)
 			for (const ending of ["\n", "\r\n"]) {
 				const path = join(cwd, `${name}.json`);
-				const original = `${JSON.stringify({ values: JSON.parse(jsonSource()), literal: "\u2026" }, null, 2)}\n`.replaceAll("\n", ending);
+				const original =
+					`${JSON.stringify({ values: JSON.parse(jsonSource()), literal: "\u2026" }, null, 2)}\n`.replaceAll(
+						"\n",
+						ending,
+					);
 				await writeFile(path, original);
 				const tools = readers(cwd);
 				const output = textOutput(await tools.read(name, { path }));
@@ -31,13 +35,9 @@ export async function summaryRereadEdit() {
 				// A retained source edit must also be visible on a new default read at the same path.
 				await tools.edit(name, {
 					path,
-					edits: [
-						{ oldText: '  "literal": "\u2026"', newText: '  "literal": "real source ellipsis edited"' },
-					],
+					edits: [{ oldText: '  "literal": "\u2026"', newText: '  "literal": "real source ellipsis edited"' }],
 				});
-				assert(
-					textOutput(await tools.read(name, { path })).includes('  "literal": "real source ellipsis edited"'),
-				);
+				assert(textOutput(await tools.read(name, { path })).includes('  "literal": "real source ellipsis edited"'));
 				receipts.push({
 					reader: name,
 					ending: ending === "\n" ? "LF" : "CRLF",

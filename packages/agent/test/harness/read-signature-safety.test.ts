@@ -12,9 +12,14 @@ describe("declaration boundary safety (#1639)", () => {
 		// Given valid, independently written signatures repeated past the default-read minimum.
 		const signature = signatureSource(fixture);
 		if (fixture.language === "js") expect(() => new Script(signature)).not.toThrow();
-		const syntax = ts.transpileModule(signature, { reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.Latest } });
+		const syntax = ts.transpileModule(signature, {
+			reportDiagnostics: true,
+			compilerOptions: { target: ts.ScriptTarget.Latest },
+		});
 		expect(syntax.diagnostics?.filter((d) => d.category === ts.DiagnosticCategory.Error)).toEqual([]);
-		const declarations = Array.from({ length: 20 }, (_, i) => signature.replace(/\b(Example|choose|value)\b/g, `$1${i}`));
+		const declarations = Array.from({ length: 20 }, (_, i) =>
+			signature.replace(/\b(Example|choose|value)\b/g, `$1${i}`),
+		);
 		const text = declarations.join("\n");
 		const path = `input.${fixture.language}`;
 		const parsed = selectedReadFolder.fold({ path, text, settings: READ_FOLD_SETTINGS });
@@ -29,7 +34,8 @@ describe("declaration boundary safety (#1639)", () => {
 		// Then the direct candidate and the actual default adapter preserve every complete declaration.
 		const view = createSegmentedReadView({ text, parsed });
 		const candidate = view.status === "summary" ? view.rendered.text : text;
-		const actual = createDefaultReadSummary({ path, text, folder: selectedReadFolder, truncated: false })?.text ?? text;
+		const actual =
+			createDefaultReadSummary({ path, text, folder: selectedReadFolder, truncated: false })?.text ?? text;
 		for (const declaration of declarations) {
 			expect(candidate).toContain(declaration);
 			expect(actual).toContain(declaration);
@@ -46,7 +52,9 @@ describe("declaration boundary safety (#1639)", () => {
 		const candidate = { text, folds, reason: "adversarial", scanned_folds: 1 };
 		// When verifying retained bytes, they really are faithful; safety must come from the source oracle.
 		expect(retainedSourceExact(source, candidate)).toBe(true);
-		expect(validBoundaries({ source, folds, allowed: annotate(source, fixture.language), retainedExact: true })).toBe(false);
+		expect(validBoundaries({ source, folds, allowed: annotate(source, fixture.language), retainedExact: true })).toBe(
+			false,
+		);
 	});
 
 	it("rejects enclosing folds that overlap a nested declaration header", () => {

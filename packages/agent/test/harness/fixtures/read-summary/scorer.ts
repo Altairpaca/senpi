@@ -33,7 +33,9 @@ export function sha256(source: string | Uint8Array): string {
 export function overlaps(left: Fold, right: Fold): boolean {
 	return left.start <= right.end && left.end >= right.start;
 }
-export function validBoundaries(sample: Pick<Sample, "source" | "folds" | "allowed" | "protected" | "retainedExact">): boolean {
+export function validBoundaries(
+	sample: Pick<Sample, "source" | "folds" | "allowed" | "protected" | "retainedExact">,
+): boolean {
 	let previousEnd = 0;
 	for (const fold of sample.folds) {
 		if (

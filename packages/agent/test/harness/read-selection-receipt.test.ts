@@ -11,7 +11,9 @@ it("binds the shipped registry to a tracked, reproducible selection receipt (#16
 	const bytes = readFileSync(receipt);
 	const selection = JSON.parse(bytes.toString("utf8"));
 	const trackedPath = relative(process.cwd(), fileURLToPath(receipt));
-	expect(execFileSync("git", ["ls-files", "--error-unmatch", trackedPath], { encoding: "utf8" }).trim()).toBe(trackedPath);
+	expect(execFileSync("git", ["ls-files", "--error-unmatch", trackedPath], { encoding: "utf8" }).trim()).toBe(
+		trackedPath,
+	);
 	expect(sha256(bytes)).toBe(READ_FOLDER_SELECTION.selectionSha256);
 	expect(selection.head_sha).toBe(READ_FOLDER_SELECTION.head);
 	expect(selection.default_read_selection).toEqual({

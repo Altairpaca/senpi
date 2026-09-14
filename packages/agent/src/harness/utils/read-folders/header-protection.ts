@@ -8,8 +8,12 @@ export class HeaderProtection {
 	private pending: Header | undefined;
 	private parameters: { readonly depth: number; readonly startLine: number } | undefined;
 
-	get active(): boolean { return this.pending !== undefined; }
-	get unfinished(): boolean { return this.pending !== undefined; }
+	get active(): boolean {
+		return this.pending !== undefined;
+	}
+	get unfinished(): boolean {
+		return this.pending !== undefined;
+	}
 
 	word(word: string, previous: string, depth: number, line: number, typescript: boolean): boolean {
 		// These operators can hide an arbitrarily shaped type before a real body.
@@ -50,7 +54,9 @@ export class HeaderProtection {
 	}
 
 	filter(ranges: readonly ReadLineRange[]): ReadLineRange[] {
-		return ranges.filter((range) => !this.intervals.some((header) =>
-			range.startLine <= header.endLine && range.endLine >= header.startLine));
+		return ranges.filter(
+			(range) =>
+				!this.intervals.some((header) => range.startLine <= header.endLine && range.endLine >= header.startLine),
+		);
 	}
 }

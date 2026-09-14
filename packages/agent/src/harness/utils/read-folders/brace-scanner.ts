@@ -158,8 +158,12 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			if (!headers.punctuation(char, stack.length, line)) return fail("unproved_header");
 			const call = char === "(" && isCallCallee(previous, beforeWord);
 			const declaration = signatureDeclaration && !stack.some((open) => open.declaration);
-			const signature = declaration || headers.active || stack.some((open) => open.signature) ||
-				(char === "[" && stack.at(-1)?.classBody === true) || importClause ||
+			const signature =
+				declaration ||
+				headers.active ||
+				stack.some((open) => open.signature) ||
+				(char === "[" && stack.at(-1)?.classBody === true) ||
+				importClause ||
 				["const", "let", "var", "export", "type", "#", "!"].includes(previous) ||
 				(language !== "json" && [":", "<", "&", "|"].includes(previous)) ||
 				(language === "ts" && previous === "=>" && !valueArrow);
@@ -202,7 +206,8 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				continue;
 			}
 			if (open.signature) headers.protect(open.headerLine ?? open.line, line);
-			if (char === ")" && !open.call && !open.control) headers.closedParameters(stack.length, open.headerLine ?? open.line);
+			if (char === ")" && !open.call && !open.control)
+				headers.closedParameters(stack.length, open.headerLine ?? open.line);
 			if (open.foldable && line - open.line - 1 >= settings.minBodyLines)
 				ranges.push({ startLine: open.line + 1, endLine: line - 1 });
 			valueArrow = open.valueParameters;
@@ -239,12 +244,14 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			signatureDeclaration = false;
 			if (ambiguousAngleDepth === stack.length) ambiguousAngleDepth = undefined;
 		}
-		if (!headers.punctuation(char === "=" && next === ">" ? "=>" : char, stack.length, line)) return fail("unproved_header");
+		if (!headers.punctuation(char === "=" && next === ">" ? "=>" : char, stack.length, line))
+			return fail("unproved_header");
 		valueArrow = valueArrow && previous === ")" && char === "=" && next === ">";
 		previous = char === "=" && next === ">" ? "=>" : char;
 		i += previous === "=>" ? 2 : 1;
 		expressionEnd = char === "." ? null : false;
 	}
 	return template || templateDepth || stack.length || headers.unfinished
-		? fail("unbalanced_or_unproved_header") : { status: "parsed", ranges: headers.filter(ranges) };
+		? fail("unbalanced_or_unproved_header")
+		: { status: "parsed", ranges: headers.filter(ranges) };
 }
