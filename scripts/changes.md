@@ -80,6 +80,26 @@
 
 - `scripts/qa/omp-item1.ts` is a new fork-only measurement script. Existing build and reader code is unchanged.
 
+## 2026-09-14 - Publish staging mirrors the dependency manifest exactly
+
+### What changed
+
+- `scripts/prepare-senpi-publish-placements.mjs` (new) owns `resolvePublishPlacements`: every `node_modules/...` entry of `publish-deps.lock.json`, top-level and nested, maps to its staged path; npm's workspace-local placements (`packages/coding-agent/node_modules/<pkg>`) are the staged tree's own `node_modules/<pkg>`, and when the root lock placed another version of the same package at the root, the workspace-local copy keeps the top-level slot while the root copy is re-nested under each staged dependent npm resolved to it (recursively), so npm's resolution survives the flattening without evaluating ranges.
+- `scripts/prepare-senpi-publish-dependencies.mjs` (new) owns `stagePublishDependencies`: each placement is staged from a version-matched installed copy (same nesting under the root install, hoisted at the root, already staged in place, or nested under another dependent), copied without whatever the installer nested inside it, and staged packages the manifest does not place are pruned at every nesting level.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` `copyPublishDependencies` delegates to that module with the internal workspace set; the bundled and vendored workspace staging is unchanged.
+
+### Why
+
+- The manifest keeps the root lock's two-level placements while the staged tree has one level, and the developer's install may be bun-hoisted. The old top-level-only copy also let root placements overwrite npm's workspace-local ones, so the published 2026.9.13-2 tarball shipped `zod@3.25.76`, `https-proxy-agent@7.0.6` and `agent-base@7.1.4` next to a manifest declaring `zod@4.4.3` / `https-proxy-agent@9.1.0` and an `http-proxy-agent@9.1.0` that pins `agent-base@9.0.0`. After the linkedom migration the only `entities` entry is nested under `htmlparser2` (7.0.1); bun hoists it to the root, the old top-level-only copy never staged it, and a stale `entities@8`/`parse5` from the previous graph rode into the tarball, where `htmlparser2` resolved `entities/decode` without `fromCodePoint` and the packed engine failed to compile (#1677).
+
+### Why an extension could not handle it
+
+- `scripts/prepare-senpi-publish-placements.mjs`, `scripts/prepare-senpi-publish-dependencies.mjs` and `scripts/prepare-senpi-bundled-workspaces.mjs` build the tarball's dependency tree before any runtime extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `copyPublishDependencies` in `scripts/prepare-senpi-bundled-workspaces.mjs` (now a one-line delegate) and its `scripts/prepare-senpi-bundled-workspaces-copy.test.mjs` nested-entry assertion.
+
 ## 2026-09-13 - Retire webfetch compile-asset workarounds
 
 ### What changed
