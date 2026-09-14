@@ -132,7 +132,7 @@ export function stagePublishDependencies(repoRoot, internalPackageNames) {
 	for (const { lockPath, chain, entry } of stagedEntries) {
 		const optional = entry && typeof entry === "object" && entry.optional === true;
 		const targetPath = join(codingAgentDir, lockPath);
-		if (chain.length > 1 && !existsSync(join(dirname(dirname(targetPath)), "package.json"))) {
+		if (chain.length > 1 && !existsSync(join(codingAgentDir, chainLockPath(chain.slice(0, -1)), "package.json"))) {
 			// The parent was optional and absent; its nested closure is absent with it.
 			if (optional) continue;
 			throw new Error(`Missing staged parent for ${lockPath}. Run npm install before publishing.`);

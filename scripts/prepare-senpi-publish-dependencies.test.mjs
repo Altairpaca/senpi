@@ -56,10 +56,16 @@ describe("stagePublishDependencies", () => {
 		writePackage(stagedRoot, "parse5", "8.0.1");
 		writePackage(join(stagedRoot, "node_modules", "htmlparser2"), "stale-nested");
 		writePackage(stagedRoot, "@earendil-works/pi-ai");
+		// ...and a scoped parent whose scoped child is nested at the same place under the root install.
+		writePackage(tempDir, "@aws-sdk/token-providers", "3.1127.0");
+		writePackage(writePackage(tempDir, "@aws-sdk/credential-provider-sso", "3.973.15"), "@aws-sdk/token-providers", "3.1129.0");
 		writeManifest(tempDir, {
-			"": { dependencies: { htmlparser2: "10.1.0" } },
+			"": { dependencies: { htmlparser2: "10.1.0", "@aws-sdk/credential-provider-sso": "3.973.15" } },
 			"node_modules/htmlparser2": { version: "10.1.0" },
 			"node_modules/htmlparser2/node_modules/entities": { version: "7.0.1" },
+			"node_modules/@aws-sdk/token-providers": { version: "3.1127.0" },
+			"node_modules/@aws-sdk/credential-provider-sso": { version: "3.973.15" },
+			"node_modules/@aws-sdk/credential-provider-sso/node_modules/@aws-sdk/token-providers": { version: "3.1129.0" },
 		});
 
 		// When
@@ -72,6 +78,8 @@ describe("stagePublishDependencies", () => {
 		assert.equal(stagedVersion(tempDir, "node_modules/parse5"), undefined);
 		assert.equal(stagedVersion(tempDir, "node_modules/htmlparser2/node_modules/stale-nested"), undefined);
 		assert.equal(stagedVersion(tempDir, "node_modules/@earendil-works/pi-ai"), "1.0.0");
+		assert.equal(stagedVersion(tempDir, "node_modules/@aws-sdk/token-providers"), "3.1127.0");
+		assert.equal(stagedVersion(tempDir, "node_modules/@aws-sdk/credential-provider-sso/node_modules/@aws-sdk/token-providers"), "3.1129.0");
 	});
 
 	it("never substitutes a copy of another version and finds the matching copy nested under another dependent", () => {
