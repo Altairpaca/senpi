@@ -2,7 +2,8 @@ export type Open = {
 	readonly char: "{" | "[" | "(";
 	readonly line: number;
 	readonly headerLine?: number;
-	readonly classBody?: boolean;
+	/** Opened where a value may start, so it can still turn out to be an assignment target. */
+	readonly target?: boolean;
 	readonly foldable: boolean;
 	readonly protected: boolean;
 	readonly signature: boolean;

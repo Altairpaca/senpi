@@ -11,7 +11,7 @@ import { selectLanguages } from "./language-selections.ts";
 import { annotate, compareOmp, retainedSourceExact } from "./oracle.ts";
 import { typescriptOracle } from "./oracle-typescript.ts";
 import { productionCandidate } from "./production-candidate.ts";
-import { qualifySignatures } from "./qualification.ts";
+import { qualifyEnumeration, qualifySignatures } from "./qualification.ts";
 import { readRawBaseline } from "./raw-baseline.ts";
 import { runReference, tokenize } from "./reference.ts";
 import { sha256, validBoundaries } from "./scorer.ts";
@@ -161,6 +161,7 @@ export async function bakeoff(options: BakeoffOptions) {
 			omp: row.referenceComparison,
 		})),
 	});
+	const enumeration = qualifyEnumeration(join(out, "adversarial-enumeration.json"));
 	const adversarial = qualifySignatures();
 	json("adversarial-boundaries.json", adversarial);
 	const selections = selectLanguages(samples, corpus.max_embedded_delta_bytes, adversarial);
@@ -207,6 +208,7 @@ export async function bakeoff(options: BakeoffOptions) {
 			folder: { id: selectedReadFolder.id, version: selectedReadFolder.version },
 		},
 		candidate_sources_sha256: candidateSourceHashes(),
+		enumeration,
 		tree_sha: execFileSync("git", ["write-tree"], { encoding: "utf8" }).trim(),
 		binary_measurement: "omp-item1 --case compiled-parity (release graph, all shipped targets)",
 		gate_status: "OQ1_unresolved_defaults_used",

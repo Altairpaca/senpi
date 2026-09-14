@@ -16,6 +16,18 @@ export function typescriptOracle(source: string, language: string) {
 	const protectedRanges: Fold[] = [];
 	const bindingPattern = (node: ts.Node): node is ts.BindingPattern =>
 		ts.isObjectBindingPattern(node) || ts.isArrayBindingPattern(node);
+	// A destructuring assignment target is expression-shaped, unlike a declaration/parameter binding.
+	const targetPattern = (node: ts.Node): boolean =>
+		ts.isParenthesizedExpression(node)
+			? targetPattern(node.expression)
+			: ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node);
+	const assignmentTarget = (node: ts.Node): ts.Node | undefined => {
+		if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+			return targetPattern(node.left) ? node.left : undefined;
+		if (ts.isForInStatement(node) || ts.isForOfStatement(node))
+			return targetPattern(node.initializer) ? node.initializer : undefined;
+		return undefined;
+	};
 	const candidates: (Fold & { kind: string })[] = [];
 	const protect = (node: ts.Node, end = node.end) =>
 		protectedRanges.push({
@@ -34,6 +46,20 @@ export function typescriptOracle(source: string, language: string) {
 			ts.isImportDeclaration(node) ||
 			ts.isExportDeclaration(node)
 		) {
+			protect(node);
+			return;
+		}
+		// Protect the complete target subtree: its defaults and nested patterns are never values.
+		const target = assignmentTarget(node);
+		if (target) {
+			protect(target);
+			node.forEachChild((child) => {
+				if (child !== target) visit(child);
+			});
+			return;
+		}
+		// A computed member name can hold an executable expression before its value or body.
+		if (ts.isComputedPropertyName(node)) {
 			protect(node);
 			return;
 		}

@@ -1,12 +1,22 @@
+import { writeFileSync } from "node:fs";
 import { READ_FOLD_SETTINGS, selectedReadFolder } from "../../../../src/harness/utils/read-folders/index.ts";
 import {
 	createDefaultReadSummary,
 	createSegmentedReadView,
 } from "../../../../src/harness/utils/segmented-read-view.ts";
+import { enumerateBoundaries } from "./adversarial-enumeration.ts";
 import { adversarialSignatures, signatureSource } from "./adversarial-signatures.ts";
 import { annotate } from "./oracle.ts";
 import { typescriptOracle } from "./oracle-typescript.ts";
 import { sha256, validBoundaries } from "./scorer.ts";
+
+export function qualifyEnumeration(path: string) {
+	const receipt = enumerateBoundaries();
+	const bytes = `${JSON.stringify(receipt, null, 2)}\n`;
+	writeFileSync(path, bytes);
+	if (receipt.counterexamples.length) throw new Error("adversarial_enumeration_failed");
+	return { ...receipt, sha256: sha256(bytes) };
+}
 
 /** Supplemental safety cases have no comparator/token score and are never counted as real corpus files. */
 export function qualifySignatures() {

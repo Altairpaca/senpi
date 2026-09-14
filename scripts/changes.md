@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-14 - Exercise the selected compiled parser failure (#1639)
+
+### What changed
+
+- `scripts/qa/read-summary-packaging.mjs` feeds malformed selected JSON through the actual relocated reader alongside the unsupported-language control, retaining the rebuilt missing-theme initialization failure.
+- The redundant self-derived release-argv comparison is removed; the independent workflow/shell contract and quoted-argv fixture remain the release authority.
+
+### Why
+
+- An excluded JavaScript file cannot reach the shipped JSON parser and therefore cannot establish compiled parse-failure fallback.
+
+### Why an extension could not handle it
+
+- `scripts/qa/read-summary-packaging.mjs` tests the real compiled reader and initialization behavior, not an extension-provided replacement.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/qa/read-summary-packaging.mjs` malformed-source fixture and raw-result assertions; preserve the missing-theme and byte-budget negatives.
+
 ## 2026-09-14 - Bind read QA to publishing compile behavior (#1639)
 
 ### What changed

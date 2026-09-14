@@ -4,6 +4,7 @@ import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { READ_FOLDER_SELECTION, selectedReadFolder } from "../../src/harness/utils/read-folders/index.ts";
+import { adversarialPrograms } from "./fixtures/read-summary/adversarial-grammar.ts";
 import { sha256 } from "./fixtures/read-summary/scorer.ts";
 
 it("binds the shipped registry to a tracked, reproducible selection receipt (#1639)", () => {
@@ -22,6 +23,9 @@ it("binds the shipped registry to a tracked, reproducible selection receipt (#16
 		languages: READ_FOLDER_SELECTION.languages,
 		folder: { id: selectedReadFolder.id, version: selectedReadFolder.version },
 	});
+	// The frozen decision must come from a run of the current adversarial grammar, with no counterexample.
+	expect(selection.enumeration.grammarSha256).toBe(sha256(JSON.stringify(adversarialPrograms())));
+	expect(selection.enumeration.counterexamples).toEqual([]);
 	for (const language of ["ts", "js", "json"] as const) {
 		const row = selection.languages.find((entry: { language: string }) => entry.language === language);
 		expect(row.invalid_boundaries).toEqual([]);

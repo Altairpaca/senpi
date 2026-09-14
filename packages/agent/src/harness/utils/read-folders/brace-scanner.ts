@@ -150,7 +150,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				!stack.at(-1)?.call
 			)
 				return fail("ambiguous_binding");
-			const body = headers.open(char, stack.length, previous, line);
+			headers.open(char, stack.length, previous, line);
 			if (!headers.punctuation(char, stack.length, line)) return fail("unproved_header");
 			const call = char === "(" && isCallCallee(previous, beforeWord);
 			const declaration = signatureDeclaration && !stack.some((open) => open.declaration);
@@ -158,7 +158,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				declaration ||
 				headers.active ||
 				stack.some((open) => open.signature) ||
-				(char === "[" && stack.at(-1)?.classBody === true) ||
+				(language !== "json" && char === "[" && stack.at(-1)?.char === "{") ||
 				importClause ||
 				["const", "let", "var", "export", "type", "#", "!"].includes(previous) ||
 				(language !== "json" && [":", "<", "&", "|"].includes(previous)) ||
@@ -176,7 +176,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				char,
 				line,
 				headerLine: char === "(" ? wordLine : line,
-				classBody: body === "class",
+				target: char !== "(" && !expressionEnd,
 				foldable,
 				protected: protectedRange,
 				signature,
@@ -201,9 +201,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				i++;
 				continue;
 			}
-			if (open.signature) headers.protect(open.headerLine ?? open.line, line);
-			if (char === ")" && !open.call && !open.control)
-				headers.closedParameters(stack.length, open.headerLine ?? open.line);
+			headers.close(open, stack.length, line);
 			if (open.foldable && line - open.line - 1 >= settings.minBodyLines)
 				ranges.push({ startLine: open.line + 1, endLine: line - 1 });
 			valueArrow = open.valueParameters;

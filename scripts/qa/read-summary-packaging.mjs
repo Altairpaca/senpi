@@ -88,12 +88,15 @@ export async function missingAssetAndBudget(directory, binary, ceiling) {
 	// Bad source remains normal raw output on the good binary; packaging errors never become raw.
 	const healthy = mkdtempSync(join(directory, "bad-source-runtime-"));
 	const healthyLayout = stageReadRuntime(healthy, binary);
-	const content = `${Array.from({ length: 110 }, (_, index) => `const value${index} = ${index};`).join("\n")}\nfunction broken() {`;
+	const content = JSON.stringify({ groups: Array.from({ length: 30 }, (_, value) => ({ value, label: "control" })) }, null, 2).slice(0, -1);
+	assert.throws(() => JSON.parse(content), SyntaxError);
+	assert(content.split("\n").length >= 100 && Buffer.byteLength(content) < 51200);
 	const files = [
-		{ id: "malformed-js", path: "malformed.js", content },
+		{ id: "malformed-json", path: "malformed.json", content },
 		{ id: "unsupported-rust", path: "unsupported.rs", content },
 	];
 	const fallback = await readSurface(healthyLayout.command, healthy, files);
+	assert.equal(fallback.records[0].full.identity.selection.languages.json, "heuristic");
 	for (const row of fallback.records) {
 		assert.deepEqual(row.elided, []);
 		assert.equal(row.full.results[0].result.content[0].text, content);

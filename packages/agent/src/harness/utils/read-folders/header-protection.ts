@@ -1,3 +1,4 @@
+import type { Open } from "./lexical-context.ts";
 import type { ReadLineRange } from "./types.ts";
 
 type Header = { readonly kind: "class" | "function"; readonly depth: number; readonly startLine: number };
@@ -6,6 +7,7 @@ type Header = { readonly kind: "class" | "function"; readonly depth: number; rea
 export class HeaderProtection {
 	readonly intervals: ReadLineRange[] = [];
 	private pending: Header | undefined;
+	private target: number | undefined;
 	private parameters: { readonly depth: number; readonly startLine: number } | undefined;
 
 	get active(): boolean {
@@ -26,21 +28,29 @@ export class HeaderProtection {
 		return true;
 	}
 
-	open(char: string, depth: number, previous: string, line: number): "class" | "function" | undefined {
+	open(char: string, depth: number, previous: string, line: number): void {
 		const header = this.pending;
-		if (char !== "{" || header?.depth !== depth) return undefined;
-		if (header.kind === "function" && previous !== ")") return undefined;
+		if (char !== "{" || header?.depth !== depth) return;
+		if (header.kind === "function" && previous !== ")") return;
 		this.protect(header.startLine, line);
 		this.pending = undefined;
 		this.parameters = undefined;
-		return header.kind;
 	}
 
-	closedParameters(depth: number, startLine: number): void {
-		this.parameters = { depth, startLine };
+	close(open: Open, depth: number, line: number): void {
+		this.target = open.target ? open.line : undefined;
+		const startLine = open.headerLine ?? open.line;
+		// Every protected member context, not only a proven signature, must survive enclosing folds.
+		if (open.protected && (open.signature || open.char !== "(")) this.protect(startLine, line);
+		if (open.char === "(" && !open.call && !open.control) this.parameters = { depth, startLine };
 	}
 
 	punctuation(token: string, depth: number, line: number): boolean {
+		// A value-position array/object reaching '=' is a destructuring assignment target.
+		// Protecting it retrospectively rejects both its members and any enclosing body.
+		const target = this.target;
+		this.target = undefined;
+		if (token === "=" && target !== undefined) this.protect(target, line);
 		if (token === ":" && this.parameters?.depth === depth) return false;
 		if ((token === "{" || token === "=>") && this.parameters?.depth === depth) {
 			this.protect(this.parameters.startLine, line);

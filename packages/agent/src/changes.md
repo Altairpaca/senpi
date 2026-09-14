@@ -1,3 +1,24 @@
+## 2026-09-14 - Computed members and assignment-pattern retention (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` protects computed names in object literals as well as class bodies, and marks every value-position array/object so a later `=` can reclassify it.
+- `packages/agent/src/harness/utils/read-folders/header-protection.ts` gives every protected member context an interval for the overlap filter, and retrospectively protects expression-shaped assignment targets at `=`.
+- `packages/agent/src/harness/utils/read-folders/lexical-context.ts` replaces the class-only computed-name marker with that value-position marker; the brace parent now supplies member context.
+- The independent AST oracle excludes complete assignment target subtrees, and the production bake-off requires the fixed adversarial grammar to pass before freezing a receipt.
+
+### Why
+
+- Computed member names and destructuring-assignment defaults can contain executable object literals without becoming implementation bodies. Both interior and enclosing folds must retain them.
+
+### Why an extension could not handle it
+
+- The public folder returns these ranges below either reader's extension surface; safety must be proved before rendering or qualification.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` and `packages/agent/src/harness/utils/read-folders/header-protection.ts` delimiter state. Preserve retrospective target protection and rejection of every overlapping fold.
+
 ## 2026-09-14 - Declaration-safe read qualification (#1639)
 
 ### What changed

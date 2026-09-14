@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { build as bundle } from "esbuild";
 import * as preparation from "./prepare-bun-compile-assets.mjs";
@@ -12,13 +12,6 @@ import * as rpc from "./qa/read-summary-rpc.mjs";
 
 // #1639: a heuristic selection must not gain an install-dependent parser.
 describe("read-summary compile contract", () => {
-	it("uses the release entry graph and compile flags", () => {
-		// Given the publishing contract; output relocation must not change its entry/flag graph.
-		const args = build.releaseCompileArgs(build.repository, "first/senpi");
-		args[args.indexOf("--outfile") + 1] = resolve("read-parity/senpi");
-		assert.deepEqual(build.releaseCompileArgs(build.repository, "read-parity/senpi"), args);
-		assert(!args.includes("--compile-autoload-package-json"));
-	});
 	it("correlates parallel read results by invocation identity, not completion order", () => {
 		// Given real RPC event shapes arriving in reverse order.
 		const calls = [{ id: "first" }, { id: "second" }];
