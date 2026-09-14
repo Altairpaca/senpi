@@ -1,3 +1,21 @@
+## 2026-09-13 - Extension commands paint no optimistic user echo
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the two `isExtensionCommand` branches in `setupEditorSubmitHandler` dispatch `session.prompt(text)` without `optimisticUserEchoes.begin()`, matching the command dispatch `handleFollowUp` already used.
+
+### Why
+
+- `AgentSession.prompt()` reports `promptDisposition("handled")` only after the command handler resolves, and a command never becomes a canonical user message. For a long-running command such as `/btw`, the `/btw <question>` bubble sat in the transcript for the whole side-query stream next to the panel that already shows the question, then vanished.
+
+### Why an extension could not handle it
+
+- The echo is painted by the host composer before the command reaches any extension; no extension API can suppress it.
+
+### Expected merge conflict zones
+
+- LOW: the `isExtensionCommand` branches in `setupEditorSubmitHandler` (upstream pi dispatches commands there without an echo).
+
 ## 2026-09-13 - Acknowledge explicit question dismissal to the model (senpi#1645)
 
 ### What changed

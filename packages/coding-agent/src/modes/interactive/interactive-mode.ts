@@ -4803,15 +4803,13 @@ export class InteractiveMode {
 					return;
 				}
 				if (this.isExtensionCommand(text)) {
+					// No optimistic echo: the command runs inside AgentSession.prompt() and
+					// never becomes a canonical user message, so the bubble would only sit
+					// next to the command's own UI (e.g. the /btw panel) until the handler
+					// resolved, then vanish. Matches handleFollowUp's command dispatch.
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
-					const pendingEchoId = this.optimisticUserEchoes.begin(text);
-					try {
-						await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
-					} catch (error) {
-						this.optimisticUserEchoes.reject(pendingEchoId);
-						throw error;
-					}
+					await this.session.prompt(text);
 					return;
 				}
 
@@ -4846,13 +4844,7 @@ export class InteractiveMode {
 					if (this.isExtensionCommand(text)) {
 						this.editor.addToHistory?.(text);
 						this.editor.setText("");
-						const pendingEchoId = this.optimisticUserEchoes.begin(text);
-						try {
-							await this.session.prompt(text, this.optimisticUserEchoes.promptOptions(pendingEchoId));
-						} catch (error) {
-							this.optimisticUserEchoes.reject(pendingEchoId);
-							throw error;
-						}
+						await this.session.prompt(text);
 					} else {
 						this.queueCompactionSubmission(text, "steer");
 					}
