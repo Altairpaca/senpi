@@ -47,7 +47,9 @@ cell grid. Prefixes encode role:
 
 ## Release entry graph validation
 
-Run `bun test scripts/release-graph-codemode.test.ts` followed by
+After a lifecycle-disabled install, run `npm rebuild canvas --foreground-scripts`
+(as the release builder does) to provide its native binding. Then run
+`bun test scripts/release-graph-codemode.test.ts` followed by
 `bun test scripts/release-graph-exclusions.test.ts`. The codemode suite rebuilds
 all workspace entries and prepares compile assets before measuring real Bun output
 contributions, so direct invocation also replaces stale `dist` from another branch.

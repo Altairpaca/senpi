@@ -305,6 +305,7 @@ jobs:
       # Keep both graph checks ahead of script tests, which can invalidate dist.
       - name: Fresh release entry graphs (codemode and exclusions)
         run: |
+          npm rebuild canvas --foreground-scripts
           bun test scripts/release-graph-codemode.test.ts
           bun test scripts/release-graph-exclusions.test.ts
 
