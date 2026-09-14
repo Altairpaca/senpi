@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-14 - Publish staging mirrors the dependency manifest exactly
+
+### What changed
+
+- `scripts/prepare-senpi-publish-dependencies.mjs` (new) owns `stagePublishDependencies`: every `node_modules/...` entry of `publish-deps.lock.json`, top-level and nested, is staged at its manifest path from a version-matched installed copy (same nesting under the root install, hoisted at the root, already staged in place, or nested under another dependent), and staged packages the manifest does not list are pruned at every nesting level.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` `copyPublishDependencies` delegates to that module with the internal workspace set; the bundled and vendored workspace staging is unchanged.
+
+### Why
+
+- The manifest is npm's standalone tree for coding-agent while the developer's install may be bun-hoisted. After the linkedom migration the only `entities` entry is nested under `htmlparser2` (7.0.1); bun hoists it to the root, the old top-level-only copy never staged it, and a stale `entities@8`/`parse5` from the previous graph rode into the tarball, where `htmlparser2` resolved `entities/decode` without `fromCodePoint` and the packed engine failed to compile (#1677).
+
+### Why an extension could not handle it
+
+- `scripts/prepare-senpi-publish-dependencies.mjs` and `scripts/prepare-senpi-bundled-workspaces.mjs` build the tarball's dependency tree before any runtime extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `copyPublishDependencies` in `scripts/prepare-senpi-bundled-workspaces.mjs` (now a one-line delegate) and its `scripts/prepare-senpi-bundled-workspaces-copy.test.mjs` nested-entry assertion.
+
 ## 2026-09-13 - Retire webfetch compile-asset workarounds
 
 ### What changed
