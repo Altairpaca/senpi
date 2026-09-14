@@ -102,8 +102,8 @@ pub(crate) fn display_path(path: &Path, cwd: &Path) -> String {
 
 pub(crate) fn order_candidates(files: &mut Vec<Candidate>) {
     files.sort_by(|a, b| a.display.as_bytes().cmp(b.display.as_bytes()));
-    // Paths are canonicalized on admission. Sorting first picks a stable
-    // display alias when roots overlap; completion order cannot choose it.
+    // Sort by display first so overlapping roots pick a stable alias;
+    // completion order cannot choose it. Dedup is by admitted walk path.
     let mut seen = HashSet::new();
     files.retain(|file| seen.insert(file.path.clone()));
 }
@@ -202,14 +202,13 @@ pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Can
             if !globs.accepts(Path::new(&display)) || types.matched(path, false).is_ignore() {
                 return WalkState::Continue;
             }
-            match fs::canonicalize(path) {
-                Ok(path) => files.lock().unwrap().push(Candidate { path, display }),
-                Err(error) => warnings.lock().unwrap().push(GrepWarning {
-                    path: Some(display),
-                    code: "IO_ERROR".into(),
-                    message: error.to_string(),
-                }),
-            }
+            // Admit the walk path as-is. Canonicalizing every candidate on
+            // Darwin is tens of milliseconds for a medium tree and swamps the
+            // search; overlapping roots still dedup on the absolute walk path.
+            files.lock().unwrap().push(Candidate {
+                path: path.to_path_buf(),
+                display,
+            });
             if let Some(error) = entry.error() {
                 warnings.lock().unwrap().push(GrepWarning {
                     path: Some(display_path(entry.path(), cwd)),

@@ -85,7 +85,11 @@ pub fn search(options: &GrepOptions, cancel: &CancelToken) -> Result<GrepResult,
     result.missing_paths = candidates.missing;
     result.warnings = candidates.warnings;
     result.timed_out = cancel.timed_out();
-    'chunks: for chunk in candidates.files.chunks(SEARCH_CHUNK) {
+    let chunk_size = match options.max_count {
+        Some(cap) => (cap as usize).saturating_add(1).clamp(1, SEARCH_CHUNK),
+        None => SEARCH_CHUNK,
+    };
+    'chunks: for chunk in candidates.files.chunks(chunk_size) {
         let files: Vec<_> = chunk
             .par_iter()
             .map(|candidate| search_one(candidate, options, &regex, cancel))
