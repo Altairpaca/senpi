@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the two `isExtensionCommand` branches in `setupEditorSubmitHandler` dispatch `session.prompt(text)` without `optimisticUserEchoes.begin()`, matching the command dispatch `handleFollowUp` already used.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the two `isExtensionCommand` branches in `setupEditorSubmitHandler` dispatch `session.prompt(text)` without `optimisticUserEchoes.begin()`, matching the command dispatch `handleFollowUp` already used. `handleFollowUp`'s streaming branch (Alt+Enter while the main turn streams) now dispatches extension commands the same way instead of painting the echo first.
 
 ### Why
 

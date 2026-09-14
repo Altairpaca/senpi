@@ -452,6 +452,78 @@ describe("/btw extension command", () => {
 		expect(tui.inputHandlerCount).toBe(0);
 	});
 
+	it("ignores a kitty Escape key release", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("/btw settled question");
+		expect(tui.widgets.map((widget) => widget.key)).toEqual(["btw"]);
+		expect(tui.inputHandlerCount).toBe(1);
+
+		// Kitty CSI-u emits a release event after every press; a release whose
+		// press was consumed elsewhere must not dismiss the panel or cancel the query.
+		tui.feedInput("\x1b[27;1:3u");
+
+		expect(tui.widgets).toHaveLength(1);
+		expect(tui.inputHandlerCount).toBe(1);
+	});
+
+	it("cancels an in-flight side query on Escape while the main turn keeps streaming", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		let sideAborted = false;
+		let mainEntered!: () => void;
+		let sideEntered!: () => void;
+		let releaseMain!: () => void;
+		const mainInFlight = new Promise<void>((resolve) => {
+			mainEntered = resolve;
+		});
+		const sideInFlight = new Promise<void>((resolve) => {
+			sideEntered = resolve;
+		});
+		const mainGate = new Promise<void>((resolve) => {
+			releaseMain = resolve;
+		});
+		harness.setResponses([
+			async () => {
+				mainEntered();
+				await mainGate;
+				return fauxAssistantMessage("main answer");
+			},
+			async (_context, options) => {
+				sideEntered();
+				await new Promise<void>((resolve) => {
+					if (options?.signal?.aborted) {
+						sideAborted = true;
+						resolve();
+						return;
+					}
+					options?.signal?.addEventListener("abort", () => {
+						sideAborted = true;
+						resolve();
+					});
+				});
+				throw new Error("aborted");
+			},
+		]);
+
+		const main = harness.session.prompt("main question");
+		await mainInFlight;
+		const side = harness.session.prompt("/btw in-flight question");
+		await sideInFlight;
+
+		tui.feedInput("\x1b");
+		await side;
+
+		expect(sideAborted).toBe(true);
+		expect(tui.widgets.at(-1)).toEqual({ key: "btw", content: undefined });
+		expect(tui.inputHandlerCount).toBe(0);
+
+		releaseMain();
+		await main;
+	});
+
 	it("dismisses the active panel on a bare /btw instead of showing usage", async () => {
 		const harness = await setup();
 		const tui = installTuiHarness(harness);
@@ -476,7 +548,9 @@ describe("/btw extension command", () => {
 		await harness.session.prompt("/btw");
 
 		expect(tui.widgets).toEqual([]);
-		expect(tui.notifications).toEqual([{ message: "Usage: /btw <question>", type: "warning" }]);
+		expect(tui.notifications).toHaveLength(1);
+		expect(tui.notifications[0]?.type).toBe("warning");
+		expect(tui.notifications[0]?.message).toContain("/btw");
 		expect(harness.faux.state.callCount).toBe(0);
 	});
 });

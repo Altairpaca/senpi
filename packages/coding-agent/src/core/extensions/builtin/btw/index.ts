@@ -1,4 +1,4 @@
-import { matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
@@ -82,7 +82,10 @@ export default function btwExtension(pi: ExtensionAPI) {
 				});
 				entry.unsubscribeEscape = ctx.ui.onTerminalInput((data) => {
 					// matchesKey accepts the raw byte plus kitty CSI-u / modifyOtherKeys encodings.
-					if (active !== entry || !matchesKey(data, "escape")) return undefined;
+					// Ignore key releases: kitty CSI-u emits a release event after every press,
+					// and this listener runs ahead of the TUI's release filter, so a release
+					// whose press was consumed elsewhere would otherwise cancel the query.
+					if (active !== entry || isKeyRelease(data) || !matchesKey(data, "escape")) return undefined;
 					dismiss(ctx, { abort: true });
 					return undefined;
 				});
