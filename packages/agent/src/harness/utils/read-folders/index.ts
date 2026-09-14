@@ -5,8 +5,8 @@ export * from "./types.ts";
 
 /** Frozen row-17 selection, not a runtime registry that can enable unmeasured grammars. */
 export const READ_FOLDER_SELECTION = Object.freeze({
-	head: "e67a77cb2f86697f6309ab8c77a21572abac69d8",
-	selectionSha256: "1c1a96fb270c75aa1a735928da0c80f40769d37bed9bb8dbc1ef5f4bf4beee8f",
+	head: "70485f5bbda9ed588bdc5d103a0576c1e08f0da9",
+	selectionSha256: "b64da607efc5b27fa8f6c9943e5a9ec56a4950a079655fa856843f6d4caedac4",
 	wasm: false,
 	rawReasons: Object.freeze({ ts: "wasm_candidate_pending_owner", js: "wasm_candidate_pending_owner" } as const),
 	languages: Object.freeze({
