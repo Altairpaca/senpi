@@ -34,7 +34,6 @@ import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
-import { createBunExtensionImporter } from "./bun-extension-importer.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -203,6 +202,9 @@ export type ExtensionFactoryResolver = (extensionPath: string, resolvedPath: str
 const MAX_EXTENSION_CACHE_CWD_ENTRIES = 16;
 let nextExtensionCacheGeneration = 0;
 const extensionCacheByCwd = new Map<string, ExtensionCacheEntry>();
+// Bun's module registry must not own generation graphs. Live runtimes and the
+// existing factory cache retain wrappers; invalidation releases runtime ownership.
+const runtimeFactories = new WeakMap<ExtensionRuntime, Set<ExtensionFactory>>();
 
 interface ExtensionCacheToken {
 	cwd: string;
@@ -294,6 +296,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 			for (const unsubscribe of eventBusUnsubscribers) unsubscribe();
 			eventBusUnsubscribers.clear();
+			runtimeFactories.delete(runtime);
 		},
 		trackEventBusSubscription: (unsubscribe) => {
 			let active = true;
@@ -691,7 +694,10 @@ function createExtensionAPI(
 const importNodeOnlyApi = (specifier: string): Promise<typeof import("jiti/static")> => import(specifier);
 
 async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter> {
-	if (isBunBinary) return createBunExtensionImporter(VIRTUAL_MODULES);
+	if (isBunBinary) {
+		const { createBunExtensionImporter } = await import("./bun-extension-importer.ts");
+		return createBunExtensionImporter(VIRTUAL_MODULES);
+	}
 	const { createJiti } = await importNodeOnlyApi("jiti/static");
 	return createJiti(import.meta.url, {
 		moduleCache: false,
@@ -714,7 +720,7 @@ function isCurrentCacheToken(cacheToken: ExtensionCacheToken | undefined): cache
 
 async function loadExtensionModule(
 	extensionPath: string,
-	importer: ExtensionModuleImporter,
+	getImporter: () => Promise<ExtensionModuleImporter>,
 	cacheToken?: ExtensionCacheToken,
 ) {
 	if (isCurrentCacheToken(cacheToken)) {
@@ -724,6 +730,7 @@ async function loadExtensionModule(
 		}
 	}
 
+	const importer = await getImporter();
 	const module = await importer.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
@@ -783,6 +790,11 @@ async function initializeExtension(
 	try {
 		await factory(load.api);
 		load.commit();
+		if (isBunBinary) {
+			const factories = runtimeFactories.get(runtime) ?? new Set<ExtensionFactory>();
+			factories.add(factory);
+			runtimeFactories.set(runtime, factories);
+		}
 	} catch (error) {
 		load.discard();
 		throw error;
@@ -806,7 +818,7 @@ async function loadExtension(
 	try {
 		const factory =
 			factoryResolver?.(extensionPath, resolvedPath) ??
-			(await loadExtensionModule(resolvedPath, await getImporter(), cacheToken));
+			(await loadExtensionModule(resolvedPath, getImporter, cacheToken));
 		time(`${extensionPath} module import`, "extensions");
 		if (!factory) {
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };

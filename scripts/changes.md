@@ -24,7 +24,7 @@
 ### What changed
 
 - `scripts/build-coding-agent-bundle.mjs` removes the obsolete lazy-jiti transform plugin and its external allowlist entry; the loader itself now owns the variable-specifier Node-only import. The Bun runtime-module stub remains unchanged.
-- `scripts/compiled-extension-load.test.ts` verifies relocated classic/shared-session extension loading, helper reload, host identity, direct/per-cwd cached factory behavior and zero positive-output jiti inputs under the release graph flags.
+- `scripts/compiled-extension-load.test.ts` verifies relocated classic/shared-session extension loading after forced GC, helper reload, host identity, direct/per-cwd cached factory behavior and zero positive-output jiti inputs under the release graph flags. Windows uses legal special-character paths, `windows-*` build targets and `.exe` names through `scripts/compiled-extension-platform.ts`. The child summary reports only observed helper output, not prescribed counter constants.
 
 ### Why
 

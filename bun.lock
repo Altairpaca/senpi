@@ -115,6 +115,7 @@
         "chalk": "6.0.0",
         "cross-spawn": "7.0.6",
         "diff": "9.0.0",
+        "es-module-lexer": "2.1.0",
         "get-east-asian-width": "1.6.0",
         "glob": "13.0.6",
         "grok-mermaid": "0.2.3",

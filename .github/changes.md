@@ -22,11 +22,11 @@
 
 ### What changed
 
-- `.github/workflows/ci.yml` installs pinned Bun 1.4.2 before each coding-agent test shard while retaining Node as the Vitest runtime.
+- `.github/workflows/ci.yml` installs pinned Bun 1.4.2 before each coding-agent test shard while retaining Node as the Vitest runtime. A Windows job also executes native importer regressions and the relocated compiled extension suite, and participates in the required fan-in gate.
 
 ### Why
 
-- `.github/workflows/ci.yml` must provide the real Bun subprocess used by native extension importer tests; Node-only runners fail with `spawnSync bun ENOENT` (Refs #1656).
+- `.github/workflows/ci.yml` must provide the real Bun subprocess used by native extension importer tests; Node-only runners fail with `spawnSync bun ENOENT` (Refs #1656). General Windows test jobs do not prove compiled extension loading, so this surface has an explicit Windows gate.
 
 ### Why an extension could not handle it
 
@@ -34,7 +34,7 @@
 
 ### Expected merge conflict zones
 
-- The coding-agent shard setup steps in `.github/workflows/ci.yml`.
+- The coding-agent shard setup, compiled extension Windows job and required fan-in dependencies in `.github/workflows/ci.yml`.
 
 ## Pin Bun CI and release builds to 1.4.2 (2026-09-08)
 

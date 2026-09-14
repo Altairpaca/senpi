@@ -16,7 +16,12 @@ export default async function (pi: ExtensionAPI) {
     url: import.meta.url, path: import.meta.path,
   };
   pi.events.emit("extension-probe-identity", { Type, Text, createEventBus, moduleToken, factoryRuns, ...result });
-  pi.rpc.handle("extension-probe", async () => result);
+  pi.rpc.handle("extension-probe", async () => {
+    // The live runtime must retain its graph after the factory has returned.
+    Bun.gc(true);
+    const late = await import(name);
+    return { ...result, dynamicIdentity: token === late.token };
+  });
 }
 `;
 
@@ -69,5 +74,5 @@ writeFileSync(join(root, "helper.ts"), "export const value: number = 42; export 
 clearExtensionCache();
 await load(true, root);
 assert.equal(observed[0].value, 42);
-console.log(JSON.stringify({ directModules: 2, cachedModules: 1, cachedFactories: 2, crossCwdModules: 2, reloadedHelper: observed[0].value }));
+console.log(JSON.stringify({ reloadedHelper: observed[0].value }));
 `;

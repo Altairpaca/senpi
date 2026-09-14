@@ -3,23 +3,27 @@ import { spawn, spawnSync } from "node:child_process";
 import { on, once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { compiledLoaderProbeSource, extensionSource } from "./compiled-extension-fixtures.ts";
+import { compiledExtensionPlatform } from "./compiled-extension-platform.ts";
 
 const repo = resolve(import.meta.dir, "..");
-const scratch = mkdtempSync(join(tmpdir(), "senpi-compiled-extension-"));
-const platform = `${process.platform}-${process.arch === "x64" ? "x64" : "arm64"}`;
+// Git Bash needs an --out path relative to the checkout on Windows, where
+// the system temp directory may live on a different drive.
+const scratch = mkdtempSync(join(process.platform === "win32" ? repo : tmpdir(), "senpi-compiled-extension-"));
+const fixturePlatform = compiledExtensionPlatform(process.platform, process.arch);
+const platform = fixturePlatform.target;
 const release = join(scratch, "release");
-const relocated = join(scratch, "relocated # % ? binary");
-const binary = join(relocated, "pi");
+const relocated = join(scratch, `relocated${fixturePlatform.pathSuffix}binary`);
+const binary = join(relocated, fixturePlatform.executable);
 const probeEntry = join(repo, "scripts", `.extension-probe-${scratch.split("-").at(-1)}.ts`);
-const probeBinary = join(relocated, "loader-probe");
+const probeBinary = join(relocated, process.platform === "win32" ? "loader-probe.exe" : "loader-probe");
 const metafile = join(scratch, "metafile.json");
 const responseSchema = z.object({
-	type: z.string(), id: z.string().optional(), success: z.boolean().optional(), data: z.unknown().optional(),
+	type: z.string(), id: z.string().optional(), success: z.boolean().optional(), data: z.unknown().optional(), error: z.unknown().optional(),
 });
 const probeSchema = z.object({
 	sentinel: z.literal("native-extension"), value: z.number(), dynamicIdentity: z.boolean(),
@@ -32,7 +36,7 @@ const releaseEntries = [
 ];
 
 function extensionFixture(): string {
-	const directory = mkdtempSync(join(scratch, "fixture # % ? "));
+	const directory = mkdtempSync(join(scratch, `fixture${fixturePlatform.pathSuffix}`));
 	writeFileSync(join(directory, "extension.ts"), extensionSource);
 	writeFileSync(join(directory, "helper.ts"), "export const value: number = 41; export const token = {};\n");
 	return join(directory, "extension.ts");
@@ -40,7 +44,7 @@ function extensionFixture(): string {
 
 beforeAll(() => {
 	// Given: a release-built binary, moved away from its original release location.
-	const build = spawnSync("bash", ["scripts/build-binaries.sh", "--skip-install", "--skip-build", "--platform", platform, "--out", release], {
+	const build = spawnSync("bash", ["scripts/build-binaries.sh", "--skip-install", "--skip-build", "--platform", platform, "--out", process.platform === "win32" ? relative(repo, release).replaceAll("\\", "/") : release], {
 		cwd: repo, encoding: "utf8", timeout: 300_000, maxBuffer: 16 * 1024 * 1024,
 	});
 	expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
@@ -85,7 +89,7 @@ test("preserves host identity and factory cache semantics when the production lo
 	});
 	// Then: the child asserts reference identity against its own bundled host namespaces.
 	expect(result.status, result.stderr).toBe(0);
-	expect(JSON.parse(result.stdout)).toEqual({ directModules: 2, cachedModules: 1, cachedFactories: 2, crossCwdModules: 2, reloadedHelper: 42 });
+	expect(JSON.parse(result.stdout)).toEqual({ reloadedHelper: 42 });
 	console.log(result.stdout.trim());
 }, 65_000);
 
