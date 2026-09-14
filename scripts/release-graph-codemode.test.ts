@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,9 +11,22 @@ const metadataSchema = z.object({
 	})),
 });
 
+const repo = resolve(import.meta.dir, "..");
+
+beforeAll(() => {
+	// Direct invocation must not trust dist left by another branch or script suite.
+	const build = spawnSync("node", ["scripts/build-all.mjs", "--pm", "bun"], {
+		cwd: repo, encoding: "utf8", timeout: 300_000,
+	});
+	expect(build.status, `node scripts/build-all.mjs --pm bun\n${build.stdout}\n${build.stderr}`).toBe(0);
+	const assets = spawnSync("node", ["scripts/prepare-bun-compile-assets.mjs"], {
+		cwd: repo, encoding: "utf8", timeout: 30_000,
+	});
+	expect(assets.status, assets.stderr).toBe(0);
+}, 340_000);
+
 test("ships no codemode implementation bytes when building the release entry graph", () => {
-	// Given: the actual release entrypoints, after workspace staging.
-	const repo = resolve(import.meta.dir, "..");
+	// Given: the actual release entrypoints, freshly built by this suite.
 	const manifest = z.object({ scripts: z.object({ "build:binary": z.string() }) }).parse(
 		JSON.parse(readFileSync(join(repo, "packages/coding-agent/package.json"), "utf8")),
 	);

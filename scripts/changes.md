@@ -45,7 +45,8 @@
 
 - `scripts/copy-codemode-sidecar.mjs` carries codemode's JS parser dependency beside its source tree; host API dependencies remain supplied by the extension importer.
 - `scripts/smoke-standalone-binary.mjs` bounds child processes and reports explicit codemode loading diagnostics before checking the exactly-one-enabled inventory contract.
-- A sibling release-graph regression rejects positive codemode contributions, including workspace-relative metafile paths. Copier and inventory tests cover required skill/parser files, stale payload replacement, duplicates, and disabled entries.
+- A sibling release-graph regression rejects positive codemode contributions, including workspace-relative metafile paths. It rebuilds workspace entries and compile assets on direct invocation, and CI runs it followed by the existing exclusions graph before script suites can invalidate `dist`.
+- Workflow coverage checks sidecar staging precedes smoke in the release command list; bundle contents are tested through actual Bun metadata rather than removed source spellings. Copier and inventory tests cover required skill/parser files, stale payload replacement, duplicates, and disabled entries.
 
 ### Why
 
