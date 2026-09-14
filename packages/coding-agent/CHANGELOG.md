@@ -8,14 +8,21 @@
 
 - Added clickable pending-question options, own-answer entry, question cycling and expanded question tabs in regular and fullscreen modes. A single-question option click commits its selection highlight before answering. The new `terminal.mouse` setting defaults to `whilePending`; `off` disables capture in both modes, while `always` keeps regular-mode capture active. Native selection bypass hints appear while questions capture the mouse ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
+- Added a builtin herdr lifecycle reporter: pending questions and host dialogs mark the pane blocked with their label, active turns/subagents/monitors remain working, and settlement restores idle. It coexists with herdr's managed integration, defers to loaded user-authored `herdr-*` reporters, and releases the pane only on quit. Extensions can inspect the optional read-only `ctx.loadedExtensionPaths` list ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
 ### Changed
+
+- Replaced webfetch's browser-emulation dependency with inert LinkeDOM parsing, preserving reader output and omitted document tags while resolving relative article links and images against the final response URL and retiring CSS/XHR compile assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 
 ### Fixed
 
+- Fixed Enter on multi-select question options to toggle the highlighted choice without advancing, including option 1; empty own-answer commits preserve selections, and hints direct users to Tab and Submit when done (#8249).
+
 - Fixed `/btw` showing its question twice in the interactive TUI: extension commands no longer paint an optimistic user bubble while their handler runs on either submit path (Enter and Alt+Enter follow-up while streaming), so only the side-question panel shows the question during the stream.
 
-- Fixed the `/btw` panel having no off switch: a bare `/btw` now dismisses the panel (or cancels the in-flight side query), Escape is matched through the shared key matcher so it also works under the kitty keyboard protocol (and kitty key-release events are ignored so they cannot cancel the query), and the panel footer names both.
+- Fixed the `Tip:` line reading as part of the block above it: every tip surface — the startup header and the working-status row — now renders one blank line above the tip ([#1680](https://github.com/code-yeongyu/senpi/issues/1680)).
 
+- Fixed the `/btw` panel having no off switch: a bare `/btw` now dismisses the panel (or cancels the in-flight side query), Escape is matched through the shared key matcher so it also works under the kitty keyboard protocol (and kitty key-release events are ignored so they cannot cancel the query), and the panel footer names both.
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13
