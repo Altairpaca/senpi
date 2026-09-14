@@ -1,3 +1,22 @@
+## 2026-09-14 - Clickable-question guidance and multiplexer QA (#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/input-tips.ts` adds one clickable-question tip. TUI, keyboard and settings guides describe scoped capture, selection bypass, fail-closed geometry and tmux's out-of-band cursor source.
+- herdr 0.9.0 passes outer SGR clicks on viewport-filled frames and all question keyboard paths; the builtin reports blocked then working/idle. Fresh short frames write `ESC[?6n` with no private reply: outer `ESC[<0;27;25M` + `ESC[<0;27;25m` did not answer at 120x40, whereas viewport `ESC[<0;27;34M` + `ESC[<0;27;34m` did. Follow-up #1688 tracks that limitation; no unsafe anchor fallback was added.
+
+### Why
+
+- Users need to know when capture is active and how to retain terminal-native selection or answer by keyboard when a multiplexer cannot calibrate a short frame.
+
+### Why an extension could not handle it
+
+- The host owns the built-in tip catalog and pending-question mouse leases. Terminal calibration lives below extension APIs; the herdr limitation is documented, not hidden by extension workarounds.
+
+### Expected merge conflict zones
+
+- The input-tip catalog and mouse/question paragraphs in the public guides. Defaults and keyboard bindings are unchanged.
+
 ## 2026-09-14 - Host-owned pending-question mouse capture (senpi#1645)
 
 ### What changed

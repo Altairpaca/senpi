@@ -393,6 +393,8 @@ Both ambient-auth providers are explicit opt-in: a vendor CLI being logged in on
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max. Applies to `@file` attachments, `read`, and images returned by tools |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
 
+With `terminal.mouse: "whilePending"`, regular-mode native selection and scrollback are unchanged when no question is pending. During capture, use the terminal's selection bypass or set `"off"`; wheel reports are consumed. Unknown frame placement ignores clicks rather than guessing. See [Mouse Input](tui.md#mouse-input) for bypass modifiers, tmux calibration and the herdr short-frame limitation. This setting does not change `tuiMode`.
+
 ### Prompt Cache
 
 Sizes how long foreground tools may block on the active model's prompt-cache lifetime, so a long
