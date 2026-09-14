@@ -1,11 +1,15 @@
-import { describe } from "vitest";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { createNativeEngine } from "../../src/core/tools/grep/native-engine.ts";
+import { expect, it } from "vitest";
+import { getNativeGrepCandidatePaths } from "../../src/core/tools/grep/native-loader.ts";
+import { resolveGrepEngine } from "../../src/core/tools/grep/select-engine.ts";
 import { describeEngineContract } from "./engine-contract.ts";
 
-const defaultPrebuildPath = join(process.cwd(), "native", "prebuilds", `${process.platform}-${process.arch}`, `senpi_grep.${process.platform}-${process.arch}.node`);
+const hasAddon = Boolean(process.env.SENPI_GREP_NATIVE_PATH) || getNativeGrepCandidatePaths().some(existsSync);
 
-describe.skipIf(!process.env.SENPI_GREP_NATIVE_PATH && !existsSync(defaultPrebuildPath))("native", () => {
-	describeEngineContract("native", () => createNativeEngine({}));
-});
+if (hasAddon) {
+	describeEngineContract("native", () => resolveGrepEngine({ env: { ...process.env, SENPI_GREP_ENGINE: "native" } }));
+} else {
+	it("requires a native fixture when the native contract is explicitly requested", () => {
+		expect(process.env.SENPI_GREP_ENGINE).not.toBe("native");
+	});
+}
