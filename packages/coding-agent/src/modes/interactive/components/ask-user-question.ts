@@ -167,16 +167,22 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 		}
 	}
 
-	private clickOption(index: number): void {
+	/** Widget entry commits visible selection feedback before resolving a one-question answer. */
+	clickOption(index: number, submitSingleQuestion = false): void {
 		const question = this.state.activeQuestion;
+		const immediate = submitSingleQuestion && this.state.request.questions.length === 1 && !question.multiSelect;
 		this.state.highlightIndex = index;
 		this.state.activateOption(question.id, question.options[index].label);
-		if (!question.multiSelect) this.state.advance();
+		if (!question.multiSelect && !immediate) this.state.advance();
 		this.emitProgress();
 		this.updateAll();
+		if (immediate) {
+			this.options.tui?.renderNow();
+			this.attemptSubmit();
+		}
 	}
 
-	private openOwnAnswer(initialText?: string): void {
+	openOwnAnswer(initialText?: string): void {
 		this.state.focus = "own-answer";
 		const existing = this.state.textFor(this.state.activeQuestion.id) ?? "";
 		this.ownAnswerInput.setValue("");

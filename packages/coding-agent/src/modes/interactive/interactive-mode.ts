@@ -1046,6 +1046,10 @@ export class InteractiveMode {
 	private composerDestination: { kind: "chat" } | { kind: "answer"; requestId: string } = { kind: "chat" };
 	private readonly questionArrivalEpochMs = Date.now();
 	private blockingQuestionHeader: string | undefined;
+	private wantsMouseLease = false;
+	private releaseMouseLease?: () => void;
+	private releaseAlwaysMouseLease?: () => void;
+	private questionMousePaused = false;
 
 	private get shownQuestion(): AsyncQuestionState | undefined {
 		return this.shownQuestionId === undefined ? undefined : this.pendingQuestions.get(this.shownQuestionId);
@@ -1118,6 +1122,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect?.() ?? true,
+			mouse: this.terminalMouseMode !== "off",
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.streamingReveal = new StreamingRevealController({
@@ -1380,6 +1385,40 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new DynamicBorder());
 	}
 
+	private get terminalMouseMode() {
+		// Renderer-only embedding hosts may omit the session settings facade.
+		return this.runtimeHost?.session?.settingsManager?.getTerminalMouse?.() ?? "whilePending";
+	}
+
+	private syncQuestionMouseCapture(): void {
+		this.wantsMouseLease = (this.pendingQuestions?.size ?? 0) > 0 || Boolean(this.askUserQuestion);
+		const enabled = !this.questionMousePaused && this.terminalMouseMode !== "off";
+		if (enabled && this.wantsMouseLease) this.releaseMouseLease ??= this.ui.acquireMouseCapture("pending-question");
+		else {
+			this.releaseMouseLease?.();
+			this.releaseMouseLease = undefined;
+		}
+		if (enabled && this.terminalMouseMode === "always" && this.ui.mode === "regular") {
+			this.releaseAlwaysMouseLease ??= this.ui.acquireMouseCapture("always");
+		} else {
+			this.releaseAlwaysMouseLease?.();
+			this.releaseAlwaysMouseLease = undefined;
+		}
+	}
+
+	private pauseQuestionMouseCapture(): void {
+		this.questionMousePaused = true;
+		this.releaseMouseLease?.();
+		this.releaseMouseLease = undefined;
+		this.releaseAlwaysMouseLease?.();
+		this.releaseAlwaysMouseLease = undefined;
+	}
+
+	private resumeQuestionMouseCapture(): void {
+		this.questionMousePaused = false;
+		this.syncQuestionMouseCapture();
+	}
+
 	private mountInteractiveTui(tui: TuiMainScreen | TuiAltScreen, components: readonly Component[]): void {
 		for (const component of components) tui.addChild(component);
 		if (TuiLayouts.isViewportTUI(tui)) {
@@ -1394,12 +1433,13 @@ export class InteractiveMode {
 			this.switchTuiMode("regular", false, false);
 			this.renderer.renderNow();
 		}
+		this.pauseQuestionMouseCapture();
 		this.ui.stop({ preserveScreen: this.renderer.mode === "fullscreen" });
 	}
 
-	private switchTuiMode(mode: TuiMode, restoreProgress = true, startRenderer = true): boolean {
+	private switchTuiMode(mode: TuiMode, restoreProgress = true, startRenderer = true, recreate = false): boolean {
 		const previousUi = this.renderer;
-		if (mode === previousUi.mode) return true;
+		if (mode === previousUi.mode && !recreate) return true;
 		if (previousUi.hasOverlayEntries) return false;
 
 		const components = [...previousUi.children];
@@ -1412,6 +1452,7 @@ export class InteractiveMode {
 			this.mainScreenRenderState = previousUi.captureRenderState();
 		}
 
+		this.pauseQuestionMouseCapture();
 		previousUi.stop({ preserveScreen: true });
 		previousUi.setFocus(null);
 		// Detach, not clear: the same live components (spinners, reveals, extension
@@ -1428,6 +1469,7 @@ export class InteractiveMode {
 			terminal,
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.runtimeHost?.session?.settingsManager?.getFullscreenCopyOnSelect?.() ?? true,
+			mouse: this.terminalMouseMode !== "off",
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -1441,6 +1483,7 @@ export class InteractiveMode {
 		nextUi.setFocus(focus);
 		if (!startRenderer) return true;
 		nextUi.start();
+		this.resumeQuestionMouseCapture();
 		this.themeController.rebindTui();
 		this.rebindExtensionTerminalInputListeners();
 		if (
@@ -1521,6 +1564,7 @@ export class InteractiveMode {
 		try {
 			takeOverInteractiveStderr();
 			this.ui.start();
+			this.resumeQuestionMouseCapture();
 		} catch (error) {
 			restoreInteractiveStderr();
 			throw error;
@@ -3836,6 +3880,7 @@ export class InteractiveMode {
 			this.disposeActiveSelector();
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.askUserQuestion);
+			this.syncQuestionMouseCapture();
 			this.ui.setFocus(this.askUserQuestion);
 			this.ui.requestRender();
 		});
@@ -3847,6 +3892,7 @@ export class InteractiveMode {
 	private hideQuestionOverlay(): void {
 		this.askUserQuestion?.dispose();
 		this.askUserQuestion = undefined;
+		this.syncQuestionMouseCapture();
 		this.questionSurface = "collapsed";
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
@@ -3910,6 +3956,7 @@ export class InteractiveMode {
 
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
 	private refreshAsyncWidget(): void {
+		this.syncQuestionMouseCapture();
 		this.applyTerminalTitle();
 		const state = this.shownQuestion;
 		if (!state || this.questionSurface === "expanded") {
@@ -3926,10 +3973,30 @@ export class InteractiveMode {
 					getDeadlineAtMs: state.getDeadlineAtMs,
 					pendingCount: this.pendingOrder.length,
 					tui,
+					mouseCaptureActive: this.terminalMouseMode !== "off",
+					onExpandClick: () => this.expandPendingQuestion(state.request.requestId),
+					onNextQuestion: () => this.cyclePendingQuestion(),
+					onOptionClick: (index) => this.clickPendingQuestion(state, index),
+					onOwnAnswerClick: () => this.clickPendingQuestion(state, "own-answer"),
 					onExpire: () =>
 						state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - state.askedAtMs)),
 				}),
 		);
+	}
+
+	private cyclePendingQuestion(): void {
+		if (this.pendingOrder.length < 2) return;
+		const index = this.pendingOrder.indexOf(this.shownQuestionId!);
+		this.shownQuestionId = this.pendingOrder[(index + 1) % this.pendingOrder.length];
+		this.refreshAsyncWidget();
+	}
+
+	private clickPendingQuestion(state: AsyncQuestionState, option: number | "own-answer"): void {
+		const unanswered = unansweredIds(state.request, state.draft);
+		const index = state.request.questions.findIndex((question) => question.id === unanswered[0]);
+		if (!this.expandPendingQuestion(state.request.requestId, index)) return;
+		if (option === "own-answer") this.askUserQuestion!.openOwnAnswer();
+		else this.askUserQuestion!.clickOption(option, true);
 	}
 
 	/** Intercept question chords and first typed input before the editor inserts it. */
@@ -3953,9 +4020,7 @@ export class InteractiveMode {
 			return false;
 		if (this.keybindings.matches(data, "app.question.next")) {
 			if (this.pendingOrder.length < 2) return false;
-			const index = this.pendingOrder.indexOf(state.request.requestId);
-			this.shownQuestionId = this.pendingOrder[(index + 1) % this.pendingOrder.length];
-			this.refreshAsyncWidget();
+			this.cyclePendingQuestion();
 			return true;
 		}
 		const unanswered = unansweredIds(state.request, state.draft);
@@ -6306,6 +6371,7 @@ export class InteractiveMode {
 			killTrackedDetachedChildren();
 		} catch {}
 		try {
+			this.pauseQuestionMouseCapture();
 			this.ui.stop();
 		} catch {}
 		// Record the crash before the terminal handoff: the banner below only reaches
@@ -6430,12 +6496,14 @@ export class InteractiveMode {
 			process.removeListener("SIGINT", ignoreSigint);
 			takeOverInteractiveStderr();
 			this.ui.start();
+			this.resumeQuestionMouseCapture();
 			this.ui.requestRender(true);
 		});
 
 		try {
 			// Stop the TUI (restore terminal to normal mode)
 			restoreInteractiveStderr();
+			this.pauseQuestionMouseCapture();
 			this.ui.stop();
 
 			// Send SIGTSTP to process group (pid=0 means all processes in group)
@@ -6634,6 +6702,7 @@ export class InteractiveMode {
 	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		const content = this.getExpandedEditorText();
+		this.pauseQuestionMouseCapture();
 		this.ui.stop();
 		restoreInteractiveStderr();
 		try {
@@ -6647,6 +6716,7 @@ export class InteractiveMode {
 		} finally {
 			takeOverInteractiveStderr();
 			this.ui.start();
+			this.resumeQuestionMouseCapture();
 			this.ui.requestRender(true);
 		}
 	}
@@ -7154,6 +7224,7 @@ export class InteractiveMode {
 					fullscreenExitOutput: this.settingsManager.getFullscreenExitOutput(),
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect?.() ?? true,
+					terminalMouse: this.settingsManager.getTerminalMouse(),
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
@@ -7328,6 +7399,16 @@ export class InteractiveMode {
 					},
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
+					},
+					onTerminalMouseChange: (mode) => {
+						if (this.renderer.hasOverlayEntries) {
+							selector?.getSettingsList().updateValue("terminal-mouse", this.terminalMouseMode);
+							this.showStatus("Close active overlays before changing mouse capture");
+							return;
+						}
+						this.settingsManager.setTerminalMouse(mode);
+						this.switchTuiMode(this.renderer.mode, true, true, true);
+						this.refreshAsyncWidget();
 					},
 					onTuiModeChange: (mode) => {
 						if (!this.switchTuiMode(mode)) {
