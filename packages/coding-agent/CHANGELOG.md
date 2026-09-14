@@ -23,6 +23,8 @@
 - Fixed the `Tip:` line reading as part of the block above it: every tip surface — the startup header and the working-status row — now renders one blank line above the tip ([#1680](https://github.com/code-yeongyu/senpi/issues/1680)).
 
 - Fixed the `/btw` panel having no off switch: a bare `/btw` now dismisses the panel (or cancels the in-flight side query), Escape is matched through the shared key matcher so it also works under the kitty keyboard protocol (and kitty key-release events are ignored so they cannot cancel the query), and the panel footer names both.
+
+- Fixed publish staging so the packed tarball mirrors `publish-deps.lock.json` exactly regardless of how the developer's package manager laid out `node_modules`: nested manifest entries (such as `htmlparser2`'s own `entities@7`) are staged at their manifest path from a version-matched installed copy, npm's workspace-local placements keep the top-level slot with a conflicting root copy re-nested under the dependents npm resolved to it, and packages the manifest no longer lists are pruned instead of riding along. A tarball staged from a bun-hoisted install previously shipped `htmlparser2@10` next to a stale `entities@8` (compiling the engine failed with `No matching export ... for import "fromCodePoint"`), and the published tarball carried `zod@3` and `https-proxy-agent@7` under a manifest declaring `zod@4.4.3` and `https-proxy-agent@9.1.0` ([#1677](https://github.com/code-yeongyu/senpi/issues/1677)).
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13
