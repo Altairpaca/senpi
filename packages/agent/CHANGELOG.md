@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `convertToLlm` still drops failed assistant turns, but `dropFailedAssistantTurns` is imported from `@earendil-works/pi-ai/utils/drop-failed-assistant-turns` so the `./harness/session` entry stays off the AI barrel.
+
+### Removed
+
 ## [2026.9.13] - 2026-09-13
 
 ### Breaking Changes

@@ -6,6 +6,41 @@
 
 ### Added
 
+### Changed
+
+- Replaced webfetch's browser-emulation dependency with inert LinkeDOM parsing, preserving reader output and omitted document tags while resolving relative article links and images against the final response URL and retiring CSS/XHR compile assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
+- Compiled Bun binaries load TypeScript extensions through native runtime modules instead of embedding jiti, preserving host-module identity and fresh dependency graphs on reload. Computed imports and requires share their generation, unused graphs can be reclaimed, native data imports keep Bun's loaders, and parser errors retain source locations. Node runtimes retain their existing jiti options and load only their own importer when needed ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
+### Fixed
+
+- Fixed Enter on multi-select question options to toggle the highlighted choice without advancing, including option 1; empty own-answer commits preserve selections, and hints direct users to Tab and Submit when done (#8249).
+
+- Fixed `/btw` showing its question twice in the interactive TUI: extension commands no longer paint an optimistic user bubble while their handler runs on either submit path (Enter and Alt+Enter follow-up while streaming), so only the side-question panel shows the question during the stream.
+
+- Fixed the `/btw` panel having no off switch: a bare `/btw` now dismisses the panel (or cancels the in-flight side query), Escape is matched through the shared key matcher so it also works under the kitty keyboard protocol (and kitty key-release events are ignored so they cannot cancel the query), and the panel footer names both.
+### Removed
+
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+
+- Added `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` to the extension session environment, exposing the session working directory and authoritative goal-store file to kernels and shell children while clearing inherited stale values (fixes #1663).
+
+
+
+- Added a pending-question queue in the interactive TUI: concurrent async questions stay open instead of superseding one another, the widget shows the pending count with `+N more`, `alt+down` cycles requests from an empty composer, and each request keeps its own draft and idle deadline ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
+- Added a faster answer path: a valid digit on an empty composer answers the shown question (a single-question single-select request submits immediately), `alt+up` joins `alt+a` for opening it, `/answer` lists or opens a specific request, and typed or pasted text binds to one request with a `↳ reply to <header>` composer label ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
+- Added question arrival signals: a `? <header>` terminal-title layer while a question is pending, a one-time terminal bell controlled by the new `askUser.bell` setting (default true), an `ask-user:asked` bus event with a matching `ask-user-asked` Notification hook, and `herdr:blocked` active/inactive pairs for questions and host dialogs. Reconnect replay and hydration do not repeat these signals ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
+- Added compact answered-question chips in the transcript: an answered, commented, dismissed or timed-out question renders as `↳ <header>: <answer>` and expands to the original message on click ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
+
 - Added the TUI foundation for host-leased regular-mode mouse clicks, with fail-closed frame anchoring and private cursor-position calibration; native selection and scrollback remain unchanged when no lease is active ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
 - Added `@code-yeongyu/senpi/bun-runtime` with synchronous, once-per-isolate provider and OAuth registration for standalone Bun consumers; later provider overrides survive repeated registration ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
@@ -18,12 +53,15 @@
 
 ### Changed
 
-- Changed the interactive startup banner to leave system resources out of the compact `[Skills]`, `[Extensions]`, `[Prompts]` and `[Themes]` lines; a section with nothing else to show stays hidden until expanded (Ctrl+O or `--verbose`), where a `system` group now follows the project, user and path groups; autocomplete descriptions tag system resources `[s]` instead of `[t]` (fixes #1640).
+- Changed `/answer skip` to also tell the agent that the user dismissed the question, instead of only showing a local notice ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
-- Compiled Bun binaries load TypeScript extensions through native runtime modules instead of embedding jiti, preserving host-module identity and fresh dependency graphs on reload. Computed imports and requires share their generation, unused graphs can be reclaimed, native data imports keep Bun's loaders, and parser errors retain source locations. Node runtimes retain their existing jiti options and load only their own importer when needed ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+- Changed the interactive startup banner to leave system resources out of the compact `[Skills]`, `[Extensions]`, `[Prompts]` and `[Themes]` lines; a section with nothing else to show stays hidden until expanded (Ctrl+O or `--verbose`), where a `system` group now follows the project, user and path groups; autocomplete descriptions tag system resources `[s]` instead of `[t]` (fixes #1640).
 
 ### Fixed
 
+- Fixed the goal monitor parking on the ask-user idle-timeout setting instead of the earliest pending question deadline, so a shorter request no longer waits for a longer one; typing in an answer now extends that park without adding continuation prompts ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
+
+- Fixed shared RPC hosts expiring an old idle window after a short readiness connection, which could remove the Windows named pipe before the client attached (part of #1290).
 - Fixed missing Bedrock, Cursor, and Devin implementations in relocated standalone binaries by registering bundled modules in both the launcher and shared-session workers ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 - Fixed the ask-user question dialog carrying a committed own-answer into the next question: after answering a question with typed text, the next question's editor no longer shows the previous answer's text and pressing Enter again no longer submits it as the next question's own answer.
 - Fixed the remaining focus traps in the ask-user question dialog: committing an own answer now lands on the next question's option list instead of leaving the editor open; Up/Down, Tab/Shift+Tab and Backspace-on-empty leave the own-answer editor (Left/Right move its cursor); the Submit tab's review rows are navigable (Up from the comment highlights the last answer, Enter on a row jumps back to that question, Left/Right move the comment cursor once it has text); Backspace on the option list clears the answer instead of opening the editor; Esc inside the own-answer editor of an async question returns to the options instead of collapsing it; and re-expanding an async question restores its draft answers and comment.

@@ -32,7 +32,6 @@ const probeSchema = z.object({
 const optimizationFlags = ["--splitting", "--minify", "--keep-names"];
 const releaseEntries = [
 	"./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/utils/image-resize-worker.ts",
-	"../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js",
 ];
 
 function extensionFixture(): string {

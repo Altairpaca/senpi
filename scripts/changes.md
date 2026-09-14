@@ -1,5 +1,44 @@
 # changes
 
+## 2026-09-13 - Retire webfetch compile-asset workarounds
+
+### What changed
+
+- `scripts/build-binaries.sh` removes jsdom's XHR worker from both split compile commands and uses the retained image-resize worker for relocation smoke testing.
+- `scripts/prepare-bun-compile-assets.mjs` retains imagegen skill staging and removes CSS dictionary inlining and jsdom stylesheet/XHR patching.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` copies runtime dependencies without the retired css-tree source rewrite.
+- Release graph and worker tests reject retired DOM contributions while retaining provider, imagegen, and session-worker coverage.
+
+### Why
+
+- `scripts/build-binaries.sh`, `scripts/prepare-bun-compile-assets.mjs`, and `scripts/prepare-senpi-bundled-workspaces.mjs` must not reference or patch the dependencies removed by the linkedom migration (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/build-binaries.sh`, `scripts/prepare-bun-compile-assets.mjs`, and `scripts/prepare-senpi-bundled-workspaces.mjs` select and stage distribution assets before runtime extension loading.
+
+### Expected merge conflict zones
+
+- Compile and smoke argv in `scripts/build-binaries.sh`; asset staging in `scripts/prepare-bun-compile-assets.mjs`; dependency copying in `scripts/prepare-senpi-bundled-workspaces.mjs`.
+
+## 2026-09-13 - Report entry-graph sizes on success
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` prints each declared entry's file count on success so a green run still reports the `./harness/session` size.
+
+### Why
+
+- The session budget is a cost contract. A silent pass hid the 132-file AI-barrel regression until the script was run by hand.
+
+### Why an extension could not handle it
+
+- Entry-graph walking is a commit-time source import check. Extensions cannot change which modules the checker walks.
+
+### Expected merge conflict zones
+
+- LOW: the success `console.log` in `scripts/check-entry-graphs.mjs`.
+
 ## 2026-09-13 - Share compiled standalone entry graphs
 
 ### What changed

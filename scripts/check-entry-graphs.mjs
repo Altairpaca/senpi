@@ -115,6 +115,7 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				continue;
 			}
 			const graph = [...walk(source)].map((file) => relative(ROOT, file));
+			console.log(`${pkgDir} export "${name}": ${graph.length} files (budget ${budget.maxFiles})`);
 			if (graph.length > budget.maxFiles) {
 				console.error(
 					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
