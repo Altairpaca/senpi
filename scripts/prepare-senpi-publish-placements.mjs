@@ -45,8 +45,12 @@ function splitManifestPath(manifestPath) {
 	return { prefix, chain: lockPathPackageChain(manifestPath.slice(prefix.length)) };
 }
 
+// Peer edges are not placement edges: npm never nests a peer under its dependent, and
+// npm-packlist (bun pm pack alike) refuses to pack a peer edge of a bundled package, so a
+// copy re-nested for a peer-only dependent could never reach the tarball. Such a dependent
+// resolves the top-level copy, exactly as it does in npm's own install.
 function declaredDependencyNames(entry) {
-	return Object.keys({ ...entry.dependencies, ...entry.optionalDependencies, ...entry.peerDependencies });
+	return Object.keys({ ...entry.dependencies, ...entry.optionalDependencies });
 }
 
 // The manifest path npm resolved `name` to from the package at manifestPath: the nearest

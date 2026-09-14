@@ -66,13 +66,15 @@ describe("resolvePublishPlacements", () => {
 		);
 	});
 
-	it("re-nests a root copy under every dependent, respects nearer placements, and drops a root copy nothing staged resolves", () => {
+	it("re-nests a root copy under every dependency edge, never a peer edge, respects nearer placements, and drops a root copy nothing staged resolves", () => {
+		// openai only PEERS on zod: npm never nests a peer and the packer would drop it, so it
+		// resolves the top-level copy; the MCP sdk declares a real dependency and gets its own.
 		assert.deepEqual(
 			placementsOf({
 				"": { dependencies: { zod: "4.4.3", lonely: "1.0.0" } },
 				"node_modules/zod": pkg("3.25.76"),
-				"node_modules/openai": pkg("6.0.0", { zod: "^3.25 || ^4.0" }),
-				"node_modules/@modelcontextprotocol/sdk": pkg("1.0.0", { zod: "^3.25 || ^4.0" }),
+				"node_modules/openai": { version: "6.0.0", peerDependencies: { zod: "^3.25 || ^4.0" } },
+				"node_modules/@modelcontextprotocol/sdk": { version: "1.0.0", dependencies: { zod: "^3.25 || ^4.0" }, peerDependencies: { zod: "^3.25 || ^4.0" } },
 				"node_modules/pinned": pkg("1.0.0", { zod: "^3.22" }),
 				"node_modules/pinned/node_modules/zod": pkg("3.22.4"),
 				"node_modules/@earendil-works/pi-ai/node_modules/lonely": pkg("0.1.0"),
@@ -90,7 +92,6 @@ describe("resolvePublishPlacements", () => {
 				"node_modules/pinned": "1.0.0",
 				"node_modules/zod": "4.4.3",
 				"node_modules/@modelcontextprotocol/sdk/node_modules/zod": "3.25.76",
-				"node_modules/openai/node_modules/zod": "3.25.76",
 				"node_modules/pinned/node_modules/zod": "3.22.4",
 			},
 		);
