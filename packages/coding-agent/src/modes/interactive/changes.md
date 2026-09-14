@@ -1,3 +1,21 @@
+## 2026-09-14 - Expanded question mouse actions (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` routes committed primary option rows, own-answer and Submit through mouse regions; descriptions remain inert. Tab labels now have width-aware recorded spans in `ask-user-question-mouse.ts`. Presses claim a target without selecting, while one click activates; Input retains caret placement and the parent retains keyboard focus.
+
+### Why
+
+- The expanded surface needs the same direct choices as the collapsed widget, including multi-select toggles and explicit review before submission.
+
+### Why an extension could not handle it
+
+- The built-in component owns its per-question state, dynamic description rows and inline inputs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: child mounting and updateAll. Keyboard dispatch and response builders are unchanged; helper modules are fork-owned.
+
 ## 2026-09-14 - Clickable pending-question widget (senpi#1645)
 
 ### What changed
