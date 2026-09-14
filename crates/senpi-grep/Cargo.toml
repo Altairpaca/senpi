@@ -1,0 +1,23 @@
+[package]
+name = "senpi-grep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+napi.workspace = true
+napi-derive.workspace = true
+ignore.workspace = true
+grep-searcher.workspace = true
+grep-regex.workspace = true
+grep-matcher.workspace = true
+globset.workspace = true
+rayon.workspace = true
+memchr.workspace = true
+
+[build-dependencies]
+napi-build.workspace = true
