@@ -2,6 +2,8 @@
 /* eslint-disable */
 export declare function __senpiGrepAbi1(): string
 
+export declare function grep(options: GrepOptions, signal?: AbortSignal | undefined | null): Promise<GrepResult>
+
 export interface GrepCounts {
   matches: number | null
   files: number

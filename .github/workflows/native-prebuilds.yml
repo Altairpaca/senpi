@@ -18,6 +18,7 @@ on:
       - 'crates/senpi-grep/**'
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
+      - 'scripts/probe-native-grep*.mjs'
   push:
     branches: [main]
     paths:
@@ -28,6 +29,7 @@ on:
       - 'crates/senpi-grep/**'
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
+      - 'scripts/probe-native-grep*.mjs'
 
 permissions:
   contents: read
@@ -254,18 +256,21 @@ jobs:
             node_files+=("${node_file}")
           done < <(find "${output_dir}" -type f -name '*.node' | sort)
           pty_file=""
+          grep_file=""
           for node_file in "${node_files[@]}"; do
             case "$(basename "${node_file}")" in
               senpi_pty.*) pty_file="${node_file}" ;;
+              senpi_grep.*) grep_file="${node_file}" ;;
             esac
           done
-          if [[ -z "${pty_file}" ]]; then
-            echo "::error::expected senpi_pty.* .node file for lifecycle probe"
+          if [[ -z "${pty_file}" || -z "${grep_file}" ]]; then
+            echo "::error::expected senpi_pty.* and senpi_grep.* .node files for lifecycle probes"
             printf '%s\n' "${node_files[@]}"
             exit 1
           fi
 
           node scripts/probe-native-pty-lifecycle.mjs "${pty_file}"
+          node scripts/probe-native-grep.mjs "${grep_file}"
 
       - name: Stage artifact
         run: |

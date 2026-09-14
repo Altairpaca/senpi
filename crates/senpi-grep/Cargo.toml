@@ -9,7 +9,8 @@ build = "build.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-napi.workspace = true
+# JS abort listeners use closure finalizers (Node-API 5; supported by Node 24+).
+napi = { workspace = true, features = ["napi5"] }
 napi-derive.workspace = true
 ignore.workspace = true
 grep-searcher.workspace = true
