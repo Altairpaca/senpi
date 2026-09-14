@@ -35,6 +35,36 @@ fn ordered_limit_ignores_walk_completion_order() {
 }
 
 #[test]
+fn overlapping_roots_dedupe_by_canonical_identity() {
+    // Refs #1678: aliases must not inflate results or the searched-file count.
+    let c = Corpus::new();
+    c.put("src/z.ts", "needle\n");
+    c.put("src/nested/a.ts", "needle\n");
+    c.put("src/b.ts", "needle\n");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("src", c.0.join("alias")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(c.0.join("src"), c.0.join("alias")).unwrap();
+    let mut o = c.options();
+    for roots in [["src/nested", "src", "alias"], ["alias", "src", "src/nested"]] {
+        o.paths = roots.into_iter().map(|root| c.path(root)).collect();
+        let r = c.search(&o);
+        assert_eq!(
+            r.matches.iter().map(|row| row.path.as_str()).collect::<Vec<_>>(),
+            ["alias/b.ts", "alias/nested/a.ts", "alias/z.ts"]
+        );
+        assert_eq!(r.files_searched, 3);
+        assert_eq!(r.counts.files, 3);
+        assert!(r.warnings.is_empty());
+    }
+    o.paths = vec![c.path("src/nested/a.ts"), c.path("alias/nested/a.ts")];
+    let r = c.search(&o);
+    assert_eq!(r.matches.len(), 1);
+    assert_eq!(r.matches[0].path, "alias/nested/a.ts");
+    assert_eq!(r.files_searched, 1);
+}
+
+#[test]
 fn oversized_lexical_first_wins() {
     let c = Corpus::new();
     let mut large = vec![b'x'; PREFIX + 100];
