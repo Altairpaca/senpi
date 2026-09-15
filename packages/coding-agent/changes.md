@@ -4,8 +4,9 @@
 
 ### What changed
 
-- `ExtensionContext.kernelTools` is an optional describe/invoke capability bound through AsyncLocalStorage for the originating JS eval.
-- `kernelToolsStorage` is exported so senpi-codemode can bind the live worker without a global registry lookup.
+- `src/index.ts` exports `kernelToolsStorage` and `ExtensionKernelTools`.
+- `src/core/extensions/types.ts` adds optional `ExtensionContext.kernelTools`.
+- `src/core/extensions/runner.ts` createContext reads the AsyncLocalStorage binder for the originating JS eval.
 
 ### Why
 
