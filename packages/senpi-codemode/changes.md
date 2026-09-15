@@ -1,5 +1,24 @@
 # senpi-codemode fork changes
 
+## 2026-09-16 - Workpool aggregate QA and reset retention (#1646)
+
+### What changed
+
+- `src/bridges/agent-bridge.ts` sets `additionalProperties: true` on the task-handle schema so extra producer fields match the frozen contract.
+- `scripts/qa/omp-item2-plugin.mjs` subscribes to `senpi-task.workpool-aggregate` on the parent session JSONL before close and asserts `pool_id`, keyed results in input order, and no `yield_unavailable`.
+
+### Why
+
+- Happy QA hardcoded `aggregateVerified: false` and could not certify a working O2 producer; kernel-reset tests inspected a canned fixture ID that could not observe a dropped engine pool.
+
+### Why an extension could not handle it
+
+- Task-handle validation and the checked-in workpool QA runner are owned by codemode; an extension cannot change the consumer schema or the ship-gate assertion.
+
+### Expected merge conflict zones
+
+- LOW: `agent-bridge.ts` schema options and `scripts/qa/omp-item2-plugin.mjs` aggregate extraction.
+
 ## 2026-09-13 - Typed task handles and host workpool sugar (#1646)
 
 ### What changed

@@ -11,6 +11,17 @@ function bounded(promise, label) {
 	let timer;
 	return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label)), 60_000); })]).finally(() => clearTimeout(timer));
 }
+function extractAggregate(value) {
+	if (value == null || typeof value !== "object") return;
+	if (value.customType === "senpi-task.workpool-aggregate" && value.details && typeof value.details.pool_id === "string" && Array.isArray(value.details.results)) return value.details;
+	if (Array.isArray(value.details)) {
+		for (const entry of value.details) {
+			const found = extractAggregate(entry);
+			if (found) return found;
+		}
+	}
+	if (value.message) return extractAggregate(value.message);
+}
 function send(response, step) {
 	response.writeHead(200, { "content-type": "text/event-stream" });
 	const delta = typeof step === "string" ? { content: step } : { tool_calls: [{ index: 0, id: `fixture-${crypto.randomUUID()}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] };
@@ -21,6 +32,7 @@ function send(response, step) {
 }
 const spec = { category: "fixture", prompt: "Return assigned key a through workpool yield" };
 const items = [{ key: "a", input: { n: 1 } }];
+const expectedResults = [{ key: "a", data: { answer: 42 } }];
 const createCode = `
 const spec = ${JSON.stringify(spec)};
 const typed = await agent('Return S2_TASK_DONE', {agent:'explore', model:'fixture/fixture', handle:true});
@@ -54,6 +66,7 @@ export async function runInstalledPlugin(outDir) {
 	let workerStep = 0;
 	let foreign = false;
 	let fixtureFailure;
+	let aggregateMessage;
 	const server = createServer((request, response) => {
 		const chunks = [];
 		request.on("data", chunk => chunks.push(chunk));
@@ -65,7 +78,7 @@ export async function runInstalledPlugin(outDir) {
 				calls.push({ parent, foreign, names });
 				if (!parent) {
 					if (!names.includes("workpool")) return send(response, "S2_TASK_DONE");
-					if (workerStep++ === 0) return send(response, { name: "workpool", args: { op: "yield", results: [{ key: "a", data: { answer: 42 } }] } });
+					if (workerStep++ === 0) return send(response, { name: "workpool", args: { op: "yield", results: expectedResults } });
 					const last = body.messages.filter(message => message.role === "tool").at(-1);
 					workerYield.resolve(JSON.parse(last.content));
 					return send(response, "S2_WORKER_DONE");
@@ -100,6 +113,8 @@ export async function runInstalledPlugin(outDir) {
 				if (!line.trim()) continue;
 				try {
 					const event = JSON.parse(line);
+					const found = extractAggregate(event);
+					if (found && !aggregateMessage) aggregateMessage = found;
 					if (event.type === "tool_execution_end" && event.toolName === "eval" && (event.isError || event.result.details?.isError)) failed.reject(new Error(JSON.stringify(event)));
 				} catch (error) { failed.reject(error); }
 			}
@@ -135,6 +150,13 @@ export async function runInstalledPlugin(outDir) {
 		const listening = once(server, "listening"); server.listen(0, "127.0.0.1"); await listening;
 		await writeFile(join(box.agentDir, "models.json"), JSON.stringify({ providers: { fixture: { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: "openai-completions", apiKey: "fixture", models: [{ id: "fixture", name: "fixture", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
 		const events = await session("parent");
+		if (!aggregateMessage) {
+			for (const event of events) {
+				const found = extractAggregate(event);
+				if (found) { aggregateMessage = found; break; }
+			}
+		}
+		assert(aggregateMessage, "O2 aggregate delivery was not observed on the parent session");
 		const created = outputs.find(value => value.phase === "create");
 		const reset = outputs.find(value => value.phase === "reset");
 		assert(created && reset, "Actual kernel display results must reach CLI events");
@@ -149,9 +171,11 @@ export async function runInstalledPlugin(outDir) {
 		await session("foreign");
 		assert.equal(outputs.at(-1).denial.details.error.code, "scope_denied");
 		const yielded = await workerYield.promise;
+		assert.notEqual(yielded?.error?.code, "yield_unavailable", "O2 yield_unavailable: keyed reconciliation or aggregate delivery is not enabled");
+		assert.equal(aggregateMessage.pool_id, created.pool_id);
+		assert.deepEqual(aggregateMessage.results, expectedResults);
 		const pool = JSON.parse(await readFile(join(box.cwd, ".omo/senpi-task/workpools", `${created.pool_id}.json`), "utf8"));
-		return { producerSha, bundleSha256, paidProviderCalls: 0, calls, outputs, pool, yielded, aggregateVerified: false,
-			blocked: yielded.error?.code === "yield_unavailable" ? "O2 row 10 does not implement keyed reconciliation or aggregate delivery" : "O2 aggregate delivery contract requires final consumer verification", eventCount: events.length };
+		return { producerSha, bundleSha256, paidProviderCalls: 0, calls, outputs, pool, yielded, aggregate: aggregateMessage, aggregateVerified: true, eventCount: events.length };
 	} finally {
 		if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, "close"); child.kill("SIGKILL"); await exited; }
 		server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

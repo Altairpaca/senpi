@@ -19,10 +19,13 @@ const agentArgsSchema = Type.Object(
 );
 
 const unsupportedIsolationWarning = "isolated/apply/merge unsupported (no isolation in task engine)";
-const taskHandleSchema = Type.Object({
-	task_id: Type.String({ pattern: "^st_[0-9a-f]+$" }),
-	run_epoch: Type.Integer({ minimum: 0 }),
-});
+const taskHandleSchema = Type.Object(
+	{
+		task_id: Type.String({ pattern: "^st_[0-9a-f]+$" }),
+		run_epoch: Type.Integer({ minimum: 0 }),
+	},
+	{ additionalProperties: true },
+);
 
 /** Structural host contract; no orchestration package dependency. */
 export type TaskHandleDetails = {

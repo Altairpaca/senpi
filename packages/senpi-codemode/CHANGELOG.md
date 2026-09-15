@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Typed task-handle details explicitly allow additional producer fields (`additionalProperties: true`) to match the frozen contract ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+
 ### Fixed
 
 ### Removed

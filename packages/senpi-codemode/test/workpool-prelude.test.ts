@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { marshalToolResult, toolResultIsError } from "../src/tool/image.ts";
-import { catchCode, create, handle, inspectById, omittedMode, operations, setup } from "./workpool/cells.ts";
+import {
+	catchCode,
+	create,
+	handle,
+	inspectById,
+	omittedMode,
+	operations,
+	setup,
+	showCreated,
+} from "./workpool/cells.ts";
 import {
 	agentSpec,
 	availability,
+	displayedPoolId,
 	fixture,
 	hostResult,
 	items,
@@ -11,6 +21,7 @@ import {
 	poolId,
 	receipt,
 	record,
+	retainingHost,
 } from "./workpool/fixture.ts";
 
 for (const language of languages) {
@@ -70,11 +81,17 @@ for (const language of languages) {
 		});
 
 		it("can inspect by ID and recreate an adapter after a real kernel reset", async () => {
-			const f = await fixture(async () => hostResult(record));
+			const { executeTool } = retainingHost();
+			const f = await fixture(executeTool);
 			try {
-				expect(toolResultIsError(await f.run(language, `${setup[language]}\n${create[language]}`))).toBe(false);
-				const afterReset = await f.run(language, inspectById[language], true);
-				expect(afterReset.details.jsonOutputs).toEqual([{ inspection: marshalToolResult(hostResult(record)) }]);
+				const created = await f.run(language, `${setup[language]}\n${create[language]}\n${showCreated[language]}`);
+				expect(toolResultIsError(created)).toBe(false);
+				const createdId = displayedPoolId(created);
+				const afterReset = await f.run(language, inspectById(language, createdId), true);
+				expect(toolResultIsError(afterReset)).toBe(false);
+				expect(afterReset.details.jsonOutputs).toEqual([
+					{ inspection: marshalToolResult(hostResult({ ...record, pool_id: createdId })) },
+				]);
 				const recreated = await f.run(language, `${setup[language]}\n${create[language]}\n${operations[language]}`);
 				expect(toolResultIsError(recreated), JSON.stringify(recreated)).toBe(false);
 			} finally {

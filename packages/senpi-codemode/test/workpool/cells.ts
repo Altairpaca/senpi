@@ -26,12 +26,25 @@ export const omittedMode: Readonly<Record<EvalLanguage, string>> = {
 	rb: "workpool(wpData['agent'], 'default')",
 	jl: 'workpool(wpData["agent"], "default")',
 };
-export const inspectById: Readonly<Record<EvalLanguage, string>> = {
-	js: `display({inspection: await tool.workpool({ op: 'inspect', pool_id: '${poolId}' })});`,
-	py: `display({'inspection': tool.workpool(op='inspect', pool_id='${poolId}')})`,
-	rb: `display({inspection: tool.workpool(op: 'inspect', pool_id: '${poolId}')})`,
-	jl: `display(Dict("inspection" => tool.workpool(op="inspect", pool_id="${poolId}")))`,
+export const showCreated: Readonly<Record<EvalLanguage, string>> = {
+	js: "display({ pool_id: pool.pool_id });",
+	py: "display({'pool_id': pool.pool_id})",
+	rb: "display({pool_id: pool.pool_id})",
+	jl: 'display(Dict("pool_id" => pool.pool_id))',
 };
+export function inspectById(language: EvalLanguage, id: string): string {
+	const pool_id = JSON.stringify(id);
+	switch (language) {
+		case "js":
+			return `display({inspection: await tool.workpool({ op: 'inspect', pool_id: ${pool_id} })});`;
+		case "py":
+			return `display({'inspection': tool.workpool(op='inspect', pool_id=${pool_id})})`;
+		case "rb":
+			return `display({inspection: tool.workpool(op: 'inspect', pool_id: ${pool_id})})`;
+		case "jl":
+			return `display(Dict("inspection" => tool.workpool(op="inspect", pool_id=${pool_id})))`;
+	}
+}
 export function catchCode(language: EvalLanguage, code: string): string {
 	switch (language) {
 		case "js":

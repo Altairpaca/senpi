@@ -19,6 +19,40 @@ export function hostResult(details: unknown): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text: JSON.stringify(details) }], details };
 }
 
+export function displayedPoolId(result: { details?: { jsonOutputs?: readonly unknown[] } }): string {
+	const first = result.details?.jsonOutputs?.[0];
+	if (typeof first !== "object" || first === null || !("pool_id" in first) || typeof first.pool_id !== "string") {
+		throw new Error(`create did not display a pool_id: ${JSON.stringify(first)}`);
+	}
+	return first.pool_id;
+}
+
+export function retainingHost() {
+	const pools = new Map<string, typeof record>();
+	return {
+		pools,
+		executeTool: async (_name: string, args: unknown) => {
+			const op = typeof args === "object" && args !== null && "op" in args ? args.op : undefined;
+			const id =
+				typeof args === "object" && args !== null && "pool_id" in args && typeof args.pool_id === "string"
+					? args.pool_id
+					: undefined;
+			if (op === "create") {
+				const pool_id = `wp_${crypto.randomUUID().replaceAll("-", "")}`;
+				const created = { ...record, pool_id };
+				pools.set(pool_id, created);
+				return hostResult(created);
+			}
+			const found = typeof id === "string" ? pools.get(id) : undefined;
+			if (found === undefined) {
+				return hostResult({ isError: true, error: { code: "not_found", message: "engine pool missing" } });
+			}
+			if (op === "push") return hostResult({ ...receipt, pool_id: found.pool_id });
+			return hostResult(found);
+		},
+	};
+}
+
 export async function fixture(executeTool: ExecuteTool) {
 	const manager = await createCodemodeSessionManager({
 		sessionId: `workpool-test-${crypto.randomUUID()}`,

@@ -28,7 +28,7 @@ async function preludeParity() {
 				{ name: "workpool", args: { op: "push", pool_id: poolId, items } },
 				...["inspect", "close", "cancel"].map(op => ({ name: "workpool", args: { op, pool_id: poolId } })),
 			]);
-			const reset = await f.run(language, inspectById[language], true);
+			const reset = await f.run(language, inspectById(language, poolId), true);
 			assert.deepEqual(reset.details.jsonOutputs, [{ inspection: marshalToolResult(hostResult(record)) }]);
 			results.push({ language, runtime: availability[language].detected, calls, output: result.details.jsonOutputs, reset: reset.details.jsonOutputs });
 		} finally { await f.manager.dispose(); }
