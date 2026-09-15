@@ -90,7 +90,7 @@ describe("paused file monitor", () => {
 				await new Promise((resolve) => setTimeout(resolve, 25));
 			}
 		} finally {
-			registry.killAll();
+			registry.dispose();
 		}
 	}, 30_000);
 });
