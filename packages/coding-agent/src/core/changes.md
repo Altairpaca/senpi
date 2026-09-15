@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-14 - Terminal mouse capture setting (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts` adds persisted `getTerminalMouse`/`setTerminalMouse` accessors, defaulting to `whilePending`, validating writes and rejecting unknown values. `packages/coding-agent/src/core/terminal-settings.ts` extends the typed settings shape with the shared `off | whilePending | always` value schema.
+
+### Why
+
+- `packages/coding-agent/src/core/settings-manager.ts` must provide a durable opt-out for regular and fullscreen capture while keeping the default renderer unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/settings-manager.ts` owns global/project precedence and persisted terminal preferences; renderer construction happens before extension registration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: terminal-settings import and terminal accessors adjacent to clearOnShrink. The settings shape module is fork-owned.
+
 ## 2026-09-14 - Session-owned by-name activation and tool_search hidden hints (senpi#1682)
 
 ### What changed
@@ -17,6 +35,7 @@
 ### Expected merge conflict zones
 
 - LOW: two small additions in `_installAgentToolHooks` / `_activateLazyTool` and one call after `bindCore`; both are fork-owned regions.
+
 ## 2026-09-14 - Restore grep as an eval-only default tool (#1678)
 
 ### What changed
