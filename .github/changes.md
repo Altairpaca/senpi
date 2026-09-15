@@ -36,6 +36,24 @@
 
 - MEDIUM: the `jobs` map and the `check-and-test` `needs` list in `.github/workflows/ci.yml` whenever upstream restructures CI.
 
+## 2026-09-14 - Enforce freshly staged release entry graphs
+
+### What changed
+
+- `.github/workflows/ci.yml` runs the codemode graph followed by the existing exclusions graph in the required workspaces/scripts job, before script suites invalidate generated output. It rebuilds the trusted canvas native binding after the lifecycle-disabled install; the codemode suite rebuilds workspace entries and compile assets itself.
+
+### Why
+
+- `.github/workflows/ci.yml` must execute the real contribution tests instead of leaving the root Bun `.ts` tests outside its Node `.mjs` glob. Native release prerequisites must be present for the graph build (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` establishes build prerequisites and validation order before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The `Fresh release entry graphs (codemode and exclusions)` step in `.github/workflows/ci.yml`.
+
 ## 2026-09-13 - Verify split workers with the release compiler
 
 ### What changed

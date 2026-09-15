@@ -61,6 +61,24 @@
 - `packages/coding-agent/src/core/sdk.ts`: defaultActiveToolNames. Keep explicit and configured selection precedence intact.
 - `packages/coding-agent/src/core/system-prompt.ts`: file-exploration guidance and getEvalOnlyGrepGuideline. Contributions must not re-advertise withheld tools as direct calls.
 
+## 2026-09-14 - Load standalone codemode from its sidecar only
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` removes the compiled factory bypass and loads the staged codemode manifest entries through the ordinary extension importer. Compiled inventory retains `<builtin:codemode>` while resolved paths and assets remain on disk.
+
+### Why
+
+- `packages/coding-agent/src/core/resource-loader.ts` previously embedded codemode implementation in addition to shipping its source tree. The standalone distribution now ships that implementation once (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` owns the host's builtin loading and compile-time dependency edge; the loaded extension cannot remove its own bundled factory.
+
+### Expected merge conflict zones
+
+- Bundled package registration and `loadExtensionFactories()` in `packages/coding-agent/src/core/resource-loader.ts`.
+
 ## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
 
 ### What changed
