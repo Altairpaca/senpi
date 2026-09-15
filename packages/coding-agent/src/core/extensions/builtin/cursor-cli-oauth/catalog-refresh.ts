@@ -1,6 +1,5 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import type { ProviderModelConfig } from "../../types.ts";
-import type { CursorCliAccountSlot } from "./accounts.ts";
 import { type CursorAccountHomeLogger, runInCursorAccountHome } from "./home-store.ts";
 import { resolveCursorCliModelCatalog } from "./models.ts";
 import { type CursorCliModelProbe, runModelsProbe } from "./models-probe.ts";
@@ -15,13 +14,6 @@ export type CursorCliModelCatalogRefreshInput = {
 	readonly runProbe?: CursorCliModelProbe;
 	readonly log?: CursorAccountHomeLogger;
 };
-
-function probeAccount(
-	accounts: readonly CursorCliAccountSlot[],
-	pinnedAccount: string | undefined,
-): CursorCliAccountSlot | undefined {
-	return accounts.find((slot) => slot.name === pinnedAccount) ?? accounts[0];
-}
 
 /**
  * Startup catalog refresh. Resolves `undefined` - spawning nothing - unless the
@@ -43,7 +35,8 @@ export async function refreshCursorCliModelCatalogForLane(
 		case "no-accounts":
 			return undefined;
 		case "configured": {
-			const account = probeAccount(outcome.assessment.accounts, input.settings.pinnedAccount);
+			const { accounts } = outcome.assessment;
+			const account = accounts.find((slot) => slot.name === input.settings.pinnedAccount) ?? accounts[0];
 			if (account === undefined) return undefined;
 			const probe = input.runProbe ?? runModelsProbe;
 			return resolveCursorCliModelCatalog({
