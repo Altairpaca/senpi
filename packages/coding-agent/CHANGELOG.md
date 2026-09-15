@@ -6,9 +6,11 @@
 
 ### Added
 
-- Optional `ExtensionContext.kernelTools` exposes a transient parent JS kernel-tool capability during eval-owned host-tool execution ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+- Added the optional `ExtensionContext.kernelTools` capability with `describe(names)` and `invoke(request, signal?)`. It is present only while a JavaScript eval cell owns the host-tool context, so an extension tool called from inside that cell can reach the functions the cell registered with `tool(fn)`; on older runtimes and outside such a cell it is `undefined`. The package exports `kernelToolsStorage` and the `ExtensionKernelTools` type for hosts that install the capability ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Changed
+
+- Default `read` calls on eligible `.json` files now return the agent package's structural view, with the same declaration-safe folding and numeric `offset`/`limit` rereads, so edits after a read still target real lines. TypeScript and JavaScript stay raw because the measured candidate missed their quality thresholds. Prose, explicit ranges and the existing size-limit continuations produce the same output as before. `ReadToolOptions.folder` selects the folder; `createReadToolDefinition`, `createCodingTools` and `createReadOnlyTools` default it to `selectedReadFolder`, and an options object without `folder` keeps reads verbatim. Compiled binaries produce byte-identical read output to the source build, and no parser dependency is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
 
@@ -55,7 +57,6 @@
 
 ### Changed
 
-- Default reads of eligible JSON now share the harness's structural view, with exact offset/limit rereads for edits. JavaScript and TypeScript remain raw after the declaration-safe production candidate missed their requalified quality thresholds. Prose, explicit ranges and existing size-limit continuations retain their previous output. Binary parity uses the publishing workflow's complete split entry graph and shipping autoload behavior; the read feature adds no parser dependency ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Retired the `GrepOperations` override hook from `GrepToolOptions` in favor of the engine-backed grep implementation, and aligned Cursor `pi_grep` frames with the new `pattern`/`path`/`glob`/`ignoreCase`/`literal`/`context`/`limit` contract. Unknown Cursor flags are ignored with a debug log. The tool always returns the structured footer and `details` v1 contract ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
 
 - Restored `grep` as a default eval-only tool, callable with `tool.grep({ pattern, path })` and discoverable through `tool_schema`. Direct model calls return an eval hint without executing; sessions without eval retain direct grep access, and existing hooks and permissions still apply ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
@@ -71,10 +72,6 @@
 
 ### Fixed
 
-- Stopped folding class bodies composed only of fields, static blocks or accessors in the public read candidate so member declarations stay visible ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-- Retained computed object-member names and destructuring-assignment targets in the public read candidate, and exercised malformed selected JSON in compiled fallback QA ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-- Prevented declaration signatures and their descendants from being hidden by direct or enclosing structural folds, and made frozen replay reject tokenizer-byte drift before reporting exact counts ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-- Preserved arrow-return object types in read signatures, restored the bake-off's explicit raw comparator, and froze default-read languages from the production folder/view rather than the prototype ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Fixed background processes surviving shutdown when the shell that started them exited first: the bash tool now keeps owning a command's process group until its last descendant is gone, so `sleep 30 &` or `nohup server &` is killed by shutdown cleanup instead of being orphaned. Tracked groups that have drained are pruned, and a group whose leader already exited is never re-signalled by bare pid ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
 
 - Fixed native grep reporting duplicate files across overlapping roots and symlink aliases; each file is searched once and reported under its lexically smallest display path without canonicalizing every file ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
