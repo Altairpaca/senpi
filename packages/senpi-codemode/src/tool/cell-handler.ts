@@ -90,6 +90,8 @@ export class CellHandler {
 			case "init-failed":
 			case "result":
 			case "closed":
+			case "kernel-tool-describe-reply":
+			case "kernel-tool-invoke-reply":
 				return;
 			default:
 				throw new TypeError(`Unhandled kernel message: ${String(message)}`);

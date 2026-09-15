@@ -156,4 +156,53 @@ describe("bridge protocol JSONL framing", () => {
 	it("documents the default frame size", () => {
 		expect(BRIDGE_FRAME_MAX_BYTES).toBe(10 * 1024 * 1024);
 	});
+
+	it("round-trips kernel-tool describe and invoke frames", () => {
+		const messages = [
+			{
+				type: "init",
+				sessionId: "session-tools",
+				connection: { port: 4317, token: "secret-token" },
+				kernelGeneration: 4,
+			},
+			{ type: "kernel-tool-describe", requestId: "d1", names: ["lookup"] },
+			{
+				type: "kernel-tool-invoke",
+				requestId: "i1",
+				name: "lookup",
+				kernel_generation: 4,
+				definition_revision: 2,
+				args: { path: "x" },
+				call_id: "child-1",
+			},
+			{
+				type: "kernel-tool-describe-reply",
+				requestId: "d1",
+				ok: true,
+				results: [
+					{
+						name: "lookup",
+						ok: true,
+						descriptor: {
+							name: "lookup",
+							description: "",
+							input_schema: { type: "object" },
+							language: "js",
+							kernel_generation: 4,
+							definition_revision: 2,
+						},
+					},
+				],
+			},
+			{
+				type: "kernel-tool-invoke-reply",
+				requestId: "i1",
+				ok: false,
+				error: { message: "stale", code: "kernel_tool_stale" },
+			},
+		];
+		for (const message of messages) {
+			expect(decodeBridgeFrame(encodeBridgeFrame(message as never))).toEqual({ ok: true, message });
+		}
+	});
 });

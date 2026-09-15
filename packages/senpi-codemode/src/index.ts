@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
+import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
 import {
@@ -48,6 +49,8 @@ export interface CodemodeExtensionAPI {
 	registerRemovedToolHint(name: string, hint: string): void;
 	on(event: CodemodeEvent | "resources_discover", handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
 	executeTool: AgentExecuteTool;
+	/** Present only while a live JavaScript eval owns the host-tool context. */
+	kernelTools?: KernelToolsCapability;
 	getActiveTools(): string[];
 	getAllTools(): readonly EvalSchemaToolInfo[];
 	sendMessage(
@@ -260,3 +263,10 @@ function modelIdFrom(event: unknown): string | undefined {
 }
 
 export { enabledLanguagesFrom };
+export {
+	KERNEL_TOOLS_UNSUPPORTED,
+	type KernelToolDescriptor,
+	type KernelToolsCapability,
+	type KernelToolsDescribeResult,
+	type KernelToolsInvokeRequest,
+} from "./kernels/js/kernel-tools-types.ts";

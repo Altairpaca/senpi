@@ -74,6 +74,7 @@ export function createWorkerCore(transport, options) {
 				parallelPoolWidth: options.parallelPoolWidth,
 				localRoots: message.connection.localRoots,
 				artifactsDir: message.connection.artifactsDir,
+				kernelGeneration: message.kernelGeneration ?? 1,
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 			});
 			emit({ type: "ready" });

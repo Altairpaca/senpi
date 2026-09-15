@@ -1,5 +1,27 @@
 # senpi-codemode fork changes
 
+## 2026-09-16 - Fenced JS kernel tool descriptors (#1647)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-*.js` parse named functions with Babel, apply MCP naming rules, and fence descriptors by generation/revision.
+- `tool(fn, metadata?)` is callable in the JS worker while `tool.<name>()` host calls remain.
+- `src/bridges/agent-bridge.ts` accepts and forwards `tools: string[]`.
+- Bridge protocol schemas include kernel-tool describe/invoke frames; production invoke pumping is not enabled yet.
+- `vitest.config.ts` merges workspace source aliases from `vitest.base.ts` so Node-hosted Vitest can load agent-bridge tests without package dist.
+
+### Why
+
+- In-process children need live, fenced parent JS functions without persisting closures or colliding with host/reserved names.
+
+### Why an extension could not handle it
+
+- Kernel globals, bridge frames, and agent argument forwarding are owned by codemode.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/bridge/protocol.ts` host/kernel unions, `src/kernels/js/worker-runtime.js` `tool` global, `src/bridges/agent-bridge.ts` argument schema.
+
 ## 2026-09-16 - Workpool aggregate QA and reset retention (#1646)
 
 ### What changed

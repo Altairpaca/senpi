@@ -8,6 +8,7 @@
 
 ### Added
 
+- JS `tool(fn, metadata?)` registers fenced kernel-tool descriptors (`name`, JSON input schema, `kernel_generation`, `definition_revision`) while `tool.read(...)` host calls keep working. `agent()` forwards `tools: string[]` for in-process children ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 - JS, Python, Ruby, and Julia expose host-owned `workpool` sugar with opaque pool IDs and unchanged tool receipts, without kernel scheduling ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
 ### Changed

@@ -11,6 +11,7 @@ const agentArgsSchema = Type.Object(
 		label: Type.Optional(Type.String()),
 		schema: Type.Optional(Type.Unknown()),
 		handle: Type.Optional(Type.Boolean()),
+		tools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 		isolated: Type.Optional(Type.Boolean()),
 		apply: Type.Optional(Type.Boolean()),
 		merge: Type.Optional(Type.Boolean()),
@@ -41,6 +42,7 @@ type TaskParams = {
 	readonly model?: string;
 	readonly name?: string;
 	readonly run_in_background: boolean;
+	readonly tools?: readonly string[];
 };
 type ProgressContext = { readonly fallbackId: string; readonly warning?: string };
 
@@ -142,6 +144,7 @@ function toTaskParams(args: AgentArgs, structured: boolean): TaskParams {
 		...(args.model === undefined ? {} : { model: args.model }),
 		...(args.label === undefined ? {} : { name: args.label }),
 		run_in_background: args.handle === true,
+		...(args.tools === undefined ? {} : { tools: args.tools }),
 	};
 }
 

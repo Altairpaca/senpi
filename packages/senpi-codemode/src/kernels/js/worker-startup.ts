@@ -16,6 +16,7 @@ export function resolveJsWorkerEntryUrl(options: JavaScriptWorkerEntryUrlOptions
 
 export interface WorkerStartupHooks {
 	readonly options: JavaScriptKernelOptions;
+	readonly kernelGeneration: number;
 	/** Wires the worker into the kernel; throws `WorkerStartupCancelledError` once the generation is stale. */
 	publish(worker: WorkerLike): void;
 	isCurrent(worker: WorkerLike): boolean;
@@ -27,7 +28,7 @@ export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, s
 	let worker = spawnWorker(hooks.options);
 	hooks.publish(worker);
 	try {
-		await initializeWorker(worker, hooks.options, signal);
+		await initializeWorker(worker, hooks, signal);
 		return;
 	} catch (error) {
 		if (!hooks.isCurrent(worker) || error instanceof WorkerStartupCancelledError) {
@@ -41,7 +42,7 @@ export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, s
 	if (!hooks.canFallBackInline()) throw new WorkerStartupCancelledError();
 	worker = createInlineWorker(hooks.options.cwd, hooks.options.parallelPoolWidth);
 	hooks.publish(worker);
-	await initializeWorker(worker, hooks.options, signal);
+	await initializeWorker(worker, hooks, signal);
 }
 
 function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
@@ -56,14 +57,16 @@ function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
 
 async function initializeWorker(
 	worker: WorkerLike,
-	options: JavaScriptKernelOptions,
+	hooks: WorkerStartupHooks,
 	signal: AbortSignal,
 ): Promise<void> {
 	const ready = waitForReady(worker, signal);
+	const options = hooks.options;
 	worker.postMessage({
 		type: "init",
 		sessionId: options.sessionId,
 		connection: localBridgeConnection(options),
+		kernelGeneration: hooks.kernelGeneration,
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 	});
 	await ready;
