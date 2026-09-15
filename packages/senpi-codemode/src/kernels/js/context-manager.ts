@@ -11,7 +11,7 @@ import {
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
-import { terminateProcessTrees } from "./process-tree.js";
+import { terminateProcessTrees } from "./process-tree-host.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun, stoppedResult } from "./run-queue.ts";
 import { bridgeError, WorkerStartupCancelledError } from "./worker-host.ts";
 import { WorkerSlot } from "./worker-slot.ts";
