@@ -5,6 +5,7 @@
 - `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` no longer marks a class-body `{` foldable after `HeaderProtection.open` consumes the class header. Initializer objects, static-block bodies and method bodies inside the class remain eligible.
 - `packages/agent/src/harness/utils/read-folders/header-protection.ts` returns whether `open` closed a class header, and clears the sticky assignment-target marker on the next word token so ASI-style value objects are not over-protected.
 - The adversarial grammar adds class-field, static-block, accessor, computed getter/setter and async-generator computed-method contexts. Enumeration pins 1440 programs / 244 emitted ranges / 0 counterexamples.
+- `packages/agent/src/harness/utils/read-folders/index.ts` re-freezes the measured selection receipt hash and its measurement commit after the requalified bake-off.
 
 ### Why
 

@@ -24,22 +24,22 @@
     }
   },
   "candidate_sources_sha256": {
-    "read-folders/brace-scanner.ts": "b8e0776501d0d278402ebb4793236a93808b7b5102cad65d63080df360876bee",
-    "read-folders/header-protection.ts": "d71bf12c4c2d5ceccb82a9d4a98ce0afecd728d39c3f68856d444bab399b1660",
+    "read-folders/brace-scanner.ts": "1afa697f1918e403d600537571f62cf2d45bdf98540160aa186273b9ea68428c",
+    "read-folders/header-protection.ts": "9bd0bea5dfe20011c8d4235563454a2af1064c95537c4ed0a807d070954a9777",
     "read-folders/lexical-context.ts": "e3816078bc60c25e07ceb029d49ceb9d83d55968e2a1e9fa278ec5a4bf9bcb3f",
     "read-folders/lexical-spans.ts": "c7ba988487972d9e39427e5faf0120b3bf787cb48ffa32cf8123ce54bdbdbd93",
     "read-folders/types.ts": "449f11dd3b2d0e68f1f6aad896a0a73a4c9756fef3f5acce9295bac9a26fbc69",
     "segmented-read-view.ts": "c0e865ba351a7a9eb29ab999c553729079732886e8bf0f2daa40c4b0d6dcf3bd"
   },
   "enumeration": {
-    "programs": 1176,
-    "grammarSha256": "b7203532f4fd335849bb5d58f90668ee469297f2f44985e37b824baf4dd66187",
-    "emittedRanges": 148,
-    "protectedPrograms": 1168,
+    "programs": 1440,
+    "grammarSha256": "b9641386c9661e9bf8282dd7fe661734806b07c626a452afbe3533c7f513fc02",
+    "emittedRanges": 244,
+    "protectedPrograms": 1432,
     "counterexamples": [],
-    "sha256": "2cc4528101989def821ae4fc39165bd5a66ff12be3849cb4fcb8da0c0b192d97"
+    "sha256": "c868ccac41fa71b8211db03d02f0f3aad30744048f423b8d6f3d33ba10c67e5d"
   },
-  "tree_sha": "102495497322fcfc90bc31cd406a1d2527b4f3e5",
+  "tree_sha": "a8208b6f36b9bbc83d6b5d9a328354fe8276708a",
   "binary_measurement": "omp-item1 --case compiled-parity (release graph, all shipped targets)",
   "gate_status": "OQ1_unresolved_defaults_used",
   "gate_receipt": {
@@ -71,9 +71,9 @@
   "reference_latency_scope": "original baseline observation, not rerun latency",
   "wasm_enabled": false,
   "status": "frozen_measurement_with_per_language_raw_fallbacks",
-  "head_sha": "70485f5bbda9ed588bdc5d103a0576c1e08f0da9",
-  "startedAt": "2026-09-14T09:31:05.890Z",
-  "finishedAt": "2026-09-14T09:31:16.672Z",
+  "head_sha": "0830b8c466e1f0689fa7f6f33cb7cfcd188b5407",
+  "startedAt": "2026-09-15T10:59:07.396Z",
+  "finishedAt": "2026-09-15T10:59:13.330Z",
   "corpus_sha256": "7341450565d0c56ac07ef676eb6e43a79cab7a012fefe73612a7e2cab1ba43fa",
   "annotations_sha256": "c3dc623bd0418fd7b8052e9c8418f84f5d3bff4e08022c309600de286e8f5133",
   "adversarial_boundaries_sha256": "ee70ae8a6d8e280c5d7d02623a7945455b3b761978caee9bf02b8020865ca4d6",
@@ -93,7 +93,7 @@
   },
   "max_embedded_delta_bytes": 12582912,
   "grammar_pins": "grammar-pins.json",
-  "output_bindings_sha256": "0fb9ba2d66562ba1f811dc5cfb208916300f631e39e8e8aa39b062fad9c5c96b",
+  "output_bindings_sha256": "098206ce13014d7cf113dcbf26d7dbcd97cec74ea5dc713b6655c0efb0f748ed",
   "raw_reader_sha256": "618043d9996f8633626b411b988863a84f87bd573eb881718ff67b4b2b3e35c7",
   "reference_reader_sha256": "270694388f57680524c3df3f6223e845dc8c4d78e2146748d2013c63ae9ba935",
   "settings": {
@@ -215,7 +215,7 @@
       "default_read_median_saving": 0,
       "default_read_saved_tokens": 0,
       "files_with_folds": 1,
-      "discovered_folds": 16,
+      "discovered_folds": 19,
       "file_outcomes": [
         {
           "id": "js-1",
@@ -225,7 +225,7 @@
         },
         {
           "id": "js-2",
-          "emitted_folds": 1,
+          "emitted_folds": 2,
           "minimum_oracle_skeleton_lines": 50
         },
         {
@@ -249,7 +249,7 @@
       ],
       "invalid_boundaries": [],
       "heuristic_rejection": "wasm_candidate_pending_owner",
-      "total_saved_tokens": 148
+      "total_saved_tokens": 272
     },
     {
       "language": "python",
