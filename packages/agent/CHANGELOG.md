@@ -6,9 +6,19 @@
 
 ### Added
 
+- Added dependency-free measured TS/JS/JSON read folders and a pure source-preserving segmented-view API with bounded breadth-first unfolding ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
 ### Changed
 
+- Requalified structural reads against declaration-protected source annotations. JSON remains selected; JavaScript now stays raw after the conservative candidate fell below 90% of the reference median, matching TypeScript's safe raw fallback ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Default reads of eligible JSON now use structural views with exact offset/limit rereads. JavaScript and TypeScript remain raw after the requalified production candidate missed their measured quality thresholds. Prose, explicit ranges and existing size-limit fallbacks remain verbatim; callers can inject a folder or omit it from custom options to retain raw reads ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
 ### Fixed
+
+- Stopped folding class bodies composed only of fields, static blocks or accessors so member declarations stay visible, and expanded the adversarial grammar to those class-member contexts ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Retained computed object-member names and complete destructuring-assignment targets against direct and enclosing folds, with deterministic adversarial grammar qualification before selection ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Protected class heritage, parameters, type/operator returns, decorators, bindings and nested declaration headers from overlapping folds; frozen bake-off replay now verifies the tokenizer installation and ships its selection receipt in-tree ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Preserved arrow-return object types in read-folder signatures and reused structured file cancellation before folding. Production measurements use an explicit raw comparator and the actual shared folder/view ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Removed
 

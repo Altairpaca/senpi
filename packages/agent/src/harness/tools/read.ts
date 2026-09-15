@@ -2,7 +2,9 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { Context } from "../context.ts";
 import type { AgentHarnessTool } from "../types.ts";
-import { getOrThrow } from "../types.ts";
+import { FileError, getOrThrow } from "../types.ts";
+import { type ReadFolder, selectedReadFolder } from "../utils/read-folders/index.ts";
+import { createDefaultReadSummary } from "../utils/segmented-read-view.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -42,10 +44,12 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Optional image conversion/resizing implementation. */
 	imageProcessor?: ReadImageProcessor;
+	/** Structural folder. Default options select the measured folder; omit here for verbatim reads. */
+	folder?: ReadFolder;
 }
 
 export function createReadTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
-	options?: ReadToolOptions,
+	options: ReadToolOptions = { folder: selectedReadFolder },
 ): AgentHarnessTool<TContext, typeof readSchema, ReadToolDetails | undefined> {
 	return {
 		name: "read",
@@ -55,6 +59,7 @@ export function createReadTool<TContext extends ExecutionToolContext = Execution
 		async execute(_toolCallId, { path, offset, limit }, _onUpdate, { env }, _invocation, context) {
 			const absolutePath = await resolveReadToolPath(env, path, context);
 			const bytes = getOrThrow(await env.readBinaryFile(absolutePath, context));
+			if (context.abortSignal?.aborted) throw new FileError("aborted", "Operation aborted", absolutePath);
 			const mimeType = detectSupportedImageMimeType(bytes);
 			if (mimeType) {
 				if (options?.imageProcessor) {
@@ -119,9 +124,19 @@ export function createReadTool<TContext extends ExecutionToolContext = Execution
 			}
 
 			const truncation = truncateHead(selectedContent);
+			const summary = createDefaultReadSummary({
+				path: absolutePath,
+				text: textContent,
+				offset,
+				limit,
+				folder: options.folder,
+				truncated: truncation.truncated,
+			});
 			let outputText: string;
 			let details: ReadToolDetails | undefined;
-			if (truncation.firstLineExceedsLimit) {
+			if (summary) {
+				outputText = summary.text;
+			} else if (truncation.firstLineExceedsLimit) {
 				const firstLineSize = formatSize(new TextEncoder().encode(allLines[startLine]).byteLength);
 				outputText = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;
 				details = { truncation };

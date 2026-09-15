@@ -1,4 +1,9 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import {
+	type AgentTool,
+	createDefaultReadSummary,
+	type ReadFolder,
+	selectedReadFolder,
+} from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, TextContent } from "@earendil-works/pi-ai";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
@@ -53,6 +58,8 @@ const defaultReadOperations: ReadOperations = {
 };
 
 export interface ReadToolOptions {
+	/** Structural folder. Default options select the measured folder; omit here for verbatim reads. */
+	folder?: ReadFolder;
 	/** Whether to auto-resize images to 2000x2000 max. Default: true */
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
@@ -70,7 +77,7 @@ function getNonVisionImageNote(model: Model<Api> | undefined): string | undefine
 
 export function createReadToolDefinition(
 	cwd: string,
-	options?: ReadToolOptions,
+	options: ReadToolOptions = { folder: selectedReadFolder },
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined, ReadRenderState> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
@@ -146,6 +153,7 @@ export function createReadToolDefinition(
 							} else {
 								// Read text content.
 								const buffer = await ops.readFile(absolutePath);
+								if (aborted) return;
 								const textContent = buffer.toString("utf-8");
 								const allLines = textContent.split("\n");
 								const totalFileLines = allLines.length;
@@ -168,8 +176,18 @@ export function createReadToolDefinition(
 								}
 								// Apply truncation, respecting both line and byte limits.
 								const truncation = truncateHead(selectedContent);
+								const summary = createDefaultReadSummary({
+									path: absolutePath,
+									text: textContent,
+									offset,
+									limit,
+									folder: options.folder,
+									truncated: truncation.truncated,
+								});
 								let outputText: string;
-								if (truncation.firstLineExceedsLimit) {
+								if (summary) {
+									outputText = summary.text;
+								} else if (truncation.firstLineExceedsLimit) {
 									// First line alone exceeds the byte limit. Point the model at a bash fallback.
 									const firstLineSize = formatSize(Buffer.byteLength(allLines[startLine], "utf-8"));
 									outputText = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;

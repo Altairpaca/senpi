@@ -1,3 +1,129 @@
+## 2026-09-15 - Do not fold fields-only class bodies (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` no longer marks a class-body `{` foldable after `HeaderProtection.open` consumes the class header. Initializer objects, static-block bodies and method bodies inside the class remain eligible.
+- `packages/agent/src/harness/utils/read-folders/header-protection.ts` returns whether `open` closed a class header, and clears the sticky assignment-target marker on the next word token so ASI-style value objects are not over-protected.
+- The adversarial grammar adds class-field, static-block, accessor, computed getter/setter and async-generator computed-method contexts. Enumeration pins 1440 programs / 244 emitted ranges / 0 counterexamples.
+- `packages/agent/src/harness/utils/read-folders/index.ts` re-freezes the measured selection receipt hash and its measurement commit after the requalified bake-off.
+
+### Why
+
+- A class whose members are only fields or `static` blocks has no method-header intervals, so a wholesale class-body fold hid every member declaration and emitted a range the independent oracle rejects.
+
+### Why an extension could not handle it
+
+- The public folder returns these ranges below either reader's extension surface; member declarations must remain visible before rendering or qualification.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` class-body foldability and `header-protection.ts` `open` return. Preserve the class-body exclusion; do not whitelist `ClassBody` in the oracle.
+
+## 2026-09-14 - Computed members and assignment-pattern retention (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` protects computed names in object literals as well as class bodies, and marks every value-position array/object so a later `=` can reclassify it.
+- `packages/agent/src/harness/utils/read-folders/header-protection.ts` gives every protected member context an interval for the overlap filter, and retrospectively protects expression-shaped assignment targets at `=`.
+- `packages/agent/src/harness/utils/read-folders/lexical-context.ts` replaces the class-only computed-name marker with that value-position marker; the brace parent now supplies member context.
+- `packages/agent/src/harness/utils/read-folders/index.ts` re-freezes the measured selection receipt hash and its measurement commit after the requalified bake-off.
+- The independent AST oracle excludes complete assignment target subtrees, and the production bake-off requires the fixed adversarial grammar to pass before freezing a receipt.
+
+### Why
+
+- Computed member names and destructuring-assignment defaults can contain executable object literals without becoming implementation bodies. Both interior and enclosing folds must retain them.
+
+### Why an extension could not handle it
+
+- The public folder returns these ranges below either reader's extension surface; safety must be proved before rendering or qualification.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` and `packages/agent/src/harness/utils/read-folders/header-protection.ts` delimiter state. Preserve retrospective target protection and rejection of every overlapping fold.
+
+## 2026-09-14 - Declaration-safe read qualification (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/header-protection.ts` tracks class/function headers and protected parameter, binding and nested declaration intervals until a proven implementation body.
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` rejects every candidate range that overlaps those intervals and fails raw when a type/operator boundary cannot be proved.
+- `packages/agent/src/harness/utils/read-folders/{index,lexical-context,lexical-spans}.ts` freeze the requalified JSON-only default while retaining safe JS/TS candidates for measurement.
+
+### Why
+
+- Declaration text inside class heritage, return types or nested headers must remain visible even when a numerically valid outer body range would contain it. The conservative candidate no longer meets the JavaScript quality threshold, so JavaScript must ship raw.
+
+### Why an extension could not handle it
+
+- The shared folder and default-language registry run below extensions in both read implementations; only this layer can prevent unsafe ranges from reaching the renderer.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` lexical state and `index.ts` frozen selection. Preserve overlap rejection and JSON-only enablement during upstream integration.
+
+## 2026-09-13 - Corrective production read selection (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/tools/read.ts` reuses `FileError("aborted")` after fresh bytes and before folding.
+- `packages/agent/src/harness/utils/read-folders/index.ts` originally bound JS/JSON defaults; the 2026-09-14 requalification above supersedes that selection and keeps JS/TS raw.
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` protects arrow-return signatures and classifies definite call arguments, balanced brace-free type arguments and comparison scopes without dropping ambiguity guards.
+- `packages/agent/src/harness/utils/segmented-read-view.ts` proves renderer exhaustiveness while preserving runtime invalid-segment errors.
+
+### Why
+
+- `packages/agent/src/harness/tools/read.ts` must preserve the environment's structured cancellation code rather than throwing an untyped cancellation error.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/tools/read.ts` is the injectable lower-level filesystem reader below extension execution.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/tools/read.ts`: error imports and the post-read cancellation check; both truncators remain unchanged.
+
+## 2026-09-13 - Structural default reads with exact range fallback
+
+### What changed
+
+- `packages/agent/src/harness/tools/read.ts`: default construction injects the frozen folder and composes the shared view only after the existing truncator accepts the input. Explicit ranges and optional-folder absence preserve verbatim reads; cancellation is checked before folding.
+- `packages/agent/src/harness/utils/segmented-read-view.ts`: adds the shared default-read eligibility adapter without duplicating rendering or footer policy.
+- `packages/agent/src/harness/utils/read-folders/index.ts`: exposes eligibility from the frozen language selection so custom folders cannot bypass prose/unsupported exemptions.
+
+### Why
+
+- `packages/agent/src/harness/tools/read.ts` must match the coding-agent reader's default summary and exact offset/limit rereads without altering existing truncation inclusivity or edit anchors.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/tools/read.ts` is the lower-level injectable tool used without the coding-agent extension runtime; both readers must call the same pure implementation.
+
+### Expected merge conflict zones
+
+- LOW: imports, default options and the text-output branch in `packages/agent/src/harness/tools/read.ts`. Preserve the raw/truncation branches and both truncate modules unchanged.
+
+## 2026-09-13 - Measured folders and shared segmented read views
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports the selected folder, immutable D4 policy and pure segmented-view contract.
+- `packages/agent/src/harness/tools/read.ts`: adds the optional `ReadToolOptions.folder` type seam only; execution is unchanged pending read integration.
+- `packages/agent/src/harness/utils/segmented-read-view.ts`: owns segment validation, FIFO breadth-first refinement, exact source rendering and offset/limit footer metadata.
+- `packages/agent/src/harness/utils/read-folders/{index,types,brace-scanner,lexical-spans}.ts`: productionizes the row-17 TS/JS/JSON scanner and frozen selection without grammar dependencies; unsupported languages and prose remain explicit fallbacks.
+
+### Why
+
+- `packages/agent/src/index.ts` exposes a single reusable contract so both read surfaces can consume identical validated views without an agent-to-coding-agent dependency.
+- `packages/agent/src/harness/tools/read.ts` reserves the folder injection seam without changing today's raw reader before parity integration is verified.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/index.ts` and `packages/agent/src/harness/tools/read.ts` own the public library exports and reader options used below the coding-agent extension layer.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` utility re-exports and `packages/agent/src/harness/tools/read.ts` imports/options; no execute or truncation changes.
+
 ## 2026-09-13 - Keep the harness/session entry graph off the AI barrel
 
 ### What changed

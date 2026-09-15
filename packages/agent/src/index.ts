@@ -145,6 +145,8 @@ export {
 	toError,
 } from "./harness/types.ts";
 export { applyShellOutputUpdate } from "./harness/utils/output-capture.ts";
+export * from "./harness/utils/read-folders/index.ts";
+export * from "./harness/utils/segmented-read-view.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
 export * from "./proxy.ts";

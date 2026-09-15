@@ -11,9 +11,7 @@ export function stageImageGenSkill(repoRoot) {
 		repoRoot,
 		"packages/coding-agent/src/core/extensions/builtin/imagegen/skill/SKILL.md",
 	);
-	if (!existsSync(sourcePath)) {
-		return false;
-	}
+	if (!existsSync(sourcePath)) return false;
 	const destinationPath = join(
 		repoRoot,
 		"packages/coding-agent/dist/core/extensions/builtin/imagegen/skill/SKILL.md",
@@ -21,6 +19,25 @@ export function stageImageGenSkill(repoRoot) {
 	mkdirSync(dirname(destinationPath), { recursive: true });
 	copyFileSync(sourcePath, destinationPath);
 	return true;
+}
+
+export function measureReadSummaryBinaryDelta({ baselineBytes, candidateBytes, maxDeltaBytes }) {
+	for (const value of [baselineBytes, candidateBytes, maxDeltaBytes]) {
+		if (!Number.isSafeInteger(value) || value < 0) {
+			throw Object.assign(new Error("Invalid read-summary binary byte measurement"), {
+				code: "READ_SUMMARY_BINARY_MEASUREMENT_INVALID",
+			});
+		}
+	}
+	const deltaBytes = candidateBytes - baselineBytes;
+	const measurement = { baselineBytes, candidateBytes, deltaBytes, maxDeltaBytes };
+	if (deltaBytes > maxDeltaBytes) {
+		throw Object.assign(new Error("Read-summary binary delta exceeds the selected asset budget"), {
+			code: "READ_SUMMARY_BINARY_BUDGET_EXCEEDED",
+			...measurement,
+		});
+	}
+	return measurement;
 }
 
 function main() {
