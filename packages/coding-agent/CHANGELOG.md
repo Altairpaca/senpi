@@ -12,6 +12,8 @@
 
 - RPC `close_session` acknowledgements and `session_closed` events, including worker-failure terminals, are published only after the session registry has removed the entry, so an immediate `list_sessions` never returns the closed session. Filesystem watchers are cancelled atomically with shutdown, every disposer is joined before process exit, reentrant RPC shutdown shares that join and keeps a failure exit code, and nonpersistent RPC probes do not start watchers ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 
+
+- The RPC host watchdog's ppid fallback no longer spawns `ps -o lstart=` every 250ms while the supervisor is alive: a dead supervisor is reaped by its own parent and the host is then reparented, so the free `kill(pid, 0)` + ppid comparison observes the loss without any child process. Long-lived shared hosts no longer accumulate thousands of `ps` children (zombies on runtimes that fail to reap them) ([#1507](https://github.com/code-yeongyu/senpi/issues/1507)).
 ### Removed
 
 ## [2026.9.15] - 2026-09-15

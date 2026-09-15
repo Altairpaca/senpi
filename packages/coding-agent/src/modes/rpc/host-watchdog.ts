@@ -17,7 +17,6 @@
 import { createReadStream, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { envValue } from "../../core/brand.ts";
-import { readProcessIdentity } from "../app-server/daemon/process.ts";
 
 /** Inherited fd whose EOF means "the supervisor died"; set by the supervisor only. */
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
@@ -29,8 +28,6 @@ export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 /** Poll cadence for the ppid fallback. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 250;
-/** Bound the Windows PowerShell identity probe so one stuck query cannot stop future polls. */
-const HOST_WATCH_PPID_PROBE_TIMEOUT_MS = 1_000;
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
@@ -179,8 +176,6 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
  * fd could be inherited.
  */
 function watchPpid(supervisorPid: number, fire: (reason: string) => void): () => void {
-	let checking = false;
-	let missingIdentityChecks = 0;
 	// Tests and embedders may bind the watchdog to this process itself; that
 	// is a valid live binding rather than evidence of supervisor loss.
 	if (supervisorPid === process.pid) return () => {};
@@ -189,20 +184,12 @@ function watchPpid(supervisorPid: number, fire: (reason: string) => void): () =>
 			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
 			return;
 		}
-		if (checking) return;
-		checking = true;
-		void readProcessIdentity(supervisorPid, process.platform, HOST_WATCH_PPID_PROBE_TIMEOUT_MS)
-			.then((result) => {
-				if (result.kind === "error") return;
-				if (result.kind === "absent") missingIdentityChecks++;
-				else missingIdentityChecks = 0;
-				if (process.ppid === supervisorPid && result.kind === "present") return;
-				if (process.ppid === supervisorPid && missingIdentityChecks < 3) return;
-				fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
-			})
-			.finally(() => {
-				checking = false;
-			});
+		// A dead supervisor is reaped by its own parent and this process is then
+		// reparented, so the ppid comparison observes the loss without spawning
+		// `ps` every tick; both checks here are free syscalls.
+		if (process.ppid !== supervisorPid) {
+			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
+		}
 	}, HOST_WATCH_PPID_INTERVAL_MS);
 	timer.unref?.();
 	return () => clearInterval(timer);
