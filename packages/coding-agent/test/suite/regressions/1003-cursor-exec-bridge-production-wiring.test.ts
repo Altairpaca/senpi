@@ -84,7 +84,15 @@ function stubGrepTool(execute: () => void): AgentTool {
 		parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }),
 		execute: async () => {
 			execute();
-			return { content: [{ type: "text", text: "needle.ts\n1: needle\n\n[grep: matches=1 files=1 searched=1 elapsedMs=0 engine=rg nextSkip=none]" }], details: undefined };
+			return {
+				content: [
+					{
+						type: "text",
+						text: "needle.ts\n1: needle\n\n[grep: matches=1 files=1 searched=1 elapsedMs=0 engine=rg nextSkip=none]",
+					},
+				],
+				details: undefined,
+			};
 		},
 	} as unknown as AgentTool;
 }
@@ -156,7 +164,10 @@ describe("cursor exec bridge production wiring (issue #1003)", () => {
 
 		// when run A's stream dispatches an exec frame while run A is still live
 		const liveResult = await bridgeA.read?.({ path: "a.ts", toolCallId: "live-run-a-frame" });
-		const grepResult = await bridgeA.piGrep?.({ toolCallId: "live-grep-frame", args: { pattern: "needle", path: "src" } });
+		const grepResult = await bridgeA.piGrep?.({
+			toolCallId: "live-grep-frame",
+			args: { pattern: "needle", path: "src" },
+		});
 
 		// then the tool runs and the frame answers with its output, and the
 		// bridge's lifecycle events land on the owning run (issue #992 also
@@ -166,8 +177,16 @@ describe("cursor exec bridge production wiring (issue #1003)", () => {
 		expect(isToolResult(liveResult) && liveResult.isError).toBe(false);
 		expect(isToolResult(liveResult) && liveResult.content).toEqual([{ type: "text", text: "read ok" }]);
 		expect(grepExecute).toHaveBeenCalledTimes(1);
-		expect(isToolResult(grepResult) && grepResult.content[0]).toEqual({ type: "text", text: expect.stringContaining("[grep: matches=") });
-		expect(lifecycleEvents.map((event) => event.type)).toEqual(["tool_execution_start", "tool_execution_end", "tool_execution_start", "tool_execution_end"]);
+		expect(isToolResult(grepResult) && grepResult.content[0]).toEqual({
+			type: "text",
+			text: expect.stringContaining("[grep: matches="),
+		});
+		expect(lifecycleEvents.map((event) => event.type)).toEqual([
+			"tool_execution_start",
+			"tool_execution_end",
+			"tool_execution_start",
+			"tool_execution_end",
+		]);
 		expect(lifecycleEvents.slice(0, 2).every((event) => event.toolCallId === "live-run-a-frame")).toBe(true);
 		expect(lifecycleEvents.slice(2).every((event) => event.toolCallId === "live-grep-frame")).toBe(true);
 

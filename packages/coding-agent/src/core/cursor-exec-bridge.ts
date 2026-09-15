@@ -290,13 +290,17 @@ export function createCursorExecBridge(options: CursorExecBridgeOptions): Cursor
 			}),
 
 		piGrep: async (call) =>
-			executeTool(options, "grep", call.toolCallId, mapCursorPiGrepArgs({
-			...call.args,
-			ignoreCase: call.args.ignoreCase === true ? true : undefined,
-			literal: call.args.literal === true ? true : undefined,
-			limit: cursorPiLimit(call.args.limit),
-		})),
-
+			executeTool(
+				options,
+				"grep",
+				call.toolCallId,
+				mapCursorPiGrepArgs({
+					...call.args,
+					ignoreCase: call.args.ignoreCase === true ? true : undefined,
+					literal: call.args.literal === true ? true : undefined,
+					limit: cursorPiLimit(call.args.limit),
+				}),
+			),
 
 		piFind: async (call) =>
 			executeTool(options, "find", call.toolCallId, {
