@@ -20,25 +20,25 @@ describe("host watchdog ppid fallback", () => {
 		probe.calls = 0;
 	});
 
-	it("performs zero process-identity probes while the supervisor is alive", () => {
+	it("performs zero process-identity probes while the supervisor is alive", async () => {
 		vi.useFakeTimers();
 		const disarm = armHostWatchdog({ ppid: process.ppid }, () => {});
 		try {
-			vi.advanceTimersByTime(5_000);
+			await vi.advanceTimersByTimeAsync(5_000);
 			expect(probe.calls).toBe(0);
 		} finally {
 			disarm();
 		}
 	});
 
-	it("still fires when the supervisor pid is gone", () => {
+	it("still fires when the supervisor pid is gone", async () => {
 		vi.useFakeTimers();
 		let fired = "";
 		const disarm = armHostWatchdog({ ppid: 999_999 }, (reason) => {
 			fired = reason;
 		});
 		try {
-			vi.advanceTimersByTime(300);
+			await vi.advanceTimersByTimeAsync(300);
 			expect(fired).toContain("999999");
 		} finally {
 			disarm();
