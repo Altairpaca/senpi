@@ -1,3 +1,22 @@
+## 2026-09-15 - Monitor bounds: paused watch zero-poll, capped line buffer (#1698)
+
+### What changed
+
+- `monitor-registry.ts` delegates to three extracted units: `monitor-line-buffer.ts` (tail capped at 64KiB), `monitor-file-watch.ts` (poll timer cleared while paused, immediate check on resume), and `monitor-file-digest.ts` (the sampled SHA-256 digest, moved unchanged).
+- A paused file monitor now does zero stat/digest work (its 250ms timer is cleared, not just ignored); resume runs one immediate check, preserving the deferred-fire semantics for changes made during the pause.
+
+### Why
+
+- A paused monitor still polled and digested its file every 250ms, and a newline-less output stream grew the session monitor's retained line tail without bound — both measured as idle-session CPU and memory growth.
+
+### Why an extension could not handle it
+
+- The poll scheduling and line buffering are internal to the monitor registry; extensions see only the public pause/resume API.
+
+### Expected merge conflict zones
+
+- LOW: `monitor-registry.ts` record fields (`poll` -> `watch`, `lineBuffer` string -> `MonitorLineBuffer`), pause/resume bodies, `#consume`. Public API and event payloads unchanged.
+
 # terminal builtin extension — fork surface
 
 ## Replacement bash preserves declared eval exposure (2026-09-14, #1678)

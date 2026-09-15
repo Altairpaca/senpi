@@ -1632,18 +1632,22 @@ describe("macOS recursive watch offload", () => {
 
 		// Then: setup went to the worker, events route back, and teardown waits for the last subscription
 		expect(createRecursiveWorker).toHaveBeenCalledTimes(1);
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 1,
-			path: "/Users/dev/large-workspace",
-			recursive: true,
-		});
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 2,
-			path: "/Users/dev/another-config-root",
-			recursive: true,
-		});
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 1,
+				path: "/Users/dev/large-workspace",
+				recursive: true,
+			}),
+		);
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 2,
+				path: "/Users/dev/another-config-root",
+				recursive: true,
+			}),
+		);
 		expect(listener).toHaveBeenCalledWith("change", ".omo/omo.json");
 		expect(onError).not.toHaveBeenCalled();
 
@@ -1669,12 +1673,14 @@ describe("macOS recursive watch offload", () => {
 		const unsubscribe = source(agentDir, vi.fn(), { recursive: false });
 
 		// Then: setup went to the worker with the non-recursive flag
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 1,
-			path: agentDir,
-			recursive: false,
-		});
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 1,
+				path: agentDir,
+				recursive: false,
+			}),
+		);
 
 		unsubscribe();
 		expect(worker.terminate).toHaveBeenCalledTimes(1);

@@ -77,6 +77,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entry,
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const createBinding = vi.fn(async () => ({
 			handle: async () => {},
@@ -125,6 +126,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entry,
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const chunks: string[] = [];
 		const writer = new SessionEventWriter(
@@ -217,6 +219,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entryFor("closing"),
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const alphaHandle = vi.fn(async () => {});
 		const betaHandle = vi.fn(async () => {});
@@ -286,6 +289,7 @@ describe("multi-session RPC routing", () => {
 				return entry;
 			},
 			closeMarked: async () => closeCompletion,
+			peek: () => ({ closeCompletion }),
 		} as never;
 		const dispose = vi.fn(() => disposing);
 		const records: Array<Record<string, unknown>> = [];
@@ -329,6 +333,7 @@ describe("multi-session RPC routing", () => {
 				return entry;
 			},
 			closeMarked,
+			peek: () => undefined,
 		} as never;
 		const records: Array<Record<string, unknown>> = [];
 		const writer = new SessionEventWriter(
@@ -378,6 +383,7 @@ describe("multi-session RPC routing", () => {
 				return entry;
 			},
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const writer = new SessionEventWriter(() => {});
 		writer.registerConnection("owner", { writeRaw: () => {}, waitForBackpressure: async () => {} });

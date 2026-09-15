@@ -136,6 +136,25 @@
 
 - `scripts/qa/omp-item1.ts` is a new fork-only measurement script. Existing build and reader code is unchanged.
 
+## 2026-09-15 - Retry the Windows release-directory rename on transient sharing violations
+
+### What changed
+
+- `scripts/rename-sync-retry.mjs` (new) owns `renameSyncRetry`: `renameSync` retried only on `EPERM`/`EBUSY`/`ENOTEMPTY` with capped exponential backoff until a hard deadline, then a loud `RenameSyncRetryError` carrying the original errno as `cause`/`code`. Clock, sleep and rename are injectable so the unit tests never wait on wall time.
+- `scripts/compiled-extension-load.test.ts` renames the freshly built release directory through that helper and surfaces `spawnSync` launch errors instead of only the exit status.
+
+### Why
+
+- `Compiled extensions (Windows)` intermittently failed with `EPERM: operation not permitted, rename '...\release\windows-x64' -> '...\relocated # % binary'` right after the build finished, on `main` and on pure `main` merges alike: Windows still held a handle on the just-written tree for a short window, so the immediate `renameSync` raced the OS (Fixes #1725).
+
+### Why an extension could not handle it
+
+- The rename happens inside the repository's own release-relocation test harness before any extension loads.
+
+### Expected merge conflict zones
+
+- `scripts/compiled-extension-load.test.ts`: the `beforeAll` build-and-relocate block.
+
 ## 2026-09-14 - Restore the Node worker bundle builder
 
 ### What changed

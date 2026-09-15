@@ -10,7 +10,20 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.15-2] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Detached eval result cards no longer arm the 1 Hz repaint ticker (they render static with frozen elapsed time), and a live ticker whose row stops rendering now stops itself after 60 idle ticks and rearms on the next render, so transcript rebuilds and session switches cannot accumulate intervals on idle sessions ([#1696](https://github.com/code-yeongyu/senpi/issues/1696)).
+- Bounded three unbounded retentions that grew long-lived session heaps without limit: settled eval cells now leave the live registry into a 32-entry terminal snapshot LRU, the JS kernel's unconsumed tool-call queue is capped at 256 and cleared on interrupt/reset/close/crash (mirroring the subprocess kernel), and per-cell display buffers cap at 8 images / 24 MB / 64 JSON outputs with elision notes ([#1695](https://github.com/code-yeongyu/senpi/issues/1695)).
 
 ### Removed
 

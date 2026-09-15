@@ -594,6 +594,9 @@ export class SessionCommandRouter {
 			} catch (cause) {
 				process.stderr.write(`senpi rpc close for session ${sessionId} failed: ${String(cause)}\n`);
 			}
+			// closeMarked may return at the grace deadline while ownership remains;
+			// terminal records must still observe the exit callback's registry removal.
+			await this.registry.peek(sessionId)?.closeCompletion;
 			terminal?.();
 		} finally {
 			finalization.resolve();

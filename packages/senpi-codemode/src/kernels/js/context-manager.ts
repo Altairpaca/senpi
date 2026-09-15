@@ -23,6 +23,10 @@ export { type JavaScriptWorkerEntryUrlOptions, resolveJsWorkerEntryUrl } from ".
 /** How long a lost worker's children get to honour SIGTERM before the host sends SIGKILL. */
 const WORKER_LOSS_CHILD_GRACE_MS = 1_000;
 
+// Pull-API fallback queue bound: a nextToolCall consumer this far behind is already stalled, and the
+// normal push path (onMessage) never reads the queue, so unbounded growth only pins tool args (#1695).
+const MAX_PENDING_TOOL_CALLS = 256;
+
 export class JavaScriptKernel {
 	readonly #options: JavaScriptKernelOptions;
 	readonly #moduleLoader: LocalModuleLoader;
@@ -77,6 +81,7 @@ export class JavaScriptKernel {
 	async reset(): Promise<void> {
 		assertJavaScriptKernelOpen(this.#lifecycle, "reset");
 		await this.#terminate();
+		this.#clearToolCalls();
 		assertJavaScriptKernelOpen(this.#lifecycle, "reset");
 		await this.#ensureReady();
 		this.#startNext();
@@ -97,6 +102,7 @@ export class JavaScriptKernel {
 		this.#slot.postMessage({ type: "close" });
 		this.#lifecycle = "closing";
 		this.#runs.settleAll("JS kernel closed");
+		this.#clearToolCalls();
 		const recovery = this.#recovery;
 		const closePromise = (async () => {
 			if (recovery) await recovery;
@@ -170,15 +176,19 @@ export class JavaScriptKernel {
 		message: string,
 		durationMs = 0,
 	): Promise<{ readonly retained: boolean; readonly note?: string }> {
-		run.interruptResult = { type: "result", cellId: run.input.cellId, ok: false, error: { message }, durationMs };
-		run.interruptAck ??= Promise.withResolvers<void>();
-		this.#slot.postMessage({ type: "interrupt", reason });
-		if ((await awaitCooperativeSettlement(run)) === "settled") return { retained: run.settledByWorker };
-		if (!this.#runs.releaseActive(run)) return { retained: run.settledByWorker };
-		const retirement = await this.#terminate();
-		this.#runs.settle(run, run.interruptResult ?? stoppedResult(run.input.cellId, message));
-		void this.#recover(() => Promise.resolve());
-		return retirement === "abandoned" ? { retained: false, note: abandonedWorkerNote() } : { retained: false };
+		try {
+			run.interruptResult = { type: "result", cellId: run.input.cellId, ok: false, error: { message }, durationMs };
+			run.interruptAck ??= Promise.withResolvers<void>();
+			this.#slot.postMessage({ type: "interrupt", reason });
+			if ((await awaitCooperativeSettlement(run)) === "settled") return { retained: run.settledByWorker };
+			if (!this.#runs.releaseActive(run)) return { retained: run.settledByWorker };
+			const retirement = await this.#terminate();
+			this.#runs.settle(run, run.interruptResult ?? stoppedResult(run.input.cellId, message));
+			void this.#recover(() => Promise.resolve());
+			return retirement === "abandoned" ? { retained: false, note: abandonedWorkerNote() } : { retained: false };
+		} finally {
+			this.#clearToolCalls();
+		}
 	}
 
 	async #restartAfterStop(): Promise<void> {
@@ -223,7 +233,10 @@ export class JavaScriptKernel {
 		if (message.type === "tool-call") {
 			const waiter = this.#toolWaiters.shift();
 			if (waiter) waiter(message);
-			else this.#pendingToolCalls.push(message);
+			else {
+				this.#pendingToolCalls.push(message);
+				if (this.#pendingToolCalls.length > MAX_PENDING_TOOL_CALLS) this.#pendingToolCalls.shift();
+			}
 			return;
 		}
 		if (message.type !== "result") return;
@@ -250,7 +263,13 @@ export class JavaScriptKernel {
 				durationMs: this.#runs.durationMs(active, performance.now()),
 			});
 		}
+		this.#clearToolCalls();
 		void this.#restartAfterStop();
+	}
+
+	#clearToolCalls(): void {
+		this.#pendingToolCalls.length = 0;
+		this.#toolWaiters.length = 0;
 	}
 
 	#clearTimeout(): void {

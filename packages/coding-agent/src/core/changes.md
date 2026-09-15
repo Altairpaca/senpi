@@ -194,6 +194,26 @@
 - MEDIUM: `collectPackageResources` (manifest read moved above the filter branch) and the `InstalledSourceScope` alias plus the update filter in `packages/coding-agent/src/core/package-manager.ts`.
 - LOW: the `SourceScope` union in `packages/coding-agent/src/core/source-info.ts`; the `system` field in `packages/coding-agent/src/core/pi-manifest.ts`; the `extendResources` call site in `packages/coding-agent/src/core/agent-session.ts` where the two private helpers were removed.
 
+## 2026-09-12 - O(1) full-history entry count on SessionManager (senpi#1635)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: maintain a non-header entry count on
+  append, load and reset; preserve it when compaction trims the resident mirror. Expose it through
+  `getEntryCount()` without loading history. Persisted tests cover trim, append, reopen and branch.
+
+### Why
+
+- Count-only UI cadence decisions must not reload and materialize the JSONL after compaction.
+
+### Why an extension could not handle it
+
+- The count follows `SessionManager` mutations below the extension boundary.
+
+### Expected merge conflict zones
+
+- LOW: count field, `_buildIndex()`, `_appendEntry()`, reset and accessor beside `getEntries()`.
+
 ## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
 
 ### What changed
