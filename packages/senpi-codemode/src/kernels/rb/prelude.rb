@@ -140,11 +140,20 @@ def __senpi_bridge_request(path, payload)
   return body["value"] if body.is_a?(Hash) && body["ok"] == true
 
   error = body.is_a?(Hash) ? body["error"] : body
-  raise(error.is_a?(Hash) ? error["message"].to_s : error.to_s)
+  raise SenpiBridgeError.new(error.is_a?(Hash) ? error["message"].to_s : error.to_s, error.is_a?(Hash) ? error["code"] : nil)
 end
 
 def __senpi_call_tool(name, args)
   __senpi_bridge_request("/call", { "callId" => "rb-#{Process.pid}-#{rand(1_000_000)}", "toolName" => name, "args" => args })
+end
+
+class SenpiBridgeError < StandardError
+  attr_reader :code
+
+  def initialize(message, code = nil)
+    super(message)
+    @code = code
+  end
 end
 
 class SenpiToolCallable
@@ -176,6 +185,8 @@ end
 def tool
   $__senpi_tool_proxy ||= SenpiToolProxy.new
 end
+
+require_relative "workpool"
 
 def completion(prompt, model: "default", system: nil, schema: nil, **kwargs)
   options = { "model" => model }.merge(kwargs.transform_keys(&:to_s))
@@ -213,7 +224,7 @@ def agent(prompt, agent: "task", model: nil, label: nil, schema: nil, isolated: 
   text_value = record.fetch("text", response)
   result = schema.nil? ? text_value : record.key?("data") ? record["data"] : JSON.parse(text_value.to_s)
   return result unless handle
-  { "text" => text_value, "output" => text_value, "handle" => record["handle"] || (record["id"] && "agent://#{record["id"]}"), "id" => record["id"], "agent" => record.fetch("agent", agent) }.tap do |node|
+  { "text" => text_value, "output" => text_value, "handle" => record["handle"] || (record["id"] && "agent://#{record["id"]}"), "id" => record["id"], "run_epoch" => record["run_epoch"], "agent" => record.fetch("agent", agent) }.tap do |node|
     node["data"] = result unless schema.nil?
   end
 end

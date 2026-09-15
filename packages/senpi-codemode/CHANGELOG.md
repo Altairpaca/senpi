@@ -4,9 +4,15 @@
 
 ### Breaking Changes
 
+- Background `agent()` handles require typed host `task_id` and `run_epoch` details; legacy prose-only responses raise `invalid_task_handle` ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+
 ### Added
 
+- JS, Python, Ruby, and Julia expose host-owned `workpool` sugar with opaque pool IDs and unchanged tool receipts, without kernel scheduling ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+
 ### Changed
+
+- Typed task-handle details explicitly allow additional producer fields (`additionalProperties: true`) to match the frozen contract ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
 ### Fixed
 

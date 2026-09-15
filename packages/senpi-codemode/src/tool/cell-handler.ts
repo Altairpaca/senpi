@@ -223,7 +223,12 @@ export class CellHandler {
 				type: "tool-reply",
 				callId: message.callId,
 				ok: false,
-				error: { message: text },
+				error: {
+					message: text,
+					...(error instanceof Error && "code" in error && typeof error.code === "string"
+						? { code: error.code }
+						: {}),
+				},
 			});
 		}
 		this.#resultBuilder.emitUpdate(false);
