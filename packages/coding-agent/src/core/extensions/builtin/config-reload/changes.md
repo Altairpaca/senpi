@@ -1,5 +1,25 @@
 # config-reload Extension Changes
 
+## 2026-09-14 - Join watcher disposal and skip nonpersistent RPC probes (#1656)
+
+### What changed
+
+- Watch-worker registration checks a shared cancellation flag before and after `fs.watch`, so a shutdown that wins the post-load/pre-registration interleaving never retains a native watcher.
+- `ConfigReloadWatchEngine.close()` cancels synchronously and joins returned disposers; repeated close shares that join and surfaces `AggregateError` if any disposer fails.
+- `session_shutdown` awaits those joins. Nonpersistent RPC sessions (`getSessionFile() === undefined`) do not start OS watches.
+
+### Why
+
+- Fire-and-forget unsubscribe during exit left FSEvents streams running into process teardown (`pthread_join` hang). Snapshot-only RPC probes never needed live watches.
+
+### Why an extension could not handle it
+
+- The event source and watch engine are internal to this builtin; process shutdown must observe their disposal.
+
+### Expected merge conflict zones
+
+- MEDIUM: `watch-event-source.ts` worker source and unsubscribe join; `watch-engine.ts` `close()`; `index.ts` `session_shutdown` / `rebuildWatchers`.
+
 ## 2026-09-11 - Keep per-source changelog acknowledgements routine (senpi#1583)
 
 ### What changed

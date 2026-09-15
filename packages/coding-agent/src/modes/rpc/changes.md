@@ -1,5 +1,26 @@
 # changes
 
+## 2026-09-14 - Publish RPC close only after registry removal (#1656)
+
+### What changed
+
+- `closeMarked()` still replies on the close-grace deadline and keeps the entry until native exit, so a worker stuck in a syscall cannot hang cancel/close. The router waits for that exit callback before emitting `session_closed` or the close acknowledgement.
+- `session-worker-client.ts` defers worker-failure terminal records until after the same exit callback, so error and failure frames observe an empty registry too.
+- `shutdown.ts` makes reentrant `shutdown()` join the in-flight disposer and preserve a non-zero exit code (serializer-error overlapping stdin EOF).
+
+### Why
+
+- An immediate `list_sessions` after close must never return the closed session, including when the worker fails instead of a clean `close_session`.
+- A second shutdown caller must not `process.exit` while watcher disposal is still outstanding.
+
+### Why an extension could not handle it
+
+- Session registry ownership and process exit are host lifecycle, outside session extensions.
+
+### Expected merge conflict zones
+
+- LOW: `closeMarked()` in `worker-session-registry.ts`, `fail()` in `session-worker-client.ts`, and the stdio `shutdown()` wrapper in `rpc-mode.ts`. Does not touch `host-lifecycle.ts` / `host-ensure.ts`.
+
 ## 2026-09-14 - Keep bundled workers out of supervisor entry dispatch
 
 ### What changed
