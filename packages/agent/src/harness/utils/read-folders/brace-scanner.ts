@@ -150,7 +150,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 				!stack.at(-1)?.call
 			)
 				return fail("ambiguous_binding");
-			headers.open(char, stack.length, previous, line);
+			const classBody = headers.open(char, stack.length, previous, line);
 			if (!headers.punctuation(char, stack.length, line)) return fail("unproved_header");
 			const call = char === "(" && isCallCallee(previous, beforeWord);
 			const declaration = signatureDeclaration && !stack.some((open) => open.declaration);
@@ -170,6 +170,7 @@ export function scanBraces(source: string, language: "ts" | "js" | "json", setti
 			const foldable =
 				templateDepth === 0 &&
 				char !== "(" &&
+				!classBody &&
 				!protectedRange &&
 				(char === "{" || !expressionEnd || language === "json");
 			stack.push({

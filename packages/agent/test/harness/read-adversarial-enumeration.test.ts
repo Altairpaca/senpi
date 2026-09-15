@@ -7,9 +7,9 @@ describe("deterministic adversarial read grammar (#1639)", () => {
 		// When every hierarchical candidate range is checked against the compiler AST.
 		const receipt = enumerateBoundaries();
 		// Then both overlap and boundary safety hold, with non-vacuous value folds and protected programs.
-		expect(receipt.programs).toBeGreaterThan(1000);
-		expect(receipt.emittedRanges).toBeGreaterThan(0);
-		expect(receipt.protectedPrograms).toBeGreaterThan(0);
+		expect(receipt.programs).toBe(1440);
+		expect(receipt.emittedRanges).toBe(244);
+		expect(receipt.protectedPrograms).toBe(1432);
 		expect(receipt.counterexamples).toEqual([]);
 	});
 });

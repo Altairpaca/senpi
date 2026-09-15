@@ -28,6 +28,7 @@
 
 ### Fixed
 
+- Stopped folding class bodies composed only of fields, static blocks or accessors in the public read candidate so member declarations stay visible ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Retained computed object-member names and destructuring-assignment targets in the public read candidate, and exercised malformed selected JSON in compiled fallback QA ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Prevented declaration signatures and their descendants from being hidden by direct or enclosing structural folds, and made frozen replay reject tokenizer-byte drift before reporting exact counts ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Preserved arrow-return object types in read signatures, restored the bake-off's explicit raw comparator, and froze default-read languages from the production folder/view rather than the prototype ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).

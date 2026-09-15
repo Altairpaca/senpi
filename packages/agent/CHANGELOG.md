@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Stopped folding class bodies composed only of fields, static blocks or accessors so member declarations stay visible, and expanded the adversarial grammar to those class-member contexts ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Retained computed object-member names and complete destructuring-assignment targets against direct and enclosing folds, with deterministic adversarial grammar qualification before selection ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Protected class heritage, parameters, type/operator returns, decorators, bindings and nested declaration headers from overlapping folds; frozen bake-off replay now verifies the tokenizer installation and ships its selection receipt in-tree ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 - Preserved arrow-return object types in read-folder signatures and reused structured file cancellation before folding. Production measurements use an explicit raw comparator and the actual shared folder/view ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).

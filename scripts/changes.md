@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-15 - Do not fold fields-only class bodies (#1639)
+
+### What changed
+
+- The production brace scanner no longer folds a class body wholesale when the body contains only fields, static blocks or accessors; initializer and static-block interiors remain foldable.
+- Adversarial grammar and the 143-line fields-only class regression cover that hole. Enumeration is 1440 programs with 0 counterexamples.
+
+### Why
+
+- Member declarations must stay visible. The project's own oracle does not certify `ClassBody` ranges, and widening the oracle would bless hiding fields.
+
+### Why an extension could not handle it
+
+- Fold ranges are produced below either reader and before any extension can rewrite output.
+
+### Expected merge conflict zones
+
+- LOW: tracker-only. Keep the class-body exclusion in the scanner; do not add `ClassBody` to the oracle whitelist.
+
 ## 2026-09-14 - Exercise the selected compiled parser failure (#1639)
 
 ### What changed

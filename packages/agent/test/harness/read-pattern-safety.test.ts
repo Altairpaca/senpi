@@ -73,3 +73,28 @@ describe("computed members and assignment targets (#1639)", () => {
 		},
 	);
 });
+
+describe("fields-only class bodies (#1639)", () => {
+	it("does not fold a fields-only class body that would hide member declarations", () => {
+		const steps = Array.from({ length: 55 }, (_, i) => `ns.step${i}();`).join("\n");
+		const fields = Array.from({ length: 12 }, (_, i) => `field${i} = ns.factory(${object});`).join("\n");
+		const text = `function outer() {\n${steps}\n}\nclass Example {\n${fields}\n}`;
+		expect(text.split("\n")).toHaveLength(143);
+		expect(() => new Script(text)).not.toThrow();
+		const parsed = selectedReadFolder.fold({ path: "input.js", text, settings: READ_FOLD_SETTINGS });
+		const ranges = parsed.status === "parsed" ? [...parsed.ranges] : [];
+		for (let i = 0; i < ranges.length; i++) ranges.push(...ranges[i].children);
+		const classBody = { start: 59, end: 142 };
+		const oracle = typescriptOracle(text, "js");
+		expect(validBoundaries({ source: text, folds: [classBody], ...oracle, retainedExact: true })).toBe(false);
+		expect(ranges.some((range) => range.startLine === 59 && range.endLine === 142)).toBe(false);
+		for (const range of ranges) {
+			const fold = { start: range.startLine, end: range.endLine };
+			expect(oracle.protected.some((header) => overlaps(fold, header))).toBe(false);
+			expect(validBoundaries({ source: text, folds: [fold], ...oracle, retainedExact: true })).toBe(true);
+		}
+		const view = createSegmentedReadView({ text, parsed });
+		const visible = view.status === "summary" ? view.rendered.text : text;
+		for (let i = 0; i < 12; i++) expect(visible).toContain(`field${i} = ns.factory({`);
+	});
+});

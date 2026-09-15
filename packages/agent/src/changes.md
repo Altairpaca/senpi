@@ -1,3 +1,23 @@
+## 2026-09-15 - Do not fold fields-only class bodies (#1639)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` no longer marks a class-body `{` foldable after `HeaderProtection.open` consumes the class header. Initializer objects, static-block bodies and method bodies inside the class remain eligible.
+- `packages/agent/src/harness/utils/read-folders/header-protection.ts` returns whether `open` closed a class header, and clears the sticky assignment-target marker on the next word token so ASI-style value objects are not over-protected.
+- The adversarial grammar adds class-field, static-block, accessor, computed getter/setter and async-generator computed-method contexts. Enumeration pins 1440 programs / 244 emitted ranges / 0 counterexamples.
+
+### Why
+
+- A class whose members are only fields or `static` blocks has no method-header intervals, so a wholesale class-body fold hid every member declaration and emitted a range the independent oracle rejects.
+
+### Why an extension could not handle it
+
+- The public folder returns these ranges below either reader's extension surface; member declarations must remain visible before rendering or qualification.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/harness/utils/read-folders/brace-scanner.ts` class-body foldability and `header-protection.ts` `open` return. Preserve the class-body exclusion; do not whitelist `ClassBody` in the oracle.
+
 ## 2026-09-14 - Computed members and assignment-pattern retention (#1639)
 
 ### What changed

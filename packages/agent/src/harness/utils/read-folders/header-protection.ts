@@ -18,6 +18,7 @@ export class HeaderProtection {
 	}
 
 	word(word: string, previous: string, depth: number, line: number, typescript: boolean): boolean {
+		this.target = undefined;
 		// These operators can hide an arbitrarily shaped type before a real body.
 		// No TypeScript grammar is installed: do not infer a boundary from the next brace.
 		if (typescript && ["keyof", "typeof", "infer", "readonly", "satisfies", "as"].includes(word)) return false;
@@ -28,13 +29,14 @@ export class HeaderProtection {
 		return true;
 	}
 
-	open(char: string, depth: number, previous: string, line: number): void {
+	open(char: string, depth: number, previous: string, line: number): boolean {
 		const header = this.pending;
-		if (char !== "{" || header?.depth !== depth) return;
-		if (header.kind === "function" && previous !== ")") return;
+		if (char !== "{" || header?.depth !== depth) return false;
+		if (header.kind === "function" && previous !== ")") return false;
 		this.protect(header.startLine, line);
 		this.pending = undefined;
 		this.parameters = undefined;
+		return header.kind === "class";
 	}
 
 	close(open: Open, depth: number, line: number): void {
