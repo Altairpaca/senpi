@@ -4,10 +4,10 @@
 
 ### What changed
 
-- `packages/coding-agent/src/index.ts` exports `kernelToolsStorage` and `ExtensionKernelTools`.
-- `packages/coding-agent/src/core/extensions/types.ts` adds optional `ExtensionContext.kernelTools`.
-- `packages/coding-agent/src/core/extensions/runner.ts` createContext reads the AsyncLocalStorage binder for the originating JS eval.
-- `packages/coding-agent/src/core/extensions/kernel-tools-context.ts` holds that binder.
+- packages/coding-agent/src/index.ts exports kernelToolsStorage and ExtensionKernelTools.
+- packages/coding-agent/src/core/extensions/types.ts adds optional ExtensionContext.kernelTools.
+- packages/coding-agent/src/core/extensions/runner.ts createContext reads the AsyncLocalStorage binder.
+- packages/coding-agent/src/core/extensions/kernel-tools-context.ts holds that binder.
 
 ### Why
 
