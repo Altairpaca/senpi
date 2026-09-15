@@ -6,6 +6,7 @@ import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
+import { createWorkpool } from "./workpool.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
 // How long a child gets to honour SIGTERM before SIGKILL. Short, because the
@@ -107,6 +108,7 @@ export class JsWorkerRuntime {
 		globalThis.output = async (...args) => await this.#output(args);
 		globalThis.tool_schema = async name => await this.#toolSchema(name);
 		globalThis.agent = async (prompt, options, ...rest) => await this.#agent(prompt, options, rest);
+		globalThis.workpool = (agent, name, options) => createWorkpool((toolName, args) => this.#callTool(toolName, args), agent, name, options);
 		globalThis.parallel = async thunks => await this.#parallel(thunks);
 		globalThis.pipeline = async (items, ...stages) => await this.#pipeline(items, stages);
 		globalThis.completion = async (prompt, opts) => await this.#callTool("completion", { prompt, opts });
@@ -302,6 +304,7 @@ export class JsWorkerRuntime {
 			output: text,
 			handle: details.handle ?? `agent://${id}`,
 			id,
+			run_epoch: details.run_epoch,
 			agent: details.agent ?? callArgs.agent ?? null,
 		};
 		if (Object.hasOwn(callArgs, "schema")) node.data = output;

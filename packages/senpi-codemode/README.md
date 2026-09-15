@@ -144,6 +144,7 @@ options object and asynchronous helpers are `await`-able.
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |
+| `workpool(agent, name, mode?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. |
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
 | `pipeline(items, ...stages)` | Applies stages left to right with a barrier between stages. |
@@ -163,6 +164,29 @@ delegates through the tool contract, so task-engine permissions, progress
 updates, and transcripts remain owned by that engine.
 `isolated`, `apply`, and `merge` are accepted for compatibility but emit a
 warning because this task-engine integration has no isolation model.
+
+Background `agent()` handles retain `id` and `agent://<id>` and include `run_epoch`.
+The host must return structured `details.task_id` (`st_` plus lowercase hex) and
+an integer `details.run_epoch >= 0`. Missing or malformed details raise
+`invalid_task_handle`; prose IDs are never used. Foreground text/JSON is unchanged.
+
+`workpool` takes exactly one of `{category, prompt, model?}` or
+`{subagent_type, prompt, model?}` as its plain-data agent spec. Mode is `fresh`
+or `keep_alive`: pass `{mode: "fresh"}` in JS, `mode="fresh"` in Python/Julia,
+or `mode: "fresh"` in Ruby. Omission is forwarded unchanged to the engine;
+hosts without an approved default still require an explicit mode. Custom tool
+names are not enabled by this adapter.
+
+`push` forwards `[{key, input}]` and returns the host receipt without waiting
+for admission. Operations return the same `{text, details, images?, hasError?}`
+envelope as direct tool calls. Creation refuses host errors instead of returning
+a broken adapter; a missing host raises `workpool_unavailable`. The host owns
+workers, keyed yields, cancellation, and aggregate delivery after explicit
+`close()`; none is implemented in a kernel. Aggregate support requires a host
+that implements it. Reset only removes kernel variables: save `pool_id` and use
+`tool.workpool({op: "inspect", pool_id})` from a new JS cell (equivalent keyword
+arguments in other languages). An open pool's adapter can be recreated with the
+same name/spec/mode; no worker state is reconstructed in the prelude.
 
 ## Required summary
 

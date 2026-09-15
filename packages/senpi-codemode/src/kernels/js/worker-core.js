@@ -144,7 +144,7 @@ function cellInterruptedError(reason) {
 
 function bridgeError(error) {
 	if (error instanceof Error) {
-		return { name: error.name, message: error.message, stack: error.stack };
+		return { name: error.name, message: error.message, stack: error.stack, ...(typeof error.code === "string" ? { code: error.code } : {}) };
 	}
 	return { message: String(error) };
 }
@@ -153,5 +153,6 @@ function errorFromBridge(error) {
 	const result = new Error(error.message);
 	if (error.name) result.name = error.name;
 	if (error.stack) result.stack = error.stack;
+	if (typeof error.code === "string") result.code = error.code;
 	return result;
 }
