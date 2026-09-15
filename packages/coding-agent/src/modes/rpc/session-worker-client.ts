@@ -57,6 +57,7 @@ export class SessionWorkerClient {
 	private readonly listeners = new Set<() => void>();
 	private readonly controls = new Set<"display" | "cancel_ui">();
 	private latestDisplay?: Extract<HostToSessionWorker, { type: "display" }>;
+	private terminalFailure?: string;
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -70,6 +71,7 @@ export class SessionWorkerClient {
 				this.requests.close(new Error("session_worker_exited"));
 				this.listeners.clear();
 				callbacks.exit();
+				this.publishTerminalFailure();
 				resolve();
 			});
 		});
@@ -253,15 +255,25 @@ export class SessionWorkerClient {
 	private fail(error: string): void {
 		if (this.stopped) return;
 		this.callbacks.failure(error);
+		this.terminalFailure = error;
 		if (this.writer && this.sessionId) {
 			this.writer.enqueue(this.sessionId, { type: "session_error", error });
-			this.writer.closeSession(this.sessionId, {
-				type: "response",
-				command: "close_session",
-				success: false,
-				error,
-			});
 		}
 		this.quarantine();
+	}
+
+	/** Terminal close records observe completed registry removal, including worker failure. */
+	private publishTerminalFailure(): void {
+		const error = this.terminalFailure;
+		const writer = this.writer;
+		const sessionId = this.sessionId;
+		if (error === undefined || !writer || !sessionId) return;
+		this.terminalFailure = undefined;
+		writer.closeSession(sessionId, {
+			type: "response",
+			command: "close_session",
+			success: false,
+			error,
+		});
 	}
 }
