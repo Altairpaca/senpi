@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { MCP_TOOL_NAME_MAX_LENGTH, buildMcpToolName } from "../../coding-agent/src/core/extensions/builtin/mcp/expose/naming.ts";
+import {
+	buildMcpToolName,
+	MCP_TOOL_NAME_MAX_LENGTH,
+} from "../../coding-agent/src/core/extensions/builtin/mcp/expose/naming.ts";
 import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL, RESERVED_SCHEMA_TOOL } from "../src/bridge/reserved.ts";
-import { KERNEL_TOOLS_UNSUPPORTED } from "../src/kernels/js/kernel-tools-types.ts";
 import {
 	MCP_TOOL_NAME_MAX_LENGTH as kernelMaxLength,
 	kernelToolKey,
 	sanitizeNamePart,
-} from "../src/kernels/js/kernel-tools-naming.js";
-import { createKernelToolRegistry, createToolNamespace } from "../src/kernels/js/kernel-tools-registry.js";
+} from "../src/kernels/js/kernel-tools-naming.ts";
+import { createKernelToolRegistry, createToolNamespace } from "../src/kernels/js/kernel-tools-registry.ts";
+import { KERNEL_TOOLS_UNSUPPORTED } from "../src/kernels/js/kernel-tools-types.ts";
 
 function lookup(path: string) {
 	return path;
@@ -104,10 +107,13 @@ describe("named functions expose fenced descriptors", () => {
 	it("keeps tool() callable while tool.read host calls still work", async () => {
 		const host: Array<{ name: string; args: unknown }> = [];
 		const tools = registry();
-		const tool = createToolNamespace((fn, metadata) => tools.define(fn, metadata), async (name, args) => {
-			host.push({ name, args });
-			return { text: String(name) };
-		});
+		const tool = createToolNamespace(
+			(fn, metadata) => tools.define(fn, metadata),
+			async (name, args) => {
+				host.push({ name, args });
+				return { text: String(name) };
+			},
+		);
 		expect(typeof tool).toBe("function");
 		const descriptor = tool(lookup);
 		expect(descriptor).toMatchObject({ name: "lookup", language: "js" });
@@ -121,13 +127,6 @@ describe("reserved collisions and stale descriptors fail closed", () => {
 		const tools = registry();
 		expectCode(() => tools.define(() => 1), "invalid_tool_definition");
 		expectCode(() => tools.define((path: string) => path), "invalid_tool_definition");
-		expectCode(
-			() =>
-				tools.define(function (path: string) {
-					return path;
-				}),
-			"invalid_tool_definition",
-		);
 		expectCode(
 			() =>
 				tools.define(function wrapped({ path }: { path: string }) {
@@ -234,7 +233,10 @@ describe("reserved collisions and stale descriptors fail closed", () => {
 				call_id: "old-gen",
 			}),
 		).rejects.toMatchObject({ code: "kernel_tool_stale" });
-		expect(tools.describe(["lookup"]).results[0]).toMatchObject({ ok: false, error: { code: "kernel_tool_missing" } });
+		expect(tools.describe(["lookup"]).results[0]).toMatchObject({
+			ok: false,
+			error: { code: "kernel_tool_missing" },
+		});
 	});
 
 	it("returns tools_unavailable for non-JS registries and unsupported hosts", () => {

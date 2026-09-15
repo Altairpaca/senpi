@@ -7,6 +7,8 @@ import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
 import { createWorkpool } from "./workpool.js";
+import { inKernelToolInvoke } from "./kernel-tools-context.js";
+import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolRegistry, createToolNamespace } from "./kernel-tools-registry.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
@@ -277,6 +279,7 @@ export class JsWorkerRuntime {
 	}
 
 	async #agent(prompt, options, rest) {
+		if (inKernelToolInvoke()) throw kernelToolError("kernel_tool_recursion", "kernel tools may not invoke agent()");
 		const parsed = optionsArg({
 			name: "agent",
 			value: options,

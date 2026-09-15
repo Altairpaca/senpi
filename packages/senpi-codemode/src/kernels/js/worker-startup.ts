@@ -55,11 +55,7 @@ function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
 	}
 }
 
-async function initializeWorker(
-	worker: WorkerLike,
-	hooks: WorkerStartupHooks,
-	signal: AbortSignal,
-): Promise<void> {
+async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, signal: AbortSignal): Promise<void> {
 	const ready = waitForReady(worker, signal);
 	const options = hooks.options;
 	worker.postMessage({

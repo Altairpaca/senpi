@@ -20,6 +20,7 @@ import { SettingsManager } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
+import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -1153,6 +1154,10 @@ export class ExtensionRunner {
 			get signal() {
 				runner.assertActive();
 				return runner.getSignalFn();
+			},
+			get kernelTools() {
+				runner.assertActive();
+				return kernelToolsStorage.getStore();
 			},
 			abort: (source) => {
 				runner.assertActive();

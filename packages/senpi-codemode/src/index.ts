@@ -1,7 +1,6 @@
 import * as os from "node:os";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
-import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
 import {
@@ -24,6 +23,7 @@ import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
 import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
+import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
 import {
 	EVAL_EXECUTION_EVENT,
@@ -262,7 +262,6 @@ function modelIdFrom(event: unknown): string | undefined {
 	return typeof model.id === "string" ? model.id : undefined;
 }
 
-export { enabledLanguagesFrom };
 export {
 	KERNEL_TOOLS_UNSUPPORTED,
 	type KernelToolDescriptor,
@@ -270,3 +269,4 @@ export {
 	type KernelToolsDescribeResult,
 	type KernelToolsInvokeRequest,
 } from "./kernels/js/kernel-tools-types.ts";
+export { enabledLanguagesFrom };

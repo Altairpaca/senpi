@@ -1,11 +1,11 @@
-import type { KernelToolErrorCode } from "./kernel-tools-errors.js";
+import type { KernelToolErrorCode } from "./kernel-tools-errors.ts";
 
 export type { KernelToolErrorCode };
 
 export type KernelToolDescriptor = {
 	readonly name: string;
 	readonly description: string;
-	readonly input_schema: Readonly<Record<string, unknown>>;
+	readonly input_schema: unknown;
 	readonly language: "js";
 	readonly kernel_generation: number;
 	readonly definition_revision: number;
@@ -21,7 +21,11 @@ export type KernelToolsInvokeRequest = {
 
 export type KernelToolsDescribeEntry =
 	| { readonly name: string; readonly ok: true; readonly descriptor: KernelToolDescriptor }
-	| { readonly name: string; readonly ok: false; readonly error: { readonly code: KernelToolErrorCode; readonly message: string } };
+	| {
+			readonly name: string;
+			readonly ok: false;
+			readonly error: { readonly code: KernelToolErrorCode; readonly message: string };
+	  };
 
 export type KernelToolsDescribeResult = {
 	readonly results: readonly KernelToolsDescribeEntry[];

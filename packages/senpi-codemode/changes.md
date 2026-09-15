@@ -1,5 +1,26 @@
 # senpi-codemode fork changes
 
+## 2026-09-16 - Reentrant JS kernel tool pump (#1647)
+
+### What changed
+
+- Host/worker protocol adds correlated kernel-tool describe/invoke/cancel/reply frames serviced off the top-level run queue.
+- Nested invokes use a call-scoped pending-reply map so `read()` inside a parent tool cannot deadlock behind `agent()`.
+- Recursive `agent()`/`workpool()` from a kernel tool returns `kernel_tool_recursion`; reset/kill rejects waiters with `kernel_tool_stale`.
+- `scripts/qa/omp-item6.ts` event-gates parent-awaits-child and reset/recursion cases.
+
+### Why
+
+- A parent JS cell awaiting a child must keep pumping nested host bridges without a second top-level eval.
+
+### Why an extension could not handle it
+
+- Worker message dispatch and run-queue ownership are kernel internals.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/worker-core.js`, `src/kernels/js/context-manager.ts`, `src/bridge/protocol.ts`.
+
 ## 2026-09-16 - Fenced JS kernel tool descriptors (#1647)
 
 ### What changed

@@ -10,6 +10,9 @@ import {
 	type ResultMessage,
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
+import { kernelToolError } from "./kernel-tools-errors.ts";
+import { KernelToolHostPump } from "./kernel-tools-host.ts";
+import type { KernelToolsDescribeResult, KernelToolsInvokeRequest } from "./kernel-tools-types.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
 import { terminateProcessTrees } from "./process-tree-host.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun, stoppedResult } from "./run-queue.ts";
@@ -36,6 +39,10 @@ export class JavaScriptKernel {
 	#recovery: Promise<void> | null = null;
 	#closePromise: Promise<void> | null = null;
 	readonly #runs = new JavaScriptRunQueue();
+	readonly #kernelTools = new KernelToolHostPump(
+		(message) => this.#slot.postMessage(message),
+		() => this.#lifecycle === "open" && this.#slot.present,
+	);
 	#timeout: NodeJS.Timeout | null = null;
 	#toolWaiters: Array<(message: ToolCallMessage) => void> = [];
 	#pendingToolCalls: ToolCallMessage[] = [];
@@ -54,6 +61,18 @@ export class JavaScriptKernel {
 
 	get mode(): JavaScriptKernelMode {
 		return this.#slot.mode;
+	}
+
+	get kernelToolEvents(): EventTarget {
+		return this.#kernelTools.events;
+	}
+
+	describeKernelTools(names: readonly string[]): Promise<KernelToolsDescribeResult> {
+		return this.#kernelTools.describe(names);
+	}
+
+	invokeKernelTool(request: KernelToolsInvokeRequest, signal?: AbortSignal): Promise<unknown> {
+		return this.#kernelTools.invoke(request, signal);
 	}
 
 	async run(input: JavaScriptRunInput): Promise<ResultMessage> {
@@ -102,6 +121,7 @@ export class JavaScriptKernel {
 		this.#slot.postMessage({ type: "close" });
 		this.#lifecycle = "closing";
 		this.#runs.settleAll("JS kernel closed");
+		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", "JS kernel closed"));
 		this.#clearToolCalls();
 		const recovery = this.#recovery;
 		const closePromise = (async () => {
@@ -220,6 +240,7 @@ export class JavaScriptKernel {
 	}
 
 	#handleMessage(message: KernelToHostMessage): void {
+		if (this.#kernelTools.consume(message) && message.type !== "tool-call") return;
 		if (message.type === "status" && message.event.op === INTERRUPT_ACK_OP) {
 			this.#runs.active?.interruptAck?.resolve();
 			return;
@@ -253,6 +274,7 @@ export class JavaScriptKernel {
 		const active = this.#runs.active;
 		if (!active && this.#slot.startingUp) return;
 		this.#clearTimeout();
+		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", error.message));
 		if (active) {
 			this.#runs.releaseActive(active);
 			this.#runs.settle(active, {
@@ -290,6 +312,7 @@ export class JavaScriptKernel {
 	 */
 	async #terminate(): Promise<WorkerRetirement> {
 		this.#clearTimeout();
+		this.#kernelTools.rejectAll(kernelToolError("kernel_tool_stale", "JavaScript worker reset"));
 		const retirement = await this.#slot.retire();
 		await this.#retireWorkerChildren();
 		return retirement;
