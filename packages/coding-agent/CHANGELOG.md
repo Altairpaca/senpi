@@ -18,6 +18,8 @@
 
 - Terminal monitors no longer burn CPU while paused: a paused file watch clears its 250ms poll timer entirely (no stat/SHA-256 digest work) and resume runs one immediate check, so a change made during the pause still fires. Session-output line buffers are now capped at 64KiB, so a newline-less stream can no longer grow a monitor's retained tail without bound ([#1698](https://github.com/code-yeongyu/senpi/issues/1698)).
 
+- Long, compaction-trimmed sessions no longer re-parse the entire session file every time the working/retry status animation cadence is decided (which periodically froze the UI on multi-day sessions): the cadence reads an O(1) maintained entry count, `SessionManager#getEntryCount()`; explicit full-history retrieval is unchanged ([#1699](https://github.com/code-yeongyu/senpi/issues/1699)).
+
 
 - The Cursor CLI OAuth lane no longer spawns `cursor-agent models` on every senpi start. The startup catalog probe runs only when the lane is usable (not disabled, `cursor-agent` installed, at least one account bound), inside that account's HOME, and every `cursor-agent` spawn (turn, `models`, `--version`) now receives the same explicit environment allowlist instead of the inherited `process.env`. Hermetic or SSH-launched senpi processes therefore never trigger the CLI's macOS keychain preflight, which used to surface as a blocking "Keychain Not Found" dialog for `cursor-keychain-probe` on the logged-in console ([#1722](https://github.com/code-yeongyu/senpi/issues/1722)).
 
