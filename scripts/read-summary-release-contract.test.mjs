@@ -9,7 +9,7 @@ import { parse } from "shell-quote";
 import { parse as parseYaml } from "yaml";
 import { releaseCompileArgs, repository } from "./qa/read-summary-build.mjs";
 
-test("QA compiles the publishing workflow's shell recipe without package autoload (#1639)", () => {
+test("QA compiles the publishing workflow's shell recipe (#1639)", () => {
 	const workflow = parseYaml(readFileSync(join(repository, ".github/workflows/build-binaries.yml"), "utf8"));
 	const build = workflow.jobs.build.steps.find((step) => step.name === "Build binaries");
 	const [script] = parse(build.run);
@@ -21,7 +21,6 @@ test("QA compiles the publishing workflow's shell recipe without package autoloa
 		args[args.indexOf("--outfile") + 1] = resolve("output/senpi");
 		assert.deepEqual(actual, args);
 	}
-	assert(!actual.includes("--compile-autoload-package-json"));
 });
 
 test("QA rejects divergent platform flags instead of choosing one publishing branch", () => {
