@@ -45,6 +45,7 @@ export {
 	type TerminalSessionNativeOptions,
 	type TerminalSessionOperationResult,
 	type TerminalSessionOptions,
+	type TerminalSessionTerminateOptions,
 } from "./session.ts";
 export {
 	type BunRuntime,
