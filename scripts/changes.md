@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-15 - Follow the current publishing compile recipe (#1639)
+
+### What changed
+
+- `scripts/read-summary-release-contract.test.mjs` still binds QA to the workflow's `build-binaries.sh` compile argv, including `--compile-autoload-package-json` now present on both publishing platforms after origin/main.
+
+### Why
+
+- The previous negative autoload assertion described an older publishing recipe. After merging origin/main the recipe includes that flag on both platforms; forbidding it made the contract test fail against its own authority.
+
+### Why an extension could not handle it
+
+- Compile argv is fixed before startup.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/read-summary-release-contract.test.mjs` publishing argv equality. Keep the workflow shell recipe as the authority.
+
 ## 2026-09-15 - Do not fold fields-only class bodies (#1639)
 
 ### What changed
