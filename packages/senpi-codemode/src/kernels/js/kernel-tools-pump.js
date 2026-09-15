@@ -53,10 +53,14 @@ export function createKernelToolPump({ getRuntime, emit, nestedInvokes }) {
 				return true;
 			}
 			if (message.type === "kernel-tool-cancel") {
-				nestedInvokes.get(message.requestId)?.controller.abort(kernelToolError("kernel_tool_stale", "Kernel tool call cancelled"));
+				const nested = nestedInvokes.get(message.requestId);
+				if (nested) abortNested(nested, kernelToolError("kernel_tool_stale", "Kernel tool call cancelled"));
 				return true;
 			}
 			return false;
+		},
+		abortAll(error) {
+			for (const nested of nestedInvokes.values()) abortNested(nested, error);
 		},
 		settleToolReply(message) {
 			for (const nested of nestedInvokes.values()) {
@@ -70,6 +74,14 @@ export function createKernelToolPump({ getRuntime, emit, nestedInvokes }) {
 			return false;
 		},
 	};
+}
+
+function abortNested(nested, error) {
+	nested.controller.abort(error);
+	for (const [callId, pending] of nested.pendingTools) {
+		nested.pendingTools.delete(callId);
+		pending.reject(error);
+	}
 }
 
 function pumpError(error) {

@@ -14,6 +14,10 @@ export interface JavaScriptKernelOptions {
 	readonly workerEntryUrl?: URL;
 	/** Per-session PI_* values applied to the worker environment before the first cell runs. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Host tool names denied as JS kernel-tool identifiers (init protocol). */
+	readonly hostToolNames?: readonly string[];
+	/** Tool names registered in another kernel language, denied as JS kernel-tool identifiers. */
+	readonly foreignLanguageNames?: readonly string[];
 }
 
 export interface JavaScriptRunInput {

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 
-async function withKernel<T>(fn: (kernel: JavaScriptKernel) => Promise<T>): Promise<T> {
+async function withKernel<T>(
+	fn: (kernel: JavaScriptKernel) => Promise<T>,
+	options: { hostToolNames?: readonly string[]; foreignLanguageNames?: readonly string[] } = {},
+): Promise<T> {
 	const kernel = new JavaScriptKernel({
 		sessionId: "kernel-tools-protocol",
 		cwd: process.cwd(),
 		parallelPoolWidth: 2,
+		...options,
 	});
 	try {
 		return await fn(kernel);
@@ -89,6 +93,66 @@ describe("kernel tool protocol", () => {
 			await expect(stale).resolves.toMatchObject({ code: "kernel_tool_stale" });
 			void hold;
 			void run;
+		});
+	});
+
+	it("rejects host and foreign names on the live worker registry", async () => {
+		await withKernel(
+			async (kernel) => {
+				const read = await kernel.run({
+					cellId: "collide-read",
+					code: "try { tool(function read(path) { return path; }); } catch (e) { return e.code; }",
+					timeoutMs: 8_000,
+				});
+				expect(read.ok).toBe(true);
+				expect(['"tool_name_collision"', '"reserved_tool_name"']).toContain(read.ok ? read.valueRepr : undefined);
+				const py = await kernel.run({
+					cellId: "collide-py",
+					code: "try { tool(function py_lookup(path) { return path; }); } catch (e) { return e.code; }",
+					timeoutMs: 8_000,
+				});
+				expect(py).toMatchObject({ ok: true, valueRepr: '"tool_name_collision"' });
+			},
+			{ hostToolNames: ["read", "bash"], foreignLanguageNames: ["py_lookup"] },
+		);
+	});
+
+	it("rejects workpool recursion and redefinition during a pending nested invoke", async () => {
+		await withKernel(async (kernel) => {
+			const run = kernel.run({
+				cellId: "redef-workpool",
+				code: "tool(async function lookup(path) { return await tool.read({ path }); }); tool(async function pooled() { return await workpool('a', 'b'); }); await tool.hold({}); tool(function lookup(path) { return 'new'; }); return 1;",
+				timeoutMs: 8_000,
+			});
+			const hold = await kernel.nextToolCall();
+			const described = await kernel.describeKernelTools(["lookup", "pooled"]);
+			const lookup = described.results[0]?.ok ? described.results[0].descriptor : undefined;
+			const pooled = described.results[1]?.ok ? described.results[1].descriptor : undefined;
+			if (!lookup || !pooled) throw new Error("descriptors missing");
+			await expect(
+				kernel.invokeKernelTool({
+					name: "pooled",
+					kernel_generation: pooled.kernel_generation,
+					definition_revision: pooled.definition_revision,
+					args: {},
+					call_id: "workpool",
+				}),
+			).rejects.toMatchObject({ code: "kernel_tool_recursion" });
+			const nested = Promise.withResolvers<void>();
+			kernel.kernelToolEvents.addEventListener("nestedInvoke", () => nested.resolve(), { once: true });
+			const invoke = kernel.invokeKernelTool({
+				name: "lookup",
+				kernel_generation: lookup.kernel_generation,
+				definition_revision: lookup.definition_revision,
+				args: { path: "x" },
+				call_id: "redef",
+			});
+			await nested.promise;
+			const readCall = await kernel.nextToolCall();
+			kernel.deliverToolReply({ type: "tool-reply", callId: hold.callId, ok: true, value: "held" });
+			await expect(run).resolves.toMatchObject({ ok: true, valueRepr: "1" });
+			kernel.deliverToolReply({ type: "tool-reply", callId: readCall.callId, ok: true, value: "late" });
+			await expect(invoke).rejects.toMatchObject({ code: "kernel_tool_stale" });
 		});
 	});
 });

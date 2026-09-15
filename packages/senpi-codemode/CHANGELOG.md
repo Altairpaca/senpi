@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- JS kernel tools parse named functions by declaration head (arrow bodies are allowed), reject illegal parameter lists instead of guessing trailing commas, keep unicode identifiers as written, carry host/foreign names on worker init, and settle nested invokes on parent interrupt ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+
 ### Removed
 
 ## [2026.9.15-2] - 2026-09-15

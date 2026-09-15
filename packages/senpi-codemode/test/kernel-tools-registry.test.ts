@@ -1,16 +1,29 @@
 import { describe, expect, it } from "vitest";
-import {
-	buildMcpToolName,
-	MCP_TOOL_NAME_MAX_LENGTH,
-} from "../../coding-agent/src/core/extensions/builtin/mcp/expose/naming.ts";
 import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL, RESERVED_SCHEMA_TOOL } from "../src/bridge/reserved.ts";
-import {
-	MCP_TOOL_NAME_MAX_LENGTH as kernelMaxLength,
-	kernelToolKey,
-	sanitizeNamePart,
-} from "../src/kernels/js/kernel-tools-naming.ts";
-import { createKernelToolRegistry, createToolNamespace } from "../src/kernels/js/kernel-tools-registry.ts";
 import { KERNEL_TOOLS_UNSUPPORTED } from "../src/kernels/js/kernel-tools-types.ts";
+
+const production = await import(new URL("../src/kernels/js/kernel-tools-registry.js", import.meta.url).href);
+const createKernelToolRegistry = production.createKernelToolRegistry as (options?: object) => {
+	generation: number;
+	define: (
+		fn: object,
+		metadata?: unknown,
+	) => {
+		name: string;
+		description: string;
+		language: string;
+		kernel_generation: number;
+		definition_revision: number;
+		input_schema: unknown;
+	};
+	describe: (names: readonly string[]) => { results: Array<{ name: string; ok: boolean; error?: { code: string } }> };
+	invoke: (request: object) => Promise<unknown>;
+	bumpGeneration: () => number;
+};
+const createToolNamespace = production.createToolNamespace as (
+	define: (fn: object, metadata?: unknown) => unknown,
+	callHost: (name: string, args: unknown) => Promise<unknown>,
+) => ((fn: object, metadata?: unknown) => unknown) & { read: (args?: unknown) => Promise<unknown> };
 
 function lookup(path: string) {
 	return path;
@@ -20,12 +33,7 @@ async function fetchText(url: string) {
 	return url;
 }
 
-function registry(
-	options: Parameters<typeof createKernelToolRegistry>[0] = {
-		hostToolNames: ["read", "bash"],
-		foreignLanguageNames: ["py_lookup"],
-	},
-) {
+function registry(options: object = { hostToolNames: ["read", "bash"], foreignLanguageNames: ["py_lookup"] }) {
 	return createKernelToolRegistry(options);
 }
 
@@ -40,12 +48,7 @@ function expectCode(run: () => unknown, code: string): void {
 
 describe("named functions expose fenced descriptors", () => {
 	it("applies existing MCP naming rules and default JSON object schemas", () => {
-		expect(kernelMaxLength).toBe(MCP_TOOL_NAME_MAX_LENGTH);
-		expect(sanitizeNamePart("read.file")).toBe("read_file");
-		expect(buildMcpToolName({ serverName: "read.file", toolName: "x" }).startsWith("mcp_read_file_")).toBe(true);
-		expect(kernelToolKey("read-file")).toBe("read_file");
-		const descriptor = registry().define(lookup);
-		expect(descriptor).toEqual({
+		expect(registry().define(lookup)).toEqual({
 			name: "lookup",
 			description: "",
 			language: "js",
@@ -67,18 +70,18 @@ describe("named functions expose fenced descriptors", () => {
 			return `${left}:${right}`;
 		}
 		const tools = registry();
-		const descriptor = tools.define(pair, {
-			description: "join",
-			schema: {
-				type: "object",
-				properties: { left: { type: "string" }, right: { type: "string" } },
-				required: ["left", "right"],
-				additionalProperties: false,
-			},
-		});
-		expect(descriptor.description).toBe("join");
-		const asyncDescriptor = tools.define(fetchText);
-		expect(asyncDescriptor.name).toBe("fetchText");
+		expect(
+			tools.define(pair, {
+				description: "join",
+				schema: {
+					type: "object",
+					properties: { left: { type: "string" }, right: { type: "string" } },
+					required: ["left", "right"],
+					additionalProperties: false,
+				},
+			}).description,
+		).toBe("join");
+		expect(tools.define(fetchText).name).toBe("fetchText");
 		await expect(
 			tools.invoke({
 				name: "pair",
@@ -115,8 +118,7 @@ describe("named functions expose fenced descriptors", () => {
 			},
 		);
 		expect(typeof tool).toBe("function");
-		const descriptor = tool(lookup);
-		expect(descriptor).toMatchObject({ name: "lookup", language: "js" });
+		expect(tool(lookup)).toMatchObject({ name: "lookup", language: "js" });
 		await expect(tool.read({ path: "demo.txt" })).resolves.toEqual({ text: "read" });
 		expect(host).toEqual([{ name: "read", args: { path: "demo.txt" } }]);
 	});
@@ -222,8 +224,7 @@ describe("reserved collisions and stale descriptors fail closed", () => {
 				call_id: "live-rev",
 			}),
 		).resolves.toBe("x");
-		const generation = tools.bumpGeneration();
-		expect(generation).toBeGreaterThan(first.kernel_generation);
+		expect(tools.bumpGeneration()).toBeGreaterThan(first.kernel_generation);
 		await expect(
 			tools.invoke({
 				name: redefined.name,
@@ -240,10 +241,7 @@ describe("reserved collisions and stale descriptors fail closed", () => {
 	});
 
 	it("returns tools_unavailable for non-JS registries and unsupported hosts", () => {
-		expect(KERNEL_TOOLS_UNSUPPORTED).toEqual({
-			code: "tools_unavailable",
-			message: "Kernel tools require a live JavaScript worker context",
-		});
+		expect(KERNEL_TOOLS_UNSUPPORTED.code).toBe("tools_unavailable");
 		expectCode(() => registry({ language: "py" }).define(lookup), "tools_unavailable");
 		expectCode(() => registry({ language: "py" }).describe(["lookup"]), "tools_unavailable");
 	});

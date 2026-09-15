@@ -1,6 +1,7 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
+import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
 import { applySessionEnvironment } from "../session-env.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
@@ -67,6 +68,14 @@ export class SubprocessKernel {
 		if (this.failure) throw this.failure;
 		// Restart always spawns a fresh interpreter, so no user global survives.
 		return { stateRetained: Promise.resolve(false) };
+	}
+
+	describeKernelTools(_names: readonly string[]): Promise<never> {
+		return rejectKernelToolsUnavailable();
+	}
+
+	invokeKernelTool(_request: unknown, _signal?: AbortSignal): Promise<never> {
+		return rejectKernelToolsUnavailable();
 	}
 
 	nextToolCall(): Promise<ToolCallMessage> {

@@ -58,6 +58,17 @@ describe("bridge protocol JSONL framing", () => {
 		expect(decodeBridgeFrame(encodeBridgeFrame(message))).toEqual({ ok: true, message });
 	});
 
+	it("round-trips init host and foreign kernel-tool names", () => {
+		const withNames: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-tools",
+			connection: { port: 4317, token: "secret-token" },
+			hostToolNames: ["read", "bash"],
+			foreignLanguageNames: ["py_lookup"],
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(withNames))).toEqual({ ok: true, message: withNames });
+	});
+
 	it("round-trips init session environment overrides", () => {
 		const withSessionEnv: HostToKernelMessage = {
 			type: "init",

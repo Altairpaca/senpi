@@ -63,6 +63,8 @@ async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, s
 		sessionId: options.sessionId,
 		connection: localBridgeConnection(options),
 		kernelGeneration: hooks.kernelGeneration,
+		hostToolNames: [...(options.hostToolNames ?? [])],
+		foreignLanguageNames: [...(options.foreignLanguageNames ?? [])],
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 	});
 	await ready;

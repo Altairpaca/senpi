@@ -1,6 +1,6 @@
 import { createToolNamespace } from "./kernel-tools-define.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
-import { kernelToolKey, normalizeKernelToolName } from "./kernel-tools-naming.js";
+import { kernelToolKey, MCP_TOOL_NAME_MAX_LENGTH, sanitizeNamePart } from "./kernel-tools-naming.js";
 import { parseToolFunction } from "./kernel-tools-parse.js";
 import { orderedArgs, resolveToolMetadata, validateInvokeArgs } from "./kernel-tools-schema.js";
 
@@ -39,7 +39,10 @@ export function createKernelToolRegistry(options = {}) {
 			assertJs();
 			const parsed = parseToolFunction(fn);
 			const resolved = resolveToolMetadata(metadata, parsed.params);
-			const normalizedName = normalizeKernelToolName(parsed.name);
+			if (sanitizeNamePart(parsed.name) !== parsed.name || parsed.name.length > MCP_TOOL_NAME_MAX_LENGTH) {
+				throw kernelToolError("invalid_tool_definition", "Kernel tool name must match MCP name grammar");
+			}
+			const normalizedName = parsed.name;
 			const key = kernelToolKey(parsed.name);
 			if (reservedKeys.has(key)) throw kernelToolError("reserved_tool_name", `Kernel tool name is reserved: ${parsed.name}`);
 			if (hostKeys.has(key) || foreignKeys.has(key)) {

@@ -29,6 +29,8 @@ const hostToKernelMessageSchema = Type.Union([
 		connection: connectionConfigSchema,
 		sessionEnv: Type.Optional(Type.Record(Type.String(), Type.String())),
 		kernelGeneration: Type.Optional(Type.Integer({ minimum: 1 })),
+		hostToolNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		foreignLanguageNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	}),
 	Type.Object({
 		type: Type.Literal("run"),

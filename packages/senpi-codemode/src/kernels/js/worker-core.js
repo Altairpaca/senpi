@@ -1,4 +1,5 @@
 import { kernelToolCallContext } from "./kernel-tools-context.js";
+import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 
@@ -74,6 +75,7 @@ export function createWorkerCore(transport, options) {
 			pendingTools.delete(callId);
 			pending.reject(interruption);
 		}
+		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
 	}
 
@@ -87,6 +89,8 @@ export function createWorkerCore(transport, options) {
 				localRoots: message.connection.localRoots,
 				artifactsDir: message.connection.artifactsDir,
 				kernelGeneration: message.kernelGeneration ?? 1,
+				hostToolNames: message.hostToolNames ?? [],
+				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 			});
 			emit({ type: "ready" });

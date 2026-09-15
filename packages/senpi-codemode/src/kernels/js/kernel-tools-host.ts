@@ -86,13 +86,22 @@ export class KernelToolHostPump {
 	): Promise<KernelToolReply> {
 		if (!this.#isOpen()) throw kernelToolError("tools_unavailable", "JavaScript worker is not available");
 		return new Promise((resolve, reject) => {
-			const settle = { resolve, reject };
-			this.#waiters.set(message.requestId, settle);
 			const onAbort = (): void => {
 				if (!this.#waiters.delete(message.requestId)) return;
 				this.#post({ type: "kernel-tool-cancel", requestId: message.requestId });
 				reject(kernelToolError("kernel_tool_stale", "Kernel tool call cancelled"));
 			};
+			const cleanup = (): void => signal?.removeEventListener("abort", onAbort);
+			this.#waiters.set(message.requestId, {
+				resolve: (reply) => {
+					cleanup();
+					resolve(reply);
+				},
+				reject: (error) => {
+					cleanup();
+					reject(error);
+				},
+			});
 			if (signal?.aborted) {
 				onAbort();
 				return;

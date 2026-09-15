@@ -34,7 +34,11 @@ export class JsWorkerRuntime {
 		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
-		this.#tools = createKernelToolRegistry({ generation: options.kernelGeneration ?? 1 });
+		this.#tools = createKernelToolRegistry({
+			generation: options.kernelGeneration ?? 1,
+			hostToolNames: options.hostToolNames ?? [],
+			foreignLanguageNames: options.foreignLanguageNames ?? [],
+		});
 		this.#installGlobals();
 	}
 

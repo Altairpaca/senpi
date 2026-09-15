@@ -49,7 +49,7 @@ export class WorkerSlot {
 
 	async ensureReady(): Promise<void> {
 		if (!this.#ready) {
-			const generation = ++this.#generation;
+			const generation = this.#generation === 0 ? ++this.#generation : this.#generation;
 			const controller = new AbortController();
 			this.#startupAbort = controller;
 			const ready = startWorkerWithInlineFallback(

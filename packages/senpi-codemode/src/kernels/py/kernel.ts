@@ -1,4 +1,5 @@
 import type { KernelInterruptHandle } from "../../tool/types.ts";
+import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
@@ -29,6 +30,14 @@ export class PythonKernel {
 		const kernel = new PythonKernel(options);
 		await kernel.#spawn(kernel.#generation);
 		return kernel;
+	}
+
+	describeKernelTools(_names: readonly string[]): Promise<never> {
+		return rejectKernelToolsUnavailable();
+	}
+
+	invokeKernelTool(_request: unknown, _signal?: AbortSignal): Promise<never> {
+		return rejectKernelToolsUnavailable();
 	}
 
 	run(input: PythonKernelRunOptions): Promise<ResultMessage> {

@@ -1,5 +1,26 @@
 # senpi-codemode fork changes
 
+## 2026-09-16 - Fail-closed JS kernel-tool parser and nested interrupt (#1647)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-parse.js` is the only parser (Babel `.ts` copy removed). It accepts `function name(` / `async function name(` with IdentifierName parameters, including unicode and arrow-containing bodies, and rejects trailing commas, defaults, rest, destructuring, arrows, generators, and classes.
+- Worker init carries `hostToolNames` / `foreignLanguageNames` into `createKernelToolRegistry`. JS names that would require MCP mangling are rejected rather than rewritten.
+- Parent interrupt aborts nested kernel-tool waits with `kernel_tool_stale` so the host waiter settles once.
+- py/rb/jl kernels expose describe/invoke that return `tools_unavailable`.
+
+### Why
+
+- Unit tests locked the unused Babel parser while the worker guessed trailing commas, over-rejected `=>` in bodies, skipped live collision rules, and hung nested invokes across interrupt.
+
+### Why an extension could not handle it
+
+- Worker parser, init protocol, and nested pending maps are kernel internals.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/kernel-tools-parse.js`, `src/kernels/js/worker-core.js`, `src/kernels/js/worker-runtime.js`, `src/bridge/protocol.ts`.
+
 ## 2026-09-16 - Reentrant JS kernel tool pump (#1647)
 
 ### What changed
@@ -25,7 +46,7 @@
 
 ### What changed
 
-- `src/kernels/js/kernel-tools-*.js` parse named functions with Babel, apply MCP naming rules, and fence descriptors by generation/revision.
+- `src/kernels/js/kernel-tools-*.js` parse named functions, apply MCP naming rules, and fence descriptors by generation/revision.
 - `tool(fn, metadata?)` is callable in the JS worker while `tool.<name>()` host calls remain.
 - `src/bridges/agent-bridge.ts` accepts and forwards `tools: string[]`.
 - Bridge protocol schemas include kernel-tool describe/invoke frames; production invoke pumping is not enabled yet.

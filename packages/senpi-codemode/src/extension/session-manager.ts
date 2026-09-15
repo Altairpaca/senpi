@@ -215,6 +215,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				cwd: this.#options.cwd,
 				parallelPoolWidth,
 				onMessage,
+				hostToolNames: this.#options.listTools?.().map((tool) => tool.name) ?? [],
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
