@@ -7,6 +7,9 @@ import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
 import { createWorkpool } from "./workpool.js";
+import { inKernelToolInvoke } from "./kernel-tools-context.js";
+import { kernelToolError } from "./kernel-tools-errors.js";
+import { createKernelToolRegistry, createToolNamespace } from "./kernel-tools-registry.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
 // How long a child gets to honour SIGTERM before SIGKILL. Short, because the
@@ -23,6 +26,7 @@ export class JsWorkerRuntime {
 	#pendingDisplays = [];
 	#children = new Set();
 	#onChildEvent;
+	#tools;
 
 	constructor(options) {
 		this.#cwd = options.cwd;
@@ -30,7 +34,16 @@ export class JsWorkerRuntime {
 		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
+		this.#tools = createKernelToolRegistry({
+			generation: options.kernelGeneration ?? 1,
+			hostToolNames: options.hostToolNames ?? [],
+			foreignLanguageNames: options.foreignLanguageNames ?? [],
+		});
 		this.#installGlobals();
+	}
+
+	get kernelTools() {
+		return this.#tools;
 	}
 
 	async run(code, cellId, hooks) {
@@ -112,14 +125,9 @@ export class JsWorkerRuntime {
 		globalThis.parallel = async thunks => await this.#parallel(thunks);
 		globalThis.pipeline = async (items, ...stages) => await this.#pipeline(items, stages);
 		globalThis.completion = async (prompt, opts) => await this.#callTool("completion", { prompt, opts });
-		globalThis.tool = new Proxy(
-			{},
-			{
-				get: (_target, prop) => {
-					if (typeof prop !== "string") return undefined;
-					return async args => await this.#callTool(prop, args ?? {});
-				},
-			},
+		globalThis.tool = createToolNamespace(
+			(fn, metadata) => this.#tools.define(fn, metadata),
+			async (name, args) => await this.#callTool(name, args),
 		);
 		globalThis.tools = globalThis.tool;
 		const originalLog = console.log.bind(console);
@@ -275,6 +283,7 @@ export class JsWorkerRuntime {
 	}
 
 	async #agent(prompt, options, rest) {
+		if (inKernelToolInvoke()) throw kernelToolError("kernel_tool_recursion", "kernel tools may not invoke agent()");
 		const parsed = optionsArg({
 			name: "agent",
 			value: options,

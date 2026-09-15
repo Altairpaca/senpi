@@ -1,5 +1,26 @@
 # Local fork changes
 
+## 2026-09-16 - Transient kernelTools on ExtensionContext (#1647)
+
+### What changed
+
+- packages/coding-agent/src/index.ts exports kernelToolsStorage and ExtensionKernelTools.
+- packages/coding-agent/src/core/extensions/types.ts adds optional ExtensionContext.kernelTools.
+- packages/coding-agent/src/core/extensions/runner.ts createContext reads the AsyncLocalStorage binder.
+- packages/coding-agent/src/core/extensions/kernel-tools-context.ts holds that binder.
+
+### Why
+
+- In-process task children need the parent kernel-tool capability on the host-tool execution context.
+
+### Why an extension could not handle it
+
+- ExtensionContext and the runner createContext path are owned by coding-agent.
+
+### Expected merge conflict zones
+
+- LOW: `src/core/extensions/types.ts` optional field after `steeringSignal`; `src/core/extensions/runner.ts` createContext getters.
+
 ## 2026-09-14 - Align Cursor grep frames with the engine contract (#1678)
 
 ### What changed

@@ -1,5 +1,25 @@
 # Core Extensions Changes
 
+## 2026-09-16 - Transient kernelTools capability (#1647)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional `ExtensionContext.kernelTools`.
+- `packages/coding-agent/src/core/extensions/kernel-tools-context.ts` holds the AsyncLocalStorage binder.
+- `packages/coding-agent/src/core/extensions/runner.ts` createContext reads that store.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` is the exported host-tool execution context; task/workpool must see the originating eval's capability.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns ExtensionContext; an extension cannot add a field for other tools.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts` after `steeringSignal`; `runner.ts` createContext getters.
+
 ## 2026-09-14 - Declarative eval-only tool exposure (#1678)
 
 ### What changed

@@ -247,6 +247,24 @@ describe("agent bridge", () => {
 		]);
 	});
 
+	it("forwards requested kernel tool names and still denies unknown arguments", async () => {
+		const calls: unknown[] = [];
+		const executeTool = withAvailability(
+			async (_toolName, params) => {
+				calls.push(params);
+				return textResult("ok");
+			},
+			() => true,
+		);
+		await expect(invokeAgent({ prompt: "x", extra: true }, { executeTool })).rejects.toThrow(
+			"agent() received invalid arguments",
+		);
+		await expect(invokeAgent({ prompt: "x", tools: ["lookup", "pair"] }, { executeTool })).resolves.toEqual({
+			text: "ok",
+		});
+		expect(calls).toEqual([{ prompt: "x", run_in_background: false, tools: ["lookup", "pair"] }]);
+	});
+
 	it("drops unsupported isolation options and emits their warning", async () => {
 		// Given
 		const events: EvalStatusEvent[] = [];

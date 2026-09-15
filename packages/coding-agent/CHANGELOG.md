@@ -6,6 +6,8 @@
 
 ### Added
 
+- Optional `ExtensionContext.kernelTools` exposes a transient parent JS kernel-tool capability during eval-owned host-tool execution ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+
 ### Changed
 
 ### Fixed

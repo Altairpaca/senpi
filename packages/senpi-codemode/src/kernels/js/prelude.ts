@@ -7,6 +7,7 @@ export const JAVASCRIPT_KERNEL_PRELUDE = [
 	"read(path, options?): read UTF-8 text; plain paths use cwd and local:// uses the session local root.",
 	"write(path, content): write UTF-8 or binary data and return the resolved path.",
 	"tool.<name>(args): request a host tool call through the bridge; resolves to { text, images?, details?, hasError? }.",
+	"tool(fn, metadata?): register a named JavaScript function as a fenced kernel tool for in-process children.",
 	"completion(prompt, options?): request a host completion bridge call.",
 	"output(...ids, options?): retrieve task output through the reserved output bridge.",
 	"agent(prompt, options?): delegate work through the reserved agent bridge.",

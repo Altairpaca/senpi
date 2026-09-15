@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { AgentToolResult, ExtensionContext } from "@code-yeongyu/senpi";
+import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
+import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
@@ -11,7 +12,7 @@ import { buildEvalExecutionEventPayload, type EvalExecutionSettleOutcome } from 
 import { evalTimeoutBehavior } from "./eval-request.ts";
 import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
 import { describeTimeoutState } from "./interrupt-note.ts";
-import type { EvalToolDetails } from "./types.ts";
+import type { EvalKernel, EvalToolDetails } from "./types.ts";
 
 export async function runEvalCell(
 	options: CreateEvalToolOptions,
@@ -166,34 +167,39 @@ async function executeCell(
 				void pending.catch((error: unknown) => execution.cancel(error));
 			}),
 		);
-		execution.setKernel(kernel);
-		const activeHandler = new CellHandler(kernel, state, {
-			executeTool: options.executeTool,
-			...(options.listTools === undefined ? {} : { listTools: options.listTools }),
-			settings: options.settings ?? defaultCodemodeSettings,
-			...(options.complete === undefined ? {} : { complete: options.complete }),
-			ctx: bridgeContext,
-			...(options.artifactsDir === undefined
-				? {}
-				: { artifactPath: join(options.artifactsDir, `eval-${randomUUID()}.log`) }),
-			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
-		});
-		handler = activeHandler;
-		cellManager.markRunning(
-			cell,
-			kernel,
-			() => activeHandler.liveResult(),
-			(error) => execution.cancel(error),
-		);
-		// Includes a steer already queued at execute start or received while acquiring the kernel.
-		onReady();
-		if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
-			options.kernelManager.setContext(bridgeContext);
-		}
-		if (invocation.input.reset) await execution.wait(kernel.reset());
-		const result = await execution.wait(kernel.run({ cellId: invocation.cellId, code: invocation.input.code }));
-		if (result.ok && state.pendingBridgeCalls.length > 0) await execution.wait(Promise.all(state.pendingBridgeCalls));
-		return await handler.finalize(result);
+		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
+			execution.setKernel(kernel);
+			const activeHandler = new CellHandler(kernel, state, {
+				executeTool: options.executeTool,
+				...(options.listTools === undefined ? {} : { listTools: options.listTools }),
+				settings: options.settings ?? defaultCodemodeSettings,
+				...(options.complete === undefined ? {} : { complete: options.complete }),
+				ctx: bridgeContext,
+				...(options.artifactsDir === undefined
+					? {}
+					: { artifactPath: join(options.artifactsDir, `eval-${randomUUID()}.log`) }),
+				...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
+			});
+			handler = activeHandler;
+			cellManager.markRunning(
+				cell,
+				kernel,
+				() => activeHandler.liveResult(),
+				(error) => execution.cancel(error),
+			);
+			// Includes a steer already queued at execute start or received while acquiring the kernel.
+			onReady();
+			if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
+				options.kernelManager.setContext(bridgeContext);
+			}
+			if (invocation.input.reset) await execution.wait(kernel.reset());
+			const result = await execution.wait(kernel.run({ cellId: invocation.cellId, code: invocation.input.code }));
+			if (result.ok && state.pendingBridgeCalls.length > 0)
+				await execution.wait(Promise.all(state.pendingBridgeCalls));
+			return await handler.finalize(result);
+		};
+		const kernelTools = jsKernelTools(kernel, invocation.input.language);
+		return kernelTools ? await kernelToolsStorage.run(kernelTools, runBound) : await runBound();
 	} catch (error) {
 		if (handler && error instanceof Error && error.name === "CodemodeSessionDisposedError")
 			return await handler.finalizeCancellation(error);
@@ -205,4 +211,17 @@ async function executeCell(
 		execution.finish();
 		if (handler) await handler.flushOutput();
 	}
+}
+
+function jsKernelTools(kernel: EvalKernel, language: string): KernelToolsCapability | undefined {
+	if (language !== "js") return undefined;
+	if (!("describeKernelTools" in kernel) || typeof kernel.describeKernelTools !== "function") return undefined;
+	const js = kernel as EvalKernel & {
+		describeKernelTools: KernelToolsCapability["describe"];
+		invokeKernelTool: KernelToolsCapability["invoke"];
+	};
+	return {
+		describe: (names) => js.describeKernelTools(names),
+		invoke: (request, signal) => js.invokeKernelTool(request, signal),
+	};
 }

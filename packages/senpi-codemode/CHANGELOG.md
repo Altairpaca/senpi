@@ -8,6 +8,8 @@
 
 ### Added
 
+- JS `tool(fn, metadata?)` registers fenced kernel-tool descriptors (`name`, JSON input schema, `kernel_generation`, `definition_revision`) while `tool.read(...)` host calls keep working. `agent()` forwards `tools: string[]` for in-process children ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+- The JS worker pumps nested kernel-tool describe/invoke independently of the top-level run queue so a parent cell can stay pending on `agent()` while an in-process child calls a parent function ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 - JS, Python, Ruby, and Julia expose host-owned `workpool` sugar with opaque pool IDs and unchanged tool receipts, without kernel scheduling ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
 ### Changed
@@ -15,6 +17,9 @@
 - Typed task-handle details explicitly allow additional producer fields (`additionalProperties: true`) to match the frozen contract ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
 ### Fixed
+
+- JS kernel tools parse named functions by declaration head (arrow bodies are allowed), reject illegal parameter lists instead of guessing trailing commas, keep unicode identifiers as written, carry host/foreign names on worker init, and settle nested invokes on parent interrupt ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+- JS `tool()` consults live host and same-session foreign kernel names (py/rb/jl), including tools attached after worker start ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Removed
 

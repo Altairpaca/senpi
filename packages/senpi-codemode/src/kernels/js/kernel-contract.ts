@@ -6,6 +6,14 @@ export type ToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }
 
 export type JavaScriptKernelMode = "worker" | "inline";
 
+/** Snapshot or live provider consulted when the worker registry checks collisions. */
+export type KernelToolNameSource = readonly string[] | (() => readonly string[]);
+
+export function resolveKernelToolNameSource(names?: KernelToolNameSource): string[] {
+	if (typeof names === "function") return [...names()];
+	return names === undefined ? [] : [...names];
+}
+
 export interface JavaScriptKernelOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
@@ -14,6 +22,10 @@ export interface JavaScriptKernelOptions {
 	readonly workerEntryUrl?: URL;
 	/** Per-session PI_* values applied to the worker environment before the first cell runs. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Host tool names denied as JS kernel-tool identifiers (init protocol). */
+	readonly hostToolNames?: KernelToolNameSource;
+	/** Tool names registered in another kernel language, denied as JS kernel-tool identifiers. */
+	readonly foreignLanguageNames?: KernelToolNameSource;
 }
 
 export interface JavaScriptRunInput {

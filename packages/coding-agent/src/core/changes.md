@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-16 - Export kernelTools storage (senpi#1647)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `kernelToolsStorage` and `ExtensionKernelTools` so codemode can bind a JS eval's kernel-tool capability onto the host-tool context.
+
+### Why
+
+- `packages/coding-agent/src/index.ts` is the public senpi extension API surface consumed by senpi-codemode.
+
+### Why an extension could not handle it
+
+- Package index re-exports are owned by coding-agent.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts` adjacent to other extension exports.
+
 ## 2026-09-14 - Terminal mouse capture setting (senpi#1645)
 
 ### What changed

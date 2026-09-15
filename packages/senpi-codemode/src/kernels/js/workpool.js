@@ -1,5 +1,9 @@
+import { inKernelToolInvoke } from "./kernel-tools-context.js";
+import { kernelToolError } from "./kernel-tools-errors.js";
+
 // Only host-tool sugar: no admission, worker, or queue state belongs to the kernel.
 export async function createWorkpool(callTool, agent, name, options = {}) {
+	if (inKernelToolInvoke()) throw kernelToolError("kernel_tool_recursion", "kernel tools may not invoke workpool()");
 	if (options === null || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some(key => key !== "mode")) {
 		throw new TypeError("workpool() options only accept mode");
 	}

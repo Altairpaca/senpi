@@ -485,6 +485,23 @@ export interface ExtensionContext {
 	 * Available during tool execution; follow-up messages do not trigger it.
 	 */
 	readonly steeringSignal?: AbortSignal;
+	/**
+	 * Transient parent JS kernel-tool capability. Present only while a supported
+	 * JavaScript eval owns the host-tool context; absent on older runtimes.
+	 */
+	readonly kernelTools?: {
+		describe(names: readonly string[]): Promise<unknown>;
+		invoke(
+			request: {
+				name: string;
+				kernel_generation: number;
+				definition_revision: number;
+				args: unknown;
+				call_id: string;
+			},
+			signal?: AbortSignal,
+		): Promise<unknown>;
+	};
 	/** Abort the current agent operation */
 	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */

@@ -1,5 +1,89 @@
 # senpi-codemode fork changes
 
+## 2026-09-16 - Live host and foreign kernel-tool name collisions (#1647)
+
+### What changed
+
+- Session manager passes live `hostToolNames` / `foreignLanguageNames` providers into the JS kernel. Foreign names come from `listKernelToolNames()` on the other kernels of the same session (py/rb/jl).
+- Worker init still carries optional name arrays. The host re-resolves providers on worker start and before each cell via `kernel-tools-names`, so MCP attach after kernel start collides at `tool()`.
+- py/rb/jl kernels expose `listKernelToolNames()` (currently empty) as the source of truth for cross-language collisions.
+
+### Why
+
+- Host names were a one-shot `listTools()` snapshot, and `foreignLanguageNames` never left session-manager, so production JS `tool()` missed Python-side names and tools attached after worker start.
+
+### Why an extension could not handle it
+
+- Collision sets live in the worker registry and session kernel map.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/extension/session-manager.ts`, `src/kernels/js/worker-startup.ts`, `src/kernels/js/context-manager.ts`, `src/bridge/kernel-tools-protocol.ts`.
+
+## 2026-09-16 - Fail-closed JS kernel-tool parser and nested interrupt (#1647)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-parse.js` is the only parser (Babel `.ts` copy removed). It accepts `function name(` / `async function name(` with IdentifierName parameters, including unicode and arrow-containing bodies, and rejects trailing commas, defaults, rest, destructuring, arrows, generators, and classes.
+- Worker init carries `hostToolNames` / `foreignLanguageNames` into `createKernelToolRegistry`. JS names that would require MCP mangling are rejected rather than rewritten.
+- Parent interrupt aborts nested kernel-tool waits with `kernel_tool_stale` so the host waiter settles once.
+- py/rb/jl kernels expose describe/invoke that return `tools_unavailable`.
+
+### Why
+
+- Unit tests locked the unused Babel parser while the worker guessed trailing commas, over-rejected `=>` in bodies, skipped live collision rules, and hung nested invokes across interrupt.
+
+### Why an extension could not handle it
+
+- Worker parser, init protocol, and nested pending maps are kernel internals.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/kernel-tools-parse.js`, `src/kernels/js/worker-core.js`, `src/kernels/js/worker-runtime.js`, `src/bridge/protocol.ts`.
+
+## 2026-09-16 - Reentrant JS kernel tool pump (#1647)
+
+### What changed
+
+- Host/worker protocol adds correlated kernel-tool describe/invoke/cancel/reply frames serviced off the top-level run queue.
+- Nested invokes use a call-scoped pending-reply map so `read()` inside a parent tool cannot deadlock behind `agent()`.
+- Recursive `agent()`/`workpool()` from a kernel tool returns `kernel_tool_recursion`; reset/kill rejects waiters with `kernel_tool_stale`.
+- `scripts/qa/omp-item6.ts` event-gates parent-awaits-child and reset/recursion cases.
+
+### Why
+
+- A parent JS cell awaiting a child must keep pumping nested host bridges without a second top-level eval.
+
+### Why an extension could not handle it
+
+- Worker message dispatch and run-queue ownership are kernel internals.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/worker-core.js`, `src/kernels/js/context-manager.ts`, `src/bridge/protocol.ts`.
+
+## 2026-09-16 - Fenced JS kernel tool descriptors (#1647)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-*.js` parse named functions, apply MCP naming rules, and fence descriptors by generation/revision.
+- `tool(fn, metadata?)` is callable in the JS worker while `tool.<name>()` host calls remain.
+- `src/bridges/agent-bridge.ts` accepts and forwards `tools: string[]`.
+- Bridge protocol schemas include kernel-tool describe/invoke frames; production invoke pumping is not enabled yet.
+- `vitest.config.ts` merges workspace source aliases from `vitest.base.ts` so Node-hosted Vitest can load agent-bridge tests without package dist.
+
+### Why
+
+- In-process children need live, fenced parent JS functions without persisting closures or colliding with host/reserved names.
+
+### Why an extension could not handle it
+
+- Kernel globals, bridge frames, and agent argument forwarding are owned by codemode.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/bridge/protocol.ts` host/kernel unions, `src/kernels/js/worker-runtime.js` `tool` global, `src/bridges/agent-bridge.ts` argument schema.
+
 ## 2026-09-16 - Workpool aggregate QA and reset retention (#1646)
 
 ### What changed

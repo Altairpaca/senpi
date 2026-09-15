@@ -96,6 +96,8 @@ export class SubprocessRunQueue {
 			case "ready":
 			case "init-failed":
 			case "closed":
+			case "kernel-tool-describe-reply":
+			case "kernel-tool-invoke-reply":
 				onMessage?.(message);
 				return false;
 			default: {

@@ -23,6 +23,7 @@ import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
 import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
+import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
 import {
 	EVAL_EXECUTION_EVENT,
@@ -48,6 +49,8 @@ export interface CodemodeExtensionAPI {
 	registerRemovedToolHint(name: string, hint: string): void;
 	on(event: CodemodeEvent | "resources_discover", handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
 	executeTool: AgentExecuteTool;
+	/** Present only while a live JavaScript eval owns the host-tool context. */
+	kernelTools?: KernelToolsCapability;
 	getActiveTools(): string[];
 	getAllTools(): readonly EvalSchemaToolInfo[];
 	sendMessage(
@@ -259,4 +262,11 @@ function modelIdFrom(event: unknown): string | undefined {
 	return typeof model.id === "string" ? model.id : undefined;
 }
 
+export {
+	KERNEL_TOOLS_UNSUPPORTED,
+	type KernelToolDescriptor,
+	type KernelToolsCapability,
+	type KernelToolsDescribeResult,
+	type KernelToolsInvokeRequest,
+} from "./kernels/js/kernel-tools-types.ts";
 export { enabledLanguagesFrom };

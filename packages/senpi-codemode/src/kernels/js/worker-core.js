@@ -1,3 +1,6 @@
+import { kernelToolCallContext } from "./kernel-tools-context.js";
+import { kernelToolError } from "./kernel-tools-errors.js";
+import { createKernelToolPump } from "./kernel-tools-pump.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 
 // Mirrors INTERRUPT_ACK_OP and CHILD_LIFECYCLE_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
@@ -21,6 +24,12 @@ export function createWorkerCore(transport, options) {
 	let runtime = null;
 	let activeCell = null;
 	const pendingTools = new Map();
+	const nestedInvokes = new Map();
+	const kernelTools = createKernelToolPump({
+		getRuntime: () => runtime,
+		emit: (message) => transport.send(message),
+		nestedInvokes,
+	});
 
 	function emit(message) {
 		transport.send(message);
@@ -47,9 +56,12 @@ export function createWorkerCore(transport, options) {
 	}
 
 	async function callTool(toolName, args) {
-		if (activeCell?.interruption) throw activeCell.interruption;
+		const nested = kernelToolCallContext.getStore();
+		if (!nested && activeCell?.interruption) throw activeCell.interruption;
+		if (nested?.signal.aborted) throw nested.signal.reason;
+		const bag = nested?.pendingTools ?? pendingTools;
 		const callId = `js-${crypto.randomUUID()}`;
-		const promise = new Promise((resolve, reject) => pendingTools.set(callId, { resolve, reject }));
+		const promise = new Promise((resolve, reject) => bag.set(callId, { resolve, reject }));
 		emit({ type: "tool-call", callId, toolName, args });
 		return await promise;
 	}
@@ -63,10 +75,16 @@ export function createWorkerCore(transport, options) {
 			pendingTools.delete(callId);
 			pending.reject(interruption);
 		}
+		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
 	}
 
 	function onMessage(message) {
+		if (kernelTools.handle(message)) return;
+		if (message.type === "kernel-tools-names") {
+			runtime?.kernelTools.setCollisionNames(message.hostToolNames ?? [], message.foreignLanguageNames ?? []);
+			return;
+		}
 		if (message.type === "init") {
 			applySessionEnvironment(message.sessionEnv);
 			runtime = new JsWorkerRuntime({
@@ -74,6 +92,9 @@ export function createWorkerCore(transport, options) {
 				parallelPoolWidth: options.parallelPoolWidth,
 				localRoots: message.connection.localRoots,
 				artifactsDir: message.connection.artifactsDir,
+				kernelGeneration: message.kernelGeneration ?? 1,
+				hostToolNames: message.hostToolNames ?? [],
+				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 			});
 			emit({ type: "ready" });
@@ -84,6 +105,7 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		if (message.type === "tool-reply") {
+			if (kernelTools.settleToolReply(message)) return;
 			const pending = pendingTools.get(message.callId);
 			if (!pending) return;
 			pendingTools.delete(message.callId);
