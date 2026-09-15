@@ -1,5 +1,4 @@
-import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeCursorCatalog } from "@earendil-works/pi-ai";
@@ -31,10 +30,13 @@ export type CursorCliModelCatalogDeps = {
 	removeDirectory: (path: string) => Promise<void>;
 };
 
+type CursorCliModelCatalogDefaultDeps = Omit<CursorCliModelCatalogDeps, "runProbe">;
+
 export type ResolveCursorCliModelCatalogOptions = {
 	readonly agentDir: string;
 	readonly settings?: CursorCliModelCatalogSettings;
-	readonly deps?: Partial<CursorCliModelCatalogDeps>;
+	/** The caller owns the probe: it decides the HOME (and therefore the account) `cursor-agent models` runs in. */
+	readonly deps: Partial<CursorCliModelCatalogDefaultDeps> & Pick<CursorCliModelCatalogDeps, "runProbe">;
 };
 
 type CachedModelCatalog = {
@@ -120,45 +122,7 @@ export function parseCursorAgentModelsListing(listing: string): ProviderModelCon
 	return normalizeEntries(raw);
 }
 
-async function runModelsProbe(executable: string, stdoutPath: string, timeoutMs: number): Promise<void> {
-	const output = await open(stdoutPath, "w");
-	try {
-		await new Promise<void>((resolve, reject) => {
-			const child = spawn(executable, ["models"], {
-				stdio: ["ignore", output.fd, "ignore"],
-			});
-			let timedOut = false;
-			let settled = false;
-			const finish = (error?: Error): void => {
-				if (settled) return;
-				settled = true;
-				clearTimeout(deadline);
-				if (error) reject(error);
-				else resolve();
-			};
-			const deadline = setTimeout(() => {
-				timedOut = true;
-				child.kill("SIGKILL");
-			}, timeoutMs);
-			child.once("error", (error) => finish(error));
-			child.once("close", (code, signal) => {
-				if (timedOut) {
-					finish(new Error(`cursor-agent models exceeded its ${timeoutMs}ms deadline`));
-					return;
-				}
-				if (code !== 0) {
-					finish(new Error(`cursor-agent models failed with code ${String(code)} and signal ${String(signal)}`));
-					return;
-				}
-				finish();
-			});
-		});
-	} finally {
-		await output.close();
-	}
-}
-
-function defaultDeps(settings: CursorCliModelCatalogSettings): CursorCliModelCatalogDeps {
+function defaultDeps(settings: CursorCliModelCatalogSettings): CursorCliModelCatalogDefaultDeps {
 	return {
 		now: Date.now,
 		resolveExecutable: () => {
@@ -168,7 +132,6 @@ function defaultDeps(settings: CursorCliModelCatalogSettings): CursorCliModelCat
 				settings: { executablePath: settings.executablePath },
 			});
 		},
-		runProbe: runModelsProbe,
 		makeTemporaryDirectory: (prefix) => mkdtemp(prefix),
 		readTextFile: (path) => readFile(path, "utf8"),
 		makeDirectory: async (path) => {
@@ -264,7 +227,7 @@ export async function resolveCursorCliModelCatalog(
 	options: ResolveCursorCliModelCatalogOptions,
 ): Promise<readonly ProviderModelConfig[]> {
 	const settings = options.settings ?? {};
-	const deps = { ...defaultDeps(settings), ...options.deps };
+	const deps: CursorCliModelCatalogDeps = { ...defaultDeps(settings), ...options.deps };
 	const cacheDirectory = join(options.agentDir, "cursor-cli-oauth");
 	const cachePath = join(cacheDirectory, "models.json");
 	const now = deps.now();

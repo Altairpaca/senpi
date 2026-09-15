@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { on, once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { compiledLoaderProbeSource, extensionSource } from "./compiled-extension-fixtures.ts";
 import { compiledExtensionPlatform } from "./compiled-extension-platform.ts";
+import { renameSyncRetry } from "./rename-sync-retry.mjs";
 
 const repo = resolve(import.meta.dir, "..");
 // Git Bash needs an --out path relative to the checkout on Windows, where
@@ -46,8 +47,11 @@ beforeAll(() => {
 	const build = spawnSync("bash", ["scripts/build-binaries.sh", "--skip-install", "--skip-build", "--platform", platform, "--out", process.platform === "win32" ? relative(repo, release).replaceAll("\\", "/") : release], {
 		cwd: repo, encoding: "utf8", timeout: 300_000, maxBuffer: 16 * 1024 * 1024,
 	});
+	if (build.error) throw build.error;
 	expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
-	renameSync(join(release, platform), relocated);
+	// spawnSync returns only after bash (and its foreground compile/smoke children) exit.
+	// Windows may still hold the just-written tree briefly; retry only that race.
+	renameSyncRetry(join(release, platform), relocated);
 	writeFileSync(probeEntry, compiledLoaderProbeSource);
 	const probe = spawnSync(process.execPath, ["build", "--compile", ...optimizationFlags, probeEntry, "--outfile", probeBinary], {
 		cwd: repo, encoding: "utf8", timeout: 120_000,
