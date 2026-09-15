@@ -5,7 +5,7 @@ vi.mock("../../../src/modes/app-server/daemon/process.ts", async (importOriginal
 	const actual = await importOriginal<typeof import("../../../src/modes/app-server/daemon/process.ts")>();
 	return {
 		...actual,
-		readProcessIdentity: (...args: Parameters<typeof actual.readProcessIdentity>) => {
+		readProcessIdentity: () => {
 			probe.calls += 1;
 			return Promise.resolve({ kind: "present" as const, identity: "test-identity" });
 		},
