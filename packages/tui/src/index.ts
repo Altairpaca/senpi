@@ -110,13 +110,24 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.ts";
+export {
+	decodeMouseButton,
+	isMouseSequence,
+	MOUSE_TRACKING,
+	MouseClickSynthesizer,
+	parseSgrMouseEvent,
+	parseWheelEvent,
+	type SgrMouseEvent,
+	toTuiMouseEvent,
+	type WheelEvent,
+} from "./mouse-input.ts";
 // Native platform integration
 export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
 export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
-export { ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
+export { type CursorPosition, ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
 // Terminal colors
 export {
 	parseOsc11BackgroundColor,

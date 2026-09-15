@@ -18,6 +18,8 @@ import type { ScopedModel } from "../model-resolver.ts";
 import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
 import { SettingsManager } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import { goalFilePath } from "./builtin/goal/persistence.ts";
+import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -1104,9 +1106,17 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getAgentDirFn();
 			},
+			get loadedExtensionPaths() {
+				runner.assertActive();
+				return runner.extensions.map((extension) => extension.resolvedPath);
+			},
 			get sessionManager() {
 				runner.assertActive();
 				return runner.sessionManager;
+			},
+			get goalStoreFile() {
+				runner.assertActive();
+				return goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd));
 			},
 			get modelRegistry() {
 				runner.assertActive();
@@ -1768,7 +1778,7 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
+					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason, scopedEntries: true };
 					const handlerResult = await handler(event, this.createContext(ext.path));
 					const result = handlerResult as ResourcesDiscoverResult | undefined;
 

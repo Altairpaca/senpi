@@ -1,5 +1,63 @@
 # changes
 
+## 2026-09-14 - Clickable pending questions and capture controls (#1645)
+
+### What changed
+
+- The interactive host renders clickable pending options and expanded question actions, commits selection feedback before answering, and owns capture leases across renderer replacement and terminal handoffs. Settings expose `terminal.mouse: off | whilePending | always`; default `whilePending` leaves no-question regular sessions uncaptured.
+- Public TUI, keybinding and settings guides plus one input tip describe clicks, selection bypass, tmux calibration and the herdr 0.9.0 short-frame limitation tracked by #1688. Exact source ownership is recorded in the interactive and core trackers.
+
+### Why
+
+- Pending questions should be directly answerable without taking over terminal selection outside their lifetime or changing existing keyboard paths.
+
+### Why an extension could not handle it
+
+- The built-in question components, renderer lifecycle and persisted terminal settings are host-owned; the lower-level cursor source belongs to the TUI package.
+
+### Expected merge conflict zones
+
+- Interactive lifecycle and question component wiring, terminal settings accessors, input tips and related public guides. No question wire format or default renderer changes.
+
+## 2026-09-14 - Activate builtin herdr pending-input reporting (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` registers the lifecycle reporter after `ask-user`; `builtin/herdr/index.ts` reads loaded extension paths at session start and bounded managed headers.
+- `packages/coding-agent/src/core/extensions/types.ts` and `runner.ts` expose optional read-only resolved extension paths, including event-only user extensions. Detailed API ownership is recorded in `core/extensions/changes.md`.
+
+### Why
+
+- Pending questions and host dialogs need explicit blocked state in herdr without requiring a separately installed user reporter or competing with one already loaded. Managed integration files remain installed and do not suppress the builtin.
+
+### Why an extension could not handle it
+
+- Lifecycle reporting stays in the builtin extension. Only the loaded-path handoff requires host code because factories cannot see other extensions' discovery identities.
+
+### Expected merge conflict zones
+
+- The `ExtensionContext` and `createContext()` getter lists and the builtin registration after `ask-user`. No interactive-mode or question component behavior changes in this increment.
+
+## 2026-09-13 - Centralize standalone provider registration
+
+### What changed
+
+- `packages/coding-agent/src/bun/runtime-modules.ts` synchronously registers Bedrock, Cursor, Devin and bundled OAuth once per isolate, preserving later overrides on repeat calls.
+- `packages/coding-agent/src/bun/runtime-setup.ts` delegates registration to that entry.
+- `packages/coding-agent/src/bun/cli.ts` retains sandbox -> runtime setup -> CLI order and removes the separate `register-cursor-agent.ts` import; that redundant file is deleted.
+
+### Why
+
+- Variable-specifier imports cannot resolve implementations absent from a relocated compiled binary, and launcher registration does not initialize worker-isolate module state.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/bun/runtime-setup.ts` and `packages/coding-agent/src/bun/cli.ts` establish startup state before extensions run; static bundle membership belongs to the entry graph.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/bun/runtime-setup.ts` registration calls and `packages/coding-agent/src/bun/cli.ts` startup imports.
+
 ## 2026-09-12 - Clear the ask-user own-answer editor when advancing to the next question
 
 ### What changed

@@ -1,7 +1,8 @@
 import { JsWorkerRuntime } from "./worker-runtime.js";
 
-// Mirrors INTERRUPT_ACK_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
+// Mirrors INTERRUPT_ACK_OP and CHILD_LIFECYCLE_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
 const INTERRUPT_ACK_OP = "interrupt-ack";
+const CHILD_LIFECYCLE_OP = "child";
 
 // Mirrors SESSION_ENVIRONMENT_KEYS in src/kernels/session-env.ts (this worker file
 // cannot import TypeScript). Keys the active session does not set must be dropped so a
@@ -9,6 +10,8 @@ const INTERRUPT_ACK_OP = "interrupt-ack";
 const SESSION_ENVIRONMENT_KEYS = [
 	"PI_SESSION_ID",
 	"PI_SESSION_FILE",
+	"PI_SESSION_CWD",
+	"PI_GOAL_STORE_FILE",
 	"PI_PROVIDER",
 	"PI_MODEL",
 	"PI_REASONING_LEVEL",
@@ -71,6 +74,7 @@ export function createWorkerCore(transport, options) {
 				parallelPoolWidth: options.parallelPoolWidth,
 				localRoots: message.connection.localRoots,
 				artifactsDir: message.connection.artifactsDir,
+				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 			});
 			emit({ type: "ready" });
 			return;

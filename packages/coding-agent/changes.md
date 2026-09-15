@@ -1,5 +1,110 @@
 # Local fork changes
 
+## 2026-09-14 - Align Cursor grep frames with the engine contract (#1678)
+
+### What changed
+
+- Cursor `pi_grep` frames now forward only the supported grep schema fields and debug-log unknown flags.
+- The built-in tools documentation describes the grep text grammar, footer, `details` v1, engines, and environment overrides.
+- `GrepOperations` is documented as deprecated and removed from `GrepToolOptions`.
+
+### Why
+
+- Cursor calls must validate against the rebuilt engine-backed grep schema while preserving the existing protocol types.
+
+## 2026-09-14 - Document eval-only grep and declared exposure (#1678)
+
+### What changed
+
+- `packages/coding-agent/docs/settings.md` adds grep to the eval-only tools, its `tool.grep` example, declarative exposure, schema discovery, direct-call hints and no-eval fallback.
+- `packages/coding-agent/docs/windows.md` documents the same shell and grep policy on Windows.
+- `packages/coding-agent/docs/extensions.md` documents all three ToolDefinition exposure values, including `"eval"` and SDK override precedence.
+- `packages/coding-agent/CHANGELOG.md` records restored default grep and `exposure: "eval"` under Unreleased.
+
+### Why
+
+- These settings, platform, extension and release surfaces must describe the restored grep catalog and the declared eval-only policy rather than a fixed four-tool policy.
+
+### Why an extension could not handle it
+
+- The shipped documentation and release notes are static package assets; extension registration cannot update them.
+
+### Expected merge conflict zones
+
+- The Eval-only tools section in `packages/coding-agent/docs/settings.md`, shell guidance in `packages/coding-agent/docs/windows.md`, Declarative Fields in `packages/coding-agent/docs/extensions.md`, and Unreleased entries in `packages/coding-agent/CHANGELOG.md`.
+
+## 2026-09-14 - Parse native extension import expressions
+
+### What changed
+
+- `packages/coding-agent/package.json` promotes the already-locked `es-module-lexer` 2.1.0 to an exact runtime dependency. Generated root, publish and installer locks reflect that edge; jiti remains a Node runtime dependency.
+
+### Why
+
+- `packages/coding-agent/package.json` supplies a small synchronous import lexer for the Bun-only transformer. Computed imports must be redirected structurally, including nested expressions and import attributes, without embedding jiti or a full JavaScript compiler.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` declares the host importer's dependencies before extension source is loaded.
+
+### Expected merge conflict zones
+
+- The runtime dependency list in `packages/coding-agent/package.json`; regenerate locks rather than hand-merging them.
+
+## 2026-09-13 - Retire the heavyweight webfetch DOM dependency
+
+### What changed
+
+- `packages/coding-agent/package.json` replaces jsdom and its types with exact-pinned linkedom 0.18.12, removes the XHR worker compile entry, and stops copying css-tree, mdn-data, and source-map-js sidecars. Imagegen and documentation assets remain shipped.
+
+### Why
+
+- `packages/coding-agent/package.json` no longer needs browser emulation or CSS dictionaries for inert HTML conversion (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` controls installed dependencies and compiled entries before extensions execute.
+
+### Expected merge conflict zones
+
+- Dependency pins, `build:binary`, and `copy-binary-assets` in `packages/coding-agent/package.json`.
+
+## 2026-09-13 - Align standalone compile entries and splitting
+
+### What changed
+
+- `packages/coding-agent/package.json` adds `--splitting` and the missing RPC session-worker entry to `build:binary`, keeping the existing minify, keep-names and autoload flags. The RPC documentation describes splitting support without changing the build-time worker-entry define.
+
+### Why
+
+- `packages/coding-agent/package.json` must embed the same four entries as the release script, sharing the duplicated graph while retaining multi-session workers (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` supplies compiler argv before any extension can load.
+
+### Expected merge conflict zones
+
+- The `build:binary` script in `packages/coding-agent/package.json`.
+
+## 2026-09-13 - Public Bun runtime registration entry
+
+### What changed
+
+- `packages/coding-agent/package.json` exports `./bun-runtime` with JavaScript and declaration entries under `dist/bun/runtime-modules`.
+
+### Why
+
+- Compiled consumers must register static provider implementations once per isolate using a published, opt-in entry; ordinary Node and browser roots stay unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` defines the package-resolution boundary before extension loading.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json` exports block; binary build scripts are deliberately unchanged.
+
 ## 2026-09-12 - Pin the chord dependency to upstream's published version
 
 ### What changed

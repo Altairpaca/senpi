@@ -10,6 +10,34 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.15] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Devin models no longer advertise a controllable thinking level: Cascade's chat protocol has no request-side thinking field (SWE-2 effort is selected through the lane uid), so the generic `/efforts`/`/reasoning` selector and the footer thinking suffix were a no-op second control. Streamed thinking output still renders; lane selection is the single effort control ([#1710](https://github.com/code-yeongyu/senpi/issues/1710)).
+
+### Removed
+
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+- Added a Devin provider-module override and static Cursor/Devin public subpaths for standalone Bun consumers, keeping Node-only implementations outside browser-facing root exports ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
+### Changed
+
+### Fixed
+
 - OpenAI Responses streams (SSE and WebSocket, every provider that shares the Responses processor) now treat silence after the last output item as a stall: once every `response.output_item.done` has arrived and no new item was added, `response.completed` must follow within 60 s or the turn fails as `Provider stream stalled after the last output item: response.completed timed out after 60000ms` and takes the same-model retry, instead of waiting out the 300 s idle watchdog; open items and pre-first-item silence keep the idle watchdog alone, so long reasoning is never cut ([#1648](https://github.com/code-yeongyu/senpi/issues/1648)).
 - OpenAI Codex and OpenAI Responses WebSocket streams now run a ping/pong liveness heartbeat (ping after 30 s of silence, dead after two unanswered pings), so a half-open connection fails as a provider stall in about 70 s and takes the same-model retry instead of freezing the turn for the full 300 s watchdog; on Bun a parked Codex WebSocket that the server closed is no longer reused (the proxy-aware wrapper now exposes `readyState`, and parked sockets evict themselves on `close`/`error`), which was the deterministic five-minute stall reported on gpt-5.6-sol ([#1648](https://github.com/code-yeongyu/senpi/issues/1648)).
 

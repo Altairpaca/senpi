@@ -10,6 +10,36 @@
 
 - JS, Python, Ruby, and Julia expose host-owned `workpool` sugar with opaque pool IDs and unchanged tool receipts, without kernel scheduling ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
+### Changed
+
+### Fixed
+
+- Detached eval result cards no longer arm the 1 Hz repaint ticker (they render static with frozen elapsed time), and a live ticker whose row stops rendering now stops itself after 60 idle ticks and rearms on the next render, so transcript rebuilds and session switches cannot accumulate intervals on idle sessions ([#1696](https://github.com/code-yeongyu/senpi/issues/1696)).
+- Bounded three unbounded retentions that grew long-lived session heaps without limit: settled eval cells now leave the live registry into a 32-entry terminal snapshot LRU, the JS kernel's unconsumed tool-call queue is capped at 256 and cleared on interrupt/reset/close/crash (mirroring the subprocess kernel), and per-cell display buffers cap at 8 images / 24 MB / 64 JSON outputs with elision notes ([#1695](https://github.com/code-yeongyu/senpi/issues/1695)).
+
+### Removed
+
+## [2026.9.15] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Eval cells no longer abandon the processes they spawn. When a JavaScript cell settles, is interrupted, or times out, its `Bun.spawn`/`node:child_process` children and their descendants are terminated (SIGTERM then SIGKILL after a grace), unless the cell asked for a detached process; a child whose worker is lost while blocked is retired by the host instead. Python kernels sweep their process group when they close gracefully, and a parent-death watchdog takes the kernel and its subprocesses down when the host dies mid-cell ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+### Removed
+
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+- Added `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` session environment keys for kernels and shell children, including clearing of inherited values when absent (fixes #1663).
+
 - Interactive foreground eval cells detach on queued steering without cancelling their computation or in-flight tools. An occupied detached slot keeps the call waiting ([#1637](https://github.com/code-yeongyu/senpi/issues/1637)).
 
 ### Changed

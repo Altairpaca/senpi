@@ -451,8 +451,12 @@ export interface ExtensionContext {
 	cwd: string;
 	/** Agent state directory (settings, logs, sessions) resolved for this session. */
 	agentDir: string;
+	/** Resolved paths of loaded extensions, including synthetic builtin/inline identifiers. */
+	readonly loadedExtensionPaths?: readonly string[];
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
+	/** Absolute goal-store path for this session; reading it does not create the file. */
+	readonly goalStoreFile?: string;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -692,7 +696,7 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	spinnerFrame?: number;
 }
 
-export type ToolExposure = "direct" | "search";
+export type ToolExposure = "direct" | "search" | "eval";
 
 /**
  * Tool definition for registerTool().
@@ -706,6 +710,9 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	description: string;
 	/**
 	 * Initial model-exposure policy. Defaults to `"direct"`.
+	 *
+	 * `"eval"` means registered and active but withheld from the model whenever the eval tool is registered;
+	 * it remains callable as `tool.<name>()`.
 	 *
 	 * This is not a permission boundary: explicit `setActiveTools()` calls or host configuration may still activate
 	 * a search-exposed tool.
@@ -789,7 +796,8 @@ export function normalizeToolExposure(
 	searchGroup?: string;
 	allowLazyActivation: boolean;
 } {
-	const exposure: ToolExposure = definition.exposure === "search" ? "search" : "direct";
+	const exposure: ToolExposure =
+		definition.exposure === "search" || definition.exposure === "eval" ? definition.exposure : "direct";
 	return {
 		exposure,
 		searchText: exposure === "search" ? definition.searchText : undefined,
@@ -847,6 +855,12 @@ export interface ResourcesDiscoverEvent {
 	type: "resources_discover";
 	cwd: string;
 	reason: "startup" | "reload";
+	/**
+	 * Capability signal: this host accepts `{ path, scope }` entries in the result. Hosts that
+	 * predate scoped entries omit the field, so a handler that must run on both returns plain
+	 * paths when it is absent.
+	 */
+	scopedEntries: true;
 }
 
 /**

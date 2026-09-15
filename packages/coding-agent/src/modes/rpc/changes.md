@@ -1,4 +1,97 @@
+## 2026-09-15 - Watchdog ppid fallback: zero-spawn supervisor check (#1507)
+
+### What changed
+
+- `host-watchdog.ts` `watchPpid` drops the 250ms `readProcessIdentity` (`ps -o lstart=`) probe: a dead supervisor is reaped by its own parent and this process is then reparented, so `kill(pid, 0)` plus the `process.ppid` comparison (both free syscalls) detect the loss with no child process at all.
+
+### Why
+
+- A long-lived shared RPC host spawned `ps` 4x/second against its live supervisor; on runtimes whose `execFile` does not reap, those children accumulated as zombies (9,386 measured, every spawn on the host then failed with EAGAIN). The probe also fired the watchdog (host shutdown) after three consecutive probe failures against a LIVE supervisor - an observability gap, not a death.
+
+### Why an extension could not handle it
+
+- The watchdog is internal host lifecycle; no extension surface reaches it.
+
+### Expected merge conflict zones
+
+- LOW: `watchPpid` body and the removed `HOST_WATCH_PPID_PROBE_TIMEOUT_MS`. Fire reasons and the fd path are unchanged; supervisor death is still detected (at reparenting instead of during the zombie window).
+
 # changes
+
+## 2026-09-14 - Publish RPC close only after registry removal (#1656)
+
+### What changed
+
+- `closeMarked()` still replies on the close-grace deadline and keeps the entry until native exit, so a worker stuck in a syscall cannot hang cancel/close. The router waits for that exit callback before emitting `session_closed` or the close acknowledgement.
+- `session-worker-client.ts` defers worker-failure terminal records until after the same exit callback, so error and failure frames observe an empty registry too.
+- `shutdown.ts` makes reentrant `shutdown()` join the in-flight disposer and preserve a non-zero exit code (serializer-error overlapping stdin EOF).
+
+### Why
+
+- An immediate `list_sessions` after close must never return the closed session, including when the worker fails instead of a clean `close_session`.
+- A second shutdown caller must not `process.exit` while watcher disposal is still outstanding.
+
+### Why an extension could not handle it
+
+- Session registry ownership and process exit are host lifecycle, outside session extensions.
+
+### Expected merge conflict zones
+
+- LOW: `closeMarked()` in `worker-session-registry.ts`, `fail()` in `session-worker-client.ts`, and the stdio `shutdown()` wrapper in `rpc-mode.ts`. Does not touch `host-lifecycle.ts` / `host-ensure.ts`.
+
+## 2026-09-14 - Keep bundled workers out of supervisor entry dispatch
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` excludes the Node bundle from its standalone supervisor entry check. Explicit supervisor dispatch, unbundled Node, and Bun behavior are unchanged.
+
+### Why
+
+- esbuild gives every inlined module the unsplit worker's URL. The supervisor's source-file equality check therefore mistook the session worker for the supervisor CLI and exited with usage before the worker could open a session (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` performs entry dispatch before session runtime or extension initialization.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: config import and standalone entry guard.
+
+## 2026-09-13 - Reset supervisor idle time at occupancy transitions (#1290)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` updates its idle decider when a public client attaches or detaches and when an observed turn starts or settles, not only on timer ticks. The timer remains the shutdown trigger.
+- A clock-controlled subprocess regression exchanges real RPC records between ticks, reconnects successfully, and proves clean exit only after the new continuous idle window expires.
+
+### Why
+
+- A short readiness connection could begin and end between ticks without resetting a previous idle window. The next tick could close the public listener immediately after readiness, producing a Windows named-pipe `ENOENT` before the lifecycle test could open a session. Occupancy transitions must invalidate the old window synchronously.
+
+### Why an extension could not handle it
+
+- Connection occupancy and the shutdown clock belong to the shared supervisor, outside session extensions.
+
+### Expected merge conflict zones
+
+- LOW: the public proxy's attach/detach callbacks and observer event handling in `host-lifecycle.ts`.
+## 2026-09-13 - Register compiled provider modules in each session worker
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` imports the Bun runtime registration entry through a literal dynamic import when `isBunBinary`, before accepting messages.
+
+### Why
+
+- Provider overrides are isolate-local: registration in the launcher cannot satisfy lazy implementation loads in a shared-session worker. Relocated compiled probes and a worker-registration mutation distinguish both paths.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` owns isolate startup before the session loads extensions and accepts RPC commands.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` startup imports and initialization before `parentPort` message subscription.
 
 ## 2026-09-12 - Queued RPC input carries its source to extension `input` handlers
 

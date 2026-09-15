@@ -1,3 +1,238 @@
+## 2026-09-14 - Clickable-question guidance and multiplexer QA (#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/input-tips.ts` adds one clickable-question tip. TUI, keyboard and settings guides describe scoped capture, selection bypass, fail-closed geometry and tmux's out-of-band cursor source.
+- herdr 0.9.0 passes outer SGR clicks on viewport-filled frames and all question keyboard paths; the builtin reports blocked then working/idle. Fresh short frames write `ESC[?6n` with no private reply: outer `ESC[<0;27;25M` + `ESC[<0;27;25m` did not answer at 120x40, whereas viewport `ESC[<0;27;34M` + `ESC[<0;27;34m` did. Follow-up #1688 tracks that limitation; no unsafe anchor fallback was added.
+
+### Why
+
+- Users need to know when capture is active and how to retain terminal-native selection or answer by keyboard when a multiplexer cannot calibrate a short frame.
+
+### Why an extension could not handle it
+
+- The host owns the built-in tip catalog and pending-question mouse leases. Terminal calibration lives below extension APIs; the herdr limitation is documented, not hidden by extension workarounds.
+
+### Expected merge conflict zones
+
+- The input-tip catalog and mouse/question paragraphs in the public guides. Defaults and keyboard bindings are unchanged.
+
+## 2026-09-14 - Host-owned pending-question mouse capture (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns one pending-question capture lease for the queue/blocking surface and a regular-mode always lease when configured. It releases capture during suspend, external editing, renderer replacement and shutdown, and reapplies intent after start. Widget clicks expand/select the shown request and synchronously write its highlighted selection before single-question submission.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` exposes terminal.mouse with the shared value schema; the host recreates the renderer on a live change so off also disables fullscreen tracking. `tui-renderer.ts` forwards the mouse constructor option.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` must preserve capture intent across new renderer instances without enabling mouse for idle regular sessions or leaving it enabled during terminal handoff.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` must make the capture policy discoverable and reversible in the existing settings surface.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns renderer replacement, terminal handoff and the question queue; extensions cannot safely lease the terminal across those boundaries.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` owns the built-in settings list and cannot be augmented by the question extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: init/switchTuiMode, question mounting/refresh, suspend/external-editor handoffs and settings callbacks.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings config/callbacks, terminal section and change dispatch. No changes to the default renderer or keyboard bindings.
+
+## 2026-09-14 - Expanded question mouse actions (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` routes committed primary option rows, own-answer and Submit through mouse regions; descriptions remain inert. Tab labels now have width-aware recorded spans in `ask-user-question-mouse.ts`. Presses claim a target without selecting, while one click activates; Input retains caret placement and the parent retains keyboard focus.
+
+### Why
+
+- The expanded surface needs the same direct choices as the collapsed widget, including multi-select toggles and explicit review before submission.
+
+### Why an extension could not handle it
+
+- The built-in component owns its per-question state, dynamic description rows and inline inputs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: child mounting and updateAll. Keyboard dispatch and response builders are unchanged; helper modules are fork-owned.
+
+## 2026-09-14 - Clickable pending-question widget (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` renders sanitized, width-bounded option buttons with two-cell gaps, wrapping between buttons. It records the emitted spans and claims left presses without activating; single clicks route option, own-answer, expand and queue-next callbacks. The host can enable a terminal-specific selection-bypass hint.
+- Visibility coverage now asserts every wrapped option remains available rather than pinning the former single truncated options line. Keyboard behavior is unchanged.
+
+### Why
+
+- Pending choices should expose direct click targets without guessing columns from repeated labels or activating on a drag.
+
+### Why an extension could not handle it
+
+- The host-owned widget owns its rendered cells and hit testing. An extension cannot attach geometry to its committed layout.
+
+### Expected merge conflict zones
+
+- The fork-owned widget render and countdown update methods; no renderer or keyboard-dispatch changes in this increment.
+
+## 2026-09-14 - Tip lines keep one blank line above them (senpi#1680)
+
+### What changed
+
+- New `packages/coding-agent/src/modes/interactive/tips/tip-line.ts` appends a tip as a `Spacer(1)` followed by its `Text`, so every surface that shows a tip renders one blank line above it.
+- `packages/coding-agent/src/modes/interactive/tips/startup-header.ts` and both working-tip paths of `showStatusIndicator` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (embedded spinner and standalone status row) append through it instead of adding the tip `Text` directly.
+
+### Why
+
+- The dim tip read as a continuation of the block above it: glued to the header's last line at startup, and to the last transcript entry while a turn runs.
+
+### Why an extension could not handle it
+
+- The startup header and the status row are host-owned containers; extensions cannot reposition their children.
+
+### Expected merge conflict zones
+
+- LOW: the `appendStartupHeader` body and the two tip `addChild` calls in `showStatusIndicator` (`packages/coding-agent/src/modes/interactive/interactive-mode.ts`); upstream pi ships no tips.
+
+## 2026-09-13 - Extension commands paint no optimistic user echo
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the two `isExtensionCommand` branches in `setupEditorSubmitHandler` dispatch `session.prompt(text)` without `optimisticUserEchoes.begin()`, matching the command dispatch `handleFollowUp` already used. `handleFollowUp`'s streaming branch (Alt+Enter while the main turn streams) now dispatches extension commands the same way instead of painting the echo first.
+
+### Why
+
+- `AgentSession.prompt()` reports `promptDisposition("handled")` only after the command handler resolves, and a command never becomes a canonical user message. For a long-running command such as `/btw`, the `/btw <question>` bubble sat in the transcript for the whole side-query stream next to the panel that already shows the question, then vanished.
+
+### Why an extension could not handle it
+
+- The echo is painted by the host composer before the command reaches any extension; no extension API can suppress it.
+
+### Expected merge conflict zones
+
+- LOW: the `isExtensionCommand` branches in `setupEditorSubmitHandler` (upstream pi dispatches commands there without an echo).
+
+## 2026-09-13 - Acknowledge explicit question dismissal to the model (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` awaits the shown request's cancelled completion, then sends one existing-format dismissal frame from `/answer skip`. It steers into a streaming turn or follows up while idle. Ordinary abort/lifecycle cancellations remain silent in the builtin, so the explicit command cannot duplicate their delivery.
+- Keyboard tests assert the exact frame and request ID in both streaming states while a second request stays pending. Real CLI QA verifies the dismissed widget disappears, a no-answer chip appears, and the model receives a turn.
+
+### Why
+
+- The command previously only showed a local dismissal notice; the plan also requires the model to learn that the user dismissed the question.
+
+### Why an extension could not handle it
+
+- The host owns `/answer skip` and its shown request. A cancelled transport response alone cannot distinguish this explicit command from abort or teardown without changing the wire contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: handleAnswerCommand and the awaited `/answer` dispatch. Question wire shapes and the answer formatter remain unchanged.
+
+## 2026-09-13 - Compact answered-question transcript chips (senpi#1645)
+
+### What changed
+
+- New `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts` recognizes the existing answer-frame prefix and renders muted, width-bounded rows per answer. A handled left press followed by a single click toggles the unchanged full body through MouseRegion; right/repeated clicks do not toggle. Hidden full-body rendering is invalidated and disposed by its owner.
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts` branches only for framed answers, keeping ordinary user-message rendering and OSC markers unchanged. A one-line render is both first and last line, so its shell prompt-zone closing markers append instead of landing ahead of the opening marker; taller messages keep the existing off-line-end placement. `packages/coding-agent/src/modes/interactive/interactive-mode.ts` supplies display-only headers from the retained question entry, so comments and no-answer outcomes remain labeled during live rendering and saved-session replay.
+- A pre-production, fixed-color-mode snapshot pins ordinary-message bytes; model-facing frame bytes and real persisted answered/timeout replay are tested. Legacy frames without header metadata fall back to the request ID.
+
+### Why
+
+- A completed answer should be a compact receipt, not another large user bubble. Timeout and dismissal frames omit headers, so display metadata is needed without rewriting model input.
+
+### Why an extension could not handle it
+
+- The host-owned user-message renderer is used for both live and replayed transcripts; a question extension cannot replace its built-in branch or mouse target.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`: constructor and rebuild; `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: plain user-message construction. The new chip module is fork-owned; builtin display metadata is tracked in `core/extensions/builtin/changes.md`.
+
+## 2026-09-13 - Question title, arrival bell and host dialog blocked signals (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` inserts the shown question header between tool and extension title layers, restores the title on settlement, and writes one BEL through the terminal abstraction for a fresh arrival when `askUser.bell` is enabled. Blocking questions use the same signals; components never write BEL.
+- The host question bridge compares the original asked timestamp with the UI attachment epoch to suppress bells for hydration, while repeated request IDs reuse completion. Host and local extension select/confirm/input/editor dialogs emit per-ID `herdr:blocked` pairs with cleanup in `finally`; question signals remain owned by the builtin.
+
+### Why
+
+- A pending question should remain visible in the terminal title without repeated alerts on reconnect, and dialog status must clear even when its promise rejects.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns terminal title precedence, terminal output and host dialog mounting; an extension cannot reliably observe UI hydration or resolve the title layer itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: applyTerminalTitle, handleHostUiRequest, createExtensionUIContext, question mount/finish and refreshAsyncWidget. Transport response shapes remain unchanged.
+
+## 2026-09-13 - Shared answer chord and terminal-aware hint (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-key.ts` selects the primary configured answer chord for hints, or its retained letter fallback under tmux, Apple Terminal, Warp and VS Code; Option-composed glyph matching remains active.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` uses that hint. `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and the input tip catalog list the queue and both configurable question actions; keybinding and TUI docs explain dequeue precedence and Windows/WSL behavior.
+
+### Why
+
+- Users need an arrow chord that does not remove the existing answer shortcut or consume a separate dequeue binding.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns the app hotkeys display and pre-action question interception, while the widget owns its terminal-aware hint.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: hotkeys question rows only; handleDequeue is unchanged. The answer-key and widget hint helpers are fork-owned.
+
+## 2026-09-13 - Explicit bound replies and digit answers (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` intercepts valid option digits only on an empty unobstructed composer, forwards the digit through the mounted component, and binds printable input or bracketed paste to one request. `/answer` lists pending requests with a SelectList, `/answer <n>` opens one, and `/answer skip` dismisses the shown request.
+- `packages/coding-agent/src/modes/interactive/components/custom-editor.ts` gives the reply destination label precedence over embedded working status. Follow-up sends as chat; expiration preserves text and clears the binding with a notice.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-keys.ts` submits an async single-question single-select digit/Enter immediately; `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` accepts an initial sub-question index for collapsed digit entry.
+- Intentional characterization flips: **(b2)** text present before arrival now stays chat; **(e)** async single-question digits now submit immediately. Every other characterization row stays pinned. Existing draft-oriented tests select with Space rather than a now-submitting digit; their draft assertions are unchanged.
+
+### Why
+
+- Numbered options must not become comment text, and later questions must never appropriate a draft or a reply already bound to another request.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns pre-insertion editor dispatch and submission routing; `packages/coding-agent/src/modes/interactive/components/custom-editor.ts` owns the built-in border. Neither is replaceable through the question promise alone.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: question input interception, composer destination, answer command, finish and follow-up routing.
+- `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`: renderTopBorder; `packages/coding-agent/src/modes/interactive/components/ask-user-question-keys.ts`: single-select submit guards; `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: initial state.
+
+## 2026-09-13 - Request-id keyed pending-question queue (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` holds a FIFO map and a pinned shown request, removes only the settled id, preserves per-request drafts, and restores editor focus without expanding the next question. `app.question.next` cycles only from an empty, unobstructed composer.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` shows the pending request count and next-question hint. The widget and `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` share an absolute countdown; an extension deadline makes it display-only. Only the mounted surface ticks.
+- All 18 characterization rows remain unchanged and green in this increment.
+
+### Why
+
+- A second question must not cancel the first or steal focus, and re-rendering must not replace the extension's authoritative idle deadline.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns the editor, widget slot, input interception, and overlay focus. The extension can provide its deadline but cannot queue these host-owned surfaces.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: question state fields, resetExtensionUI, showAsyncQuestion, refreshAsyncWidget, expandPendingQuestion, and composer comment routing.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` and `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: countdown construction and pending-count rendering.
+
 ## 2026-09-13 - Ask-user overlay: no focus traps in the own-answer and Submit editors, draft restore on re-expansion (senpi#1641)
 
 ### What changed

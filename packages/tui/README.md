@@ -221,14 +221,20 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
-| `handleMouse?(event)` | Called by `TuiAltScreen` for normalized pointer input targeted at the component. |
+| `handleMouse?(event)` | Called by the renderer for normalized pointer input targeted at the component; regular-mode clicks require an active mouse-capture lease. |
 | `invalidate?()` | Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. |
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
 
 ### Mouse Input
 
-`TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta. `TuiMainScreen` does not capture mouse input because the terminal owns its scrollback.
+`TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta.
+
+`TuiMainScreen` captures only while a host-owned lease is active: `const release = tui.acquireMouseCapture("pending-question")`; call `release()` when the interactive surface closes. Leases compose and releases are idempotent. A replacement renderer starts with no leases, so the host must reapply its intent after switching modes. Without a lease, native selection and scrollback remain untouched.
+
+Regular mode supports unmodified left press/click only. A handler must acknowledge an eligible press with `{ handled: true }` without activating; a same-cell release within 500 ms produces the click. Changed placement or target layout cancels the gesture. Wheel, motion, other buttons, and modified reports are consumed without dispatch, including in-flight reports after capture ends. While capture is active, use the terminal's selection bypass: usually Shift-drag, or Option-drag in iTerm2/Terminal.app. There is no regular-mode app-owned drag selection or wheel scrolling.
+
+Clicks fail closed when frame placement is unknown, resized, or image-bearing. Short fresh frames use a private cursor-position query; clearing and viewport-filling frames provide their own anchors. A query timeout leaves keyboard interaction available; a clearing render can recover the anchor. External stdout/stderr invalidates placement, and the next regular-mode render appends a fresh frame before recalibrating without clearing diagnostics or scrollback. Tracking is disabled on non-TTY output, Termux, and Windows consoles without Windows Terminal.
 
 ```typescript
 import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
@@ -257,7 +263,9 @@ Use `MouseRegion` to add mouse behavior without changing a component's rendering
 
 ```typescript
 const collapsible = new MouseRegion(content, (event) => {
-  if (event.type !== "click" || event.button !== "left") return undefined;
+  if (event.button !== "left") return undefined;
+  if (event.type === "press") return { handled: true };
+  if (event.type !== "click") return undefined;
   expanded = !expanded;
   return { handled: true };
 });

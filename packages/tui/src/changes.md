@@ -1,5 +1,110 @@
 # TUI delta rendering fork changes
 
+## 2026-09-14 - Out-of-band tmux frame anchors (#1645)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` selects an injectable tmux CLI cursor source when TMUX_PANE is set. `packages/tui/src/tmux-cursor-query.ts` accepts only two matching pane-relative numeric readings at least 10 ms apart within the existing 750 ms total budget. The private query is still written; its replies cannot override the tmux source.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: tmux 3.7b swallows private DECXCPR, leaving fresh short frames unclickable. Errors, malformed output, movement and timeout still leave placement unknown; timeout remains restart-only recovery.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts` owns the cursor broker and renderer calibration lifecycle, below extension input handling. Bare CPR remains forbidden.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: constructor options, pending query state, issue/settlement and private-response interception. Outside tmux the private protocol bytes are unchanged. The existing large terminal module is not refactored; the new source is below 250 pure LOC.
+
+## 2026-09-13 - Private cursor calibration and external-output recovery
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: adds the private DECXCPR broker, two/three-parameter response interception, shared in-flight promises, bounded timeout, late-fragment discard, and non-suppressing external-write observation. A timed-out broker stays fail-closed until restart because CPR has no request identifiers.
+- `packages/tui/src/tui.ts`: calibrates short frames against a matching committed placement/cursor snapshot and invalidates placement on external stdout/stderr writes. The pending-wrap CPR column just beyond the right margin is accepted.
+- `packages/tui/src/tui-main-screen.ts`: after external output, appends a fresh working frame before recalibration rather than guessing the old frame position from a moved cursor. Existing output and scrollback are not cleared.
+- `packages/tui/src/index.ts`: exports the cursor-position result type; custom terminals may omit the optional query/observation methods.
+
+### Why
+
+- `packages/tui/src/terminal.ts` and `packages/tui/src/index.ts`: private replies avoid collisions with modified function keys, while custom terminal implementations remain usable without CPR support.
+- `packages/tui/src/tui.ts` and `packages/tui/src/tui-main-screen.ts`: real-PTY QA showed that recalibrating an unchanged old frame after a stderr newline mapped a blank row onto an option. A fresh committed frame is necessary before its cursor can identify its origin.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`, `packages/tui/src/tui.ts`, `packages/tui/src/tui-main-screen.ts`, and `packages/tui/src/index.ts`: terminal negotiation, write ownership, hardware cursor snapshots, and committed renderer geometry are below extension APIs.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: keyboard-negotiation interception, stdout guard, stderr observer, and lifecycle cleanup.
+- `packages/tui/src/tui.ts`: additive calibration members and stop cleanup; no terminal-input handler changes.
+- `packages/tui/src/tui-main-screen.ts`: fork-owned post-output append recovery and committed-frame calibration.
+- `packages/tui/src/index.ts`: terminal result-type exports.
+
+## 2026-09-13 - Regular-mode scoped click dispatch
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: consumes mouse input before extension listeners, enables click-only tracking for leases on supported terminals, and dispatches same-cell clicks against committed component and overlay geometry.
+- `packages/tui/src/tui.ts`: exposes mounted mouse-layout roots to the fork-owned main-screen renderer. No terminal input handler changes.
+
+### Why
+
+- `packages/tui/src/tui-main-screen.ts`: stale mouse reports must never reach the editor or extension input listeners; layout changes must cancel gestures rather than activate a replaced control.
+- `packages/tui/src/tui.ts`: overlay identity participates in the same committed-layout check as root component identity.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui-main-screen.ts` and `packages/tui/src/tui.ts`: the renderer owns terminal capture, input ordering, overlays, and committed hit geometry.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui-main-screen.ts`: fork-owned dispatch and tracking lifecycle.
+- `packages/tui/src/tui.ts`: additive protected mouse-layout root accessor only.
+
+## 2026-09-13 - Lease intent and fail-closed mouse geometry
+
+### What changed
+
+- `packages/tui/src/tui.ts`: adds idempotent capture leases, lifecycle blockers, placement epochs, and committed-frame anchors; unknown, stale, resized, and image-bearing frames cannot resolve mouse rows.
+
+### Why
+
+- `packages/tui/src/tui.ts`: inline clicks need reliable frame placement without changing renderer defaults or taking permanent terminal ownership.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: committed frame geometry, hardware cursor placement, and renderer lifecycle are private renderer state.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: one fullRender hook, resize/replay/insert-scroll/multiplexer epoch increments, and stop bookkeeping. Terminal input routing is untouched.
+
+## 2026-09-13 - Share mouse protocol parsing and retain owned fragments
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: four helper bodies delegate to `mouse-input.ts`; fullscreen selection, scrolling, search, and tracking bytes remain unchanged.
+- `packages/tui/src/index.ts`: exports the shared parser, protocol constants, and click synthesizer.
+- `packages/tui/src/stdin-buffer.ts`: retains incomplete owned SGR reports for at most 750 ms and 64 characters, discarding expired tails through a CSI terminator rather than leaking them into keyboard handling. A new escape boundary resynchronizes without stripping the next report's CSI prefix (pinned by an additional assertion-based RED/GREEN during final review).
+
+### Why
+
+- `packages/tui/src/tui-alt-screen.ts` and `packages/tui/src/index.ts`: regular-mode consumers need the same zero-based mouse protocol contract without duplicating private parsing.
+- `packages/tui/src/stdin-buffer.ts`: timeout-flushed mouse fragments previously exposed protocol tails as typed text.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui-alt-screen.ts`, `packages/tui/src/index.ts`, and `packages/tui/src/stdin-buffer.ts`: protocol framing and renderer-private helper ownership precede extension input dispatch.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui-alt-screen.ts`: helper delegations and one import; selection, scrollbar, and search logic are untouched.
+- `packages/tui/src/index.ts`: mouse exports.
+- `packages/tui/src/stdin-buffer.ts`: owned-fragment buffering and timeout flush.
+
 ## 2026-09-12 - Carry-forwards from the upstream v0.85.x sync
 
 ### What changed

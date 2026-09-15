@@ -6,9 +6,11 @@
  * and key dispatch in ask-user-question-keys.ts.
  */
 
-import { Container, type Focusable, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { Container, type Focusable, Input, Spacer, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
+import { AskUserCountdown } from "./ask-user-countdown.ts";
 import { type AskUserKeyHandlerContext, handleAskUserKeyInput } from "./ask-user-question-keys.ts";
+import { AskUserQuestionTabs, isQuestionMouseAction, questionMouseRegion } from "./ask-user-question-mouse.ts";
 import {
 	renderCommentLabel,
 	renderHintsLine,
@@ -18,7 +20,7 @@ import {
 	renderQuestionList,
 	renderSubmitLine,
 	renderSubmitSummary,
-	renderTabBar,
+	renderTabLabels,
 	renderTitle,
 } from "./ask-user-question-render.ts";
 import {
@@ -27,17 +29,20 @@ import {
 	NOT_ANSWERED_NOTICE,
 	type QuestionDraft,
 } from "./ask-user-question-state.ts";
-import { CountdownTimer } from "./countdown-timer.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
 export interface AskUserQuestionOptions {
 	tui?: TUI;
 	/** Idle countdown duration; defaults to the request's timeoutMs. */
 	timeoutMs?: number;
+	/** Authoritative extension deadline; when supplied the component never expires the request itself. */
+	getDeadlineAtMs?: () => number;
 	/** Draft notification on every selection or keystroke (drives the idle timer). */
 	onProgress?: (draft: QuestionDraft) => void;
 	/** Answers and comment captured earlier (an async question re-expanded from its widget). */
 	initialDraft?: QuestionDraft;
+	/** Host digit entry targets the first unanswered sub-question. */
+	initialQuestionIndex?: number;
 }
 
 export class AskUserQuestionComponent extends Container implements Focusable {
@@ -46,9 +51,9 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 	private readonly options: AskUserQuestionOptions;
 	private readonly ownAnswerInput = new Input();
 	private readonly commentInput = new Input();
-	private readonly countdown: CountdownTimer | undefined;
+	private readonly countdown: AskUserCountdown | undefined;
 	private readonly titleText: Text;
-	private readonly tabText: Text;
+	private readonly tabText: AskUserQuestionTabs;
 	private readonly questionText: Text;
 	private readonly listContainer = new Container();
 	private readonly ownAnswerContainer = new Container();
@@ -86,7 +91,13 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 		this.titleText = new Text("", 1, 0);
 		this.addChild(this.titleText);
-		this.tabText = new Text("", 1, 0);
+		this.tabText = new AskUserQuestionTabs((index) => {
+			if (index === this.state.request.questions.length) this.clickSubmit();
+			else {
+				this.state.jumpToQuestion(index);
+				this.updateAll();
+			}
+		});
 		this.addChild(this.tabText);
 		this.questionText = new Text("", 1, 0);
 		this.addChild(this.questionText);
@@ -96,7 +107,7 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 		this.noticeText = new Text("", 1, 0);
 		this.addChild(this.noticeText);
 		this.submitText = new Text("", 1, 0);
-		this.addChild(this.submitText);
+		this.addChild(questionMouseRegion(this.submitText, () => this.clickSubmit()));
 		this.hintsText = new Text("", 1, 0);
 		this.addChild(this.hintsText);
 		this.addChild(new Spacer(1));
@@ -107,17 +118,20 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 			if (this.state.comment !== undefined) this.commentInput.setValue(this.state.comment);
 		}
 
+		if (opts.initialQuestionIndex !== undefined) this.state.jumpToQuestion(opts.initialQuestionIndex);
+
 		const timeoutMs = opts.timeoutMs ?? request.timeoutMs;
-		if (timeoutMs > 0) {
-			this.countdown = new CountdownTimer(
+		if (timeoutMs > 0 || opts.getDeadlineAtMs) {
+			this.countdown = new AskUserCountdown(
 				timeoutMs,
 				opts.tui,
-				(seconds) => {
-					this.countdownLabel = formatCountdownLabel(seconds * 1000);
+				(remainingMs) => {
+					this.countdownLabel = formatCountdownLabel(remainingMs);
 					this.updateTitle();
 					this.options.tui?.requestRender();
 				},
 				() => this.finish("timed_out", timeoutMs),
+				opts.getDeadlineAtMs,
 			);
 		}
 		this.updateAll();
@@ -136,11 +150,39 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 		handleAskUserKeyInput(this.keyHandlerContext, data);
 	}
 
+	override handleMouse(event: TuiMouseEvent) {
+		if (this.settled || !isQuestionMouseAction(event)) return undefined;
+		return super.handleMouse(event);
+	}
+
 	dispose(): void {
 		this.countdown?.dispose();
 	}
 
-	private openOwnAnswer(initialText?: string): void {
+	private clickSubmit(): void {
+		if (this.state.focus === "submit") this.attemptSubmit();
+		else {
+			this.state.enterSubmit();
+			this.updateAll();
+		}
+	}
+
+	/** Widget entry commits visible selection feedback before resolving a one-question answer. */
+	clickOption(index: number, submitSingleQuestion = false): void {
+		const question = this.state.activeQuestion;
+		const immediate = submitSingleQuestion && this.state.request.questions.length === 1 && !question.multiSelect;
+		this.state.highlightIndex = index;
+		this.state.activateOption(question.id, question.options[index].label);
+		if (!question.multiSelect && !immediate) this.state.advance();
+		this.emitProgress();
+		this.updateAll();
+		if (immediate) {
+			this.options.tui?.renderNow();
+			this.attemptSubmit();
+		}
+	}
+
+	openOwnAnswer(initialText?: string): void {
 		this.state.focus = "own-answer";
 		const existing = this.state.textFor(this.state.activeQuestion.id) ?? "";
 		this.ownAnswerInput.setValue("");
@@ -201,16 +243,27 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 	private updateAll(): void {
 		this.updateTitle();
 		this.applyFocusFlags();
-		this.tabText.setText(renderTabBar(this.state));
+		this.tabText.setTabs(renderTabLabels(this.state));
 		this.questionText.setText(
 			this.state.focus === "submit" ? "Review your answers" : renderQuestionLine(this.state.activeQuestion),
 		);
 
 		this.listContainer.clear();
-		for (const line of this.state.focus === "submit"
-			? renderSubmitSummary(this.state)
-			: renderQuestionList(this.state)) {
-			this.listContainer.addChild(new Text(line, 1, 0));
+		const lines = this.state.focus === "submit" ? renderSubmitSummary(this.state) : renderQuestionList(this.state);
+		let optionIndex = 0;
+		let description = false;
+		for (const line of lines) {
+			const text = new Text(line, 1, 0);
+			if (this.state.focus === "submit" || description) {
+				this.listContainer.addChild(text);
+				description = false;
+			} else if (optionIndex < this.state.activeQuestion.options.length) {
+				const index = optionIndex++;
+				this.listContainer.addChild(questionMouseRegion(text, () => this.clickOption(index)));
+				description = Boolean(this.state.activeQuestion.options[index].description);
+			} else {
+				this.listContainer.addChild(questionMouseRegion(text, () => this.openOwnAnswer()));
+			}
 		}
 
 		this.ownAnswerContainer.clear();

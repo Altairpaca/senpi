@@ -82,6 +82,7 @@ import { toJsonEvent } from "../json-event.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
+import { createRpcShutdown } from "./shutdown.ts";
 
 // Re-export types for consumers
 export type {
@@ -121,7 +122,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
 	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities });
 
-	let shuttingDown = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	const registerSignalHandlers = (): void => {
@@ -144,22 +144,20 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	let detachInput = () => {};
 
-	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<never> {
-		if (shuttingDown) {
-			process.exit(exitCode);
-		}
-		shuttingDown = true;
-		for (const cleanup of signalCleanupHandlers) {
-			cleanup();
-		}
-		await handler.dispose();
-		detachInput();
-		process.stdin.pause();
-		if (signal !== "SIGTERM") {
-			await flushRawStdout();
-		}
-		process.exit(exitCode);
-	}
+	const shutdown = createRpcShutdown(
+		async (signal) => {
+			for (const cleanup of signalCleanupHandlers) {
+				cleanup();
+			}
+			await handler.dispose();
+			detachInput();
+			process.stdin.pause();
+			if (signal !== "SIGTERM") {
+				await flushRawStdout();
+			}
+		},
+		(exitCode) => process.exit(exitCode),
+	);
 
 	const handleInputLine = async (line: string): Promise<void> => {
 		await handler.handleInputLine(line);

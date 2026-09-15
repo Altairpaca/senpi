@@ -27,18 +27,24 @@ const { parentPort } = require("node:worker_threads");
 if (!parentPort) throw new Error("Recursive watch worker requires a parent port");
 
 const watchers = new Map();
+const cancelled = new Set();
+const isCancelled = (message) =>
+	cancelled.has(message.id) || (message.active !== undefined && Atomics.load(message.active, 0) === 0);
 parentPort.on("message", (message) => {
 	if (message.kind === "unwatch") {
+		cancelled.add(message.id);
 		watchers.get(message.id)?.close();
 		watchers.delete(message.id);
 		return;
 	}
 	if (message.kind !== "watch") return;
+	if (isCancelled(message)) return;
 	try {
 		const watcher = watch(
 			message.path,
 			{ recursive: message.recursive !== false, encoding: "utf8" },
 			(eventType, filename) => {
+				if (isCancelled(message)) return;
 				parentPort.postMessage({
 					kind: "event",
 					id: message.id,
@@ -47,6 +53,10 @@ parentPort.on("message", (message) => {
 				});
 			},
 		);
+		if (isCancelled(message)) {
+			watcher.close();
+			return;
+		}
 		watcher.on("error", (error) => {
 			parentPort.postMessage({
 				kind: "error",
@@ -100,7 +110,12 @@ export function createFsWatchEventSource(
 ): WatchEventSource {
 	const recursiveSubscriptions = new Map<
 		number,
-		{ readonly path: string; readonly listener: WatchEventListener; readonly recursive: boolean }
+		{
+			readonly path: string;
+			readonly listener: WatchEventListener;
+			readonly recursive: boolean;
+			readonly active: Int32Array;
+		}
 	>();
 	let recursiveWorker: RecursiveWatchWorker | undefined;
 	let nextSubscriptionId = 1;
@@ -127,7 +142,13 @@ export function createFsWatchEventSource(
 			if (recursiveSubscriptions.size === 0) return;
 			const replacement = ensureRecursiveWorker();
 			for (const [id, subscription] of recursiveSubscriptions) {
-				replacement.postMessage({ kind: "watch", id, path: subscription.path, recursive: subscription.recursive });
+				replacement.postMessage({
+					kind: "watch",
+					id,
+					path: subscription.path,
+					recursive: subscription.recursive,
+					active: subscription.active,
+				});
 			}
 		});
 		recursiveWorker = worker;
@@ -138,19 +159,28 @@ export function createFsWatchEventSource(
 		if (WORKER_OFFLOADED_WATCH_PLATFORMS.has(options.platform ?? process.platform)) {
 			const id = nextSubscriptionId++;
 			const recursive = watchOptions?.recursive ?? false;
-			ensureRecursiveWorker().postMessage({ kind: "watch", id, path, recursive });
-			recursiveSubscriptions.set(id, { path, listener, recursive });
+			const active = new Int32Array(new SharedArrayBuffer(4));
+			Atomics.store(active, 0, 1);
+			ensureRecursiveWorker().postMessage({ kind: "watch", id, path, recursive, active });
+			recursiveSubscriptions.set(id, { path, listener, recursive, active });
+			let closing: Promise<void> | undefined;
 			return () => {
-				if (!recursiveSubscriptions.delete(id)) return;
+				if (!recursiveSubscriptions.delete(id)) return closing;
+				Atomics.store(active, 0, 0);
 				// Resolve at unsubscribe time: the worker may have been replaced after a crash.
 				const worker = recursiveWorker;
-				if (!worker) return;
-				if (recursiveSubscriptions.size > 0) {
-					worker.postMessage({ kind: "unwatch", id });
-					return;
-				}
+				if (!worker) return closing;
+				worker.postMessage({ kind: "unwatch", id });
+				if (recursiveSubscriptions.size > 0) return;
 				recursiveWorker = undefined;
-				void worker.terminate().catch((error: unknown) => onError(error, path));
+				closing = worker.terminate().then(
+					() => undefined,
+					(error: unknown) => {
+						onError(error, path);
+						throw error;
+					},
+				);
+				return closing;
 			};
 		}
 

@@ -1,5 +1,105 @@
 # core/tools changes
 
+## Bash keeps its process group until the last descendant exits (2026-09-15)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` (`createLocalShellOperations`): the exec `finally` no longer untracks the shell pid the moment the shell is gone. Both branches now call `noteDetachedChildExited(pid)`, which keeps the entry tracked when the shell's process group still has members, and the block ends with `pruneTrackedDetachedChildren()` so drained groups cannot accumulate across a session.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts` spawns the shell `detached`, so a command that backgrounds work (`sleep 30 &`, `nohup server &`) leaves those descendants alive in the shell's group after the shell itself exits. Untracking on exit dropped shutdown's only handle on them, so SIGHUP/SIGTERM cleanup left them running ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts` owns the spawn/wait/cleanup seam of the builtin shell backend; no extension hook runs inside that `finally`, and extensions cannot register a process group with the host's shutdown cleanup.
+
+### Expected merge conflict zones
+
+- LOW: the exec `finally` block in `createLocalShellOperations` inside `packages/coding-agent/src/core/tools/bash.ts`, which the fork already diverges in for the abort/kill-grace tracking (2026-07-18 entry below).
+
+## Re-export the grep tool from its engine-backed module (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/grep.ts`: reduced to `export * from "./grep/index.ts"`. The tool implementation now lives in the `grep/` directory (engine contract, native and ripgrep engines, pattern ladder, formatting, renderer), and this file stays as the import path every existing caller already uses.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the engine-backed tool is several modules, not one file, and callers plus extension consumers import it by this path; keeping the module as a re-export moves the implementation without breaking those imports (Refs #1678).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the builtin tool factory is constructed by core session setup, so its module boundary cannot be relocated from an extension.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/tools/grep.ts` resolves to this re-export on sync; upstream edits to the old single-file implementation must be replayed inside `packages/coding-agent/src/core/tools/grep/` instead.
+
+## Align Cursor grep output with the engine-backed renderer (2026-09-14)
+
+- Cursor `pi_grep` calls now use the supported grep schema and the engine renderer's structured footer.
+
+## Restore grep to the registered tool surface (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/index.ts`: delete temporarilyDisabledToolNames and its temporary-withholding comment. Grep remains constructed as before; session defaults now activate it, and its declared eval exposure alone withholds it when eval is registered. Find and ls are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/index.ts`: the temporary export fed catalog and selection filters that hid grep from codemode discovery even though the executable registry still contained it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/index.ts`: an extension cannot remove a core export consumed by session registry construction; the temporary filter must be deleted at its source.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/index.ts`: allToolNames / ToolsOptions boundary. Preserve upstream tool names; do not reintroduce the deleted temporary set.
+
+## Declared eval exposure for builtin shells and grep (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: the preceding S1 policy change declares exposure: "eval" on each tool definition. PowerShell wraps the shared shell definition and overrides its exposure. This entry records that prerequisite for the grep surface restoration; no additional runtime change is made here.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: declarations let the session derive eval-only routing from registered definitions rather than a hardcoded builtin name set, while sessions without eval retain direct access.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: the core factories own their exposure metadata before the session constructs its catalog; a later extension cannot retroactively supply that declaration to every caller.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/bash.ts` and `packages/coding-agent/src/core/tools/grep.ts`: returned definition metadata. `packages/coding-agent/src/core/tools/powershell.ts`: the createShellToolDefinition wrapper. Preserve exposure: "eval" alongside upstream factory changes.
+
+## Session cwd and goal-store environment keys (2026-09-13)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` extends `resolveSpawnContext()` with `PI_SESSION_CWD` from `ctx.cwd` and optional `PI_GOAL_STORE_FILE` from `ctx.goalStoreFile`. Both inherited keys are deleted before active session values are applied, and injection still precedes `spawnHook`. With session exposure disabled or the optional goal path absent, stale inherited values remain unset.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts` must give shell children the active session's working directory and authoritative goal-store path rather than inherited parent-session values. The session cwd can differ from a spawn-hook override, and the goal path cannot be inferred reliably from the session JSONL path for overridden session directories or in-memory sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts` owns the core shell spawn environment and its session-exposure opt-out. A consumer extension cannot enforce the delete-then-set contract for every core shell child or guarantee that custom spawn hooks receive the resolved values.
+
+### Expected merge conflict zones
+
+- LOW: the inherited-key deletion list and active-context assignment block in `resolveSpawnContext()` in `packages/coding-agent/src/core/tools/bash.ts`. Preserve injection before `spawnHook` and the `exposeSessionEnvironment` gate.
+
+### Tests
+
+- `packages/coding-agent/test/suite/bash-session-env.test.ts`: real registered shell children receive both values; opt-out and optional-getter omission clear inherited values.
+- `packages/coding-agent/test/sdk-session-manager.test.ts`: SDK-created session metadata reaches the registered bash tool.
+- `packages/coding-agent/test/agent-session-dynamic-tools.test.ts`: existing custom spawn-hook and session-exposure opt-out coverage.
+
 ## Compact memory read classifications with stable headlines (2026-09-09)
 
 ### What changed
@@ -98,6 +198,8 @@
 
 ## grep is temporarily withheld from the model-facing tool surface (2026-08-29)
 
+Historical entry, superseded by the 2026-09-14 restoration above. The temporary set is deleted, not retained empty; grep withholding now comes only from the eval-only policy.
+
 ### What changed
 
 - `index.ts`: added `temporarilyDisabledToolNames`, currently holding `grep`. Tools named here are
@@ -118,9 +220,7 @@
 
 ### Expected merge conflict zones
 
-- `index.ts`: the `temporarilyDisabledToolNames` export sits directly below `allToolNames`, so an
-  upstream change that adds or removes a builtin tool name will conflict there. Resolve by keeping
-  both the upstream tool-name edit and this set; the set is intended to be emptied, not carried.
+- `index.ts`: the historical temporary export below `allToolNames` is now deleted. Keep upstream tool-name edits without restoring the set.
 
 ## Output spill streams capture early storage failures (2026-08-26)
 

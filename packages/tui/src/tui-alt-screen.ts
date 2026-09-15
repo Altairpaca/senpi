@@ -18,6 +18,7 @@ import {
 	type ScrollbarGeometry,
 } from "./layout.ts";
 import { getLayoutNode } from "./layout-node.ts";
+import { decodeMouseButton, isMouseSequence, parseSgrMouseEvent, parseWheelEvent } from "./mouse-input.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	deleteAllKittyImages,
@@ -769,16 +770,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private decodeMouseButton(button: number): TuiMouseButton {
-		switch (button & 3) {
-			case 0:
-				return "left";
-			case 1:
-				return "middle";
-			case 2:
-				return "right";
-			default:
-				return "none";
-		}
+		return decodeMouseButton(button);
 	}
 
 	private createMouseEvent(
@@ -937,32 +929,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private parseWheelEvent(data: string): WheelEvent | undefined {
-		const sgr = /^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/.exec(data);
-		if (sgr) {
-			const button = Number.parseInt(sgr[1], 10);
-			if ((button & 64) === 0) return undefined;
-			const direction = button & 3;
-			if (direction !== 0 && direction !== 1) return undefined;
-			return {
-				direction: direction === 0 ? -1 : 1,
-				x: Number.parseInt(sgr[2], 10) - 1,
-				y: Number.parseInt(sgr[3], 10) - 1,
-				button,
-			};
-		}
-		if (data.length === 6 && data.startsWith("\x1b[M")) {
-			const button = data.charCodeAt(3) - 32;
-			if ((button & 64) === 0) return undefined;
-			const direction = button & 3;
-			if (direction !== 0 && direction !== 1) return undefined;
-			return {
-				direction: direction === 0 ? -1 : 1,
-				x: data.charCodeAt(4) - 33,
-				y: data.charCodeAt(5) - 33,
-				button,
-			};
-		}
-		return undefined;
+		return parseWheelEvent(data);
 	}
 
 	private getWheelScrollLines(button: number): number {
@@ -985,14 +952,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private parseSgrMouseEvent(data: string): SgrMouseEvent | undefined {
-		const match = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
-		if (!match) return undefined;
-		return {
-			button: Number.parseInt(match[1], 10),
-			x: Number.parseInt(match[2], 10) - 1,
-			y: Number.parseInt(match[3], 10) - 1,
-			release: match[4] === "m",
-		};
+		return parseSgrMouseEvent(data);
 	}
 
 	private handleRightClickPaste(event: SgrMouseEvent): boolean {
@@ -1611,7 +1571,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private isMouseSequence(data: string): boolean {
-		return /^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data) || (data.length === 6 && data.startsWith("\x1b[M"));
+		return isMouseSequence(data);
 	}
 
 	private compositeScrollToEndIndicator(screen: string[], layout: LayoutFrame, width: number): string[] {

@@ -386,11 +386,14 @@ Both ambient-auth providers are explicit opt-in: a vendor CLI being logged in on
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
 | `terminal.imageWidthCells` | number | `60` | Preferred inline image width in terminal cells |
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
+| `terminal.mouse` | `"off"`, `"whilePending"`, `"always"` | `"whilePending"` | Capture regular-mode clicks while a question is pending; `always` keeps capture active in regular mode, and `off` disables mouse capture in both regular and fullscreen modes. Editable in `/settings`. |
 | `terminal.hyperlinks` | boolean or `"auto"` | `"auto"` | Override OSC 8 hyperlink support (advanced, JSON-only) |
 | `terminal.images` | string or boolean | `"auto"` | Override image protocol support with `"kitty"`, `"iterm2"`, `false`, or `"auto"` (advanced, JSON-only) |
 | `terminal.trueColor` | boolean or `"auto"` | `"auto"` | Override truecolor support (advanced, JSON-only) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max. Applies to `@file` attachments, `read`, and images returned by tools |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
+
+With `terminal.mouse: "whilePending"`, regular-mode native selection and scrollback are unchanged when no question is pending. During capture, use the terminal's selection bypass or set `"off"`; wheel reports are consumed. Unknown frame placement ignores clicks rather than guessing. See [Mouse Input](tui.md#mouse-input) for bypass modifiers, tmux calibration and the herdr short-frame limitation. This setting does not change `tuiMode`.
 
 ### Prompt Cache
 
@@ -464,15 +467,16 @@ An empty array starts with no built-in tools while preserving extension and SDK 
 
 #### Eval-only tools
 
-Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
+Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
 
 ```js
 const { output } = await tool.bash({ command: "ls -la" });
+const hits = await tool.grep({ pattern: "TODO", path: "src" });
 const snapshot = await tool.workflow({ action: "snapshot", run_id });
 await tool.monitor({ description: "build", command: "bun run build", filter: "^done" });
 ```
 
-This is the default and has no setting. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and all four tools remain directly callable, so shell, workflow and monitor access is never lost.
+This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell` and `grep` use that declaration. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
 
 ### Ask User
 
@@ -480,6 +484,7 @@ This is the default and has no setting. Hooks and permission checks apply unchan
 |---------|------|---------|-------------|
 | `askUser.enabled` | boolean | `true` | Enable the built-in question tool (`request_user_input` / `ask_user_question`) |
 | `askUser.timeoutMinutes` | number | `30` | Idle minutes before an unanswered question times out, clamped to 1–120 |
+| `askUser.bell` | boolean | `true` | Ring the terminal bell once for a newly displayed question; reconnect hydration does not ring |
 
 Disable for one run without changing settings with `--no-ask-user` (wins over `askUser.enabled: true`). `disabledBuiltinExtensions: ["ask-user"]` remains the coarse switch that skips loading the extension.
 
@@ -487,10 +492,13 @@ Disable for one run without changing settings with `--no-ask-user` (wins over `a
 {
   "askUser": {
     "enabled": true,
-    "timeoutMinutes": 30
+    "timeoutMinutes": 30,
+    "bell": true
   }
 }
 ```
+
+While a question is pending, the terminal title shows `? <header>` unless an active tool title takes precedence. Settlement restores the previous title layer. Set `askUser.bell: false` to keep the title and question display without a bell.
 
 ### Sessions
 

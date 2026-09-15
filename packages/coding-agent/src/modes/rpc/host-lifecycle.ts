@@ -45,7 +45,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, isBunBinary } from "../../config.ts";
+import { getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { createHostDaemonPaths } from "./host-ensure.ts";
 import {
@@ -448,8 +448,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			);
 			if (internalSecret) sendSocketHandshake(internal, internalSecret);
 			clientSockets.add(client);
+			// A readiness exchange can begin and end between ticks. Record the
+			// attachment now, before a later tick can reuse the preceding idle window.
+			decider.update(currentActivity());
 			const detach = (): void => {
 				clientSockets.delete(client);
+				decider.update(currentActivity());
 				internal.destroy();
 				client.destroy();
 			};
@@ -501,6 +505,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		if (type === "agent_start") busySessions.set(sessionId, (busySessions.get(sessionId) ?? 0) + 1);
 		else if (type === "agent_settled")
 			busySessions.set(sessionId, Math.max(0, (busySessions.get(sessionId) ?? 1) - 1));
+		else return;
+		decider.update(currentActivity());
 	}
 
 	async function shutdown(reason: string, exitCode: number): Promise<never> {
@@ -842,7 +848,7 @@ function isEntryScript(): boolean {
 	}
 }
 
-if (isEntryScript()) {
+if (!isBundledNode && isEntryScript()) {
 	const launch = parseSupervisorArgs(process.argv.slice(2));
 	if (!launch) {
 		writeStderrLine("usage: host-lifecycle.ts --socket <path> [host cli args...]");

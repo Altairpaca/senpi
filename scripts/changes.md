@@ -1,5 +1,163 @@
 # changes
 
+## 2026-09-14 - Restore the Node worker bundle builder
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` externalizes runtime-guarded Bun SQLite, optional canvas, and the package-relative native PTY loader; an esbuild plugin emits file-attributed assets. The Bun runtime-module stub and lazy Node jiti boundary remain intact.
+- Node bundle smoke coverage runs the CLI version command and a real shared-session worker lifecycle under Node.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs` could not reach the provider SDK isolation assertion because esbuild rejected Bun SQLite, file attributes, and native canvas. Bundling the PTY loader also relocated its manifest/prebuild lookup incorrectly (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` defines the distribution graph before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: external allowlist and common esbuild plugins.
+
+## 2026-09-14 - Publish staging mirrors the dependency manifest exactly
+
+### What changed
+
+- `scripts/prepare-senpi-publish-placements.mjs` (new) owns `resolvePublishPlacements`: every `node_modules/...` entry of `publish-deps.lock.json`, top-level and nested, maps to its staged path; npm's workspace-local placements (`packages/coding-agent/node_modules/<pkg>`) are the staged tree's own `node_modules/<pkg>`, and when the root lock placed another version of the same package at the root, the workspace-local copy keeps the top-level slot while the root copy is re-nested under each staged dependent npm resolved to it (recursively), so npm's resolution survives the flattening without evaluating ranges.
+- `scripts/prepare-senpi-publish-dependencies.mjs` (new) owns `stagePublishDependencies`: each placement is staged from a version-matched installed copy (same nesting under the root install, hoisted at the root, already staged in place, or nested under another dependent), copied without whatever the installer nested inside it, and staged packages the manifest does not place are pruned at every nesting level.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` `copyPublishDependencies` delegates to that module with the internal workspace set; the bundled and vendored workspace staging is unchanged.
+
+### Why
+
+- The manifest keeps the root lock's two-level placements while the staged tree has one level, and the developer's install may be bun-hoisted. The old top-level-only copy also let root placements overwrite npm's workspace-local ones, so the published 2026.9.13-2 tarball shipped `zod@3.25.76`, `https-proxy-agent@7.0.6` and `agent-base@7.1.4` next to a manifest declaring `zod@4.4.3` / `https-proxy-agent@9.1.0` and an `http-proxy-agent@9.1.0` that pins `agent-base@9.0.0`. After the linkedom migration the only `entities` entry is nested under `htmlparser2` (7.0.1); bun hoists it to the root, the old top-level-only copy never staged it, and a stale `entities@8`/`parse5` from the previous graph rode into the tarball, where `htmlparser2` resolved `entities/decode` without `fromCodePoint` and the packed engine failed to compile (#1677).
+
+### Why an extension could not handle it
+
+- `scripts/prepare-senpi-publish-placements.mjs`, `scripts/prepare-senpi-publish-dependencies.mjs` and `scripts/prepare-senpi-bundled-workspaces.mjs` build the tarball's dependency tree before any runtime extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `copyPublishDependencies` in `scripts/prepare-senpi-bundled-workspaces.mjs` (now a one-line delegate) and its `scripts/prepare-senpi-bundled-workspaces-copy.test.mjs` nested-entry assertion.
+
+## 2026-09-14 - Ship standalone codemode once
+
+### What changed
+
+- `scripts/copy-codemode-sidecar.mjs` carries codemode's JS parser dependency beside its source tree; host API dependencies remain supplied by the extension importer.
+- `scripts/build-binaries.sh` enables package-json autoload in both release compile commands, matching the package's binary build so Bun can resolve the on-disk parser manifest. Dotenv and bunfig autoload remain disabled.
+- `scripts/smoke-standalone-binary.mjs` bounds child processes and reports explicit codemode loading diagnostics before checking the exactly-one-enabled inventory contract.
+- A sibling release-graph regression rejects positive codemode contributions, including workspace-relative metafile paths. It rebuilds workspace entries and compile assets on direct invocation, and CI runs it followed by the existing exclusions graph before script suites can invalidate `dist`.
+- Workflow coverage checks sidecar staging precedes smoke in the release command list; bundle contents are tested through actual Bun metadata rather than removed source spellings. Copier and inventory tests cover required skill/parser files, stale payload replacement, duplicates, and disabled entries.
+
+### Why
+
+- `scripts/copy-codemode-sidecar.mjs` must make the on-disk extension runnable without the removed bundled factory. `scripts/smoke-standalone-binary.mjs` must distinguish missing payloads from successful relocation (Refs #1656).
+- `scripts/build-binaries.sh` needs runtime package metadata for the native importer to resolve external dependencies; shipping their files alone is insufficient when package-json autoload is disabled.
+
+### Why an extension could not handle it
+
+- `scripts/copy-codemode-sidecar.mjs` stages release files before startup; `scripts/smoke-standalone-binary.mjs` verifies the standalone artifact externally. `scripts/build-binaries.sh` sets compiler options that loaded extensions cannot change.
+
+### Expected merge conflict zones
+
+- Payload copying in `scripts/copy-codemode-sidecar.mjs`, RPC validation in `scripts/smoke-standalone-binary.mjs`, and compile flags in `scripts/build-binaries.sh`.
+
+## 2026-09-13 - Retire webfetch compile-asset workarounds
+
+### What changed
+
+- `scripts/build-binaries.sh` removes jsdom's XHR worker from both split compile commands and uses the retained image-resize worker for relocation smoke testing.
+- `scripts/prepare-bun-compile-assets.mjs` retains imagegen skill staging and removes CSS dictionary inlining and jsdom stylesheet/XHR patching.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` copies runtime dependencies without the retired css-tree source rewrite.
+- Release graph and worker tests reject retired DOM contributions while retaining provider, imagegen, and session-worker coverage.
+
+### Why
+
+- `scripts/build-binaries.sh`, `scripts/prepare-bun-compile-assets.mjs`, and `scripts/prepare-senpi-bundled-workspaces.mjs` must not reference or patch the dependencies removed by the linkedom migration (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/build-binaries.sh`, `scripts/prepare-bun-compile-assets.mjs`, and `scripts/prepare-senpi-bundled-workspaces.mjs` select and stage distribution assets before runtime extension loading.
+
+### Expected merge conflict zones
+
+- Compile and smoke argv in `scripts/build-binaries.sh`; asset staging in `scripts/prepare-bun-compile-assets.mjs`; dependency copying in `scripts/prepare-senpi-bundled-workspaces.mjs`.
+
+## 2026-09-13 - Report entry-graph sizes on success
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` prints each declared entry's file count on success so a green run still reports the `./harness/session` size.
+
+### Why
+
+- The session budget is a cost contract. A silent pass hid the 132-file AI-barrel regression until the script was run by hand.
+
+### Why an extension could not handle it
+
+- Entry-graph walking is a commit-time source import check. Extensions cannot change which modules the checker walks.
+
+### Expected merge conflict zones
+
+- LOW: the success `console.log` in `scripts/check-entry-graphs.mjs`.
+
+## 2026-09-13 - Share compiled standalone entry graphs
+
+### What changed
+
+- `scripts/build-binaries.sh` adds `--splitting` immediately after `--compile` in both platform branches, retaining minification, names, autoload isolation and all four explicit entries.
+- `scripts/build-binaries-flags.test.mjs` checks parsed release/package argv. `scripts/session-worker-compile.test.ts` characterizes split and unsplit relocated production clients with two live workers, shared-memory acknowledgments and native exits.
+
+### Why
+
+- `scripts/build-binaries.sh` previously embedded duplicate copies of the shared session-worker graph. Splitting shares those bytes without changing the runtime worker-entry contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/build-binaries.sh` selects embedded entry graphs at compile time, before runtime extensions exist.
+
+### Expected merge conflict zones
+
+- The Windows and non-Windows compile argv in `scripts/build-binaries.sh`.
+
+## 2026-09-13 - Keep jiti out of the native Bun extension graph
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` removes the obsolete lazy-jiti transform plugin and its external allowlist entry; the loader itself now owns the variable-specifier Node-only import. The Bun runtime-module stub remains unchanged.
+- `scripts/compiled-extension-load.test.ts` verifies relocated classic/shared-session extension loading after forced GC, helper reload, host identity, direct/per-cwd cached factory behavior and zero positive-output jiti inputs under the release graph flags. Windows uses legal special-character paths, `windows-*` build targets and `.exe` names through `scripts/compiled-extension-platform.ts`. The child summary reports only observed helper output, not prescribed counter constants.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs` no longer needs to replace a static jiti import. Native compiled extensions use Bun's module loader, while jiti remains an installed Node runtime dependency.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` determines the distribution graph before an extension can run.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: plugin list and external package allowlist; preserve the separate Bun runtime-module stub.
+
+## 2026-09-13 - Keep Bun provider registration outside Node bundles
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` resolves literal `bun/runtime-modules` imports to an empty module only in its Node esbuild graph.
+- Bundle coverage tests require positive implementation bytes reachable from both compiled entries; relocated binary probes consume terminal assistant errors in classic and shared RPC.
+
+### Why
+
+- esbuild follows literal imports even inside the worker's `isBunBinary` branch and would otherwise inline all three Node-only provider modules and the AWS SDK into its unsplit Node worker.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` establishes distribution bundle membership at build time, before extension execution.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs` plugin list and Bun-only import resolver.
+
 ## 2026-09-12 - Chord keeps upstream's release identity instead of the fork CalVer
 
 ### What changed

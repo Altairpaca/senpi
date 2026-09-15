@@ -1,5 +1,155 @@
 # changes
 
+## 2026-09-14 - Terminal mouse capture setting (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts` adds persisted `getTerminalMouse`/`setTerminalMouse` accessors, defaulting to `whilePending`, validating writes and rejecting unknown values. `packages/coding-agent/src/core/terminal-settings.ts` extends the typed settings shape with the shared `off | whilePending | always` value schema.
+
+### Why
+
+- `packages/coding-agent/src/core/settings-manager.ts` must provide a durable opt-out for regular and fullscreen capture while keeping the default renderer unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/settings-manager.ts` owns global/project precedence and persisted terminal preferences; renderer construction happens before extension registration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: terminal-settings import and terminal accessors adjacent to clearOnShrink. The settings shape module is fork-owned.
+
+## 2026-09-14 - Session-owned by-name activation and tool_search hidden hints (senpi#1682)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_activateLazyTool` promotes a lazily-activatable **search-exposed** tool itself when no tool-search catalog claims it, so a deferred tool activates on a by-name call even in a session without the tool-search builtin (exposure metadata owns the path; the catalog only enriches it). Eval-exposed tools are never promoted this way; they stay reachable only through the eval cell. `_bindToolSearchRemovedHints` binds `agent.removedToolHints` into the tool-search service at construction and after `bindCore`, so a `tool_search` query naming an eval-only or removed tool answers with that tool's redirect hint.
+
+### Why
+
+- The lazy activator lived only in the tool-search service, so deferred tools (e.g. `generate_image`) could not activate by name without the builtin loaded; the eval-only redirect existed only in the unknown-tool error path, leaving `tool_search` to answer "No tools matched" for hidden tools.
+
+### Why an extension could not handle it
+
+- Both hooks are session internals: the active-set promotion behind `_activateLazyTool` and the `agent.removedToolHints` record are owned by `packages/coding-agent/src/core/agent-session.ts`, which no extension API exposes for reading.
+
+### Expected merge conflict zones
+
+- LOW: two small additions in `_installAgentToolHooks` / `_activateLazyTool` and one call after `bindCore`; both are fork-owned regions.
+
+## 2026-09-14 - Restore grep as an eval-only default tool (#1678)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: remove the temporary grep catalog and default-selection filters, their import, and the now-unused explicit-selection flag. The catalog includes grep for codemode schema discovery; the declared eval-only policy alone controls model exposure and programmatic execution.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: add grep to both initial default lists so sessions without eval expose it directly. Configured defaults, explicit allowlists/exclusions, and find/ls selections are unchanged.
+- `packages/coding-agent/src/core/system-prompt.ts`: derive the eval-only search guideline from contributed grep snippets absent from the selected tool list, shared with the dynamic tool section. Prefer tool.grep inside eval over shell search, without recommending direct bash when it is withheld.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the temporary filter hid grep from getAllTools(), which codemode uses for listTools, and prevented declared exposure from entering the eval-only policy.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: registration alone does not activate grep in their independently seeded defaults.
+- `packages/coding-agent/src/core/system-prompt.ts`: selected tools intentionally exclude eval-only grep and bash, while their contributions survive; guidance must preserve that distinction.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the catalog, selection, and executable registry. `packages/coding-agent/src/core/sdk.ts` seeds the session defaults before extensions bind.
+- `packages/coding-agent/src/core/system-prompt.ts` owns the legacy fallback guidance and shared conditional search guideline consumed by dynamic prompt assembly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: definitionRegistry, nextActiveToolNames, and _buildRuntime defaults. Preserve allowlist/exclusion predicates but do not restore temporary grep filters.
+- `packages/coding-agent/src/core/sdk.ts`: defaultActiveToolNames. Keep explicit and configured selection precedence intact.
+- `packages/coding-agent/src/core/system-prompt.ts`: file-exploration guidance and getEvalOnlyGrepGuideline. Contributions must not re-advertise withheld tools as direct calls.
+
+## 2026-09-14 - Load standalone codemode from its sidecar only
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` removes the compiled factory bypass and loads the staged codemode manifest entries through the ordinary extension importer. Compiled inventory retains `<builtin:codemode>` while resolved paths and assets remain on disk.
+
+### Why
+
+- `packages/coding-agent/src/core/resource-loader.ts` previously embedded codemode implementation in addition to shipping its source tree. The standalone distribution now ships that implementation once (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` owns the host's builtin loading and compile-time dependency edge; the loaded extension cannot remove its own bundled factory.
+
+### Expected merge conflict zones
+
+- Bundled package registration and `loadExtensionFactories()` in `packages/coding-agent/src/core/resource-loader.ts`.
+
+## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.goalStoreFile`, preserving hand-built context compatibility.
+- `packages/coding-agent/src/core/extensions/runner.ts` implements the guarded lazy getter once in `createContext()` through `goalFilePath(goalStoreRef(sessionManager, cwd))`, honoring persisted, overridden-directory, and in-memory sessions without creating a goal file.
+- `packages/coding-agent/src/core/tools/bash.ts` clears inherited `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` before setting context values, including opt-out and custom spawn-hook semantics.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` supplies the same values for foreground/background PTY bash and clears inherited values even when no context or optional goal path is supplied. Explicit undefined overrides preserve deletion through PTY backends that merge the host environment.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` and `packages/coding-agent/src/core/extensions/runner.ts` expose facts consumers cannot infer from the session JSONL path, especially with a session-directory override or no persisted session.
+- `packages/coding-agent/src/core/tools/bash.ts` and `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` must not route child processes to stale inherited session paths; the session cwd is not necessarily the child's overridden working directory.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` and `packages/coding-agent/src/core/extensions/runner.ts` own the host context and its lifecycle guards; an extension cannot add a universally available authoritative context getter.
+- `packages/coding-agent/src/core/tools/bash.ts` owns core child spawn environment construction. `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` owns its independent PTY spawn boundary. A consumer extension cannot sanitize all children at either boundary.
+
+### Expected merge conflict zones
+
+- LOW: the session-manager neighborhood of `ExtensionContext` in `packages/coding-agent/src/core/extensions/types.ts`, and imports plus `createContext()` in `packages/coding-agent/src/core/extensions/runner.ts`.
+- LOW: `resolveSpawnContext()` in `packages/coding-agent/src/core/tools/bash.ts`; session environment and the two spawn sites in `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`.
+
+### Tests
+
+- `test/suite/session-goal-store-context.test.ts`: persisted, `SessionManager.open(path, otherSessionDir)`, and in-memory goal paths; getter reads do not create files.
+- `test/suite/bash-session-env.test.ts`: real registered shell children, opt-out, optional getter omission.
+- `test/suite/terminal-bash-session-env.test.ts`: real foreground/background PTY children, execute-time/fallback contexts, inherited-value clearing.
+- `test/sdk-session-manager.test.ts`: SDK-created session values through the registered bash surface.
+
+
+
+## 2026-09-13 - Configurable pending-question arrival bell (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts` adds optional `AskUserSettings.bell`; `packages/coding-agent/src/core/settings-manager.ts` resolves it to true by default and honors an explicit false value. `docs/settings.md` documents the bell and pending-title behavior.
+
+### Why
+
+- Question arrivals should be noticeable without forcing an audible signal on users who disable it.
+
+### Why an extension could not handle it
+
+- The core settings manager owns global/project merge precedence and the typed ask-user settings contract consumed by the interactive host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: AskUserSettings; `packages/coding-agent/src/core/settings-manager.ts`: getAskUserSettings.
+
+## 2026-09-13 - Pending-question cycling keybinding (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts` adds `app.question.next`, default `alt+down`, for cycling pending requests from an empty composer. Tab autocomplete and Shift+Tab thinking cycling are unchanged.
+- The answer action defaults to both `alt+up` and the retained `alt+a`. Exported primary/fallback key constants keep terminal-aware hints tied to the binding table. Pending-question interception precedes dequeue without changing its handler; Windows/WSL retain their independent `alt+q` dequeue key.
+
+### Why
+
+- Multiple requests need a configurable cycling chord without taking existing editor actions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts` owns the app binding table and its TUI type augmentation; host dispatch and hints must share that declaration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: AppKeybindings and KEYBINDINGS question entries.
+
+
 ## 2026-09-13 - Invocation-scoped steering notification (senpi#1637)
 
 ### What changed
@@ -1563,6 +1713,8 @@
 
 ## 2026-08-29 - Withheld tools are filtered at the advertisement seam
 
+Historical entry, superseded by the 2026-09-14 eval-only grep restoration above. The temporary catalog and selection filters described below are removed; the eval-only policy now owns withholding.
+
 ### What changed
 
 - `agent-session.ts`: names in `temporarilyDisabledToolNames` are dropped from `definitionRegistry`
@@ -1591,10 +1743,7 @@
 
 ### Expected merge conflict zones
 
-- `agent-session.ts`: the `definitionRegistry` construction and the `nextActiveToolNames` filter
-  both gained a `temporarilyDisabledToolNames` guard alongside the existing `isAllowedTool` call.
-  Upstream edits to either filter will conflict; keep the upstream predicate change and re-apply
-  the withheld-name guard next to it.
+- `agent-session.ts`: the historical `definitionRegistry` and `nextActiveToolNames` temporary guards are now deleted. Keep upstream allowlist/exclusion predicates and the declared eval-only policy; do not reintroduce the temporary guards.
 
 - Model runtime credential admission counts the combined canonical environment and policy slot lane, admitting rotation for more than one live slot without acquiring leases during preflight.
 
