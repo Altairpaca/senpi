@@ -9,8 +9,8 @@ import {
 } from "../src/api/devin-agent/gen/cascade_pb.ts";
 import { getBuiltinApiProvider } from "../src/api-registry.ts";
 import { createModels } from "../src/models.ts";
-import { devinProvider } from "../src/providers/devin.ts";
 import { DEVIN_MODELS } from "../src/providers/devin.models.ts";
+import { devinProvider } from "../src/providers/devin.ts";
 import "../src/compat.ts";
 
 let server: Server | undefined;

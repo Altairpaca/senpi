@@ -10,7 +10,8 @@ describe("resolveGrepEngine", () => {
 	});
 
 	it("rejects unavailable native engine with ENGINE_UNAVAILABLE", async () => {
-		await expect(resolveGrepEngine({ env: { SENPI_GREP_ENGINE: "native", SENPI_GREP_NATIVE_PATH: "/nonexistent" } }))
-			.rejects.toMatchObject({ code: "ENGINE_UNAVAILABLE" });
+		await expect(
+			resolveGrepEngine({ env: { SENPI_GREP_ENGINE: "native", SENPI_GREP_NATIVE_PATH: "/nonexistent" } }),
+		).rejects.toMatchObject({ code: "ENGINE_UNAVAILABLE" });
 	});
 });
