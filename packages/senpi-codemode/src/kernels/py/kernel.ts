@@ -32,6 +32,10 @@ export class PythonKernel {
 		return kernel;
 	}
 
+	listKernelToolNames(): readonly string[] {
+		return [];
+	}
+
 	describeKernelTools(_names: readonly string[]): Promise<never> {
 		return rejectKernelToolsUnavailable();
 	}

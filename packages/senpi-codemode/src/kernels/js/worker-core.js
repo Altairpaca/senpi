@@ -81,6 +81,10 @@ export function createWorkerCore(transport, options) {
 
 	function onMessage(message) {
 		if (kernelTools.handle(message)) return;
+		if (message.type === "kernel-tools-names") {
+			runtime?.kernelTools.setCollisionNames(message.hostToolNames ?? [], message.foreignLanguageNames ?? []);
+			return;
+		}
 		if (message.type === "init") {
 			applySessionEnvironment(message.sessionEnv);
 			runtime = new JsWorkerRuntime({

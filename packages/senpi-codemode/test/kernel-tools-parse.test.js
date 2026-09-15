@@ -100,6 +100,28 @@ describe("production parser hostile definitions", () => {
 		});
 	});
 
+	it("rejects Function#toString variants the scanner must not guess", () => {
+		expectInvalid(Math.abs);
+		expectInvalid(
+			function named(a) {
+				return a;
+			}.bind(null),
+		);
+		expectInvalid({
+			lookup(path) {
+				return path;
+			},
+		}.lookup);
+		expectInvalid(Object.getOwnPropertyDescriptor({ get lookup() { return 1; } }, "lookup").get);
+		class FieldArrow {
+			lookup = (a) => a;
+		}
+		expectInvalid(new FieldArrow().lookup);
+		const escaped = function toolProbe() {};
+		escaped.toString = () => "function \\u0061(x) { return x; }";
+		expectInvalid(escaped);
+	});
+
 	it("keeps representable names as written and rejects MCP mangling", () => {
 		const tools = createKernelToolRegistry();
 		expect(tools.define(function lookup(path) { return path; }).name).toBe("lookup");

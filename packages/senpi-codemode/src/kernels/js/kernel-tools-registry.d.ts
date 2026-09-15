@@ -3,8 +3,8 @@ export { createToolNamespace } from "./kernel-tools-define.js";
 export type KernelToolRegistryOptions = {
 	readonly generation?: number;
 	readonly language?: "js" | "py" | "rb" | "jl";
-	readonly hostToolNames?: readonly string[];
-	readonly foreignLanguageNames?: readonly string[];
+	readonly hostToolNames?: readonly string[] | (() => readonly string[]);
+	readonly foreignLanguageNames?: readonly string[] | (() => readonly string[]);
 	readonly reservedNames?: readonly string[];
 };
 
@@ -23,4 +23,5 @@ export function createKernelToolRegistry(options?: KernelToolRegistryOptions): {
 		signal?: AbortSignal,
 	): Promise<unknown>;
 	bumpGeneration(): number;
+	setCollisionNames(hostToolNames?: readonly string[], foreignLanguageNames?: readonly string[]): void;
 };

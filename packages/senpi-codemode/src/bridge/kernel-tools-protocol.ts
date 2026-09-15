@@ -48,6 +48,11 @@ export const kernelToolHostToKernelSchemas = [
 		type: Type.Literal("kernel-tool-cancel"),
 		requestId: Type.String({ minLength: 1 }),
 	}),
+	Type.Object({
+		type: Type.Literal("kernel-tools-names"),
+		hostToolNames: Type.Array(Type.String({ minLength: 1 })),
+		foreignLanguageNames: Type.Array(Type.String({ minLength: 1 })),
+	}),
 ] as const;
 
 export const kernelToolKernelToHostSchemas = [

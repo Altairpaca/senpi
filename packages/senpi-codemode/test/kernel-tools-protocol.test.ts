@@ -3,7 +3,10 @@ import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 
 async function withKernel<T>(
 	fn: (kernel: JavaScriptKernel) => Promise<T>,
-	options: { hostToolNames?: readonly string[]; foreignLanguageNames?: readonly string[] } = {},
+	options: {
+		hostToolNames?: readonly string[] | (() => readonly string[]);
+		foreignLanguageNames?: readonly string[] | (() => readonly string[]);
+	} = {},
 ): Promise<T> {
 	const kernel = new JavaScriptKernel({
 		sessionId: "kernel-tools-protocol",
@@ -104,8 +107,7 @@ describe("kernel tool protocol", () => {
 					code: "try { tool(function read(path) { return path; }); } catch (e) { return e.code; }",
 					timeoutMs: 8_000,
 				});
-				expect(read.ok).toBe(true);
-				expect(['"tool_name_collision"', '"reserved_tool_name"']).toContain(read.ok ? read.valueRepr : undefined);
+				expect(read).toMatchObject({ ok: true, valueRepr: '"tool_name_collision"' });
 				const py = await kernel.run({
 					cellId: "collide-py",
 					code: "try { tool(function py_lookup(path) { return path; }); } catch (e) { return e.code; }",
@@ -114,6 +116,28 @@ describe("kernel tool protocol", () => {
 				expect(py).toMatchObject({ ok: true, valueRepr: '"tool_name_collision"' });
 			},
 			{ hostToolNames: ["read", "bash"], foreignLanguageNames: ["py_lookup"] },
+		);
+	});
+
+	it("rejects a host tool attached after kernel start", async () => {
+		const hostToolNames = ["read"];
+		await withKernel(
+			async (kernel) => {
+				const boot = await kernel.run({
+					cellId: "boot-host",
+					code: "return 1",
+					timeoutMs: 8_000,
+				});
+				expect(boot).toMatchObject({ ok: true, valueRepr: "1" });
+				hostToolNames.push("mcp_attached");
+				const attached = await kernel.run({
+					cellId: "collide-attached",
+					code: "try { tool(function mcp_attached(a) { return a; }); } catch (e) { return e.code; }",
+					timeoutMs: 8_000,
+				});
+				expect(attached).toMatchObject({ ok: true, valueRepr: '"tool_name_collision"' });
+			},
+			{ hostToolNames: () => hostToolNames },
 		);
 	});
 

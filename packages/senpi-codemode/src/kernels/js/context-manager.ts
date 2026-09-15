@@ -8,6 +8,7 @@ import {
 	type JavaScriptRunInput,
 	type LifecycleState,
 	type ResultMessage,
+	resolveKernelToolNameSource,
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
 import { kernelToolError } from "./kernel-tools-errors.ts";
@@ -166,6 +167,11 @@ export class JavaScriptKernel {
 		if (next.input.timeoutMs) {
 			this.#timeout = setTimeout(() => void this.#timeoutActive(next), next.input.timeoutMs);
 		}
+		this.#slot.postMessage({
+			type: "kernel-tools-names",
+			hostToolNames: resolveKernelToolNameSource(this.#options.hostToolNames),
+			foreignLanguageNames: resolveKernelToolNameSource(this.#options.foreignLanguageNames),
+		});
 		this.#slot.postMessage({
 			type: "run",
 			cellId: next.input.cellId,

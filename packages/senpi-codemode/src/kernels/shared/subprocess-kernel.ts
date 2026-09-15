@@ -70,6 +70,10 @@ export class SubprocessKernel {
 		return { stateRetained: Promise.resolve(false) };
 	}
 
+	listKernelToolNames(): readonly string[] {
+		return [];
+	}
+
 	describeKernelTools(_names: readonly string[]): Promise<never> {
 		return rejectKernelToolsUnavailable();
 	}

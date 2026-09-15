@@ -19,6 +19,7 @@
 ### Fixed
 
 - JS kernel tools parse named functions by declaration head (arrow bodies are allowed), reject illegal parameter lists instead of guessing trailing commas, keep unicode identifiers as written, carry host/foreign names on worker init, and settle nested invokes on parent interrupt ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+- JS `tool()` consults live host and same-session foreign kernel names (py/rb/jl), including tools attached after worker start ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Removed
 

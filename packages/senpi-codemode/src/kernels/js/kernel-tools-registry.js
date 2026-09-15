@@ -8,12 +8,20 @@ export { createToolNamespace };
 
 const DEFAULT_RESERVED = Object.freeze(["__agent__", "__output__", "__schema__"]);
 
+function currentNames(source) {
+	return typeof source === "function" ? source() : (source ?? []);
+}
+
+function hasNameKey(source, key) {
+	return currentNames(source).some((name) => kernelToolKey(name) === key);
+}
+
 export function createKernelToolRegistry(options = {}) {
 	const language = options.language ?? "js";
 	let generation = options.generation ?? 1;
 	const reservedKeys = new Set((options.reservedNames ?? DEFAULT_RESERVED).map(kernelToolKey));
-	const hostKeys = new Set((options.hostToolNames ?? []).map(kernelToolKey));
-	const foreignKeys = new Set((options.foreignLanguageNames ?? []).map(kernelToolKey));
+	let hostSource = options.hostToolNames ?? [];
+	let foreignSource = options.foreignLanguageNames ?? [];
 	const entries = new Map();
 
 	function assertJs() {
@@ -45,7 +53,7 @@ export function createKernelToolRegistry(options = {}) {
 			const normalizedName = parsed.name;
 			const key = kernelToolKey(parsed.name);
 			if (reservedKeys.has(key)) throw kernelToolError("reserved_tool_name", `Kernel tool name is reserved: ${parsed.name}`);
-			if (hostKeys.has(key) || foreignKeys.has(key)) {
+			if (hasNameKey(hostSource, key) || hasNameKey(foreignSource, key)) {
 				throw kernelToolError("tool_name_collision", `Kernel tool name collides: ${parsed.name}`);
 			}
 			const existing = entries.get(key);
@@ -110,6 +118,10 @@ export function createKernelToolRegistry(options = {}) {
 			generation += 1;
 			entries.clear();
 			return generation;
+		},
+		setCollisionNames(hostToolNames, foreignLanguageNames) {
+			hostSource = hostToolNames ?? [];
+			foreignSource = foreignLanguageNames ?? [];
 		},
 	};
 }

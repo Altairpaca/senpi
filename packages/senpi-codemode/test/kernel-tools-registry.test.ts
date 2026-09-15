@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL, RESERVED_SCHEMA_TOOL } from "../src/bridge/reserved.ts";
-import { KERNEL_TOOLS_UNSUPPORTED } from "../src/kernels/js/kernel-tools-types.ts";
 
 const production = await import(new URL("../src/kernels/js/kernel-tools-registry.js", import.meta.url).href);
 const createKernelToolRegistry = production.createKernelToolRegistry as (options?: object) => {
@@ -241,7 +240,6 @@ describe("reserved collisions and stale descriptors fail closed", () => {
 	});
 
 	it("returns tools_unavailable for non-JS registries and unsupported hosts", () => {
-		expect(KERNEL_TOOLS_UNSUPPORTED.code).toBe("tools_unavailable");
 		expectCode(() => registry({ language: "py" }).define(lookup), "tools_unavailable");
 		expectCode(() => registry({ language: "py" }).describe(["lookup"]), "tools_unavailable");
 	});

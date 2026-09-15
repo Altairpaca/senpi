@@ -132,6 +132,8 @@ export interface EvalKernel {
 	deliverToolReply(message: Extract<HostToKernelMessage, { type: "tool-reply" }>): void;
 	reset(): Promise<void>;
 	close(): Promise<void>;
+	/** Names this kernel has registered; JS collides with other languages in the same session. */
+	listKernelToolNames?(): readonly string[];
 }
 
 export interface EvalKernelManager {

@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
+import { resolveKernelToolNameSource } from "./kernel-contract.ts";
 import { type JavaScriptKernelOptions, localBridgeConnection } from "./local-module-loader.ts";
 import { spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
 
@@ -63,8 +64,8 @@ async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, s
 		sessionId: options.sessionId,
 		connection: localBridgeConnection(options),
 		kernelGeneration: hooks.kernelGeneration,
-		hostToolNames: [...(options.hostToolNames ?? [])],
-		foreignLanguageNames: [...(options.foreignLanguageNames ?? [])],
+		hostToolNames: resolveKernelToolNameSource(options.hostToolNames),
+		foreignLanguageNames: resolveKernelToolNameSource(options.foreignLanguageNames),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 	});
 	await ready;

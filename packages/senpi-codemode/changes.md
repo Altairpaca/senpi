@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-09-16 - Live host and foreign kernel-tool name collisions (#1647)
+
+### What changed
+
+- Session manager passes live `hostToolNames` / `foreignLanguageNames` providers into the JS kernel. Foreign names come from `listKernelToolNames()` on the other kernels of the same session (py/rb/jl).
+- Worker init still carries optional name arrays. The host re-resolves providers on worker start and before each cell via `kernel-tools-names`, so MCP attach after kernel start collides at `tool()`.
+- py/rb/jl kernels expose `listKernelToolNames()` (currently empty) as the source of truth for cross-language collisions.
+
+### Why
+
+- Host names were a one-shot `listTools()` snapshot, and `foreignLanguageNames` never left session-manager, so production JS `tool()` missed Python-side names and tools attached after worker start.
+
+### Why an extension could not handle it
+
+- Collision sets live in the worker registry and session kernel map.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/extension/session-manager.ts`, `src/kernels/js/worker-startup.ts`, `src/kernels/js/context-manager.ts`, `src/bridge/kernel-tools-protocol.ts`.
+
 ## 2026-09-16 - Fail-closed JS kernel-tool parser and nested interrupt (#1647)
 
 ### What changed
