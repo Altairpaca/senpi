@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- Fixed background processes surviving shutdown when the shell that started them exited first: the bash tool now keeps owning a command's process group until its last descendant is gone, so `sleep 30 &` or `nohup server &` is killed by shutdown cleanup instead of being orphaned. Tracked groups that have drained are pruned, and a group whose leader already exited is never re-signalled by bare pid ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
 - Fixed native grep reporting duplicate files across overlapping roots and symlink aliases; each file is searched once and reported under its lexically smallest display path without canonicalizing every file ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
 
 - Fixed deferred (search-exposed) tools never activating by name in sessions without the tool-search builtin: the session now promotes the tool itself when no catalog activator claims it ([#1682](https://github.com/code-yeongyu/senpi/issues/1682)).
