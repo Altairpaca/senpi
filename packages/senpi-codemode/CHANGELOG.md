@@ -4,22 +4,20 @@
 
 ### Breaking Changes
 
-- Background `agent()` handles require typed host `task_id` and `run_epoch` details; legacy prose-only responses raise `invalid_task_handle` ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+- Background `agent(..., handle=true)` now requires the host task tool to return structured `details.task_id` (`st_` plus lowercase hex) and an integer `details.run_epoch >= 0`. The result gains a `run_epoch` field next to `id` and `handle`, in every kernel language. A host that returns an error, or only a prose task id in its text, raises `invalid_task_handle`; the old regex scrape of the text is gone. Extra producer fields in `details` are accepted. Foreground text and JSON results are unchanged ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
 ### Added
 
-- JS `tool(fn, metadata?)` registers fenced kernel-tool descriptors (`name`, JSON input schema, `kernel_generation`, `definition_revision`) while `tool.read(...)` host calls keep working. `agent()` forwards `tools: string[]` for in-process children ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
-- The JS worker pumps nested kernel-tool describe/invoke independently of the top-level run queue so a parent cell can stay pending on `agent()` while an in-process child calls a parent function ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
-- JS, Python, Ruby, and Julia expose host-owned `workpool` sugar with opaque pool IDs and unchanged tool receipts, without kernel scheduling ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+- Added `workpool(agent, name, mode?)` to the JS, Python, Ruby and Julia preludes as a thin adapter over the host `workpool` tool. `agent` is a plain-data spec with one of `category` or `subagent_type` plus `prompt` and optional `model`; `mode` is `fresh` or `keep_alive` and is forwarded only when given. The adapter exposes `pool_id`, `push(items)`, `close()`, `inspect()` and `cancel()`, each returning the same `{text, details, images?, hasError?}` envelope as a direct tool call, and holds no worker, queue or admission state, so a kernel reset drops only the variable and the pool survives. A missing or inactive host tool raises `workpool_unavailable`; a host error at creation is raised instead of returning a broken adapter. Kernel tools may not call `workpool()` (`kernel_tool_recursion`) ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+- Added JavaScript kernel tools. `tool(fn, metadata?)` registers a named `function` or `async function` declaration as a fenced tool for in-process children while `tool.<name>(args)` host calls keep working. The parser reads only the declaration head: anonymous functions, classes, generators, native functions and non-identifier parameters are rejected with `invalid_tool_definition`; unicode identifiers are kept as written. Names must already fit the MCP grammar (`[A-Za-z0-9_-]`, at most 64 characters) and are checked against reserved bridge names, live host tools (including tools attached after the worker started) and tools registered by the session's Python, Ruby or Julia kernels, raising `reserved_tool_name` or `tool_name_collision`. Each descriptor carries `name`, a JSON input schema, `kernel_generation` and `definition_revision`; a stale generation or revision is refused with `kernel_tool_stale`, redefining a function bumps its revision, and a kernel reset clears every registered tool and bumps the generation. `agent()` accepts `tools: string[]` to hand a child those tool names. Kernel-tool requests against Python, Ruby or Julia kernels fail with `tools_unavailable` ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+- The JS worker answers kernel-tool `describe` and `invoke` requests on a separate pump from the top-level run queue, so a parent cell can stay pending on `agent()` while an in-process child calls one of the parent's registered functions. Interrupting the parent settles every nested invoke, and a worker reset, crash or close rejects the pending ones with `kernel_tool_stale` ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
+- `CodemodeExtensionAPI.kernelTools` exposes the parent cell's kernel-tool `describe`/`invoke` capability to extensions while a JavaScript eval is live; `KernelToolDescriptor`, `KernelToolsCapability`, `KernelToolsDescribeResult`, `KernelToolsInvokeRequest` and `KERNEL_TOOLS_UNSUPPORTED` are exported. Kernels may implement `EvalKernel.listKernelToolNames()` so the session manager can detect cross-language name collisions ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Changed
 
-- Typed task-handle details explicitly allow additional producer fields (`additionalProperties: true`) to match the frozen contract ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
+- The eval prompt documents `workpool()` and the `run_epoch` field on background `agent()` handles, and the JS prelude describes `tool(fn, metadata?)` and `workpool()` ([#1646](https://github.com/code-yeongyu/senpi/issues/1646), [#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Fixed
-
-- JS kernel tools parse named functions by declaration head (arrow bodies are allowed), reject illegal parameter lists instead of guessing trailing commas, keep unicode identifiers as written, carry host/foreign names on worker init, and settle nested invokes on parent interrupt ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
-- JS `tool()` consults live host and same-session foreign kernel names (py/rb/jl), including tools attached after worker start ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Removed
 

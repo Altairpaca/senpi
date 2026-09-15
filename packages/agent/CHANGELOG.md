@@ -6,19 +6,13 @@
 
 ### Added
 
-- Added dependency-free measured TS/JS/JSON read folders and a pure source-preserving segmented-view API with bounded breadth-first unfolding ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Added structural read folders and a segmented read view, exported as `selectedReadFolder`, `createDefaultReadSummary`, `createSegmentedReadView` and the `ReadFolder` type. A folder is a pure, synchronous lexer over TS/JS/JSON that marks foldable interiors (bodies of four or more lines, comments of six or more) and refuses any fold that overlaps a declaration header: class heritage, decorators, parameter lists, return types, arrow-return object types, computed member names, destructuring targets and nested declaration headers stay visible, and class bodies made only of fields, static blocks or accessors are never folded. Ambiguous lexical input (unproved type-operator or angle syntax, unclosed literals, unicode-set regexes) yields `parse_failure` instead of a partial fold. The view keeps exact source slices, inserts an ellipsis line per elision and lists numeric `offset`/`limit` rereads in its footer; it unfolds breadth-first until 50 source lines are visible and returns `no_summary` for inputs under 100 lines, oversized skeletons or views with no byte saving. No parser runtime, WASM or subprocess is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Changed
 
-- Requalified structural reads against declaration-protected source annotations. JSON remains selected; JavaScript now stays raw after the conservative candidate fell below 90% of the reference median, matching TypeScript's safe raw fallback ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-- Default reads of eligible JSON now use structural views with exact offset/limit rereads. JavaScript and TypeScript remain raw after the requalified production candidate missed their measured quality thresholds. Prose, explicit ranges and existing size-limit fallbacks remain verbatim; callers can inject a folder or omit it from custom options to retain raw reads ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+- Default `read` calls on eligible `.json` files now return the structural view. TypeScript and JavaScript stay raw: the measured candidate missed the required median saving for both, so only JSON is selected in the frozen `READ_FOLDER_SELECTION`. Explicit `offset`/`limit` requests, truncated input, markdown and `.txt` keep the verbatim path. `createReadTool()` with no options uses `selectedReadFolder`; passing an options object without `folder` reads raw, and a custom folder can be injected. The tool also honors an abort that arrives while the file bytes are being read ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
-
-- Stopped folding class bodies composed only of fields, static blocks or accessors so member declarations stay visible, and expanded the adversarial grammar to those class-member contexts ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-- Retained computed object-member names and complete destructuring-assignment targets against direct and enclosing folds, with deterministic adversarial grammar qualification before selection ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-- Protected class heritage, parameters, type/operator returns, decorators, bindings and nested declaration headers from overlapping folds; frozen bake-off replay now verifies the tokenizer installation and ships its selection receipt in-tree ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-- Preserved arrow-return object types in read-folder signatures and reused structured file cancellation before folding. Production measurements use an explicit raw comparator and the actual shared folder/view ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Removed
 
