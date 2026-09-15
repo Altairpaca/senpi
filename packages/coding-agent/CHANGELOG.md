@@ -15,6 +15,7 @@
 - Large tool-result strings evicted from the resident store now persist to a per-session blob backing and hydrate on read instead of forcing a full session-JSONL reparse; blobs are integrity-checked envelopes, so corrupt files fall back to JSONL recovery; `--no-session` never writes blobs.
 - Idle sessions release the memoized materialized entry views and tokenize the runtime message state in place; the next turn re-materializes them before any provider request or compaction admission reads them.
 - Branched sessions materialize entry content before the previous backing is released, so sentinel tokens can no longer be written into a new branched session file, and switching or branching sessions removes the previous session's blob directory.
+- Compaction spills resident strings to the blob backing instead of dropping them, keeping post-compaction reads on the O(string) hydration path.
 
 ### Fixed
 
