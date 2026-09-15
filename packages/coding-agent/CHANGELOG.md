@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added a real search engine behind `grep`. A native `senpi-grep` addon walks the tree with ordered parallelism, bounded reads and cancellation, and ripgrep stays as the fallback; `SENPI_GREP_ENGINE=auto|native|rg` chooses, and `SENPI_GREP_NATIVE_PATH` points at a different addon. `mode` selects `content`, `count` or `files`, `limit` and `skip` paginate over files, `path` takes a file, a directory, an array or a `<file>:L1-L2` selector, and `glob` accepts `!` exclusions. Every result ends in a `[grep: matches=2 files=2 searched=42 elapsedMs=8 engine=native nextSkip=none]` footer and carries `details` v1 with structured matches, file counts, scan status and pagination. The TUI, the HTML export and the eval widget group the matches under their file ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
+
 - Added `exposure: "eval"` to tool definitions: enabled tools remain registered and callable inside eval while hidden from direct model calls whenever eval is available. Built-in `bash`, `powershell` and `grep` declare this exposure; explicit SDK `evalOnlyToolNames` overrides still take precedence ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
 
 - Added a builtin herdr lifecycle reporter: pending questions and host dialogs mark the pane blocked with their label, active turns/subagents/monitors remain working, and settlement restores idle. It coexists with herdr's managed integration, defers to loaded user-authored `herdr-*` reporters, and releases the pane only on quit. Extensions can inspect the optional read-only `ctx.loadedExtensionPaths` list ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
