@@ -64,8 +64,11 @@ describe("config watch worker shutdown", () => {
 			};
 			try {
 				// When: cancellation precedes dispatch or lands after admission inside fs.watch.
+				// Snapshot IPC so an unwatch posted from inside fs.watch is not also delivered;
+				// the post-watch cancellation check must dispose that handle itself.
 				if (phase === "queued") cancel();
-				for (const command of worker.commands) port.emit("message", command);
+				const dispatched = worker.commands.splice(0);
+				for (const command of dispatched) port.emit("message", command);
 				worker.exit.resolve(0);
 				await unsubscribe();
 				// Then: late registration is immediately disposed, never retained for delivery.
