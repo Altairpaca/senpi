@@ -5950,9 +5950,9 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 ### What changed
 
-- `core/session-resident-store.ts`: eviction now has a recoverable backing. When the resident budget is exceeded, the least-recently-used string is written to a lazily-resolved blob directory (temp file + rename) before being dropped from the map; `materialize` hydrates evicted strings from that directory without re-entering the resident cache, so a bulk read cannot refill the budget. Without a backing directory eviction is disabled entirely — strings stay resident beyond the budget because dropping them would leave consumers holding unreadable sentinel tokens (previously reachable for in-memory sessions over 64 MiB). `clear()` wipes the blob cache along with the map; `stats()` gained `evictedCount`/`evictedBytes`.
-- `core/session-manager.ts`: persisted sessions configure the store with `<sessionDir>/resident-blobs/<sessionId>` (`--no-session` resolves to no directory and never writes blobs), and a new `dropMaterializedCaches()` releases `entriesCache`, `branchCache`, and `compactEntriesCache`.
-- `core/agent-session.ts`: `_emitAgentIdleAfterDeferredTurns()` releases the memoized materialized views right before emitting `agent_idle`. Materialized entries hold the full persisted strings, so views kept between turns pinned the entire session text in resident memory while idle (measured: an idle session held ~1.1 GB dirty JS heap on macOS via `footprint`; the store budget alone bounded only its own map while the views re-pinned everything).
+- `packages/coding-agent/src/core/session-resident-store.ts`: eviction now has a recoverable backing. When the resident budget is exceeded, the least-recently-used string is written to a lazily-resolved blob directory (temp file + rename) before being dropped from the map; `materialize` hydrates evicted strings from that directory without re-entering the resident cache, so a bulk read cannot refill the budget. Without a backing directory eviction is disabled entirely — strings stay resident beyond the budget because dropping them would leave consumers holding unreadable sentinel tokens (previously reachable for in-memory sessions over 64 MiB). `clear()` wipes the blob cache along with the map; `stats()` gained `evictedCount`/`evictedBytes`.
+- `packages/coding-agent/src/core/session-manager.ts`: persisted sessions configure the store with `<sessionDir>/resident-blobs/<sessionId>` (`--no-session` resolves to no directory and never writes blobs), and a new `dropMaterializedCaches()` releases `entriesCache`, `branchCache`, and `compactEntriesCache`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_emitAgentIdleAfterDeferredTurns()` releases the memoized materialized views right before emitting `agent_idle`. Materialized entries hold the full persisted strings, so views kept between turns pinned the entire session text in resident memory while idle (measured: an idle session held ~1.1 GB dirty JS heap on macOS via `footprint`; the store budget alone bounded only its own map while the views re-pinned everything).
 
 ### Why
 
@@ -5964,4 +5964,4 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 ### Expected merge conflict zones
 
-- LOW: `core/session-resident-store.ts` internals; `core/session-manager.ts` constructor tail and the block after `getEntries()`; `core/agent-session.ts` `_emitAgentIdleAfterDeferredTurns` tail.
+- LOW: `packages/coding-agent/src/core/session-resident-store.ts` internals; `packages/coding-agent/src/core/session-manager.ts` constructor tail and the block after `getEntries()`; `packages/coding-agent/src/core/agent-session.ts` `_emitAgentIdleAfterDeferredTurns` tail.
