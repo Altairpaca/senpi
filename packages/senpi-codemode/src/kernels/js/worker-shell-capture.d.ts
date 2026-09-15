@@ -3,6 +3,7 @@ export type ShellCaptureStream = "stdout" | "stderr";
 export type ShellCaptureRestore = () => void;
 
 export interface ShellCaptureChild {
+	readonly pid?: number;
 	readonly exitCode: number | null;
 	readonly signalCode: string | null;
 	readonly exited: Promise<number>;

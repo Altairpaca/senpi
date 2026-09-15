@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
 import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
+import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
 
@@ -20,10 +21,12 @@ export class JsWorkerRuntime {
 	#hooks = null;
 	#pendingDisplays = [];
 	#children = new Set();
+	#onChildEvent;
 
 	constructor(options) {
 		this.#cwd = options.cwd;
 		this.#parallelPoolWidth = options.parallelPoolWidth;
+		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
 		this.#installGlobals();
@@ -55,8 +58,8 @@ export class JsWorkerRuntime {
 	}
 
 	interrupt() {
-		// SIGTERM goes out synchronously so the caller's interrupt latency is
-		// unchanged; the SIGKILL escalation runs on its own.
+		// The tree snapshot, SIGTERM, and SIGKILL escalation run on their own so
+		// the caller's interrupt latency stays that of the acknowledgement.
 		void this.#terminateChildren();
 	}
 
@@ -65,46 +68,24 @@ export class JsWorkerRuntime {
 		// `detached: true` is the cell saying it wants the process to outlive it.
 		if (isPlainObject(spawnOptions) && spawnOptions.detached === true) return;
 		this.#children.add(child);
-		const forget = () => this.#children.delete(child);
+		const pid = Number.isInteger(child.pid) && child.pid > 0 ? child.pid : null;
+		// The host keeps its own copy of live pids: if this worker is terminated
+		// while blocked, only the host can still retire them.
+		if (pid !== null) this.#onChildEvent?.({ pid, state: "spawned" });
+		const forget = () => {
+			this.#children.delete(child);
+			if (pid !== null) this.#onChildEvent?.({ pid, state: "exited" });
+		};
 		if (child.exited instanceof Promise) child.exited.then(forget, forget);
 	}
 
 	#terminateChildren() {
-		const children = [...this.#children];
+		const children = [...this.#children].filter(child => child.exitCode === null && child.signalCode === null);
 		this.#children.clear();
-		const pending = [];
-		for (const child of children) {
-			if (child.exitCode !== null || child.signalCode !== null) continue;
-			try {
-				child.kill();
-			} catch {
-				continue;
-			}
-			pending.push(this.#killAfterGrace(child));
-		}
-		return pending.length === 0 ? undefined : Promise.all(pending);
-	}
-
-	async #killAfterGrace(child) {
-		const exited = child.exited instanceof Promise ? child.exited : null;
-		if (exited === null) return;
-		let timer;
-		const settled = exited.then(
-			() => true,
-			() => true,
-		);
-		const graced = new Promise(resolve => {
-			timer = setTimeout(() => resolve(false), CHILD_TERMINATION_GRACE_MS);
-		});
-		const exitedInTime = await Promise.race([settled, graced]);
-		clearTimeout(timer);
-		if (exitedInTime) return;
-		try {
-			child.kill("SIGKILL");
-		} catch {
-			return;
-		}
-		await settled;
+		if (children.length === 0) return undefined;
+		const roots = children.map(child => child.pid).filter(pid => Number.isInteger(pid) && pid > 0);
+		const settled = Promise.allSettled(children.map(child => (child.exited instanceof Promise ? child.exited : Promise.resolve())));
+		return terminateProcessTrees(roots, { graceMs: CHILD_TERMINATION_GRACE_MS, settled });
 	}
 
 	async #drainPendingDisplays() {
