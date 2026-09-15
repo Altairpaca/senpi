@@ -8,9 +8,9 @@ import type {
 	TerminalMonitorEndedEvent as MonitorEndedEvent,
 	TerminalMonitorEndedReason as MonitorEndedReason,
 } from "../monitor-state-event.ts";
-import { digestFileHandle } from "./monitor-file-digest.js";
-import { FileWatchLoop } from "./monitor-file-watch.js";
-import { MonitorLineBuffer } from "./monitor-line-buffer.js";
+import { digestFileHandle } from "./monitor-file-digest.ts";
+import { FileWatchLoop } from "./monitor-file-watch.ts";
+import { MonitorLineBuffer } from "./monitor-line-buffer.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import { DEFAULT_DURABLE_MONITOR_FIRE_BUDGET, FIRE_BUDGET_AUTO_MUTE_SUMMARY, FIRE_BUDGET_WINDOW_MS } from "./shared.ts";
 import type { MonitorDurabilityClass } from "./terminal-manifest.ts";
