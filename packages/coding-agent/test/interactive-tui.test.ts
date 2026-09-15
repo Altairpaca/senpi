@@ -634,7 +634,7 @@ type RetryStatusContext = {
 	activeStatusIndicator: (Component & { dispose(): void }) | undefined;
 	runtimeHost: {
 		session: {
-			sessionManager: { getEntries(): readonly unknown[] };
+			sessionManager: { getEntries(): readonly unknown[]; getEntryCount(): number };
 		};
 	};
 };
@@ -664,6 +664,7 @@ function createRetryStatusContext(sessionEntryCount: number): RetryStatusContext
 			session: {
 				sessionManager: {
 					getEntries: () => Array.from({ length: sessionEntryCount }, () => ({})),
+					getEntryCount: () => sessionEntryCount,
 				},
 			},
 		},

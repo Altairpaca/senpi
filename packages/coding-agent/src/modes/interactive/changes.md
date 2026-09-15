@@ -303,6 +303,26 @@
 - MEDIUM: `showLoadedResources` (`formatCompactList`, `addLoadedSection` and the four compact-list call sites) and the removed `getDisplaySourceInfo` / `getScopeGroup` / `buildScopeGroups` / `formatScopeGroups` bodies in `interactive-mode.ts`, along with the new `loaded-resource-scopes.ts` and `loaded-resource-section.ts` imports.
 - LOW: the `ResourceGroup` interface and `SourceScope` import in `components/config-selector.ts`.
 
+## 2026-09-12 - Working/retry status cadence reads the O(1) entry count (senpi#1635)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: use `getEntryCount()` in
+  the hook-status timer, working indicator and retry indicator. Ticker tests cover the 999/1000
+  cadence boundary and zero history loads on a trimmed persisted session.
+
+### Why
+
+- These cadence decisions need a count, not the full history that `getEntries()` loads after trim.
+
+### Why an extension could not handle it
+
+- The timer and indicator constructors are internal to interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: the three count-only cadence call sites.
+
 ## 2026-09-12 - Upstream sync: status spinners in the editor border, mouse toggles, renderer-only tool cards
 
 ### What changed
