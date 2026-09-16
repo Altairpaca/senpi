@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A session no longer dead-ends when the compaction summarizer is killed by a provider or credential failure. Such a stream used to end required compaction with the raw internal `senpi:no-turn-retry:` marker, which also disabled auto-retry and model fallback; because compaction never applied, the context stayed above the threshold and every following prompt failed identically. Those failures now apply the deterministic compaction checkpoint (retained-suffix safety checks unchanged) and the turn continues, with one plain warning saying a provider summary could not be completed, that a checkpoint was applied and older detail was dropped, and that it is safe to continue. Provider refusals, missing credentials and user aborts still surface loudly instead of reducing context. One compaction is also bounded at 15 minutes total across every attempt and retry regardless of input size (an explicit `compaction.summarizationMaxDurationMs` above that still wins), and the summary stream's final settlement now happens inside the watchdog, so a provider whose stream ends without a terminal event can no longer park compaction with no timer armed ([#1741](https://github.com/code-yeongyu/senpi/issues/1741)).
+
 ### Removed
 
 ## [2026.9.16] - 2026-09-16
