@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Buffer } from "buffer";
 
@@ -23,11 +24,11 @@ export interface ResidentStringStoreOptions {
 }
 
 export class ResidentStringStore {
+	// Keyed by content hash: the id IS the reverse index, so the same text always
+	// resolves to the same token and the same blob file, across store instances
+	// sharing a backing directory and across eviction/spill cycles.
 	private strings = new Map<string, string>();
-	/** Reverse index over resident strings; keys pin nothing beyond the strings map. */
-	private idsByText = new Map<string, string>();
 	private bytes = 0;
-	private nextId = 0;
 	private evictedCount = 0;
 	private evictedBytes = 0;
 	private readonly maxBytes: number;
@@ -44,9 +45,7 @@ export class ResidentStringStore {
 
 	clear(): void {
 		this.strings.clear();
-		this.idsByText.clear();
 		this.bytes = 0;
-		this.nextId = 0;
 		this.evictedCount = 0;
 		this.evictedBytes = 0;
 		const dir = this.blobsDir?.();
@@ -131,24 +130,18 @@ export class ResidentStringStore {
 			return text;
 		}
 
-		const existingToken = this.idsByText.get(text);
-		if (existingToken !== undefined) {
-			const id = existingToken.slice(RESIDENT_STRING_PREFIX.length);
-			const resident = this.strings.get(id);
-			if (resident !== undefined) {
-				// Map insertion order is the eviction order; a re-externalize refreshes recency.
-				this.strings.delete(id);
-				this.strings.set(id, resident);
-			}
-			return existingToken;
+		const id = createHash("sha256").update(text, "utf8").digest("hex");
+		const token = `${RESIDENT_STRING_PREFIX}${id}`;
+		if (this.strings.has(id)) {
+			// Map insertion order is the eviction order; a re-externalize refreshes recency.
+			this.strings.delete(id);
+			this.strings.set(id, text);
+			return token;
 		}
 
-		const id = `${this.nextId++}`;
 		this.strings.set(id, text);
 		this.bytes += Buffer.byteLength(text, "utf8");
 		this._enforceBudget();
-		const token = `${RESIDENT_STRING_PREFIX}${id}`;
-		this.idsByText.set(text, token);
 		return token;
 	}
 
@@ -182,7 +175,6 @@ export class ResidentStringStore {
 				return;
 			}
 			this.strings.delete(oldestId);
-			this.idsByText.delete(oldest);
 			this.bytes -= Buffer.byteLength(oldest, "utf8");
 		}
 	}
@@ -196,10 +188,15 @@ export class ResidentStringStore {
 		const temp = `${final}.tmp`;
 		try {
 			mkdirSync(dir, { recursive: true });
-			// Blobs are JSON envelopes so a truncated or mangled file fails the read
-			// below and falls back to JSONL recovery instead of hydrating garbage.
-			writeFileSync(temp, JSON.stringify({ v: 1, text }), "utf8");
-			renameSync(temp, final);
+			// The id is the content hash, so an existing blob already holds these exact
+			// bytes: skip the rewrite but still report the eviction, because the string
+			// is leaving memory either way.
+			if (!existsSync(final)) {
+				// Blobs are JSON envelopes so a truncated or mangled file fails the read
+				// below and falls back to JSONL recovery instead of hydrating garbage.
+				writeFileSync(temp, JSON.stringify({ v: 1, text }), "utf8");
+				renameSync(temp, final);
+			}
 		} catch {
 			try {
 				rmSync(temp, { force: true });
@@ -216,12 +213,19 @@ export class ResidentStringStore {
 		if (!dir) {
 			return undefined;
 		}
+		const file = join(dir, `${id}.blob`);
 		try {
-			const parsed = JSON.parse(readFileSync(join(dir, `${id}.blob`), "utf8")) as { text?: unknown };
-			return typeof parsed.text === "string" ? parsed.text : undefined;
-		} catch {
-			return undefined;
-		}
+			const parsed = JSON.parse(readFileSync(file, "utf8")) as { text?: unknown };
+			if (typeof parsed.text === "string") {
+				return parsed.text;
+			}
+		} catch {}
+		// The blob is missing or unusable. Drop whatever is there so the next eviction
+		// of this content writes a readable blob instead of skipping over a broken one.
+		try {
+			rmSync(file, { force: true });
+		} catch {}
+		return undefined;
 	}
 }
 
@@ -251,6 +255,11 @@ function transformJsonValue(
 	}
 	if (value === null || typeof value === "boolean") {
 		return value;
+	}
+	if (typeof value === "bigint") {
+		// JSON.stringify semantics: a BigInt is not serializable, and the store's
+		// contract is to fail exactly like it does.
+		throw new TypeError("Do not know how to serialize a BigInt");
 	}
 	if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
 		return OMIT_JSON_VALUE;
