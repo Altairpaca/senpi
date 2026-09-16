@@ -55,6 +55,7 @@ import type {
 import {
 	cleanupSessionResources,
 	cursorOverflowCompactionSettings,
+	describeProviderStallForUser,
 	isClassifierRefusal,
 	isContextOverflow,
 	isCursorPayloadResourceExhausted,
@@ -8008,6 +8009,24 @@ export class AgentSession {
 	}
 
 	/**
+	 * User-facing text for a turn that is really over. A provider-stream stall
+	 * carries the watchdog's own wording (`Provider stream start timed out after
+	 * 180000ms ...`), which the retry classifier needs on the message but which
+	 * explains nothing to the person reading the transcript and names no next
+	 * step (senpi#1740). Anything that is not a stall keeps its error verbatim.
+	 */
+	private _terminalFailureText(message: AssistantMessage, attempts: number): string | undefined {
+		const model = this.model ? `${this.model.provider}/${this.model.id}` : undefined;
+		return (
+			describeProviderStallForUser(message.errorMessage, {
+				attempts,
+				model,
+				recovery: this._retryFallback.hasConfiguredChain() ? "chain-exhausted" : "no-fallback-configured",
+			}) ?? message.errorMessage
+		);
+	}
+
+	/**
 	 * A 429-class failure with no usable fallback candidate must not fail the
 	 * turn with zero attempts: a provider answering 429 is asking for a retry.
 	 * No-hint and tier2 waits degrade to same-model in-turn retries under the
@@ -8397,7 +8416,7 @@ export class AgentSession {
 						type: "auto_retry_end",
 						success: false,
 						attempt: this._retryAttempt - 1,
-						finalError: message.errorMessage,
+						finalError: this._terminalFailureText(message, this._retryAttempt - 1),
 					});
 					this._retryAttempt = 0;
 					this._resetHintTierState();
