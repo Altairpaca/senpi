@@ -6,7 +6,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	type AgentMessage,
+	DEFAULT_STREAM_THROUGHPUT_WINDOW_MS,
+	estimateStreamedUnits,
+	StreamRateMeter,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import { type AuthEvent, type AuthPrompt, contentText, modelsAreEqual } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
@@ -940,6 +946,15 @@ export class InteractiveMode {
 	private workingVisible = true;
 	private workingIndicatorOptions: WorkingIndicatorOptions | undefined = undefined;
 	private workingStartedAt: number | undefined = undefined;
+	/**
+	 * Live streamed-units rate for the working line, over the same window the
+	 * throughput watchdog judges, so a crawling turn is visible while it crawls
+	 * (#1739). Rebuilt at every assistant message start (field initializers run
+	 * before the runtime host is bound, so the configured window is read there);
+	 * only observed while an assistant message streams, so tool time never
+	 * dilutes the rate.
+	 */
+	private streamRateMeter = new StreamRateMeter(DEFAULT_STREAM_THROUGHPUT_WINDOW_MS);
 	private readonly defaultWorkingMessage = "Working";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
@@ -3138,6 +3153,12 @@ export class InteractiveMode {
 		return this.workingMessage ?? this.defaultWorkingMessage;
 	}
 
+	/** Live tok/s once the provider's first stream event arrived, else undefined. */
+	private getWorkingTokensPerSecond(): number | undefined {
+		if (this.streamingMessage === undefined) return undefined;
+		return this.streamRateMeter.ratePerSecond();
+	}
+
 	private refreshWorkingLoaderMessage(): void {
 		if (this.activeStatusIndicator?.kind === "working") {
 			this.activeStatusIndicator.setMessage(this.getWorkingLoaderMessage());
@@ -3176,6 +3197,7 @@ export class InteractiveMode {
 						shimmer: formatWorkingStatusShimmerText,
 						suffix: (text) => theme.fg("dim", text),
 					},
+					this.getWorkingTokensPerSecond(),
 				),
 			messageIntervalMs: largeSessionWorkingStatusInterval(
 				sessionEntryCount,
@@ -5076,6 +5098,10 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.streamRateMeter = new StreamRateMeter(
+						this.settingsManager.getAgentStreamThroughputOptions()?.windowMs ||
+							DEFAULT_STREAM_THROUGHPUT_WINDOW_MS,
+					);
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -5096,6 +5122,12 @@ export class InteractiveMode {
 				break;
 
 			case "message_update":
+				if (
+					event.assistantMessageEvent.type === "text_delta" ||
+					event.assistantMessageEvent.type === "thinking_delta"
+				) {
+					this.streamRateMeter.record(estimateStreamedUnits(event.assistantMessageEvent.delta));
+				}
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingReveal.setTarget(assistantStreamingHeadMessage(event.message));
@@ -5523,6 +5555,20 @@ export class InteractiveMode {
 					why: event.chainConfigured
 						? "Retrying on your configured fallback chain."
 						: "No fallback chain configured — set one with /fallback.",
+				});
+				break;
+
+			case "stream_throughput_degraded":
+				// The turn ended on the measured rate with no model left to take it
+				// over; same copy as the configured-chain-absent server fallback.
+				this.showNoticeBox({
+					title: `✕ Provider stream throughput degraded · ${event.model}`,
+					tone: "error",
+					why: `${event.errorMessage} ${
+						event.chainConfigured
+							? "Every fallback candidate for this model was already tried."
+							: "No fallback chain configured — set one with /fallback."
+					}`,
 				});
 				break;
 

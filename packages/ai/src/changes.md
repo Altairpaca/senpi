@@ -1,3 +1,38 @@
+## Plain-language provider-stall copy (2026-09-16)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: adds `describeProviderStallForUser(errorMessage, options)` and the `ProviderStallDescriptionOptions` type next to `PROVIDER_STREAM_STALL_ERROR_PATTERN`. It turns any of the four stall watchdog wordings (stream-start, idle, WebSocket liveness, Responses completion) into one user-facing sentence naming the model, what the provider failed to do, and the bound it blew; with `attempts` it adds the same-model retry count, and with `recovery` it adds the next step (`/fallback`, resend, or the matching `retry.provider.*` setting). Anything that is not a stall returns `undefined` so callers keep their verbatim error. The classifier patterns and every existing export are untouched.
+
+### Why
+
+- senpi#1740: the watchdog's own `Error.message` is a classifier token (`isProviderStreamStallError`, the turn-retry gate) that also leaked to users as the answer to a stalled turn (`Provider stream start timed out after 180000ms`). The wording therefore cannot change, and the replacement has to live next to the patterns it mirrors so the two never drift - the coding-agent session, the interactive transcript and print mode all read this one definition.
+
+### Why an extension could not handle it
+
+- The stall wording is produced inside the agent loop and consumed by the retry classifier in this package; an extension sees the assistant message only after the host has already decided what to print.
+
+### Expected merge conflict zones
+
+- LOW: one appended block at the end of the stall-classifier section in `packages/ai/src/utils/retry.ts`; no existing line changes.
+
+## Throughput-degraded provider streams classified apart from silence stalls (2026-09-16)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` accepts the agent-loop throughput verdict ("provider stream throughput degraded"), and a new anchored `isProviderStreamThroughputDegradedError(message)` matches the full wording `Provider stream throughput degraded: <n> tok/s over <n>s (floor <n> tok/s)` plus its optional settings hint. It is deliberately NOT part of `PROVIDER_STREAM_STALL_ERROR_PATTERN` / `isProviderStreamStallError`, and not a provider timeout.
+
+### Why
+
+- senpi#1739: a stall is silence, which a same-model retry can genuinely fix; a degraded stream is an upstream that answers too slowly, where replaying the same payload cannot raise the rate. `AgentSession` needs the two classes separated so the degraded one can skip the same-model budget and go straight to the fallback chain while staying retryable.
+
+### Why an extension could not handle it
+
+- Retry and fallback admission is decided inside `AgentSession` from this classifier; an extension observes the turn only after that decision.
+
+### Expected merge conflict zones
+
+- LOW: one alternation in the retryable list plus one new exported predicate in `packages/ai/src/utils/retry.ts`.
 ## Shared empty-response error texts, forwarded empty stops admitted to the turn retry (2026-09-16)
 
 ### What changed
