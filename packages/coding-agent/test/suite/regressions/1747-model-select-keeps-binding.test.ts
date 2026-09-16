@@ -82,10 +82,10 @@ describe("issue #1747 model selector keeps a resumable Claude binding", () => {
 			turn.eventContext,
 		);
 
-		// The excursion answered one turn on the other provider before coming back.
+		// The excursion answered one turn on the other provider before coming back; the
+		// sent stream carries user turns only, so that answer adds nothing to it.
 		const awayHashes = sentMessageHashes([
 			...turn.contextMessages,
-			assistant("foreign answer"),
 			{ role: "user", content: [{ type: "text", text: "back on Claude" }], timestamp: 3 },
 		]);
 		const decision = decideNativeContinuity({
@@ -99,8 +99,8 @@ describe("issue #1747 model selector keeps a resumable Claude binding", () => {
 			crossAccountResumeSupported: true,
 		});
 
-		// The sent stream carries user turns only: the recorded prefix still matches, so
-		// the reattach re-sends just the turn taken while away, not the conversation.
+		// The recorded prefix still matches, so the reattach re-sends just the turn
+		// taken while away, not the conversation.
 		expect(decision).toMatchObject({ kind: "reattach", sdkSessionId: turn.sdkSessionId, from: 1 });
 		expect(awayHashes.slice(0, 1)).toEqual(turn.turnHashes);
 		expect(awayHashes).toHaveLength(2);

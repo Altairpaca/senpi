@@ -110,9 +110,7 @@ export function invalidationReasonFromBranch(branch: readonly BranchEntry[]): st
 
 function isBindingInvalidation(value: unknown): value is BindingInvalidation {
 	if (typeof value !== "object" || value === null) return false;
-	return (
-		"invalidated" in value && value.invalidated === true && "reason" in value && typeof value.reason === "string"
-	);
+	return "invalidated" in value && value.invalidated === true && "reason" in value && typeof value.reason === "string";
 }
 
 export function bindingFromStoredBranch(
