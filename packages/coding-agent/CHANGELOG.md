@@ -6,6 +6,23 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- A provider that accepts a request and never starts streaming no longer ends the turn with the watchdog's own message (`Provider stream start timed out after 180000ms ...`). The stall is still retried on the same model with the configured stream-start bound, and still hands the turn to the next model in a configured `retry.fallbackChains` entry whose answer becomes the turn result. What changed is what you read: the transcript (and `senpi -p`) describes the stall in plain language, and when nothing can take the turn over the final line names the stalled model, the attempts spent and the next step - `/fallback`, resending, or raising `retry.provider.streamStartTimeoutMs` (`0` disables). The wording on the assistant message is unchanged, so retry classification and fallback routing behave exactly as before ([#1740](https://github.com/code-yeongyu/senpi/issues/1740)).
+
+- A provider that keeps streaming at a uselessly low rate is now detected instead of looking healthy forever. Every previous guard on a live stream watched for silence (the stream-start bound stops applying at the first event; the idle bound is re-armed by every event), so a turn crawling at ~2 tok/s never failed, never retried and never walked a fallback chain. After the first stream event senpi now ignores `retry.provider.throughputGraceMs` (default 5000) of streaming and then measures streamed text and thinking units over a trailing `retry.provider.throughputWindowMs` (default 20000); a full window carrying at least 16 units whose sustained rate is below `retry.provider.minThroughputTokensPerSecond` (default 8, `0` disables) aborts the request with `Provider stream throughput degraded: <n> tok/s over <n>s (floor <n> tok/s)`. That failure is retryable but spends no same-model attempts - replaying the payload cannot make the upstream faster - so it goes straight to the configured fallback chain, and with no candidate the turn ends on that error with the usual "No fallback chain configured - set one with /fallback." guidance instead of continuing to crawl. Time the provider spends running local tools is excluded from the measurement, and the interactive working line now shows the live rate (`Working (1m 12s - 2.1 tok/s - esc to interrupt)`) so a degraded turn is visible while it runs ([#1739](https://github.com/code-yeongyu/senpi/issues/1739)).
+### Removed
+
+## [2026.9.16] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
+- Extensions receive a per-handler `signal` on the `session_shutdown` event. The host aborts it when that handler exceeds its budget, so long shutdown work can stop cleanly instead of being left behind ([#1732](https://github.com/code-yeongyu/senpi/issues/1732)).
+
 - Added the optional `ExtensionContext.kernelTools` capability with `describe(names)` and `invoke(request, signal?)`. It is present only while a JavaScript eval cell owns the host-tool context, so an extension tool called from inside that cell can reach the functions the cell registered with `tool(fn)`; on older runtimes and outside such a cell it is `undefined`. The package exports `kernelToolsStorage` and the `ExtensionKernelTools` type for hosts that install the capability ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Changed
@@ -18,6 +35,8 @@
 - Compaction spills resident strings to the blob backing instead of dropping them, keeping post-compaction reads on the O(string) hydration path.
 
 ### Fixed
+
+- One extension can no longer hold quit, `/reload`, `/new`, `/resume` or a fork hostage: senpi now bounds every `session_shutdown` handler itself. A handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs one warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error naming it, and continues teardown with the remaining handlers. Set either setting to `0` to disable that half. Handlers that finish under the warning threshold are unaffected, and every other extension event keeps its uncapped wait (ask-user and approval dialogs may legitimately block for minutes) ([#1732](https://github.com/code-yeongyu/senpi/issues/1732)).
 
 ### Removed
 
