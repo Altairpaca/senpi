@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { KEYBINDINGS, migrateKeybindingsConfig } from "../../src/core/keybindings.ts";
+import { KEYBINDINGS } from "../../src/core/keybindings.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../src/core/slash-commands.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import {
@@ -42,13 +42,6 @@ describe("app.session.renameCurrent keybinding", () => {
 			defaultKeys: [],
 			description: "Rename the current session",
 		});
-	});
-
-	it("migrates a renameCurrentSession alias onto the action id", () => {
-		const { config, migrated } = migrateKeybindingsConfig({ renameCurrentSession: "ctrl+alt+r" });
-
-		expect(migrated).toBe(true);
-		expect(config).toEqual({ "app.session.renameCurrent": "ctrl+alt+r" });
 	});
 
 	it("opens the inline rename editor when the action fires", () => {

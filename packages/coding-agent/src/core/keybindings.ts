@@ -323,7 +323,6 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	toggleSessionPath: "app.session.togglePath",
 	toggleSessionSort: "app.session.toggleSort",
 	renameSession: "app.session.rename",
-	renameCurrentSession: "app.session.renameCurrent",
 	deleteSession: "app.session.delete",
 	deleteSessionNoninvasive: "app.session.deleteNoninvasive",
 } as const satisfies Record<string, Keybinding>;

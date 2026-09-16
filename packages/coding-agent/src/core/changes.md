@@ -45,7 +45,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/slash-commands.ts` adds the `/rename [name]` builtin and keeps `/name` as an alias that describes the same session-rename action.
-- `packages/coding-agent/src/core/keybindings.ts` registers unbound-by-default `app.session.renameCurrent` ("Rename the current session") and a `renameCurrentSession` name migration onto that id.
+- `packages/coding-agent/src/core/keybindings.ts` registers unbound-by-default `app.session.renameCurrent` ("Rename the current session").
 
 ### Why
 
@@ -60,7 +60,7 @@
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/slash-commands.ts`: the `name` row in `BUILTIN_SLASH_COMMANDS`.
-- `packages/coding-agent/src/core/keybindings.ts`: `AppKeybindings` / `KEYBINDINGS` next to `app.session.resume`, and `KEYBINDING_NAME_MIGRATIONS` next to `renameSession`.
+- `packages/coding-agent/src/core/keybindings.ts`: `AppKeybindings` / `KEYBINDINGS` next to `app.session.resume`.
 
 ## 2026-09-16 - session_shutdown handler budget settings (senpi#1732)
 
