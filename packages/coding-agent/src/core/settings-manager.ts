@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { StreamThroughputOptions, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Transport } from "@earendil-works/pi-ai";
 import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import type {
@@ -1631,6 +1631,28 @@ export class SettingsManager {
 			return undefined;
 		}
 		return Math.min(DEFAULT_STREAM_START_TIMEOUT_MS, idleTimeoutMs);
+	}
+
+	/**
+	 * Sustained-throughput guard for an in-progress provider stream. The
+	 * stream-start bound stops applying at the first event and the idle bound is
+	 * re-armed by every event, so a provider that keeps answering at a uselessly
+	 * low rate trips neither (#1739). `retry.provider.minThroughputTokensPerSecond`
+	 * (floor, `0` disables), `retry.provider.throughputWindowMs` (`0` disables)
+	 * and `retry.provider.throughputGraceMs` override the agent defaults; an
+	 * unset knob keeps the shipped default. Returns undefined when nothing is
+	 * configured, so the agent loop applies its own defaults.
+	 */
+	getAgentStreamThroughputOptions(): StreamThroughputOptions | undefined {
+		const provider = this.settings.retry?.provider;
+		const options: StreamThroughputOptions = {
+			...(provider?.minThroughputTokensPerSecond === undefined
+				? {}
+				: { floorTokensPerSecond: provider.minThroughputTokensPerSecond }),
+			...(provider?.throughputWindowMs === undefined ? {} : { windowMs: provider.throughputWindowMs }),
+			...(provider?.throughputGraceMs === undefined ? {} : { graceMs: provider.throughputGraceMs }),
+		};
+		return Object.keys(options).length === 0 ? undefined : options;
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {
