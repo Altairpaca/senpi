@@ -1,3 +1,28 @@
+## 2026-09-16 - Forward thinking live in the empty-assistant recovery wrapper (#1733)
+
+### What changed
+
+- `packages/agent/src/empty-assistant-recovery.ts` commits an attempt (starts forwarding) on the first meaningful content event: non-blank `thinking_delta`, visible `text_delta`, `toolcall_start`, or a `text_end`/`thinking_end` carrying content. Previously only `toolcall_start` and visible `text_delta` committed, so a reasoning model's whole thinking phase was buffered.
+- `CommitPolicy.thinkingCommits` is false for the Kimi XTML lane (`hasKimiTextToolCallRecovery`): that thinking channel is the documented misrouting vector for text tool calls, and `wrapStreamWithKimiThinkingRecovery` forwards deltas untouched and only rewrites the finished message, so streaming it live would expose protocol fragments the recovery later removes (the #759 production incident). Kimi keeps the buffered contract until the thinking recovery sanitizes deltas and partials as they stream.
+- A committed attempt that ends as an empty stop or a `tool_use` stop without a tool call is not retried inside the wrapper. It ends as a `stopReason: "error"` message with `FORWARDED_EMPTY_RESPONSE_ERROR` / `FORWARDED_EMPTY_TOOL_USE_ERROR` (defined in pi-ai `utils/empty-response-errors.ts`), the streamed content preserved, and a `{ retries: 0, forwarded: true }` recovery diagnostic. pi-ai's retry classifier treats those two texts as retryable, so `AgentSession` drops the message from agent state and re-requests.
+- Uncommitted attempts keep the one silent retry and the terminal "twice" errors unchanged.
+
+### Why
+
+- Session data over seven days showed 79-83% of Claude and Kimi turns with thinking were held invisible for a median of 15-28 s (p90 31-52 s) until the first text delta, while the wrapper's silent retry fired 12 times in 58,801 assistant messages. oh-my-pi's `withReplaySafeStreamRetry` commits on `thinking_delta` and leaves post-commit empty stops to its session-level turn recovery; this mirrors that split with senpi's existing turn retry.
+
+### Why an extension could not handle it
+
+- The hold happens inside the agent loop's stream function wrapper, below `before_provider_request` and above every subscriber; no extension hook observes events before they are forwarded.
+
+### Rejected alternative
+
+- Replaying a retry after forwarding and splicing its events onto the first attempt's partial. A second `start` duplicates the partial message in the loop, and a message mixing attempt-one thinking with attempt-two content cannot be replayed to Anthropic, whose signed thinking blocks must be returned unmodified with the response that produced them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/empty-assistant-recovery.ts` forwarding gate and terminal handling; `packages/ai/src/utils/retry.ts` RETRYABLE pattern list. Preserve the split: uncommitted -> in-stream retry, committed -> retryable error.
+
 ## 2026-09-15 - Do not fold fields-only class bodies (#1639)
 
 ### What changed
