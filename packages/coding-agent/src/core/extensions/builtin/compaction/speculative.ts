@@ -26,12 +26,12 @@ import {
 	summarizationMaxDurationMs,
 	summarizationTotalBudgetMs,
 } from "../../../compaction/stream-watchdog.ts";
-import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import {
 	createWarmAnchorSnapshot,
 	isWarmSummaryAnchorValid,
 	type WarmAnchorSnapshot,
 } from "../../../compaction/warm-anchor.ts";
+import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";

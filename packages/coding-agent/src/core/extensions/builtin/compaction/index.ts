@@ -483,12 +483,7 @@ export default function compactionExtension(
 						pendingJob.snapshot.generation === speculativeGeneration &&
 						pendingJob.snapshot.expectedRevision === ctx.getMessageRevision()
 					) {
-						const recovery = recoverRequiredCompaction(
-							ctx,
-							pendingJob.snapshot,
-							failureKind,
-							inheritedFailure,
-						);
+						const recovery = recoverRequiredCompaction(ctx, pendingJob.snapshot, failureKind, inheritedFailure);
 						compaction = recovery.compaction;
 						if (!compaction) {
 							const result = { applied: false, reason: "failed" } as const;

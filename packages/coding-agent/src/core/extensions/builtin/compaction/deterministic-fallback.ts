@@ -169,9 +169,7 @@ function isSafeBoundedValue(value: unknown, seen = new Set<object>(), depth = 0)
 function isTerminalSummarizationProviderFailure(error: unknown): boolean {
 	if (error instanceof CredentialFailoverError) return true;
 	if (error instanceof Error && error.message.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return true;
-	return (
-		error instanceof SummaryRequestError && !error.transient && !error.refused && error.failureKind === undefined
-	);
+	return error instanceof SummaryRequestError && !error.transient && !error.refused && error.failureKind === undefined;
 }
 
 export function classifyRequiredCompactionFallbackFailure(
