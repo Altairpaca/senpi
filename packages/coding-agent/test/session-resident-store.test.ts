@@ -70,6 +70,47 @@ describe("ResidentStringStore", () => {
 		}
 	});
 
+	it("evict, hydrate and re-externalize adds no blob file", () => {
+		const dir = tempDir("resident-store-rehydrate-");
+		const blobs = join(dir, "blobs");
+		try {
+			const store = new ResidentStringStore({ maxBytes: KB, blobsDir: () => blobs });
+			const text = "h".repeat(40 * KB);
+			const token = store.externalize(text);
+			const blobFilesAfterEviction = readdirSync(blobs).length;
+			const evictionsAfterFirst = store.stats().evictedCount ?? 0;
+
+			const reToken = store.externalize(store.materialize(token));
+
+			expect(reToken).toBe(token);
+			expect(readdirSync(blobs)).toHaveLength(blobFilesAfterEviction);
+			// The hydrated string re-enters the resident map and is evicted onto its own
+			// existing blob; a stale reverse index would skip both.
+			expect(store.stats().evictedCount).toBe(evictionsAfterFirst + 1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("stores sharing one backing directory never hydrate each other's text", () => {
+		const dir = tempDir("resident-store-shared-");
+		const blobs = join(dir, "blobs");
+		try {
+			const storeA = new ResidentStringStore({ maxBytes: KB, blobsDir: () => blobs });
+			const storeB = new ResidentStringStore({ maxBytes: KB, blobsDir: () => blobs });
+			const textA = "a".repeat(40 * KB);
+			const textB = "b".repeat(40 * KB);
+
+			const tokenA = storeA.externalize(textA);
+			const tokenB = storeB.externalize(textB);
+
+			expect(storeA.materialize(tokenA)).toBe(textA);
+			expect(storeB.materialize(tokenB)).toBe(textB);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps strings resident when the backing directory is unwritable", () => {
 		const dir = tempDir("resident-store-fail-");
 		try {
@@ -124,6 +165,49 @@ describe("ResidentStringStore", () => {
 		}
 	});
 
+	it("re-externalizing a spilled string makes it resident again with the same token", () => {
+		const dir = tempDir("resident-store-respill-");
+		const blobs = join(dir, "blobs");
+		try {
+			const store = new ResidentStringStore({ maxBytes: 96 * KB, blobsDir: () => blobs });
+			const text = "a".repeat(40 * KB);
+			const token = store.externalize(text);
+			store.spillResident();
+			expect(store.stats().blobCount).toBe(0);
+
+			const reToken = store.externalize(text);
+
+			expect(reToken).toBe(token);
+			expect(store.stats().blobCount).toBe(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("a corrupt blob is removed on read so the next eviction rewrites it", () => {
+		const dir = tempDir("resident-store-corrupt-prune-");
+		const blobs = join(dir, "blobs");
+		try {
+			const store = new ResidentStringStore({ maxBytes: KB, blobsDir: () => blobs });
+			const text = "c".repeat(40 * KB);
+			const token = store.externalize(text);
+			const id = token.slice(RESIDENT_STRING_PREFIX.length);
+			const blobFile = join(blobs, `${id}.blob`);
+			expect(existsSync(blobFile)).toBe(true);
+			writeFileSync(blobFile, "{corrupt", "utf8");
+
+			const hydrated = store.materialize(token, (missing) => (missing === id ? text : undefined));
+
+			expect(hydrated).toBe(text);
+			expect(existsSync(blobFile)).toBe(false);
+			expect(store.externalize(text)).toBe(token);
+			expect(existsSync(blobFile)).toBe(true);
+			expect(store.materialize(token)).toBe(text);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("leaves strings resident on spill without a backing directory", () => {
 		const store = new ResidentStringStore({ maxBytes: 64 * KB });
 		const text = "x".repeat(40 * KB);
@@ -166,6 +250,12 @@ describe("ResidentStringStore", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+
+	it("BigInt values throw the JSON TypeError", () => {
+		const store = new ResidentStringStore({ maxBytes: Number.MAX_SAFE_INTEGER });
+
+		expect(() => store.externalize({ n: 1n })).toThrow(/BigInt/);
 	});
 
 	it("round-trips surrogate pairs through eviction", () => {
