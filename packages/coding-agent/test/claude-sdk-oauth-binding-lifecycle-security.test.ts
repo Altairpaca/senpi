@@ -174,7 +174,13 @@ afterEach(() => {
 });
 
 describe("Claude SDK OAuth binding lifecycle security", () => {
-	it("forgets process binding and invalidates/deletes durable state when selecting a non-Claude provider", async () => {
+	// A provider excursion is not an invalidation (senpi#1747): leaving this provider closes the
+	// live SDK query but keeps the binding, so returning to the same Claude model reattaches at the
+	// recorded prefix instead of re-sending the whole conversation. Durable state is still deleted
+	// for a genuine invalidation - the assistant-rewritten and extensions-removed cases below keep
+	// that half of the contract pinned - and a binding whose identity drifted is refused on the way
+	// back by identityDrift / withoutUnconfirmedResume rather than by deleting the sidecar here.
+	it("keeps the binding and its durable state when selecting a non-Claude provider", async () => {
 		const sessionId = "model-select-non-claude";
 		const { sessionFile } = makeSession();
 		const extension = fakeExtension();
@@ -197,12 +203,12 @@ describe("Claude SDK OAuth binding lifecycle security", () => {
 			context(sessionId, [], sessionFile),
 		);
 
-		expect(getBinding(sessionId)).toBeUndefined();
-		expect(extension.persisted).toContainEqual({
+		expect(getBinding(sessionId)?.sdkSessionId).toBe("sdk-before-switch");
+		expect(extension.persisted).not.toContainEqual({
 			customType: BINDING_ENTRY_TYPE,
 			data: { schemaVersion: 1, invalidated: true, reason: "model_selected" },
 		});
-		expect(existsSync(bindingSidecarPath(sessionFile))).toBe(false);
+		expect(existsSync(bindingSidecarPath(sessionFile))).toBe(true);
 	});
 
 	it("forgets process state and deletes durable state when an assistant message is rewritten", async () => {
