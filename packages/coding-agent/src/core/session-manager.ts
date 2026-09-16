@@ -22,7 +22,12 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-import { registerSessionWriter, reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
+import {
+	hasOtherLiveSessionWriter,
+	registerSessionWriter,
+	reserveSessionWrite,
+	unregisterSessionWriter,
+} from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -984,11 +989,10 @@ export class SessionManager {
 
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
-			// Blobs left under this id by an earlier process are a disposable cache: the
-			// JSONL is the authority for every entry and this store rewrites what it
+			// Blobs left under this id by a process that is gone are a disposable cache:
+			// the JSONL is the authority for every entry and this store rewrites what it
 			// evicts, so clearing them bounds the directory to one process lifetime.
-			const staleBlobsDir = this.residentStore.resolvedBlobsDir();
-			if (staleBlobsDir) this._removeBlobsDir(staleBlobsDir);
+			this._releaseBlobsDirUnlessShared();
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
@@ -1422,9 +1426,21 @@ export class SessionManager {
 	 * is untouched - it is the authority the next reader loads from. Idempotent.
 	 */
 	dispose(): void {
-		const blobsDir = this.residentStore.resolvedBlobsDir();
-		if (blobsDir) this._removeBlobsDir(blobsDir);
 		unregisterSessionWriter(this);
+		this._releaseBlobsDirUnlessShared();
+	}
+
+	/**
+	 * The blob directory is keyed by session id, so every live manager over the same
+	 * session file hydrates from it. Removing it while one of them is still reading
+	 * would cost that manager a full JSONL recovery per evicted string, so the last
+	 * owner to let go is the one that clears it.
+	 */
+	private _releaseBlobsDirUnlessShared(): void {
+		const blobsDir = this.residentStore.resolvedBlobsDir();
+		if (!blobsDir) return;
+		if (this.sessionFile && hasOtherLiveSessionWriter(this.sessionFile, this)) return;
+		this._removeBlobsDir(blobsDir);
 	}
 
 	private _removeBlobsDir(dir: string): void {
