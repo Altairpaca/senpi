@@ -10,6 +10,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readSync,
+	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
@@ -1014,6 +1015,10 @@ export class SessionManager {
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
+		// Capture the previous backing before the id changes: the blobsDir
+		// provider resolves against the new id after this assignment, so clear()
+		// below would otherwise leak the old session's blob directory on disk.
+		const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const header: SessionHeader = {
@@ -1028,6 +1033,9 @@ export class SessionManager {
 		this.mirrorTrimmed = false;
 		this.fullEntryCount = 0;
 		this.residentStore.clear();
+		if (previousBlobsDir) {
+			this._removeBlobsDir(previousBlobsDir);
+		}
 		this.byId.clear();
 		this.entryOrdersById.clear();
 		this.messageEntryPositions = new WeakMap();
@@ -1149,6 +1157,14 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/**
+	 * Exposes the resident store for out-of-band string lifecycles such as the
+	 * agent's runtime message state (tokenized while idle, hydrated per turn).
+	 */
+	getResidentStore(): ResidentStringStore {
+		return this.residentStore;
 	}
 
 	getResidentStoreStats(): ResidentStoreStats {
@@ -1393,6 +1409,12 @@ export class SessionManager {
 		this._appendEntry(entry);
 		this._trimMirrorAfterCompaction(entry);
 		return entry.id;
+	}
+
+	private _removeBlobsDir(dir: string): void {
+		try {
+			rmSync(dir, { force: true, recursive: true });
+		} catch {}
 	}
 
 	private _trimMirrorAfterCompaction(compaction: CompactionEntry): void {
@@ -1934,13 +1956,19 @@ export class SessionManager {
 			}
 
 			reserveSessionWrite(newSessionFile);
+			// Materialize the branched entries while the previous backing is still
+			// readable, then clear: re-externalizing tokenized entries after clear()
+			// would bake sentinel tokens into the new branched JSONL.
+			const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
+			const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 			this.residentStore.clear();
+			if (previousBlobsDir) {
+				this._removeBlobsDir(previousBlobsDir);
+			}
 			this.mirrorTrimmed = false;
-			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-				this.residentStore.externalize(entry),
-			);
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
+			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
 			this.mutationCount++;
 
@@ -1975,10 +2003,9 @@ export class SessionManager {
 			labelEntries.push(labelEntry);
 			parentId = labelEntry.id;
 		}
+		const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
 		this.residentStore.clear();
-		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-			this.residentStore.externalize(entry),
-		);
+		this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 		this.sessionId = newSessionId;
 		this._buildIndex();
 		this.mutationCount++;

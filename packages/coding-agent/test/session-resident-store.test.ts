@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ResidentStringStore } from "../src/core/session-resident-store.ts";
+import { RESIDENT_STRING_PREFIX, ResidentStringStore } from "../src/core/session-resident-store.ts";
 
 const KB = 1024;
 
@@ -86,6 +86,39 @@ describe("ResidentStringStore", () => {
 		}
 	});
 
+	it("hydrates readable-but-corrupt blobs by falling back to JSONL recovery", () => {
+		const dir = tempDir("resident-store-corrupt-");
+		const blobs = join(dir, "blobs");
+		try {
+			const store = new ResidentStringStore({ maxBytes: KB, blobsDir: () => blobs });
+			const text = "c".repeat(40 * KB);
+			const token = store.externalize(text);
+
+			writeFileSync(join(blobs, `${token.slice(RESIDENT_STRING_PREFIX.length)}.blob`), "{corrupt", "utf8");
+
+			const fallback = new Map([[token.slice(RESIDENT_STRING_PREFIX.length), text]]);
+			expect(store.materialize(token, (id) => fallback.get(id))).toBe(text);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("externalizeInPlace/materializeInPlace round-trips runtime state", () => {
+		const dir = tempDir("resident-store-inplace-");
+		try {
+			const store = new ResidentStringStore({ maxBytes: 64 * KB, blobsDir: () => join(dir, "blobs") });
+			const large = "m".repeat(40 * KB);
+			const state = { messages: [{ role: "user", content: [{ type: "text", text: large }] }] };
+
+			store.externalizeInPlace(state);
+			expect(JSON.stringify(state)).toContain(RESIDENT_STRING_PREFIX.slice(1, 20));
+
+			store.materializeInPlace(state);
+			expect(state.messages[0].content[0].text).toBe(large);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it("removes blob files on clear", () => {
 		const dir = tempDir("resident-store-clear-");
 		const blobs = join(dir, "blobs");

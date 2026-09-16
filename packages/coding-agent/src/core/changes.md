@@ -5965,3 +5965,24 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/core/session-resident-store.ts` internals; `packages/coding-agent/src/core/session-manager.ts` constructor tail and the block after `getEntries()`; `packages/coding-agent/src/core/agent-session.ts` `_emitAgentIdleAfterDeferredTurns` tail.
+
+## 2026-09-16 - Resident store review fixes (branch-token baking, blob integrity, dir leaks, idle state)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: blobs are JSON envelopes (`{v:1,text}`) and `_readBlob` validates them, so a truncated or mangled blob falls back to JSONL recovery instead of hydrating garbage; `externalizeString` consults an `idsByText` reverse index (deleted on eviction/spill/clear) so re-externalizing the same resident text is idempotent instead of double-counting bytes; new `externalizeInPlace()`/`materializeInPlace()` mutate nested string fields in place (object identity preserved) and `resolvedBlobsDir()` exposes the active backing.
+- `packages/coding-agent/src/core/session-manager.ts`: `createBranchedSession()` materializes the branched entries via `_materializeEntries()` BEFORE clearing the store, so re-externalization can no longer bake sentinel tokens into the new branched JSONL; `_resetToNewSession()` and the branch path capture and remove the previous session's blob directory that `clear()` could no longer reach after the session-id switch; new `getResidentStore()` accessor.
+- `packages/coding-agent/src/core/agent-session.ts`: the idle settle now also tokenizes `agent.state.messages` in place (the runtime copies that pinned the same large strings the views pinned); `prepareNextTurnWithContext` and `transformContext` re-materialize them, so every provider request and every per-turn consumer reads real strings.
+- `test/suite/harness.ts`: `getUserTexts`/`getAssistantTexts` materialize through the store — post-idle runtime state legitimately holds tokens.
+
+### Why
+
+- ChatGPT-web review of PR #1726/#1729 confirmed four defects: branch-time token baking, missing blob corruption detection, old-session blob-directory leaks, and idle retention through agent state. Each fix keeps the session file authoritative: corruption and hydration misses still fall back to the existing batched JSONL recovery.
+
+### Why an extension could not handle it
+
+- All four fixes live inside private store/`SessionManager`/`AgentSession` lifecycles (ordering around `clear()`, the blobsDir provider, and the idle settle boundary); extensions never see these transition points.
+
+### Expected merge conflict zones
+
+- LOW: `core/session-resident-store.ts` (blob envelope + reverse index); `core/session-manager.ts` (`_resetToNewSession`, `createBranchedSession`); `core/agent-session.ts` (idle settle, `transformContext`, `prepareNextTurnWithContext` wrappers).

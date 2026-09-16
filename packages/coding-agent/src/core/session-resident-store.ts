@@ -4,7 +4,7 @@ import { Buffer } from "buffer";
 
 const RESIDENT_STRING_MIN_BYTES = 32 * 1024;
 const DEFAULT_RESIDENT_STRING_BUDGET_BYTES = 64 * 1024 * 1024;
-const RESIDENT_STRING_PREFIX = "\u0000senpi-resident-string:v1:";
+export const RESIDENT_STRING_PREFIX = "\u0000senpi-resident-string:v1:";
 const OMIT_JSON_VALUE = Symbol("omit-json-value");
 
 export interface ResidentStoreStats {
@@ -24,6 +24,8 @@ export interface ResidentStringStoreOptions {
 
 export class ResidentStringStore {
 	private strings = new Map<string, string>();
+	/** Reverse index over resident strings; keys pin nothing beyond the strings map. */
+	private idsByText = new Map<string, string>();
 	private bytes = 0;
 	private nextId = 0;
 	private evictedCount = 0;
@@ -42,6 +44,7 @@ export class ResidentStringStore {
 
 	clear(): void {
 		this.strings.clear();
+		this.idsByText.clear();
 		this.bytes = 0;
 		this.nextId = 0;
 		this.evictedCount = 0;
@@ -71,16 +74,63 @@ export class ResidentStringStore {
 		return transformJson(value, (text) => this.materializeString(text, onMissing));
 	}
 
+	resolvedBlobsDir(): string | undefined {
+		return this.blobsDir?.();
+	}
+
+	/**
+	 * Replace large strings reachable from `value` with resident tokens, mutating
+	 * the object graph in place so consumer-held references stay valid.
+	 */
+	externalizeInPlace(value: unknown): void {
+		this._mutateStringsInPlace(value, new Set(), (text) => this.externalizeString(text));
+	}
+
+	/** Hydrate resident tokens reachable from `value` in place (inverse of externalizeInPlace). */
+	materializeInPlace(value: unknown): void {
+		this._mutateStringsInPlace(value, new Set(), (text) => this.materializeString(text));
+	}
+
+	private _mutateStringsInPlace(value: unknown, seen: Set<object>, mutate: (text: string) => string): void {
+		if (typeof value !== "object" || value === null || seen.has(value)) {
+			return;
+		}
+		seen.add(value);
+		const record = value as Record<string, unknown>;
+		for (const key of Object.keys(record)) {
+			const current = record[key];
+			if (typeof current === "string") {
+				record[key] = mutate(current);
+			} else if (typeof current === "object" && current !== null) {
+				this._mutateStringsInPlace(current, seen, mutate);
+			}
+		}
+	}
+
 	private externalizeString(text: string): string {
 		if (text.length < RESIDENT_STRING_MIN_BYTES || text.startsWith(RESIDENT_STRING_PREFIX)) {
 			return text;
+		}
+
+		const existingToken = this.idsByText.get(text);
+		if (existingToken !== undefined) {
+			const id = existingToken.slice(RESIDENT_STRING_PREFIX.length);
+			const resident = this.strings.get(id);
+			if (resident !== undefined) {
+				// Map insertion order is the eviction order; a re-externalize refreshes recency.
+				this.strings.delete(id);
+				this.strings.set(id, resident);
+			}
+			return existingToken;
 		}
 
 		const id = `${this.nextId++}`;
 		this.strings.set(id, text);
 		this.bytes += Buffer.byteLength(text, "utf8");
 		this._enforceBudget();
-		return `${RESIDENT_STRING_PREFIX}${id}`;
+		const token = `${RESIDENT_STRING_PREFIX}${id}`;
+		this.idsByText.set(text, token);
+		return token;
 	}
 
 	private materializeString(text: string, onMissing?: (id: string) => string | undefined): string {
@@ -113,6 +163,7 @@ export class ResidentStringStore {
 				return;
 			}
 			this.strings.delete(oldestId);
+			this.idsByText.delete(oldest);
 			this.bytes -= Buffer.byteLength(oldest, "utf8");
 		}
 	}
@@ -126,7 +177,9 @@ export class ResidentStringStore {
 		const temp = `${final}.tmp`;
 		try {
 			mkdirSync(dir, { recursive: true });
-			writeFileSync(temp, text, "utf8");
+			// Blobs are JSON envelopes so a truncated or mangled file fails the read
+			// below and falls back to JSONL recovery instead of hydrating garbage.
+			writeFileSync(temp, JSON.stringify({ v: 1, text }), "utf8");
 			renameSync(temp, final);
 		} catch {
 			try {
@@ -145,7 +198,8 @@ export class ResidentStringStore {
 			return undefined;
 		}
 		try {
-			return readFileSync(join(dir, `${id}.blob`), "utf8");
+			const parsed = JSON.parse(readFileSync(join(dir, `${id}.blob`), "utf8")) as { text?: unknown };
+			return typeof parsed.text === "string" ? parsed.text : undefined;
 		} catch {
 			return undefined;
 		}

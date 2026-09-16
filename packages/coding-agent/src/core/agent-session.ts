@@ -1546,6 +1546,9 @@ export class AgentSession {
 				: undefined);
 		const previousTransformContext = this.agent.transformContext;
 		this.agent.transformContext = async (messages, signal) => {
+			// The idle path tokenizes agent.state.messages in place; every provider
+			// request re-hydrates here so tokens can never reach a model.
+			this.sessionManager.getResidentStore().materializeInPlace(messages);
 			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
 			const model = this.model;
 			if (model?.provider !== "cursor" && model?.provider !== "cursor-cli-oauth") return transformed;
@@ -1576,6 +1579,10 @@ export class AgentSession {
 		};
 
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
+			// A settled turn leaves tokens in agent.state.messages (idle release); make
+			// them readable again before any consumer (compaction admission, context
+			// refresh, admission estimation) reads them this turn.
+			this.sessionManager.getResidentStore().materializeInPlace(this.agent.state.messages);
 			// Enforce compaction only when this prepare precedes an actual provider
 			// admission: a tool continuation or queued steer/follow-up messages. A
 			// completed turn with no continuation keeps pre-PR timing, while the
@@ -1989,6 +1996,10 @@ export class AgentSession {
 		// entries pin the full persisted strings, so keeping the views between turns
 		// holds the whole session text in resident memory while nothing runs.
 		this.sessionManager.dropMaterializedCaches();
+		// agent.state.messages holds the runtime copies of the same large strings the
+		// views pinned. Tokenize them in place while idle; the next turn re-materializes
+		// them through the prepare/transformContext hooks below.
+		this.sessionManager.getResidentStore().externalizeInPlace(this.agent.state.messages);
 		this._emit({ type: "agent_idle" });
 	}
 
