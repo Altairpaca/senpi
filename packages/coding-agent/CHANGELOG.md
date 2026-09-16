@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A provider that accepts a request and never starts streaming no longer ends the turn with the watchdog's own message (`Provider stream start timed out after 180000ms ...`). The stall is still retried on the same model with the configured stream-start bound, and still hands the turn to the next model in a configured `retry.fallbackChains` entry whose answer becomes the turn result. What changed is what you read: the transcript (and `senpi -p`) describes the stall in plain language, and when nothing can take the turn over the final line names the stalled model, the attempts spent and the next step - `/fallback`, resending, or raising `retry.provider.streamStartTimeoutMs` (`0` disables). The wording on the assistant message is unchanged, so retry classification and fallback routing behave exactly as before ([#1740](https://github.com/code-yeongyu/senpi/issues/1740)).
+
 ### Removed
 
 ## [2026.9.16] - 2026-09-16

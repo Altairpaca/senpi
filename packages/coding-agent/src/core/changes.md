@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-16 - Stalled turns end with recovery guidance (senpi#1740)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` adds the private `_terminalFailureText(message, attempts)` and uses it for the `auto_retry_end.finalError` of an exhausted transient retry. A provider-stream stall is rewritten through `describeProviderStallForUser` (imported from `@earendil-works/pi-ai/compat`) with the stalled model selector, the attempts spent and a recovery hint chosen from `RetryFallbackController.hasConfiguredChain()` (`chain-exhausted` vs `no-fallback-configured`); every other failure keeps `message.errorMessage` verbatim. The assistant message itself is left untouched, so `isProviderStreamStallError` and the retry/fallback routing are unchanged.
+
+### Why
+
+- senpi#1740: when a provider accepted a request and never streamed a first event, the session's visible outcome was the watchdog's interpolated message (`Provider stream start timed out after 180000ms`). It names no cause and no next step, and the same string has to stay on the message because the retry classifier matches on it - so the rewrite belongs at the event the UI renders, not at the message.
+
+### Why an extension could not handle it
+
+- `auto_retry_end` is emitted by the session at the moment it gives the turn up; only the session knows the attempts spent and whether a fallback chain existed.
+
+### Expected merge conflict zones
+
+- LOW: one import specifier, one new private method before `_degradeRateLimitedWithoutFallback`, and one `finalError:` line in the generic transient-exhaustion branch of `_handleRetryableError`.
+
 ## 2026-09-16 - session_shutdown handler budget settings (senpi#1732)
 
 ### What changed
