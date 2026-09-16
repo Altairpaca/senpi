@@ -6,6 +6,8 @@
 
 ### Added
 
+- Extensions receive a per-handler `signal` on the `session_shutdown` event. The host aborts it when that handler exceeds its budget, so long shutdown work can stop cleanly instead of being left behind ([#1732](https://github.com/code-yeongyu/senpi/issues/1732)).
+
 - Added the optional `ExtensionContext.kernelTools` capability with `describe(names)` and `invoke(request, signal?)`. It is present only while a JavaScript eval cell owns the host-tool context, so an extension tool called from inside that cell can reach the functions the cell registered with `tool(fn)`; on older runtimes and outside such a cell it is `undefined`. The package exports `kernelToolsStorage` and the `ExtensionKernelTools` type for hosts that install the capability ([#1647](https://github.com/code-yeongyu/senpi/issues/1647)).
 
 ### Changed
@@ -13,6 +15,8 @@
 - Default `read` calls on eligible `.json` files now return the agent package's structural view, with the same declaration-safe folding and numeric `offset`/`limit` rereads, so edits after a read still target real lines. TypeScript and JavaScript stay raw because the measured candidate missed their quality thresholds. Prose, explicit ranges and the existing size-limit continuations produce the same output as before. `ReadToolOptions.folder` selects the folder; `createReadToolDefinition`, `createCodingTools` and `createReadOnlyTools` default it to `selectedReadFolder`, and an options object without `folder` keeps reads verbatim. Compiled binaries produce byte-identical read output to the source build, and no parser dependency is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
+
+- One extension can no longer hold quit, `/reload`, `/new`, `/resume` or a fork hostage: senpi now bounds every `session_shutdown` handler itself. A handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs one warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error naming it, and continues teardown with the remaining handlers. Set either setting to `0` to disable that half. Handlers that finish under the warning threshold are unaffected, and every other extension event keeps its uncapped wait (ask-user and approval dialogs may legitimately block for minutes) ([#1732](https://github.com/code-yeongyu/senpi/issues/1732)).
 
 ### Removed
 
