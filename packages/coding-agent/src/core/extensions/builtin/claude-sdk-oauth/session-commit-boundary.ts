@@ -1,4 +1,4 @@
-import { clampEvalSummary } from "@code-yeongyu/senpi-codemode/eval-request";
+import { clampEvalSummary } from "@code-yeongyu/senpi-codemode/eval-summary";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 import { sessionSyncDigest } from "./session-sync.ts";
