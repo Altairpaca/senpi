@@ -226,6 +226,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			return runner.emitContext(messages);
 		},
 		prepareNextTurnWithContext: options.prepareNextTurnWithContext,
+		// Mirrors core/sdk.ts: the stream throughput guard is settings-driven.
+		streamThroughput: settingsManager.getAgentStreamThroughputOptions(),
 	});
 	const extensionsResult = options.extensionFactories
 		? await createTestExtensionsResult(options.extensionFactories, tempDir)

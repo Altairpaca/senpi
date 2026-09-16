@@ -1,3 +1,26 @@
+## 2026-09-16 - Stream throughput watchdog for in-progress provider streams (#1739)
+
+### What changed
+
+- `packages/agent/src/stream-throughput-watchdog.ts` (new): `StreamThroughputDegradedError`, `formatStreamThroughputDegradedMessage`, `estimateStreamedUnits`, the sliding-window `StreamRateMeter`, `createStreamThroughputWatchdog` and the shipped defaults (floor 8 units/s, 20s window, 5s grace, 16-unit minimum). One streamed unit is ~4 characters of a text or thinking delta, so a gateway that batches several tokens per delta is measured by volume rather than by event count.
+- `packages/agent/src/agent-loop.ts`: the assistant event reader creates the watchdog from `config.streamThroughput`, anchors it at the first stream event, records units from `text_delta` / `thinking_delta`, and excludes any wait that began while the stream reported pending local work (Cursor exec). A verdict closes the iterator, aborts the request controller with the error and rejects the read, so the turn ends as `stopReason: "error"` with that message and the request signal carries it.
+- `packages/agent/src/types.ts`: `AgentLoopConfig.streamThroughput` (floor / window / grace; a `0` floor or window disables the guard).
+- `packages/agent/src/agent.ts`: `AgentOptions.streamThroughput` and the matching public field, forwarded into every loop config so hosts can retune it per session.
+- `packages/agent/src/index.ts`: exports the watchdog module's public surface (the coding agent's interactive working line reuses `StreamRateMeter` and `estimateStreamedUnits`).
+
+### Why
+
+- Every other guard on a live stream detects SILENCE: the stream-start bound stops applying once the first event arrives (`useStartBound = !sawFirstEvent`) and the idle bound is re-armed by every event. A provider answering at ~2 tok/s therefore tripped nothing while the session was unusable (senpi#1739, reported for `gpt-6-astra`). Compaction already bounds this class with a wall-clock budget; the main turn cannot use a wall clock because tool-using turns are legitimately long, so the guard measures rate over a trailing window instead.
+
+### Why an extension could not handle it
+
+- The measurement has to happen between the provider iterator and the loop, on the same controller that can abort the in-flight request. No extension hook sits there, and an extension cannot fail the turn with a retryable error the session router understands.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` around `createAssistantEventReader` / `readNextAssistantEvent`, which upstream also edits for the idle and start bounds. Keep the split: silence -> start/idle errors, sustained low rate -> `StreamThroughputDegradedError`.
+- LOW: the new option field in `packages/agent/src/types.ts` and `packages/agent/src/agent.ts`.
+
 ## 2026-09-16 - Forward thinking live in the empty-assistant recovery wrapper (#1733)
 
 ### What changed
