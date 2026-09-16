@@ -1,7 +1,12 @@
 import type { AssistantMessage } from "../types.ts";
+import { FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR } from "./empty-response-errors.ts";
 
 function buildProviderErrorPattern(patterns: readonly string[]): RegExp {
 	return new RegExp(patterns.join("|"), "i");
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
@@ -130,6 +135,13 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// fallback chain unwedge such a session instead of dead-ending it. The trailing
 	// backtick keeps the pattern on Anthropic's pairing-error template.
 	"was found without a corresponding `",
+
+	// An empty stop or tool_use-without-tool-call on a model whose reasoning had already streamed
+	// live. The stream-level wrapper (pi-agent-core empty-assistant-recovery) cannot replay such an
+	// attempt, so it ends the turn with these exact texts for the turn retry to re-request; the
+	// "twice" variants are deliberately absent because the wrapper already spent its own retry.
+	escapeRegExp(FORWARDED_EMPTY_RESPONSE_ERROR),
+	escapeRegExp(FORWARDED_EMPTY_TOOL_USE_ERROR),
 
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
