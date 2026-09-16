@@ -6062,3 +6062,24 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/core/session-resident-store.ts` (new method after `clear()`); `packages/coding-agent/src/core/session-manager.ts` `_trimMirrorAfterCompaction` one-line change.
+
+## 2026-09-16 - Resident store: content-addressed blobs, token-free runtime reads, bounded blob lifetime
+
+### What changed
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: blob ids are the SHA-256 hex of the text (the token stays `RESIDENT_STRING_PREFIX + id`); the `idsByText` reverse index and the per-instance counter are gone, so `spillResident()` releases every spilled string and re-externalizing hydrated text maps to the existing blob instead of minting a new file. `_writeBlob` skips a file that already exists (same hash, same bytes) while still counting the eviction; `_readBlob` deletes a blob that fails the envelope check so the next eviction rewrites it. `transformJsonValue` throws `TypeError("Do not know how to serialize a BigInt")` again instead of letting a bigint reach the `WeakSet` cycle guard.
+- `packages/coding-agent/src/core/agent-session.ts`: the idle settle releases the materialized views and tokenizes `agent.state.messages` only when `residentStore.stats().evictedCount > 0` (the release frees memory only for blob-hydrated strings) and sets a latch; `get messages()`, `prepareNextTurnWithContext`, and the out-of-turn token estimators (`_estimateCompactionLogTokens`, `_blockedAdmissionContentTokens`, `_resolveThresholdContextTokens`, the compaction-threshold estimate, `_shouldCompact`) read through `_runtimeMessages()`, which hydrates the runtime array in place when the latch is set. `dispose()` disposes the session manager.
+- `packages/coding-agent/src/core/session-manager.ts`: `dispose()` removes the blob directory and unregisters the session writer; `_setSessionFile` clears a stale `resident-blobs/<sessionId>` directory when a persisted session is opened or recovered.
+- `packages/coding-agent/test/suite/harness.ts`: `getUserTexts`/`getAssistantTexts` read plain message text again (the store wrapper was a symptom of the token leak).
+
+### Why
+
+- Review of PRs #1726/#1729 (issue #1746) found: spilled strings pinned by the reverse-index keys; a bigint crashing with `WeakSet values must be objects`; `session.messages` exposing resident tokens between `agent_idle` and the next turn; per-process numeric ids creating a new blob per re-externalize and colliding across processes on one session directory; the idle release re-materializing the full history every turn even when nothing was evicted; and no blob-directory cleanup on writer teardown or session reopen.
+
+### Why an extension could not handle it
+
+- Blob naming, the idle settle boundary, the runtime message accessor, and the session-writer lifecycle are private store/`SessionManager`/`AgentSession` internals; extensions observe none of these transition points.
+
+### Expected merge conflict zones
+
+- LOW: `core/session-resident-store.ts` (id derivation, `_writeBlob`/`_readBlob`); `core/agent-session.ts` (`_emitAgentIdleAfterDeferredTurns`, `get messages`, estimator call sites, `dispose`); `core/session-manager.ts` (`_setSessionFile`, new `dispose`).

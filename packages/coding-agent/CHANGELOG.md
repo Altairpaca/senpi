@@ -8,6 +8,11 @@
 
 ### Changed
 
+- Large tool-result strings evicted from the resident store persist to a per-session blob backing and hydrate on read instead of forcing a full session-JSONL reparse. Blob names are the SHA-256 of the text, so a string that is hydrated and externalized again maps to the same file, and two processes sharing a session directory can only ever write identical bytes under one name. Blobs are integrity-checked envelopes: a corrupt file is deleted on read and the entry falls back to JSONL recovery. `--no-session` never writes blobs ([#1746](https://github.com/code-yeongyu/senpi/issues/1746)).
+- Idle sessions release the memoized entry views and tokenize the runtime message state only once the store has evicted something; `session.messages` and the compaction estimators hydrate those tokens before returning, so readers never see resident tokens. The blob directory is removed when the session manager is disposed, when the session is switched or branched, and stale blobs are cleared when a persisted session is reopened ([#1746](https://github.com/code-yeongyu/senpi/issues/1746)).
+- Compaction spills resident strings to the blob backing instead of dropping them, keeping post-compaction reads on the per-string hydration path.
+- Branched sessions materialize entry content before the previous backing is released, so resident tokens can no longer be written into a new branched session file.
+
 ### Fixed
 
 - A provider that accepts a request and never starts streaming no longer ends the turn with the watchdog's own message (`Provider stream start timed out after 180000ms ...`). The stall is still retried on the same model with the configured stream-start bound, and still hands the turn to the next model in a configured `retry.fallbackChains` entry whose answer becomes the turn result. What changed is what you read: the transcript (and `senpi -p`) describes the stall in plain language, and when nothing can take the turn over the final line names the stalled model, the attempts spent and the next step - `/fallback`, resending, or raising `retry.provider.streamStartTimeoutMs` (`0` disables). The wording on the assistant message is unchanged, so retry classification and fallback routing behave exactly as before ([#1740](https://github.com/code-yeongyu/senpi/issues/1740)).
@@ -28,11 +33,6 @@
 ### Changed
 
 - Default `read` calls on eligible `.json` files now return the agent package's structural view, with the same declaration-safe folding and numeric `offset`/`limit` rereads, so edits after a read still target real lines. TypeScript and JavaScript stay raw because the measured candidate missed their quality thresholds. Prose, explicit ranges and the existing size-limit continuations produce the same output as before. `ReadToolOptions.folder` selects the folder; `createReadToolDefinition`, `createCodingTools` and `createReadOnlyTools` default it to `selectedReadFolder`, and an options object without `folder` keeps reads verbatim. Compiled binaries produce byte-identical read output to the source build, and no parser dependency is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
-
-- Large tool-result strings evicted from the resident store now persist to a per-session blob backing and hydrate on read instead of forcing a full session-JSONL reparse; blobs are integrity-checked envelopes, so corrupt files fall back to JSONL recovery; `--no-session` never writes blobs.
-- Idle sessions release the memoized materialized entry views and tokenize the runtime message state in place; the next turn re-materializes them before any provider request or compaction admission reads them.
-- Branched sessions materialize entry content before the previous backing is released, so sentinel tokens can no longer be written into a new branched session file, and switching or branching sessions removes the previous session's blob directory.
-- Compaction spills resident strings to the blob backing instead of dropping them, keeping post-compaction reads on the O(string) hydration path.
 
 ### Fixed
 

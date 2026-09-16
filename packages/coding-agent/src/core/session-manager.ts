@@ -984,9 +984,9 @@ export class SessionManager {
 
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
-			// Blobs left under this id by an earlier process are unreachable: this store
-			// numbers its own ids from zero and the JSONL is the authority for every
-			// entry, so the stale backing is disposable cache, never recoverable state.
+			// Blobs left under this id by an earlier process are a disposable cache: the
+			// JSONL is the authority for every entry and this store rewrites what it
+			// evicts, so clearing them bounds the directory to one process lifetime.
 			const staleBlobsDir = this.residentStore.resolvedBlobsDir();
 			if (staleBlobsDir) this._removeBlobsDir(staleBlobsDir);
 
