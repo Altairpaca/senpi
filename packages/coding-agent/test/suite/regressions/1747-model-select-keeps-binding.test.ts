@@ -99,7 +99,10 @@ describe("issue #1747 model selector keeps a resumable Claude binding", () => {
 			crossAccountResumeSupported: true,
 		});
 
+		// The sent stream carries user turns only: the recorded prefix still matches, so
+		// the reattach re-sends just the turn taken while away, not the conversation.
 		expect(decision).toMatchObject({ kind: "reattach", sdkSessionId: turn.sdkSessionId, from: 1 });
-		expect(awayHashes).toHaveLength(3);
+		expect(awayHashes.slice(0, 1)).toEqual(turn.turnHashes);
+		expect(awayHashes).toHaveLength(2);
 	});
 });
