@@ -107,7 +107,10 @@ describe("blocking compaction shares the bounded summarization retry", () => {
 			const harness = createBlockingContext({ usageTokens: 9_950 });
 			registrations.push(harness.registration);
 			harness.registration.setResponses([
-				fauxAssistantMessage("", { stopReason: "error", errorMessage: "Codex error: stream ended with an error response" }),
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Codex error: stream ended with an error response",
+				}),
 			]);
 
 			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).resolves.toBeUndefined();
