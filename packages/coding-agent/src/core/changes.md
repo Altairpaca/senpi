@@ -1,5 +1,27 @@
 # changes
 
+## 2026-09-16 - Throughput-degraded streams skip same-model retries and fail over (senpi#1739)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_handleRetryableError` gains a branch for `isProviderStreamThroughputDegradedError` ahead of the generic transient path. It spends no same-model attempts, calls `tryFallback("transient")` immediately (which still notes the slow selector's cooldown), and, when no candidate exists, emits the new `stream_throughput_degraded` session event (`model`, `errorMessage`, `chainConfigured`) plus the usual `retry_fallback_exhausted` / `auto_retry_end` bookkeeping before ending the turn on that error. The `provider_error` session log gains the `throughput` kind.
+- `packages/coding-agent/src/core/settings-manager.ts`: `getAgentStreamThroughputOptions()` forwards `retry.provider.minThroughputTokensPerSecond`, `retry.provider.throughputWindowMs` and `retry.provider.throughputGraceMs` to the agent loop, returning undefined when nothing is configured so the agent defaults apply; a configured `0` floor or window is forwarded and disables the guard.
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: the three knobs on `ProviderRetrySettings`.
+- `packages/coding-agent/src/core/sdk.ts`: wires `streamThroughput` into the `Agent` next to `timeoutMs` / `streamStartTimeoutMs`.
+
+### Why
+
+- senpi#1739: a provider that keeps streaming at ~2 tok/s produced no error at all, so retry and fallback never ran and the session looked healthy. With the agent loop now failing such a stream, the session must route it: replaying the payload on the same model cannot make the upstream faster, and the stall policy's full same-model budget would waste minutes before the chain is consulted.
+
+### Why an extension could not handle it
+
+- Retry budget, fallback chain and turn termination all live in `AgentSession`; extensions observe the turn after those decisions and cannot skip the same-model budget.
+
+### Expected merge conflict zones
+
+- MEDIUM: the retry class chain in `_handleRetryableError` (`packages/coding-agent/src/core/agent-session.ts`), which upstream also edits for 429 tiers and stalls. Keep the throughput branch BEFORE the generic transient branch.
+- LOW: the settings getter and the `ProviderRetrySettings` fields.
+
 ## 2026-09-16 - session_shutdown handler budget settings (senpi#1732)
 
 ### What changed

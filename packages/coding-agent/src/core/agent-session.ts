@@ -61,6 +61,7 @@ import {
 	isCursorQuotaResourceExhausted,
 	isCursorZeroTokenResourceExhausted,
 	isProviderStreamStallError,
+	isProviderStreamThroughputDegradedError,
 	isProviderTimeoutError,
 	isRecoverableLength,
 	isRetryableAssistantError,
@@ -561,6 +562,17 @@ export type AgentSessionEvent =
 			type: "server_fallback_aborted";
 			from: string;
 			to: string;
+			chainConfigured: boolean;
+	  }
+	/**
+	 * A turn ended on the throughput watchdog's verdict without a fallback model
+	 * to take it over. `chainConfigured` mirrors `server_fallback_aborted`: the
+	 * no-chain case has no other signal to offer the UI.
+	 */
+	| {
+			type: "stream_throughput_degraded";
+			model: string;
+			errorMessage: string;
 			chainConfigured: boolean;
 	  }
 	// Auth login flow (task 13) is additive with event-only completion. The
@@ -1779,11 +1791,13 @@ export class AgentSession {
 		if (event.type === "message_end" && event.message.role === "assistant") {
 			const message = event.message as AssistantMessage;
 			if (message.stopReason !== "error") return;
-			const kind = isProviderStreamStallError(message)
-				? "stall"
-				: isProviderTimeoutError(message)
-					? "timeout"
-					: "error";
+			const kind = isProviderStreamThroughputDegradedError(message)
+				? "throughput"
+				: isProviderStreamStallError(message)
+					? "stall"
+					: isProviderTimeoutError(message)
+						? "timeout"
+						: "error";
 			this._sessionLogger.warn("provider_error", {
 				kind,
 				error: message.errorMessage,
@@ -8207,6 +8221,46 @@ export class AgentSession {
 				return "not-handled";
 			}
 			this._retryAttempt++;
+		} else if (isProviderStreamThroughputDegradedError(message)) {
+			// The upstream IS answering, just uselessly slowly (#1739). Replaying the
+			// same payload on the same model cannot raise its rate, so - unlike the
+			// silence stalls - this class spends no same-model attempts and consults
+			// the chain immediately. The slow selector still gets the ordinary
+			// transient cooldown inside tryFallback.
+			switchedFallback = await tryFallback("transient", { errorMessage });
+			if (switchedFallback) {
+				// The fallback model starts with a fresh budget, as on every other hop.
+				this._retryAttempt = 1;
+			} else {
+				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
+				if (exhaustedChainKey) {
+					this._emit({
+						type: "retry_fallback_exhausted",
+						chainKey: exhaustedChainKey,
+						lastError: errorMessage,
+					});
+				}
+				// No candidate: end the turn on the measured rate instead of sitting on
+				// the trickle, and tell the UI whether a chain exists at all.
+				this._emit({
+					type: "stream_throughput_degraded",
+					model: this.model ? formatSelector(this.model) : message.model,
+					errorMessage,
+					chainConfigured: this._retryFallback.hasConfiguredChain(),
+				});
+				if (this._retryAttempt > 0) {
+					this._emit({
+						type: "auto_retry_end",
+						success: false,
+						attempt: this._retryAttempt,
+						finalError: message.errorMessage,
+					});
+				}
+				this._retryAttempt = 0;
+				this._resetHintTierState();
+				this._resolveRetry();
+				return "not-handled";
+			}
 		} else {
 			// A provider-stream stall is an ordinary transient failure: it consumes
 			// the same bounded same-model budget (the resolved profile's turn

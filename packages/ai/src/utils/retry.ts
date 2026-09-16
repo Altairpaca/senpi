@@ -143,6 +143,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	escapeRegExp(FORWARDED_EMPTY_RESPONSE_ERROR),
 	escapeRegExp(FORWARDED_EMPTY_TOOL_USE_ERROR),
 
+	// Agent-loop throughput watchdog verdict (#1739). The upstream is answering,
+	// just uselessly slowly, so the turn must move - to the fallback chain, not
+	// through the same-model budget (see isProviderStreamThroughputDegradedError).
+	"provider stream throughput degraded",
+
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
 
@@ -407,6 +412,25 @@ const PROVIDER_TRANSPORT_TIMEOUT_ERROR_PATTERN = /^Request timed out\.?$/i;
 
 export function isProviderStreamStallError(message: AssistantMessage): boolean {
 	return message.stopReason === "error" && PROVIDER_STREAM_STALL_ERROR_PATTERN.test(message.errorMessage ?? "");
+}
+
+/**
+ * Matches the agent-loop throughput watchdog verdict ("Provider stream
+ * throughput degraded: <n> tok/s over <n>s (floor <n> tok/s)", optionally
+ * followed by the settings hint). Deliberately NOT part of the stall pattern
+ * above: a stall is silence, which a same-model retry can genuinely fix, while
+ * a degraded stream is an upstream that answers too slowly for replaying the
+ * same payload to help. Callers use this to skip the same-model retry budget
+ * and consult the fallback chain immediately.
+ */
+const PROVIDER_STREAM_THROUGHPUT_DEGRADED_ERROR_PATTERN =
+	/^Provider stream throughput degraded: \d+(?:\.\d+)? tok\/s over \d+(?:\.\d+)?s \(floor \d+(?:\.\d+)? tok\/s\)(?: \([^)]*\))?$/i;
+
+export function isProviderStreamThroughputDegradedError(message: AssistantMessage): boolean {
+	return (
+		message.stopReason === "error" &&
+		PROVIDER_STREAM_THROUGHPUT_DEGRADED_ERROR_PATTERN.test(message.errorMessage ?? "")
+	);
 }
 
 /**
