@@ -22,7 +22,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-import { registerSessionWriter, reserveSessionWrite } from "./session-write-reservation.ts";
+import { registerSessionWriter, reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -984,6 +984,11 @@ export class SessionManager {
 
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
+			// Blobs left under this id by an earlier process are unreachable: this store
+			// numbers its own ids from zero and the JSONL is the authority for every
+			// entry, so the stale backing is disposable cache, never recoverable state.
+			const staleBlobsDir = this.residentStore.resolvedBlobsDir();
+			if (staleBlobsDir) this._removeBlobsDir(staleBlobsDir);
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
@@ -1409,6 +1414,17 @@ export class SessionManager {
 		this._appendEntry(entry);
 		this._trimMirrorAfterCompaction(entry);
 		return entry.id;
+	}
+
+	/**
+	 * Release what outlives this manager in the process: the shared host's write
+	 * grant and the blob directory backing its resident mirror. The session JSONL
+	 * is untouched - it is the authority the next reader loads from. Idempotent.
+	 */
+	dispose(): void {
+		const blobsDir = this.residentStore.resolvedBlobsDir();
+		if (blobsDir) this._removeBlobsDir(blobsDir);
+		unregisterSessionWriter(this);
 	}
 
 	private _removeBlobsDir(dir: string): void {

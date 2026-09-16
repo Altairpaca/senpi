@@ -1018,6 +1018,8 @@ export class AgentSession {
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 	private _settlementEpoch = 0;
+	/** Set by the idle release; every runtime read re-hydrates before handing the array out. */
+	private _runtimeMessagesTokenized = false;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -1595,7 +1597,7 @@ export class AgentSession {
 			// A settled turn leaves tokens in agent.state.messages (idle release); make
 			// them readable again before any consumer (compaction admission, context
 			// refresh, admission estimation) reads them this turn.
-			this.sessionManager.getResidentStore().materializeInPlace(this.agent.state.messages);
+			this._runtimeMessages();
 			// Enforce compaction only when this prepare precedes an actual provider
 			// admission: a tool continuation or queued steer/follow-up messages. A
 			// completed turn with no continuation keeps pre-PR timing, while the
@@ -1816,7 +1818,7 @@ export class AgentSession {
 	private _estimateCompactionLogTokens(source: "active" | "persisted"): number | undefined {
 		try {
 			const messages =
-				source === "active" ? this.agent.state.messages : this.sessionManager.buildSessionContext().messages;
+				source === "active" ? this._runtimeMessages() : this.sessionManager.buildSessionContext().messages;
 			return estimateMessagesTokens(filterContextExcludedMessages(messages));
 		} catch {
 			return undefined;
@@ -1864,9 +1866,23 @@ export class AgentSession {
 		this._releaseBlockedPostCompactionAdmissionIfReduced();
 	}
 
+	/**
+	 * `agent.state.messages` with resident tokens hydrated, same array identity.
+	 * The idle release tokenizes the runtime messages in place to let the resident
+	 * store drop its hydrated copies; every reader that can run between two turns
+	 * goes through here so a sentinel never reaches a consumer.
+	 */
+	private _runtimeMessages(): AgentMessage[] {
+		if (this._runtimeMessagesTokenized) {
+			this._runtimeMessagesTokenized = false;
+			this.sessionManager.getResidentStore().materializeInPlace(this.agent.state.messages);
+		}
+		return this.agent.state.messages;
+	}
+
 	/** Byte-derived size of the context an admission decision would carry. */
 	private _blockedAdmissionContentTokens(): number {
-		return estimateMessagesTokens(filterContextExcludedMessages(this.agent.state.messages));
+		return estimateMessagesTokens(filterContextExcludedMessages(this._runtimeMessages()));
 	}
 
 	/** A compaction that genuinely reduced the context clears the blocked state. */
@@ -2007,14 +2023,20 @@ export class AgentSession {
 		}
 		if (settlementEpoch !== this._settlementEpoch) return;
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
-		// Settling idle: release the memoized materialized session views. Materialized
-		// entries pin the full persisted strings, so keeping the views between turns
-		// holds the whole session text in resident memory while nothing runs.
-		this.sessionManager.dropMaterializedCaches();
-		// agent.state.messages holds the runtime copies of the same large strings the
-		// views pinned. Tokenize them in place while idle; the next turn re-materializes
-		// them through the prepare/transformContext hooks below.
-		this.sessionManager.getResidentStore().externalizeInPlace(this.agent.state.messages);
+		// Releasing frees memory only for strings the store already spilled to its blob
+		// backing: a resident string is shared with the store, so tokenizing it hands
+		// back nothing while costing every settled-time reader a re-materialization.
+		if ((this.sessionManager.getResidentStoreStats().evictedCount ?? 0) > 0) {
+			// Settling idle: release the memoized materialized session views. Materialized
+			// entries pin the full persisted strings, so keeping the views between turns
+			// holds the whole session text in resident memory while nothing runs.
+			this.sessionManager.dropMaterializedCaches();
+			// agent.state.messages holds the runtime copies of the same large strings the
+			// views pinned. Tokenize them in place while idle; the next read re-materializes
+			// them through _runtimeMessages(), and the next turn through the hooks above.
+			this.sessionManager.getResidentStore().externalizeInPlace(this.agent.state.messages);
+			this._runtimeMessagesTokenized = true;
+		}
 		this._emit({ type: "agent_idle" });
 	}
 
@@ -2210,7 +2232,7 @@ export class AgentSession {
 	 * and that small figure must not hide a transcript already past the window.
 	 */
 	private _resolveThresholdContextTokens(directContextTokens: number): number {
-		const messages = filterContextExcludedMessages(this.agent.state.messages);
+		const messages = filterContextExcludedMessages(this._runtimeMessages());
 		return resolveThresholdContextTokens(directContextTokens, estimateMessagesTokens(messages));
 	}
 
@@ -2259,7 +2281,7 @@ export class AgentSession {
 		if (message.stopReason !== "error" && directContextTokens !== 0) {
 			contextTokens = this._resolveThresholdContextTokens(directContextTokens);
 		} else {
-			const messages = filterContextExcludedMessages(this.agent.state.messages);
+			const messages = filterContextExcludedMessages(this._runtimeMessages());
 			const estimate = estimateContextTokens(messages);
 			if (estimate.lastUsageIndex === null) {
 				if (!this._isRequiredCompactionError(message)) return undefined;
@@ -2294,7 +2316,7 @@ export class AgentSession {
 		const model = this.model;
 		if (!model) return false;
 		const settings = this._getCompactionSettings();
-		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(this.agent.state.messages));
+		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(this._runtimeMessages()));
 		return shouldCompact(contextTokens, model.contextWindow, settings);
 	}
 
@@ -3023,6 +3045,9 @@ export class AgentSession {
 		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
+		// Nothing reads or writes this manager once its session is gone: it releases
+		// its writer grant and its disposable blob directory here.
+		this.sessionManager.dispose();
 	}
 
 	/** Live in-session activity signals; see `session-activity.ts` for the contract. */
@@ -3458,7 +3483,7 @@ export class AgentSession {
 
 	/** All messages including custom types like BashExecutionMessage */
 	get messages(): AgentMessage[] {
-		return this.agent.state.messages;
+		return this._runtimeMessages();
 	}
 
 	/** Current steering mode */
