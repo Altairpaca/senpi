@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- The empty-assistant recovery wrapper (`withEmptyAssistantRecovery`) no longer withholds a wrapped model's thinking until its first visible text or tool call. The attempt now starts forwarding on the first meaningful content event (a non-blank `thinking_delta`, a visible `text_delta`, `toolcall_start`, or a `text_end`/`thinking_end` with content), so reasoning streams live and the assistant `message_start` reaches subscribers when the provider's `start` event does. The Kimi XTML lane is the one exception: its thinking channel is where misrouted text tool calls land and `recoverKimiXtmlThinking` only rewrites the finished message, so a leaked protocol fragment forwarded live could not be retracted; that lane keeps the buffered contract. An attempt that never forwarded anything keeps the existing silent retry and bounded "twice" errors. An attempt that had already forwarded reasoning and then stopped empty (or reported `tool_use` without a tool call) is no longer replayed inside the stream; it ends as a retryable `error` that keeps the streamed content and carries the `empty_assistant_response_recovery` / `empty_tool_use_response_recovery` diagnostic with `{ retries: 0, forwarded: true }`, and the session's turn retry re-requests it ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
+
 ### Removed
 
 ## [2026.9.15-2] - 2026-09-15

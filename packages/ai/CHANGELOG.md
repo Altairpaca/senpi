@@ -6,7 +6,11 @@
 
 ### Added
 
+- `EMPTY_RESPONSE_ERROR`, `EMPTY_TOOL_USE_ERROR`, `FORWARDED_EMPTY_RESPONSE_ERROR` and `FORWARDED_EMPTY_TOOL_USE_ERROR` (`utils/empty-response-errors.ts`, exported from the package root): the terminal error texts the pi-agent-core empty-assistant recovery wrapper produces, so the wrapper and the retry classifier share one definition ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
+
 ### Changed
+
+- `isRetryableErrorMessage` / `isRetryableAssistantError` classify `FORWARDED_EMPTY_RESPONSE_ERROR` and `FORWARDED_EMPTY_TOOL_USE_ERROR` as retryable, so a turn whose reasoning already streamed live before an empty stop is re-requested by the session's turn retry. The bounded "twice" variants stay non-retryable ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
 
 ### Fixed
 
