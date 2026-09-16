@@ -379,7 +379,7 @@ user sends another prompt ◄─────────────────
   ├─► session_start { reason: "reload" }
   └─► resources_discover { reason: "reload" }
 
-/name or pi.setSessionName()
+/rename, /name, or pi.setSessionName()
   └─► session_info_changed
 
 /compact or auto-compaction
@@ -477,7 +477,7 @@ pi.on("session_start", async (event, ctx) => {
 
 #### session_info_changed
 
-Fired when the current session display name is set via `/name`, RPC, or `pi.setSessionName()`.
+Fired when the current session display name is set via `/rename`, `/name`, RPC, or `pi.setSessionName()`.
 
 ```typescript
 pi.on("session_info_changed", async (event, ctx) => {

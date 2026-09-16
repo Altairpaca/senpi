@@ -39,6 +39,29 @@
 
 - MEDIUM: the retry class chain in `_handleRetryableError` (`packages/coding-agent/src/core/agent-session.ts`), which upstream also edits for 429 tiers and stalls. Keep the throughput branch BEFORE the generic transient branch.
 - LOW: the settings getter and the `ProviderRetrySettings` fields.
+
+## 2026-09-16 - /rename session command
+
+### What changed
+
+- `packages/coding-agent/src/core/slash-commands.ts` adds the `/rename [name]` builtin and keeps `/name` as an alias that describes the same session-rename action.
+- `packages/coding-agent/src/core/keybindings.ts` registers unbound-by-default `app.session.renameCurrent` ("Rename the current session") and a `renameCurrentSession` name migration onto that id.
+
+### Why
+
+- `packages/coding-agent/src/core/slash-commands.ts` is the catalog `/help` and command discovery read, so the new command has to live there for the TUI to list it.
+- `packages/coding-agent/src/core/keybindings.ts` owns the bindable action table; a key that opens the current-session rename editor cannot be registered from an extension's command list.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/slash-commands.ts` is the host builtin catalog. An extension can add its own command, but it cannot replace the built-in `/name` row or insert `/rename` into that list.
+- `packages/coding-agent/src/core/keybindings.ts` owns first-class `app.session.*` ids that the interactive editor already dispatches; an extension cannot add `app.session.renameCurrent` there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/slash-commands.ts`: the `name` row in `BUILTIN_SLASH_COMMANDS`.
+- `packages/coding-agent/src/core/keybindings.ts`: `AppKeybindings` / `KEYBINDINGS` next to `app.session.resume`, and `KEYBINDING_NAME_MIGRATIONS` next to `renameSession`.
+
 ## 2026-09-16 - session_shutdown handler budget settings (senpi#1732)
 
 ### What changed
