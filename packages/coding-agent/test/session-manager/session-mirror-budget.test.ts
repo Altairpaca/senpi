@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -164,6 +164,44 @@ describe("SessionManager resident mirror", () => {
 		const branched = readFileSync(branchedFile!, "utf8");
 		expect(branched).not.toContain(RESIDENT_STRING_PREFIX);
 		expect(branched).toContain(LARGE_TEXT.slice(0, 64));
+	});
+
+	it("removes the blob directory when the session manager is disposed", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const blobsDir = session.getResidentStore().resolvedBlobsDir();
+		expect(blobsDir).toBeDefined();
+		expect(existsSync(blobsDir!)).toBe(true);
+
+		session.dispose();
+
+		expect(existsSync(blobsDir!)).toBe(false);
+	});
+
+	it("clears a stale blob directory when a persisted session is reopened", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		// An assistant message is what flushes the JSONL to disk; without one there
+		// is no file for a second process to reopen.
+		session.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const blobsDir = session.getResidentStore().resolvedBlobsDir()!;
+		expect(readdirSync(blobsDir).some((name) => name.endsWith(".blob"))).toBe(true);
+		// A previous process spilled more strings than this reopen will, so its
+		// high-numbered blobs are garbage no id of the new store ever overwrites.
+		const staleBlob = join(blobsDir, "9999.blob");
+		writeFileSync(staleBlob, JSON.stringify({ v: 1, text: LARGE_TEXT }), "utf8");
+		const sessionFile = session.getSessionFile()!;
+
+		const reopened = SessionManager.open(sessionFile, tempDir);
+
+		expect(existsSync(staleBlob)).toBe(false);
+		const payloads = reopened
+			.getEntries()
+			.filter((entry) => entry.type === "custom")
+			.map((entry) => (entry.data as { payload: string }).payload);
+		expect(payloads).toHaveLength(70);
+		expect(payloads[0]).toBe(`0:${LARGE_TEXT}`);
+		expect(payloads.at(-1)).toBe(`69:${LARGE_TEXT}`);
 	});
 
 	it("removes the previous session's blob directory on newSession", () => {

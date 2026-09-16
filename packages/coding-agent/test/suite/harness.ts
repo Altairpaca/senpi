@@ -50,17 +50,15 @@ export function getMessageText(message: unknown): string {
 }
 
 export function getUserTexts(harness: Harness): string[] {
-	const materialize = (text: string) => harness.sessionManager.getResidentStore().materialize(text);
 	return harness.session.messages
 		.filter((message) => message.role === "user")
-		.map((message) => materialize(getMessageText(message)));
+		.map((message) => getMessageText(message));
 }
 
 export function getAssistantTexts(harness: Harness): string[] {
-	const materialize = (text: string) => harness.sessionManager.getResidentStore().materialize(text);
 	return harness.session.messages
 		.filter((message) => message.role === "assistant")
-		.map((message) => materialize(getMessageText(message)));
+		.map((message) => getMessageText(message));
 }
 
 export interface HarnessOptions {
