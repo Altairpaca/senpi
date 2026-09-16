@@ -414,6 +414,91 @@ export function isProviderStreamStallError(message: AssistantMessage): boolean {
 	return message.stopReason === "error" && PROVIDER_STREAM_STALL_ERROR_PATTERN.test(message.errorMessage ?? "");
 }
 
+/** One row per stall watchdog: how to read its message, and how to explain it. */
+const PROVIDER_STALL_PHASES: ReadonlyArray<{
+	pattern: RegExp;
+	/** What the provider failed to do, in the user's words. */
+	symptom: string;
+	/** The setting that widens this bound, when one exists. */
+	setting?: string;
+}> = [
+	{
+		pattern: /^Provider stream start timed out after (\d+)ms/i,
+		symptom: "accepted the request but never started sending a response",
+		setting: "retry.provider.streamStartTimeoutMs",
+	},
+	{
+		pattern: /^Idle timeout waiting for provider stream after (\d+)ms/i,
+		symptom: "started the response and then went silent",
+		setting: "retry.provider.timeoutMs",
+	},
+	{
+		pattern: /^WebSocket liveness timeout after (\d+)ms/i,
+		symptom: "stopped answering connection health checks",
+	},
+	{
+		pattern: /^Provider stream stalled after the last output item: response\.completed timed out after (\d+)ms/i,
+		symptom: "finished its output but never sent the end-of-response event",
+	},
+];
+
+export interface ProviderStallDescriptionOptions {
+	/** Same-model attempts already spent on this turn. */
+	attempts?: number;
+	/** Selector of the model that stalled, for example `anthropic/claude-opus-5`. */
+	model?: string;
+	/**
+	 * Appends the "what to do next" sentence. Omit it while the turn can still
+	 * recover: a retry in flight is not the moment to tell the user to act.
+	 */
+	recovery?: "no-fallback-configured" | "chain-exhausted";
+}
+
+function formatStallDuration(timeoutMs: number): string {
+	if (timeoutMs < 1000) return `${timeoutMs}ms`;
+	if (timeoutMs < 120_000) return `${Math.round(timeoutMs / 100) / 10}s`;
+	return `${Math.round(timeoutMs / 6000) / 10}m`;
+}
+
+/**
+ * Plain-language replacement for a stall watchdog's own `Error.message`.
+ *
+ * The watchdog wording (`Provider stream start timed out after 180000ms ...`)
+ * is a classifier token - {@link isProviderStreamStallError} and the turn retry
+ * gate both match on it - so it must stay on the assistant message. It was also
+ * the only thing the user ever saw when a turn died on a stall, which explains
+ * nothing and names no next step (senpi#1740). Every user-facing surface routes
+ * the message through here first and falls back to the raw text for anything
+ * that is not a stall.
+ */
+export function describeProviderStallForUser(
+	errorMessage: string | undefined,
+	options: ProviderStallDescriptionOptions = {},
+): string | undefined {
+	if (!errorMessage) return undefined;
+	for (const { pattern, symptom, setting } of PROVIDER_STALL_PHASES) {
+		const match = pattern.exec(errorMessage);
+		if (!match) continue;
+		const subject = options.model ? `The provider for ${options.model}` : "The provider";
+		const duration = formatStallDuration(Number(match[1]));
+		const sentences = [`${subject} ${symptom} within ${duration}, so the request was cancelled.`];
+		const attempts = options.attempts ?? 0;
+		if (attempts > 0) {
+			sentences.push(`Retried ${attempts} time${attempts === 1 ? "" : "s"} on the same model with the same result.`);
+		}
+		if (options.recovery) {
+			const raise = setting ? `, or raise ${setting} in settings (0 disables the bound)` : "";
+			const lead =
+				options.recovery === "no-fallback-configured"
+					? "No fallback model is configured for it, so nothing could take the turn over: run /fallback to add one"
+					: "Every model in its fallback chain was tried as well: run /fallback to review the chain";
+			sentences.push(`${lead}, send the message again${raise}.`);
+		}
+		return sentences.join(" ");
+	}
+	return undefined;
+}
+
 /**
  * Matches the agent-loop throughput watchdog verdict ("Provider stream
  * throughput degraded: <n> tok/s over <n>s (floor <n> tok/s)", optionally

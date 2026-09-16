@@ -1,3 +1,21 @@
+## 2026-09-16 - Stall transcripts read as stalls (senpi#1740)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: the `error` stop-reason branch routes `message.errorMessage` through `describeProviderStallForUser` first and prints that sentence for a provider-stream stall, falling back to the previous `Error: <errorMessage>` line for everything else. The branch is now a block with two early `break`s (tool calls, server-fallback diagnostic) instead of one negated condition; the descriptors it emits are unchanged in kind and order. No recovery advice is printed here - the turn may still be retrying.
+
+### Why
+
+- senpi#1740: the transcript printed `Error: Provider stream start timed out after 180000ms (raise streamStartTimeoutMs ...)` for every stalled attempt, including attempts a retry or a fallback model later recovered, so the watchdog wording was what the user read as the answer.
+
+### Why an extension could not handle it
+
+- Assistant bubbles are built by the host renderer; an extension cannot rewrite a descriptor the host already emitted.
+
+### Expected merge conflict zones
+
+- LOW: the `case "error"` arm of `createAssistantRenderDescriptors` and one import block.
+
 ## 2026-09-16 - Live tok/s on the working line and the throughput-degraded notice (#1739)
 
 ### What changed
@@ -16,7 +34,6 @@
 ### Expected merge conflict zones
 
 - LOW: the working-status suffix helper and the `message_start` / `message_update` cases in `interactive-mode.ts`.
-
 ## 2026-09-14 - Clickable-question guidance and multiplexer QA (#1645)
 
 ### What changed
