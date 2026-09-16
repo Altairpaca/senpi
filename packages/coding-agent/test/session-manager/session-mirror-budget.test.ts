@@ -178,19 +178,19 @@ describe("SessionManager resident mirror", () => {
 		expect(existsSync(blobsDir!)).toBe(false);
 	});
 
-	it("clears a stale blob directory when a persisted session is reopened", () => {
-		const session = SessionManager.create(tempDir, tempDir);
+	it("clears blobs a dead process left behind when a persisted session is reopened", () => {
 		// An assistant message is what flushes the JSONL to disk; without one there
-		// is no file for a second process to reopen.
-		session.appendMessage(assistantMsg("ready"));
-		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
-		const blobsDir = session.getResidentStore().resolvedBlobsDir()!;
-		expect(readdirSync(blobsDir).some((name) => name.endsWith(".blob"))).toBe(true);
-		// A previous process spilled more strings than this reopen will, so its
-		// high-numbered blobs are garbage no id of the new store ever overwrites.
-		const staleBlob = join(blobsDir, "9999.blob");
+		// is no file for a later process to reopen.
+		const previous = SessionManager.create(tempDir, tempDir);
+		previous.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) previous.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const sessionFile = previous.getSessionFile()!;
+		const previousBlobsDir = previous.getResidentStore().resolvedBlobsDir()!;
+		// The writer is gone with its process; only its blob directory outlived it.
+		previous.dispose();
+		mkdirSync(previousBlobsDir, { recursive: true });
+		const staleBlob = join(previousBlobsDir, `${"9".repeat(64)}.blob`);
 		writeFileSync(staleBlob, JSON.stringify({ v: 1, text: LARGE_TEXT }), "utf8");
-		const sessionFile = session.getSessionFile()!;
 
 		const reopened = SessionManager.open(sessionFile, tempDir);
 
@@ -202,6 +202,35 @@ describe("SessionManager resident mirror", () => {
 		expect(payloads).toHaveLength(70);
 		expect(payloads[0]).toBe(`0:${LARGE_TEXT}`);
 		expect(payloads.at(-1)).toBe(`69:${LARGE_TEXT}`);
+	});
+
+	it("keeps the blob directory while another live manager still owns the session file", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const blobsDir = session.getResidentStore().resolvedBlobsDir()!;
+		const sessionFile = session.getSessionFile()!;
+
+		// A second manager over the same file (the app-server loads a thread that is
+		// already open). Neither its open nor its disposal may take the cache the
+		// first manager is still hydrating from.
+		const sibling = SessionManager.open(sessionFile, tempDir);
+		expect(readdirSync(blobsDir).some((name) => name.endsWith(".blob"))).toBe(true);
+
+		sibling.dispose();
+
+		expect(existsSync(blobsDir)).toBe(true);
+		expect(
+			session
+				.getEntries()
+				.filter((entry) => entry.type === "custom")
+				.map((entry) => (entry.data as { payload: string }).payload),
+		).toHaveLength(70);
+
+		// Once the last owner lets go, the directory goes with it.
+		session.dispose();
+
+		expect(existsSync(blobsDir)).toBe(false);
 	});
 
 	it("removes the previous session's blob directory on newSession", () => {
