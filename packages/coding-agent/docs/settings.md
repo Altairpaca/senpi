@@ -505,12 +505,24 @@ While a question is pending, the terminal title shows `? <header>` unless an act
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `sessionDir` | string | - | Directory where session files are stored. Accepts absolute or relative paths, plus `~`. |
+| `sessionShutdownHandlerWarnMs` | number | `2000` | Warn when a single extension's `session_shutdown` handler has run this long. Set to `0` to disable the warning. |
+| `sessionShutdownHandlerTimeoutMs` | number | `10000` | Hard cap for a single extension's `session_shutdown` handler. Set to `0` to disable the cap. |
 
 ```json
 { "sessionDir": ".senpi/sessions" }
 ```
 
 When multiple sources specify a session directory, precedence is `--session-dir`, `SENPI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in settings.json.
+
+#### Shutdown handler budget
+
+senpi bounds each extension's `session_shutdown` handler so one slow extension cannot hold quit, `/reload`, `/new`, `/resume` or a fork hostage. Past `sessionShutdownHandlerWarnMs` it logs one warning naming the extension; at `sessionShutdownHandlerTimeoutMs` it aborts the `signal` that handler received on the event, reports an extension error, and continues teardown with the next handler. The handler itself is not killed - it keeps running until the process exits - so extensions that persist durable state should observe `event.signal`.
+
+```json
+{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000 }
+```
+
+Only `session_shutdown` is bounded; other extension events (including ask-user and approval dialogs, which may legitimately wait for minutes) are unaffected.
 
 ### Model Cycling
 

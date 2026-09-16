@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-16 - session_shutdown handler budget settings (senpi#1732)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts` adds the typed `sessionShutdownHandlerWarnMs` (default 2000) and `sessionShutdownHandlerTimeoutMs` (default 10000) settings with `getSessionShutdownHandlerWarnMs`/`setSessionShutdownHandlerWarnMs` and `getSessionShutdownHandlerTimeoutMs`/`setSessionShutdownHandlerTimeoutMs`, validated through the existing `parseTimeoutSetting` path (finite, >= 0, 0 disables) exactly like `httpIdleTimeoutMs`, plus the exported `DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS` / `DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS` constants the extension runner falls back to.
+
+### Why
+
+- `packages/coding-agent/src/core/settings-manager.ts` owns global/project settings precedence and validation, so the host's shutdown-handler budget has to be a typed setting there for users to tune or disable it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/settings-manager.ts` is read by the extension runner during teardown; an extension cannot define a setting that bounds the host's own wait on extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: the `Settings` interface next to `httpIdleTimeoutMs`/`websocketConnectTimeoutMs`, the timeout default constants near `DEFAULT_STREAM_START_TIMEOUT_MS`, and the accessors directly after `setHttpIdleTimeoutMs`.
+
 ## 2026-09-16 - Export kernelTools storage (senpi#1647)
 
 ### What changed
