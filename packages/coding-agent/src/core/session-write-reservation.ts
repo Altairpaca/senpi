@@ -36,6 +36,24 @@ export function unregisterSessionWriter(owner: SessionWriterOwner): void {
 	liveWriters.delete(ref);
 }
 
+/**
+ * Whether a persisted writer other than `self` still owns `path`. Callers that release
+ * per-session caches ask this so the last owner is the one that clears them; collected
+ * writers are pruned here.
+ */
+export function hasOtherLiveSessionWriter(path: string, self: SessionWriterOwner): boolean {
+	for (const ref of liveWriters) {
+		const owner = ref.deref();
+		if (!owner) {
+			liveWriters.delete(ref);
+			continue;
+		}
+		if (owner === self) continue;
+		if (owner.isPersisted() && owner.getSessionFile() === path) return true;
+	}
+	return false;
+}
+
 /** Session files still owned by a live persisted writer; collected writers are pruned here. */
 export function liveSessionWritePaths(): string[] {
 	const paths: string[] = [];

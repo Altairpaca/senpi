@@ -10,6 +10,11 @@
 
 ### Changed
 
+- Large tool-result strings evicted from the resident store persist to a per-session blob backing and hydrate on read instead of forcing a full session-JSONL reparse. Blob names are the SHA-256 of the text, so a string that is hydrated and externalized again maps to the same file, and two processes sharing a session directory can only ever write identical bytes under one name. Blobs are integrity-checked envelopes: a corrupt file is deleted on read and the entry falls back to JSONL recovery. `--no-session` never writes blobs ([#1746](https://github.com/code-yeongyu/senpi/issues/1746)).
+- Idle sessions release the memoized entry views and tokenize the runtime message state only once the store has evicted something; `session.messages` and the compaction estimators hydrate those tokens before returning, so readers never see resident tokens. The blob directory is removed when the session manager is disposed, when the session is switched or branched, and stale blobs are cleared when a persisted session is reopened ([#1746](https://github.com/code-yeongyu/senpi/issues/1746)).
+- Compaction spills resident strings to the blob backing instead of dropping them, keeping post-compaction reads on the per-string hydration path.
+- Branched sessions materialize entry content before the previous backing is released, so resident tokens can no longer be written into a new branched session file.
+
 ### Fixed
 
 - Moving the model selector off a Claude model and back no longer re-sends the whole conversation. Leaving the `claude-sdk-oauth` provider now closes the live SDK session but keeps its continuity binding - the same thing a thinking-level change already did - so returning to the same Claude model re-attaches to the existing session and sends only the messages added while you were away, instead of paying for the full history again. Switching to a different Claude model, a restart with no usable transcript, a diverged conversation and an unacknowledged session id all still start fresh exactly as before. When a binding really was discarded, the transcript notice now names the recorded cause (`model_selected`, `tainted_compaction`, `branch_diverged`, `extensions_removed`, ...) instead of the generic `registry_miss`, which from now on means only "no record was ever found" ([#1747](https://github.com/code-yeongyu/senpi/issues/1747)).

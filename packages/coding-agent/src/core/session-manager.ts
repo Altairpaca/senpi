@@ -10,6 +10,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readSync,
+	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
@@ -21,7 +22,12 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-import { registerSessionWriter, reserveSessionWrite } from "./session-write-reservation.ts";
+import {
+	hasOtherLiveSessionWriter,
+	registerSessionWriter,
+	reserveSessionWrite,
+	unregisterSessionWriter,
+} from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -914,6 +920,13 @@ export class SessionManager {
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
+		// Lazily resolved: the session id only exists once the header loads or
+		// newSession() runs. Unpersisted sessions disable eviction entirely —
+		// dropping strings with no backing would lose them.
+		this.residentStore.configure({
+			blobsDir: () =>
+				this.persist && this.sessionId ? join(this.sessionDir, "resident-blobs", this.sessionId) : undefined,
+		});
 
 		if (sessionFile) {
 			this._setSessionFile(sessionFile, preloadedFileEntries);
@@ -976,6 +989,10 @@ export class SessionManager {
 
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
+			// Blobs left under this id by a process that is gone are a disposable cache:
+			// the JSONL is the authority for every entry and this store rewrites what it
+			// evicts, so clearing them bounds the directory to one process lifetime.
+			this._releaseBlobsDirUnlessShared();
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
@@ -1007,6 +1024,10 @@ export class SessionManager {
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
+		// Capture the previous backing before the id changes: the blobsDir
+		// provider resolves against the new id after this assignment, so clear()
+		// below would otherwise leak the old session's blob directory on disk.
+		const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const header: SessionHeader = {
@@ -1021,6 +1042,9 @@ export class SessionManager {
 		this.mirrorTrimmed = false;
 		this.fullEntryCount = 0;
 		this.residentStore.clear();
+		if (previousBlobsDir) {
+			this._removeBlobsDir(previousBlobsDir);
+		}
 		this.byId.clear();
 		this.entryOrdersById.clear();
 		this.messageEntryPositions = new WeakMap();
@@ -1142,6 +1166,14 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/**
+	 * Exposes the resident store for out-of-band string lifecycles such as the
+	 * agent's runtime message state (tokenized while idle, hydrated per turn).
+	 */
+	getResidentStore(): ResidentStringStore {
+		return this.residentStore;
 	}
 
 	getResidentStoreStats(): ResidentStoreStats {
@@ -1388,6 +1420,35 @@ export class SessionManager {
 		return entry.id;
 	}
 
+	/**
+	 * Release what outlives this manager in the process: the shared host's write
+	 * grant and the blob directory backing its resident mirror. The session JSONL
+	 * is untouched - it is the authority the next reader loads from. Idempotent.
+	 */
+	dispose(): void {
+		unregisterSessionWriter(this);
+		this._releaseBlobsDirUnlessShared();
+	}
+
+	/**
+	 * The blob directory is keyed by session id, so every live manager over the same
+	 * session file hydrates from it. Removing it while one of them is still reading
+	 * would cost that manager a full JSONL recovery per evicted string, so the last
+	 * owner to let go is the one that clears it.
+	 */
+	private _releaseBlobsDirUnlessShared(): void {
+		const blobsDir = this.residentStore.resolvedBlobsDir();
+		if (!blobsDir) return;
+		if (this.sessionFile && hasOtherLiveSessionWriter(this.sessionFile, this)) return;
+		this._removeBlobsDir(blobsDir);
+	}
+
+	private _removeBlobsDir(dir: string): void {
+		try {
+			rmSync(dir, { force: true, recursive: true });
+		} catch {}
+	}
+
 	private _trimMirrorAfterCompaction(compaction: CompactionEntry): void {
 		if (!this.persist) return;
 		const firstKeptIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
@@ -1404,7 +1465,7 @@ export class SessionManager {
 			if (entry.type !== "session") entry.parentId = parentId;
 			parentId = entry.type === "session" ? null : entry.id;
 		}
-		this.residentStore.clear();
+		this.residentStore.spillResident();
 		this.mirrorTrimmed = true;
 		this.fileEntries = [header, ...retained]
 			.filter((entry): entry is FileEntry => entry !== undefined)
@@ -1672,6 +1733,18 @@ export class SessionManager {
 		return this.fullEntryCount;
 	}
 
+	/**
+	 * Release the memoized materialized views. Materialized entries hold the full
+	 * persisted strings, so views kept between turns pin the whole session text
+	 * in memory even while nothing runs. The next read rebuilds them from the
+	 * bounded resident store.
+	 */
+	dropMaterializedCaches(): void {
+		this.entriesCache = null;
+		this.branchCache = null;
+		this.compactEntriesCache = null;
+	}
+
 	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
 		return materializeSessionEntries(entries, {
 			residentStore: this.residentStore,
@@ -1915,13 +1988,19 @@ export class SessionManager {
 			}
 
 			reserveSessionWrite(newSessionFile);
+			// Materialize the branched entries while the previous backing is still
+			// readable, then clear: re-externalizing tokenized entries after clear()
+			// would bake sentinel tokens into the new branched JSONL.
+			const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
+			const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 			this.residentStore.clear();
+			if (previousBlobsDir) {
+				this._removeBlobsDir(previousBlobsDir);
+			}
 			this.mirrorTrimmed = false;
-			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-				this.residentStore.externalize(entry),
-			);
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
+			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
 			this.mutationCount++;
 
@@ -1956,10 +2035,9 @@ export class SessionManager {
 			labelEntries.push(labelEntry);
 			parentId = labelEntry.id;
 		}
+		const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
 		this.residentStore.clear();
-		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-			this.residentStore.externalize(entry),
-		);
+		this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 		this.sessionId = newSessionId;
 		this._buildIndex();
 		this.mutationCount++;
