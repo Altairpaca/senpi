@@ -8,6 +8,7 @@
 	"types": "./src/index.ts",
 	"exports": {
 		".": "./src/index.ts",
+		"./eval-request": "./src/tool/eval-request.ts",
 		"./package.json": "./package.json"
 	},
 	"files": [
