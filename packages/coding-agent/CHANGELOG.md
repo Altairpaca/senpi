@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added `/rename [name]` to rename the current session from the TUI: with an argument it sets the name immediately, without one it opens an inline editor prefilled with the current name (Enter commits, Esc cancels, empty names are rejected). `/name` remains as an alias, and the new unbound `app.session.renameCurrent` keybinding action opens the same editor. ([#1738](https://github.com/code-yeongyu/senpi/issues/1738))
+
 ### Changed
 
 ### Fixed
