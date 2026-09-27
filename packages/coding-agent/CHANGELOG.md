@@ -10,7 +10,11 @@
 
 ### Changed
 
+- The shared RPC host no longer refuses new worker sessions when its memory crosses a watermark: it has no resource caps, so every open is admitted. Memory pressure is still reported and idle sessions still park sooner. `SENPI_RPC_HOST_RSS_REFUSE_MB` is no longer read. `senpi host status` adds `host_rss_mb` (the supervisor and host processes, as `ps` shows them) beside `rss_mb` (the whole process tree, including every tool the sessions spawned), per generation too. ([#2207](https://github.com/code-yeongyu/senpi/issues/2207))
+
 ### Fixed
+
+- RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
 
 ### Removed
 

@@ -7,20 +7,15 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../../../src/core/agent-session-runtime.ts";
 import { ProjectTrustStore } from "../../../src/core/trust-manager.ts";
-import {
-	DEFAULT_HOST_RSS_WARN_MB,
-	HOST_MEMORY_SAMPLE_MS,
-	HostMemorySampler,
-} from "../../../src/modes/rpc/host-memory-sampler.ts";
+import { DEFAULT_HOST_RSS_WARN_MB, HostMemorySampler } from "../../../src/modes/rpc/host-memory-sampler.ts";
 import type { RpcResponse } from "../../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 
-// senpi#1905: above the warning threshold the host only halved idle parking, and nothing
-// bounded admission as RSS climbed past 9 GB into a runtime crash that took every session
-// with it. Above a HIGH watermark a NEW worker session is now refused with a retryable
-// code; interactive opens, attaches to a live path and every existing session are served.
+// senpi#2207: the shared host has no resource caps. Memory is reported and idle sessions park
+// sooner under pressure, but no open is ever refused for memory: the RSS refuse watermark that
+// #1905 added declined every task child on the machine once a long-lived host crossed it.
 
 const MEGABYTE = 1024 * 1024;
 
@@ -54,6 +49,7 @@ interface Host {
 	readonly dir: string;
 	readonly router: SessionCommandRouter;
 	readonly records: Array<Record<string, unknown>>;
+	readonly pressure: Array<Record<string, unknown>>;
 	setRssMb(rssMb: number): void;
 	openWorker(sessionPath: string): Promise<RpcResponse | undefined>;
 	openInteractive(sessionPath: string): Promise<RpcResponse | undefined>;
@@ -74,14 +70,14 @@ async function createHost(directories: string[]): Promise<Host> {
 		dispose: async () => {},
 	}));
 	let rssBytes = 0;
+	const pressure: Array<Record<string, unknown>> = [];
 	const sampler = new HostMemorySampler({
-		emit: () => {},
+		emit: (record) => pressure.push({ ...record }),
 		sessions: () => router.sessionCount,
-		onPressure: (pressure) => router.setMemoryPressure(pressure),
-		onCritical: (critical, rssMb) => router.setMemoryCritical(critical, rssMb),
+		onPressure: (active) => router.setMemoryPressure(active),
 		log: () => {},
 		readRssBytes: () => rssBytes,
-		env: {},
+		env: { SENPI_RPC_HOST_RSS_REFUSE_MB: "1" },
 	});
 	let requests = 0;
 	const open = (sessionPath: string, kind: "worker" | undefined) =>
@@ -97,6 +93,7 @@ async function createHost(directories: string[]): Promise<Host> {
 		dir,
 		router,
 		records,
+		pressure,
 		setRssMb: (rssMb) => {
 			rssBytes = rssMb * MEGABYTE;
 			sampler.sample();
@@ -110,43 +107,40 @@ async function createHost(directories: string[]): Promise<Host> {
 	};
 }
 
-describe("issue 1905: worker admission above the critical RSS watermark", () => {
+describe("issue 2207: memory never refuses an open", () => {
 	const directories: string[] = [];
 	afterEach(async () => {
 		await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 	});
 
-	it("refuses a NEW worker session with host_memory_pressure and a retry hint", async () => {
-		// Given: a host above twice its warning threshold
+	it("admits a NEW worker session far above every former watermark, and still reports the pressure", async () => {
+		// Given: a host four times over its warning threshold, with the retired refuse variable set
 		const host = await createHost(directories);
 		try {
-			host.setRssMb(DEFAULT_HOST_RSS_WARN_MB * 2 + 1);
+			const rssMb = DEFAULT_HOST_RSS_WARN_MB * 4;
+			host.setRssMb(rssMb);
 
 			// When: a client opens a new worker session
 			const response = await host.openWorker(join(host.dir, "worker.jsonl"));
 
-			// Then: the open is refused with the retryable code, and no session was created
-			expect(response).toMatchObject({
-				success: false,
-				error: "host_memory_pressure",
-				errorCode: "host_memory_pressure",
-				errorData: { rssMb: DEFAULT_HOST_RSS_WARN_MB * 2 + 1, retry_after_ms: HOST_MEMORY_SAMPLE_MS },
-			});
-			expect(host.router.sessionCount).toBe(0);
+			// Then: it is admitted, and the pressure record still went out
+			expect(response).toBeUndefined();
+			expect(host.router.sessionCount).toBe(1);
+			expect(host.pressure).toContainEqual({ type: "host_memory_pressure", rssMb, sessions: 0 });
 		} finally {
 			await host.router.dispose();
 		}
 	});
 
-	it("still serves interactive opens, attaches to a live worker path and existing sessions", async () => {
-		// Given: a worker session opened before the host went critical
+	it("serves interactive opens, attaches to a live worker path and existing sessions under pressure", async () => {
+		// Given: a worker session opened before the host came under pressure
 		const host = await createHost(directories);
 		try {
 			const workerPath = join(host.dir, "live-worker.jsonl");
 			expect(await host.openWorker(workerPath)).toBeUndefined();
 			const workerId = host.openedSessionId("open-1");
 			if (workerId === undefined) throw new Error("worker session did not open");
-			host.setRssMb(DEFAULT_HOST_RSS_WARN_MB * 2 + 1);
+			host.setRssMb(DEFAULT_HOST_RSS_WARN_MB * 4);
 
 			// When: an interactive open, a reattach to the live worker path, and a command on it
 			const interactive = await host.openInteractive(join(host.dir, "interactive.jsonl"));
@@ -158,26 +152,6 @@ describe("issue 1905: worker admission above the critical RSS watermark", () => 
 			expect(reattach).toBeUndefined();
 			expect(state).not.toMatchObject({ success: false });
 			expect(host.records.find((record) => record.id === "open-3")).toMatchObject({ data: { attached: true } });
-		} finally {
-			await host.router.dispose();
-		}
-	});
-
-	it("admits worker sessions again once RSS falls back under the watermark", async () => {
-		// Given: a host that was critical
-		const host = await createHost(directories);
-		try {
-			host.setRssMb(DEFAULT_HOST_RSS_WARN_MB * 2 + 1);
-			expect(await host.openWorker(join(host.dir, "refused.jsonl"))).toMatchObject({
-				error: "host_memory_pressure",
-			});
-
-			// When: memory returns under the watermark (still above the warning threshold)
-			host.setRssMb(DEFAULT_HOST_RSS_WARN_MB + 1);
-
-			// Then: the next worker open is admitted
-			expect(await host.openWorker(join(host.dir, "admitted.jsonl"))).toBeUndefined();
-			expect(host.router.sessionCount).toBe(1);
 		} finally {
 			await host.router.dispose();
 		}
