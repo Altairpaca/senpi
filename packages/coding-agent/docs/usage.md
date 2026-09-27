@@ -226,6 +226,7 @@ cat README.md | senpi -p "Summarize this text"
 | `-r`, `--resume` | Browse and select a session |
 | `--session <path\|id>` | Use a specific session file or partial UUID |
 | `--fork <path\|id>` | Fork a session file or partial UUID into a new session |
+| `--rebind <path\|id>` | Move a session of this repository, recorded at another path (moved or re-cloned), into this directory and continue it |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode; do not save |
 | `--name <name>`, `-n <name>` | Set session display name at startup |

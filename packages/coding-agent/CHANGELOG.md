@@ -10,6 +10,8 @@
 - Extension tools can declare `permissionParser(input, cwd)`, so permission rules can gate their calls by tier (for example `my_tool:exec=deny`). A built-in parser for the same tool name always wins.
 - New `tool_activated` extension event, fired when the active tool set gains tools through `pi.setActiveTools()`, `tool_search` promotion, or a lazy by-name activation.
 
+- Sessions follow a moved or re-cloned repository: when `--session <id>` (or a `--resume` pick) finds a session filed under another path of the same git repository, senpi shows both paths and offers to move it here, keeping its id, history, goal, loops, and monitors; `--rebind <path|id>` does it without asking, and a different repository keeps the fork prompt. Sessions now record their repository (root commit and `origin` remote) so this works after the old path is gone. ([#2181](https://github.com/code-yeongyu/senpi/issues/2181))
+
 ### Changed
 
 ### Fixed

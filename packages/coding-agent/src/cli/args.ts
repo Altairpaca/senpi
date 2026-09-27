@@ -30,6 +30,7 @@ export interface Args {
 	session?: string;
 	sessionId?: string;
 	fork?: string;
+	rebind?: string;
 	sessionDir?: string;
 	models?: string[];
 	tools?: string[];
@@ -171,6 +172,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.sessionId = args[++i];
 		} else if (arg === "--fork" && i + 1 < args.length) {
 			result.fork = args[++i];
+		} else if (arg === "--rebind" && i + 1 < args.length) {
+			result.rebind = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
@@ -365,6 +368,7 @@ ${chalk.bold("Options:")}
   --session <path|id>            Use specific session file or partial UUID
   --session-id <id>              Use exact project session ID, creating it if missing
   --fork <path|id>               Fork specific session file or partial UUID into a new session
+  --rebind <path|id>             Move a session from a moved or re-cloned repository into this directory and continue it
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
