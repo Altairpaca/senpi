@@ -1,23 +1,3 @@
-## 2026-09-27 - Terminal provider errors keep the provider Retry-After; quota exhaustion wording is shared (senpi#2198)
-
-### What changed
-
-- `packages/ai/src/utils/error-body.ts`: `normalizeProviderError` reads `retry-after-ms` / `retry-after` (delta-seconds or HTTP-date) / `x-ratelimit-reset*` from the SDK error's response headers for 429 and 503 statuses into `retryAfterMs`, and `formatProviderError` appends the canonical `(retry-after-ms: N)` marker when the message does not already carry one. Every adapter formatting its terminal error through `formatProviderError` (OpenAI completions/responses/codex, Azure, Google, OpenRouter images) now keeps the provider-requested wait.
-- `packages/ai/src/utils/retry.ts`: the account quota/budget/credit/billing exhaustion patterns move into `QUOTA_EXHAUSTION_PATTERNS` (spread unchanged into `NON_RETRYABLE_PROVIDER_ERROR_PATTERN`) and are exposed through `isQuotaExhaustionMessage()`.
-
-### Why
-
-- With provider retries disabled (or exhausted), the SDK error's headers were dropped when the terminal message was formatted, so a provider `Retry-After` never reached the coding-agent fallback circuit breaker. The breaker also needs the terminal classifier's own quota wording to open circuits for `quota exceeded` / `out of budget` failures (senpi#2198, review of senpi#2201).
-
-### Why an extension could not handle it
-
-- The headers exist only on the SDK error object inside each adapter's catch block; nothing downstream of the formatted `errorMessage` can recover them.
-
-### Expected merge conflict zones
-
-- LOW: `NormalizedProviderError` and `formatProviderError` in `utils/error-body.ts`.
-- LOW: the head of `NON_RETRYABLE_PROVIDER_ERROR_PATTERN` in `utils/retry.ts`.
-
 ## 2026-09-24 - Forced tool_choice refused under thinking falls back instead of failing (senpi#2121)
 
 ### What changed

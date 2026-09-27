@@ -92,10 +92,6 @@ export interface HarnessOptions {
 	evalOnlyToolNames?: string[];
 	/** Send the senpi#2093 environment-context message. Off by default so transcript-pinning tests stay exact. */
 	environmentContext?: boolean;
-	/** Build a sibling session on another harness's faux provider, agent dir, and model registry. */
-	siblingOf?: Harness;
-	/** With `siblingOf`: build a fresh model runtime instead of sharing it, as `/new` does in the CLI. */
-	siblingFreshRuntime?: boolean;
 }
 
 export interface Harness {
@@ -127,16 +123,12 @@ function createTempDir(): string {
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
-	const sibling = options.siblingOf;
-	const sharedRegistry = options.siblingFreshRuntime ? undefined : sibling?.modelRegistry;
-	const fauxProvider: FauxProviderRegistration =
-		sibling?.faux ??
-		registerFauxProvider({
-			api: options.api,
-			provider: options.provider,
-			models: options.models,
-		});
-	if (!sibling) fauxProvider.setResponses([]);
+	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
+		api: options.api,
+		provider: options.provider,
+		models: options.models,
+	});
+	fauxProvider.setResponses([]);
 	const model = fauxProvider.getModel();
 	const toolMap = options.tools ? Object.fromEntries(options.tools.map((tool) => [tool.name, tool])) : undefined;
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
@@ -145,7 +137,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const sessionManager = options.persistSession
 		? SessionManager.create(tempDir, join(tempDir, "sessions"))
 		: SessionManager.inMemory();
-	const agentDir = sibling ? join(sibling.tempDir, "agent") : join(tempDir, "agent");
+	const agentDir = join(tempDir, "agent");
 	if (options.fileSettings) {
 		mkdirSync(agentDir, { recursive: true });
 		writeFileSync(
@@ -157,18 +149,16 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		? SettingsManager.create(tempDir, agentDir)
 		: SettingsManager.inMemory(options.settings);
 
-	const authStorage = sibling?.authStorage ?? AuthStorage.inMemory();
-	if (withConfiguredAuth && !sibling) {
+	const authStorage = AuthStorage.inMemory();
+	if (withConfiguredAuth) {
 		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
 	}
 	const modelsPath = options.modelsJson === undefined ? undefined : join(tempDir, "models.json");
 	if (modelsPath) writeFileSync(modelsPath, JSON.stringify(options.modelsJson));
-	const modelRegistry =
-		sharedRegistry ??
-		(modelsPath
-			? await createModelRegistry(authStorage, modelsPath)
-			: await createInMemoryModelRegistry(authStorage));
-	if (withConfiguredAuth && !sharedRegistry) {
+	const modelRegistry = modelsPath
+		? await createModelRegistry(authStorage, modelsPath)
+		: await createInMemoryModelRegistry(authStorage);
+	if (withConfiguredAuth) {
 		modelRegistry.registerProvider(model.provider, {
 			baseUrl: model.baseUrl,
 			apiKey: "faux-key",
@@ -294,7 +284,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		tempDir,
 		cleanup() {
 			session.dispose();
-			if (!sibling) fauxProvider.unregister();
+			fauxProvider.unregister();
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
 			}
