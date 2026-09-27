@@ -64,6 +64,32 @@ Admission and status live in the host's own registry and daemon-control surface,
 - `session-registry.ts` `openSession` and `session-command-router.ts` memory setters.
 - `host-process-metrics.ts` `readHostProcessMetrics` return shape.
 
+## 2026-09-27 - A host generation attaches instead of handing itself off, and daemon spawns drop caller session state (#2208)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts` keeps the broad product/config allowlist but layers an explicit denylist over session identity, prompt-cache wait state, eval-kernel parent identity, and the lifecycle identity/watch/scratch variables of a calling host. `daemonEnvironment` now builds a child environment from the allowed process/system variables plus allowed launch overrides, then applies the new generation's forced identity last.
+- `packages/coding-agent/src/modes/rpc/host-spawn-environment.ts` (new), `packages/coding-agent/src/modes/rpc/host-ensure.ts`, and `packages/coding-agent/src/modes/rpc/host-successor.ts` route both the initial host and a handoff successor through that one final-environment builder. The oversized ensure module's previous inline environment constructor moved into the focused spawn module before the behavior changed.
+- `packages/coding-agent/src/modes/rpc/host-process-role.ts` (new) marks the lifetime of `runMultiSessionHost` in process-local module state. `packages/coding-agent/src/modes/rpc/multi-session-host.ts` enters that scope at startup, and `host-ensure.ts` treats an ensure made inside it as policy `never`: it may attach or start when no host exists, but never launches a successor. The explicit `handoffHost` path remains independent, so a shell child can still run `senpi host handoff`.
+- `packages/coding-agent/src/modes/rpc/host-idle-policy.ts` (new) holds the idle-policy constants, overrides and resolver extracted from `multi-session-host.ts`, keeping the marker-only edit from growing an already oversized source file.
+
+### Why
+
+`ensureHost` and `startSuccessor` rebuilt their child environments from all of `process.env`. The request runner supplied null overrides for ordinary denied names, but the allowlist accepted every `PI_*`/`SENPI_*` name, so a tool shell or eval kernel carried its session id, session file, model choice, goal store and kernel parent into a machine-wide daemon. A caller already running inside a host also carried that generation's watchdog, scratch directory and identity into the next process.
+
+The same in-process caller could request an engine upgrade. A superseded generation running sessions from an older release then compared its current source build to the public generation, decided it was newer, and handed the socket off again. Several generations could remain alive even though one manual handoff should advance the daemon exactly once.
+
+### Why an extension could not handle it
+
+The environment is fixed at the supervisor spawn boundary, before any session or extension exists. Whether the caller is itself the multi-session host is also process-lifetime state needed before `ensureHost` chooses `reuse` or `handoff`; a session extension cannot safely rewrite either lifecycle decision.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: the allowlist and final child-environment construction.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: imports, the upgrade policy choice, and the `startHost` spawn environment.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: the successor spawn environment.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the host entry function and the extracted idle-policy declarations.
+
 ## 2026-09-22 - Daemon status metrics read the process table through the kernel, never a `ps` child (omo-desktop#594)
 
 ### What changed
