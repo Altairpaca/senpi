@@ -69,4 +69,31 @@ describe.skipIf(process.platform === "win32")("gc removal of a dead endpoint", (
 			}
 		},
 	);
+
+	it.skipIf(process.getuid?.() === 0)(
+		"fails on the socket while the endpoint directory is still there, so the endpoint stays listed",
+		async () => {
+			const qa = endpointScratch("gcz");
+			const blocked = join(qa.root, "ro", "b.sock");
+			const blockedPaths = await deadEndpoint(blocked, qa.agentDir);
+			await refusingSocket(blocked);
+			await chmod(dirname(blocked), 0o500);
+			try {
+				const result = await gcHostEndpoints(qa.agentDir);
+
+				// No sibling beside the socket, so the removal reaches the socket itself: unlinking it
+				// from a read-only directory must fail BEFORE the endpoint directory is touched. A
+				// removal that took the directory first would leave a socket nothing names - half
+				// removed, no longer listed, never finished by a later gc.
+				expect(result.removed).toEqual([]);
+				expect(result.kept).toEqual([
+					{ socket: blocked, dir: blockedPaths.dir, reason: "failed", error: expect.stringContaining("EACCES") },
+				]);
+				await expect(stat(blocked)).resolves.toBeDefined();
+				await expect(stat(blockedPaths.endpointFile)).resolves.toBeDefined();
+			} finally {
+				await chmod(dirname(blocked), 0o700);
+			}
+		},
+	);
 });
