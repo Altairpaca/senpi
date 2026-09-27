@@ -127,8 +127,9 @@ export async function clearHostRegistration(paths: HostDaemonPaths): Promise<voi
 	if (typeof pointer?.instance_id === "string") {
 		await rm(generationPaths(paths, pointer.instance_id).dir, { recursive: true, force: true });
 	}
-	await rm(paths.pointerFile, { force: true });
 	await rm(paths.settingsFile, { force: true });
+	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
+	await rm(paths.pointerFile, { force: true });
 }
 
 /**
@@ -144,11 +145,11 @@ export async function releaseGeneration(
 	const record = parseDaemonPidFile((await readFileOrUndefined(generation.pidFile)) ?? "");
 	if (record !== undefined && record.pid !== owner.pid) return;
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
-	if (pointer?.instance_id === owner.instanceId) {
-		await rm(paths.pointerFile, { force: true });
-		await rm(paths.settingsFile, { force: true });
-	}
+	const ownsPointer = pointer?.instance_id === owner.instanceId;
+	if (ownsPointer) await rm(paths.settingsFile, { force: true });
 	await rm(generation.dir, { recursive: true, force: true });
+	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
+	if (ownsPointer) await rm(paths.pointerFile, { force: true });
 }
 
 /**
