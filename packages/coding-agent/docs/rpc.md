@@ -340,8 +340,11 @@ names is alive an ensure refuses (`legacy_host`) rather than starting a second h
 and starts no host in that case.
 
 `endpoint.json` names the socket the directory serves (the exact string its name was hashed from). It is
-written `0600` when the directory is created and re-asserted under the ensure lock, only when absent, and
-never rewritten, so `created_at` is the endpoint's first ensure. It is the one file a generation's release
+written `0600` when the directory is created and re-asserted under the ensure lock. It is written whole to a
+temporary name and linked into place, so no reader ever sees half a file, and a valid one is never rewritten, so
+`created_at` is the endpoint's first ensure. Under the lock the ensure does replace a file that does not name a
+socket hashing to this directory (torn by a crash of an older build, or foreign): left alone, such a file would
+leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
 `settings.json` and its generation directory, and without `endpoint.json` such an endpoint could not even be
 enumerated. `stderr.log` and `crashes.jsonl` stay too. The only thing that ever removes an endpoint directory

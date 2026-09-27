@@ -67,6 +67,27 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - `endpoint.json` is written atomically and an ensure repairs a torn one
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity(paths, socket, { repair? })` writes the record to `endpoint.json.<pid>-<uuid>.tmp` and `link()`s it into place (no clobber, so the first writer still wins), removing the temporary name either way. With `repair: true` an existing file that does not parse to a record whose `socket` hashes to this directory is replaced by `rename()`. `createDaemonDirectories` (outside the lock) never repairs.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `ensureHostLocked` re-asserts the identity with `repair: true`, i.e. only under the socket's ensure lock - the same lock `gc` holds while it decides about the directory.
+- Tests: `test/rpc-host-endpoint-identity.test.ts` - the first writer's identity survives a repairing call, a torn file is kept without `repair` and rewritten with it, and no temporary file remains; against real hosts, a torn `endpoint.json` that `gc` keeps as `unknown_identity` is rewritten by the next ensure, after which `gc` removes the endpoint once its host idled out.
+
+### Why
+
+`endpoint.json` was written in place with an exclusive create, and a later ensure's re-assert returned on `EEXIST`. A write cut short left a truncated file forever: the endpoint was enumerated as `socket: null`, and `gc` - which can only take a lock it can name - kept it as `unknown_identity` on every run, leaking the directory (senpi#2245 review m1).
+
+### Why an extension could not handle it
+
+The daemon directory and `ensureHost` are host lifecycle internals that run before and outside any extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity`, the `node:crypto`/`node:fs/promises` imports and the layout comment.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the first statement of `ensureHostLocked`.
+
 ## 2026-09-28 - A status read no longer keeps an idle host alive
 
 ### What changed

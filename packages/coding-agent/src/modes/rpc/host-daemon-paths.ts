@@ -23,7 +23,8 @@
  * ever writes a legacy-shaped file, and nothing here ever removes one: a flat `host.pid` that DOES
  * exist belongs to a legacy host that may still be running, and is read-only to this build.
  *
- * `endpoint.json` is the endpoint's durable identity: written once, never rewritten, and the one file
+ * `endpoint.json` is the endpoint's durable identity: written once and whole (linked into place), never
+ * rewritten while it names this directory's socket (an ensure repairs one that does not), and the one file
  * a generation's release leaves behind - so an endpoint whose host exited (cleanly or not) can still
  * be enumerated and named. The pointer, `settings.json` and the generation directories all describe
  * a LIVE host and go with it.
@@ -31,8 +32,8 @@
  * What those files CONTAIN is `host-daemon-state.ts` (settings, and the primitives every state file
  * is written through) and `host-daemon-registration.ts` (the pointer and the generation records).
  */
-import { createHash } from "node:crypto";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join, win32 } from "node:path";
 import { getAgentDir } from "../../config.ts";
 
@@ -211,22 +212,53 @@ export async function createDaemonDirectories(paths: HostDaemonPaths): Promise<v
 }
 
 /**
- * Writes `endpoint.json` when it is absent and never rewrites it: the first writer's `created_at`
- * is the endpoint's birth, and a second writer racing it loses on the exclusive create rather than
- * replacing it. Idempotent, so an ensure re-asserts it under its lock at no cost.
+ * Writes `endpoint.json` when it is absent and never rewrites a valid one: the first writer's
+ * `created_at` is the endpoint's birth. The file is written whole to a temporary name and LINKED
+ * into place, so a reader never sees it half-written and a second writer racing the first loses on
+ * the link rather than replacing it. `repair` - asserted only by an ensure under this socket's ensure
+ * lock, where `gc` cannot be deciding about the directory - also replaces a file that does not name a
+ * socket of this directory (torn by a crash of an older build, or foreign), which would otherwise
+ * leave the endpoint unaddressable, and never `gc`-able, for good.
  */
-export async function ensureEndpointIdentity(paths: HostDaemonPaths, socket: string): Promise<void> {
+export async function ensureEndpointIdentity(
+	paths: HostDaemonPaths,
+	socket: string,
+	options: { readonly repair?: boolean } = {},
+): Promise<void> {
+	const temporary = `${paths.endpointFile}.${process.pid}-${randomUUID()}.tmp`;
 	try {
 		await mkdir(paths.dir, { recursive: true, mode: DIRECTORY_MODE });
 		await writeFile(
-			paths.endpointFile,
+			temporary,
 			`${JSON.stringify({ layout: HOST_DAEMON_LAYOUT, socket, created_at: new Date().toISOString() })}\n`,
 			{ mode: HOST_STATE_FILE_MODE, flag: "wx" },
 		);
+		try {
+			await link(temporary, paths.endpointFile);
+		} catch (cause) {
+			if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST")) throw cause;
+			if (options.repair === true && !(await namesThisDirectory(paths))) await rename(temporary, paths.endpointFile);
+		}
 	} catch (cause) {
-		if (cause instanceof Error && "code" in cause && cause.code === "EEXIST") return;
 		throw new HostDaemonStateError(paths.endpointFile, cause);
+	} finally {
+		await rm(temporary, { force: true });
 	}
+}
+
+async function namesThisDirectory(paths: HostDaemonPaths): Promise<boolean> {
+	let record: unknown;
+	try {
+		record = JSON.parse(await readFile(paths.endpointFile, "utf8"));
+	} catch {
+		return false;
+	}
+	if (typeof record !== "object" || record === null || !("socket" in record)) return false;
+	return (
+		typeof record.socket === "string" &&
+		record.socket !== "" &&
+		daemonDirectoryName(record.socket) === basename(paths.dir)
+	);
 }
 
 /** Creates one generation's private directory. Same failure shape as the daemon directory itself. */

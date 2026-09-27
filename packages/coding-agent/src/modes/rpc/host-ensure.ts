@@ -160,7 +160,8 @@ async function ensureHostLocked(
 	socket: string,
 	options: EnsureHostOptions,
 ): Promise<EnsuredHost> {
-	await ensureEndpointIdentity(paths, socket);
+	// Under the lock, so a torn or foreign `endpoint.json` is repaired rather than left unaddressable.
+	await ensureEndpointIdentity(paths, socket, { repair: true });
 	const testOptions = options._test;
 	const registered = await readHostRegistration(paths);
 	// A record naming ANOTHER endpoint is not about this ensure's host. The per-socket directory
