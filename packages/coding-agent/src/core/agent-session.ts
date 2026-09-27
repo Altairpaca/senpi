@@ -1089,7 +1089,7 @@ export class AgentSession {
 	private readonly _retryFallback: RetryFallbackController;
 	private readonly _selectorCooldowns: SelectorCooldowns;
 	private readonly _fallbackCircuits: FallbackCircuitAccess;
-	private readonly _fallbackCircuitsLease: { release(): void };
+	private readonly _fallbackCircuitsLease: ReturnType<typeof acquireFallbackCircuits>;
 	private _probeBackLaneSeq = 0;
 	private _circuitProbeWatchdog: ReturnType<typeof setTimeout> | undefined;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
@@ -1165,10 +1165,12 @@ export class AgentSession {
 		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
 		this._fallbackNow = config.fallbackNow ?? monotonicNow;
 		this._selectorCooldowns = new SelectorCooldowns(this._fallbackNow);
-		const circuitsLease = acquireFallbackCircuits(this._agentDir);
-		this._fallbackCircuitsLease = circuitsLease;
+		const lease = () => this._fallbackCircuitsLease;
 		this._fallbackCircuits = createFallbackCircuitAccess({
-			breaker: circuitsLease.breaker,
+			// Read on every use: the hold is taken as construction's last step.
+			get breaker() {
+				return lease().breaker;
+			},
 			owner: () => this.sessionId,
 			now: this._fallbackNow,
 			settings: () => this.settingsManager.getFallbackCircuitSettings(),
@@ -1230,6 +1232,8 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
+		// Last, so a construction that throws never leaves a hold only dispose() could release.
+		this._fallbackCircuitsLease = acquireFallbackCircuits(this._agentDir);
 	}
 
 	get modelRuntime(): ModelRuntime {
