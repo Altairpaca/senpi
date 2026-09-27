@@ -11,7 +11,7 @@ import { readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { daemonDirectoryName } from "../src/modes/rpc/host-daemon-paths.ts";
+import { canonicalEndpointPath, daemonDirectoryName } from "../src/modes/rpc/host-daemon-paths.ts";
 import { ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { gcHostEndpoints } from "../src/modes/rpc/host-gc.ts";
 import { stopHost } from "../src/modes/rpc/host-stop.ts";
@@ -46,6 +46,24 @@ describe.skipIf(process.platform === "win32")("daemon directory of a socket with
 		expect(daemonDirectoryName(join(alias, "rpc", "rpc.sock"))).toBe(sha16(canonical));
 		expect(daemonDirectoryName(join(alias, "later", "x.sock"))).toBe(sha16(join(real, "later", "x.sock")));
 		expect(daemonDirectoryName(join(alias, "rpc", "other.sock"))).not.toBe(sha16(canonical));
+	});
+
+	it("canonicalizes by the platform parameter, not the platform this process runs on", () => {
+		const real = realpathSync(mkdtempSync(join(tmpdir(), "dh-plat-")));
+		scratch.push(real);
+		const alias = aliasOf(real);
+		const throughAlias = join(alias, "x.sock");
+		const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+		try {
+			// The parameter says POSIX: the socket's directory resolves through the symlink even
+			// though this process claims to run on win32, where the path would come back unchanged.
+			expect(canonicalEndpointPath(throughAlias, "linux")).toBe(join(real, "x.sock"));
+			// The parameter says win32: normalized and lower-cased, whatever this process runs on.
+			expect(canonicalEndpointPath("C:\\Agents\\RPC.Sock", "win32")).toBe("c:\\agents\\rpc.sock");
+		} finally {
+			Object.defineProperty(process, "platform", descriptor ?? { value: "linux" });
+		}
 	});
 
 	it.skipIf(process.platform !== "darwin")("names /tmp and /private/tmp spellings of one socket alike", () => {

@@ -1,3 +1,22 @@
+## 2026-09-28 - canonicalEndpointPath honours its platform parameter
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: the abstract-socket line of `canonicalEndpointPath` read `process.platform` instead of its `platform` parameter, so a caller that stated a POSIX platform while running on win32 got its path back uncanonicalized. The win32 half of that clause is gone: a win32 parameter already returns through the normalized branch above, so nothing on this line needs the running platform - the parameter is the only platform the function answers.
+- Tests: `test/rpc-host-daemon-dir-spelling.test.ts` - with `process.platform` stubbed to win32, `canonicalEndpointPath(socket, "linux")` still resolves the socket's directory through a symlink, and `canonicalEndpointPath(path, "win32")` still normalizes and lower-cases (verify-t33 N6). Before the fix the POSIX call returned the spelling unchanged.
+
+### Why
+
+Every other branch of the function answers the parameter; the daemon directory and the ensure lock are derived from this canonicalization, so a caller on win32 asking for POSIX rules must get them (verify-t33 N6).
+
+### Why an extension could not handle it
+
+The canonicalization runs inside `ensureHost`/`stopHost`/`handoffHost`/`host gc`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `canonicalEndpointPath`'s abstract-socket line.
+
 ## 2026-09-28 - A successor that fails before it was spawned also restores the boot settings
 
 ### What changed

@@ -92,7 +92,7 @@ export interface HostGenerationPaths {
  */
 export function canonicalEndpointPath(socket: string, platform: NodeJS.Platform = process.platform): string {
 	if (platform === "win32") return win32.normalize(socket).toLowerCase();
-	if (socket.startsWith("\0") || process.platform === "win32") return socket;
+	if (socket.startsWith("\0")) return socket;
 	return join(canonicalSessionPath(dirname(socket)), basename(socket));
 }
 
