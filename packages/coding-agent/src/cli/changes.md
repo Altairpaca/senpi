@@ -1,3 +1,23 @@
+## 2026-09-27 - `senpi schedule` command for durable scheduled prompts
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-command.ts` (new): `senpi schedule list [--json]`, `cancel <id>`, and `run [--watch] [--exec <command>] [--poll-seconds <n>] [--timeout-seconds <n>]` over the job files of the builtin `schedule` extension (`core/extensions/builtin/schedule/`). `run` prints one JSON line per event; `--watch` keeps a heartbeat in `<agent dir>/schedule/runner.json` and stops cleanly on SIGTERM/SIGINT. Usage errors print usage on stderr and exit 2; a failed one-shot delivery exits 1.
+- `packages/coding-agent/src/cli/deferred-commands.ts`: `SCHEDULE_COMMAND_ARGV` plus `dispatchScheduleCommand(args)`, an exit-code dispatch shaped like `dispatchHostCommand`.
+- `packages/coding-agent/src/cli/args.ts`: one `Commands:` line in `printHelp` for `schedule`, beside `host`.
+
+### Why
+
+- `/loop` keeps its timers in the session process and refuses `--print`, so a headless run (a chat bridge that runs one `senpi -p` per message) could not schedule anything. Scheduled prompts are now files, and this command is the out-of-process runner that fires them.
+
+### Why an extension could not handle it
+
+- The runner has to outlive every session process, and CLI commands are routed before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: one help line in `args.ts`; the tail of `deferred-commands.ts`.
+
 ## 2026-09-28 - `host shard-path|gc` in the help text (senpi#2245)
 
 ### What changed
