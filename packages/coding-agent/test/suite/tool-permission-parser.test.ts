@@ -30,7 +30,10 @@ function tieredTool(calls: string[], name = "tiered"): ExtensionFactory {
 	};
 }
 
-async function sessionWith(permission: string, extra: ExtensionFactory[] = []): Promise<{ harness: Harness; calls: string[] }> {
+async function sessionWith(
+	permission: string,
+	extra: ExtensionFactory[] = [],
+): Promise<{ harness: Harness; calls: string[] }> {
 	const calls: string[] = [];
 	const harness = await createHarness({
 		extensionFactories: [
