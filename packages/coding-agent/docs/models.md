@@ -409,7 +409,7 @@ Migration: older configs that used `compat.reasoningEffortMap` should move that 
 
 ### Discovering Models From an Endpoint
 
-`senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider defined in `models.json`, using the provider's configured key and headers, and adds every listed model to the provider's `models` array. Fields you already set on a listed model are kept, models the endpoint does not list are kept, and the previous file is saved next to it as `models.json.backup-<timestamp>`. Comments are not preserved in the rewritten file; the backup keeps them.
+`senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider defined in `models.json`, using the provider's configured key and headers, and adds every listed model to the provider's `models` array. Models the endpoint does not list are kept, and so is every field of a listed model except the three reasoning fields discovery owns (below). The previous file is saved next to it as `models.json.backup-<timestamp>`, and a rewrite that would not load is refused. Comments are not preserved in the rewritten file; the backup keeps them. The command prints the listing URL with any user info removed and query values shown as `<redacted>`.
 
 Some endpoints advertise the reasoning efforts each model accepts:
 
@@ -428,7 +428,7 @@ When the provider sets `"compat": { "supportsReasoningEffort": true }`, discover
 }
 ```
 
-Values that name no senpi level are reported and not used. Without the compat flag, advertised efforts are ignored and only the model ids are added.
+For a model whose entry advertises `reasoning_efforts`, discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel`: it sets `reasoning` to `true` (overriding an explicit `false`), replaces the map, and replaces the default, removing a previous `defaultThinkingLevel` when the listing marks none. Values that name no senpi level are reported and not used; if none of the advertised values is usable, the model's reasoning controls are turned off (`reasoning: false`, no map, no default) instead of keeping an old map. A model whose entry has no `reasoning_efforts` field keeps its reasoning fields as they are. Without the compat flag, advertised efforts are ignored and only the model ids are added.
 
 ## Overriding Built-in Providers
 

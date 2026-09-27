@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { APP_NAME, getModelsPath } from "../config.ts";
+import { ModelConfig } from "../core/model-config.ts";
 import {
 	discoverProviderModels,
 	type ModelsDiscoveryAuth,
@@ -7,6 +8,7 @@ import {
 	type ModelsDiscoveryReport,
 } from "../core/model-discovery.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import { resolveHeadersOrThrow } from "../core/resolve-config-value.ts";
 
 const USAGE = `${APP_NAME} models discover <provider>`;
 const DISCOVERY_TIMEOUT_MS = 30_000;
@@ -27,16 +29,19 @@ entry advertises become its thinkingLevelMap and defaultThinkingLevel.`);
 }
 
 async function resolveAuth(providerId: string, signal: AbortSignal): Promise<ModelsDiscoveryAuth> {
+	// Configured headers (routing, tenant) apply whether or not the provider has a credential.
+	const config = await ModelConfig.load(getModelsPath());
+	const configured = await resolveHeadersOrThrow(config.getProvider(providerId)?.headers, `provider "${providerId}"`);
 	const runtime = await ModelRuntime.create({ allowModelNetwork: false, signal });
 	// A keyless local server is not a registered provider; it is still discoverable.
-	if (!runtime.getProvider(providerId)) return {};
-	const auth = (await runtime.getAuth(providerId, { signal }))?.auth;
-	return { apiKey: auth?.apiKey, headers: auth?.headers };
+	const auth = runtime.getProvider(providerId) ? (await runtime.getAuth(providerId, { signal }))?.auth : undefined;
+	return { apiKey: auth?.apiKey, headers: { ...configured, ...auth?.headers } };
 }
 
 function describe(report: ModelsDiscoveryReport, id: string): string {
 	const efforts = report.efforts[id];
-	if (!efforts || efforts.levels.length === 0) return id;
+	if (!efforts) return id;
+	if (efforts.levels.length === 0) return `${id}  reasoning: off (no usable effort advertised)`;
 	const fallback = efforts.defaultThinkingLevel ? ` (default ${efforts.defaultThinkingLevel})` : "";
 	return `${id}  reasoning: ${efforts.levels.join(", ")}${fallback}`;
 }

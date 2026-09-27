@@ -5,7 +5,8 @@
  * `models` array. When the provider opts in with `compat.supportsReasoningEffort: true`, the
  * `reasoning_efforts` an entry advertises become that model's `thinkingLevelMap` (endpoint
  * spelling kept, unadvertised levels vetoed) and its `default` becomes `defaultThinkingLevel`.
- * Fields discovery does not own are left exactly as the user wrote them.
+ * Discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel` of a model that advertises
+ * efforts; every other field is left exactly as the user wrote them.
  */
 
 import { chmodSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -19,6 +20,8 @@ import {
 } from "@earendil-works/pi-ai";
 import { stripJsonComments } from "../utils/json.ts";
 import { stripBom } from "../utils/text.ts";
+import { ModelConfig } from "./model-config.ts";
+import { type ListingUrl, listingUrl, redactUrlInMessage } from "./model-discovery-url.ts";
 import { uniqueBackupPath } from "./models-json-migration.ts";
 
 export interface ModelsDiscoveryAuth {
@@ -91,17 +94,24 @@ function readDocument(modelsPath: string): { content: string; document: JsonReco
 	return { content, document };
 }
 
-function findProviderKey(document: JsonRecord, providerId: string, modelsPath: string): string {
+interface ConfiguredProvider {
+	key: string;
+	providers: JsonRecord;
+	provider: JsonRecord;
+}
+
+function findProvider(document: JsonRecord, providerId: string, modelsPath: string): ConfiguredProvider {
 	const wanted = normalizeProviderId(providerId);
 	const providers = isRecord(document.providers) ? document.providers : {};
 	const key = Object.keys(providers).find((candidate) => normalizeProviderId(candidate) === wanted);
-	if (key === undefined || !isRecord(providers[key])) {
+	const provider = key === undefined ? undefined : providers[key];
+	if (key === undefined || !isRecord(provider)) {
 		throw new ModelsDiscoveryError(`Provider "${providerId}" is not defined in ${modelsPath}`);
 	}
-	return key;
+	return { key, providers, provider };
 }
 
-function listingUrl(provider: JsonRecord, providerId: string): string {
+function providerListingUrl(provider: JsonRecord, providerId: string): ListingUrl {
 	if (typeof provider.api === "string" && !OPENAI_COMPATIBLE_APIS.has(provider.api)) {
 		throw new ModelsDiscoveryError(
 			`Provider "${providerId}" uses api "${provider.api}", not an OpenAI-compatible api`,
@@ -110,11 +120,13 @@ function listingUrl(provider: JsonRecord, providerId: string): string {
 	if (typeof provider.baseUrl !== "string" || provider.baseUrl.trim() === "") {
 		throw new ModelsDiscoveryError(`Provider "${providerId}" needs a "baseUrl" to discover models`);
 	}
-	return `${provider.baseUrl.trim().replace(/\/+$/u, "")}/models`;
+	const url = listingUrl(provider.baseUrl);
+	if (!url) throw new ModelsDiscoveryError(`Provider "${providerId}" has a "baseUrl" that is not a valid URL`);
+	return url;
 }
 
 async function fetchListing(
-	url: string,
+	url: ListingUrl,
 	auth: ModelsDiscoveryAuth,
 	fetchImpl: typeof fetch,
 	signal: AbortSignal | undefined,
@@ -127,16 +139,22 @@ async function fetchListing(
 	if (auth.apiKey && !Object.keys(headers).some((name) => name.toLowerCase() === "authorization")) {
 		headers.authorization = `Bearer ${auth.apiKey}`;
 	}
-	const response = await fetchImpl(url, { headers, signal });
-	if (!response.ok) throw new ModelsDiscoveryError(`GET ${url} failed: HTTP ${response.status}`);
+	let response: Response;
+	try {
+		response = await fetchImpl(url.request, { headers, signal });
+	} catch (error) {
+		const reason = redactUrlInMessage(error instanceof Error ? error.message : String(error), url);
+		throw new ModelsDiscoveryError(`GET ${url.display} failed: ${reason}`);
+	}
+	if (!response.ok) throw new ModelsDiscoveryError(`GET ${url.display} failed: HTTP ${response.status}`);
 	let payload: unknown;
 	try {
 		payload = await response.json();
 	} catch {
-		throw new ModelsDiscoveryError(`GET ${url} did not return JSON`);
+		throw new ModelsDiscoveryError(`GET ${url.display} did not return JSON`);
 	}
 	const data = Array.isArray(payload) ? payload : isRecord(payload) ? payload.data : undefined;
-	if (!Array.isArray(data)) throw new ModelsDiscoveryError(`GET ${url} did not return a model list`);
+	if (!Array.isArray(data)) throw new ModelsDiscoveryError(`GET ${url.display} did not return a model list`);
 	const listed = new Map<string, ListedModel>();
 	for (const entry of data) {
 		if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.trim() === "") continue;
@@ -153,9 +171,15 @@ function describeEfforts(parsed: EndpointReasoningEfforts): DiscoveredEfforts {
 		: { levels, defaultThinkingLevel: parsed.defaultThinkingLevel, unmapped: parsed.unmapped };
 }
 
+/**
+ * Discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel` of a model whose
+ * listing advertises efforts; absent metadata leaves the entry alone. An advertised ladder with no
+ * value senpi can represent turns the controls off rather than keeping a stale map.
+ */
 function withEfforts(entry: JsonRecord, parsed: EndpointReasoningEfforts | undefined): JsonRecord {
-	if (!parsed?.thinkingLevelMap) return entry;
-	const { defaultThinkingLevel: _previous, ...rest } = entry;
+	if (!parsed) return entry;
+	const { defaultThinkingLevel: _previousDefault, thinkingLevelMap: _previousMap, ...rest } = entry;
+	if (!parsed.thinkingLevelMap) return { ...rest, reasoning: false };
 	return parsed.defaultThinkingLevel === undefined
 		? { ...rest, reasoning: true, thinkingLevelMap: parsed.thinkingLevelMap }
 		: {
@@ -189,17 +213,15 @@ function writeWithBackup(modelsPath: string, original: string, next: string): st
 /** Fetch the provider's model listing once and upsert it into models.json. */
 export async function discoverProviderModels(options: DiscoverProviderModelsOptions): Promise<ModelsDiscoveryReport> {
 	const { content, document } = readDocument(options.modelsPath);
-	const providerKey = findProviderKey(document, options.providerId, options.modelsPath);
-	const providers = document.providers as JsonRecord;
-	const provider = providers[providerKey] as JsonRecord;
-	const url = listingUrl(provider, options.providerId);
+	const { key: providerKey, providers, provider } = findProvider(document, options.providerId, options.modelsPath);
+	const url = providerListingUrl(provider, options.providerId);
 	const listing = await fetchListing(url, options.auth, options.fetch ?? fetch, options.signal);
 
 	const honorEfforts = isRecord(provider.compat) && provider.compat.supportsReasoningEffort === true;
 	const configured = Array.isArray(provider.models) ? [...provider.models] : [];
 	const report: ModelsDiscoveryReport = {
 		providerId: providerKey,
-		url,
+		url: url.display,
 		modelsPath: options.modelsPath,
 		added: [],
 		updated: [],
@@ -215,7 +237,8 @@ export async function discoverProviderModels(options: DiscoverProviderModelsOpti
 		if (!honorEfforts && Array.isArray(listed.reasoningEfforts)) report.effortsIgnored = true;
 		if (parsed) report.efforts[listed.id] = describeEfforts(parsed);
 		const index = configured.findIndex((entry) => isRecord(entry) && entry.id === listed.id);
-		const current = index >= 0 ? (configured[index] as JsonRecord) : undefined;
+		const existing = index >= 0 ? configured[index] : undefined;
+		const current = isRecord(existing) ? existing : undefined;
 		const next = withEfforts(current ?? { id: listed.id }, parsed);
 		if (current === undefined) {
 			configured.push(next);
@@ -237,7 +260,14 @@ export async function discoverProviderModels(options: DiscoverProviderModelsOpti
 		...document,
 		providers: { ...providers, [providerKey]: { ...provider, models: configured } },
 	};
-	report.backupPath = writeWithBackup(options.modelsPath, content, `${JSON.stringify(nextDocument, null, 2)}\n`);
+	const nextContent = `${JSON.stringify(nextDocument, null, 2)}\n`;
+	const invalid = ModelConfig.validationError(nextContent, options.modelsPath);
+	if (invalid !== undefined) {
+		throw new ModelsDiscoveryError(
+			`Discovery would leave an invalid models.json, so nothing was written.\n${invalid}`,
+		);
+	}
+	report.backupPath = writeWithBackup(options.modelsPath, content, nextContent);
 	report.written = true;
 	report.commentsDropped = stripJsonComments(stripBom(content)) !== stripBom(content);
 	return report;

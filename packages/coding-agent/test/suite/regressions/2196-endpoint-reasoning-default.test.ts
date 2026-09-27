@@ -11,6 +11,11 @@ import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 // senpi#2196: an endpoint-advertised default effort becomes the model's default thinking level.
+function required<T>(value: T | undefined, what: string): T {
+	if (value === undefined) throw new Error(`${what} is missing`);
+	return value;
+}
+
 const ENDPOINT_LEVELS = { off: null, minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: null };
 
 function withEndpointDefault<TApi extends Api>(model: Model<TApi>): Model<TApi> {
@@ -21,7 +26,7 @@ describe("model defaultThinkingLevel at startup", () => {
 	let tempDir: string;
 	let cwd: string;
 	let agentDir: string;
-	const base = getModel("chatgpt-subscription", "gpt-5.5");
+	const base = required(getModel("chatgpt-subscription", "gpt-5.5"), "catalog model chatgpt-subscription/gpt-5.5");
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `senpi-2196-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -41,7 +46,7 @@ describe("model defaultThinkingLevel at startup", () => {
 	}
 
 	it("starts at the model default instead of the global default", async () => {
-		const model = withEndpointDefault(base!);
+		const model = withEndpointDefault(base);
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
@@ -55,7 +60,7 @@ describe("model defaultThinkingLevel at startup", () => {
 	});
 
 	it("keeps a remembered per-model level above the model default", async () => {
-		const model = withEndpointDefault(base!);
+		const model = withEndpointDefault(base);
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
@@ -86,7 +91,7 @@ describe("model defaultThinkingLevel on model switch", () => {
 		harnesses.push(harness);
 		harness.session.setThinkingLevel("high");
 
-		await harness.session.setModel(withEndpointDefault(harness.getModel("faux-2")!));
+		await harness.session.setModel(withEndpointDefault(required(harness.getModel("faux-2"), "faux-2")));
 
 		expect(harness.session.thinkingLevel).toBe("low");
 	});
