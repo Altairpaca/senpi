@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -426,6 +427,7 @@ describe("schedule runner", () => {
 					bootAtMs: processBootAtMs(),
 					processStartedAtMs: 1,
 					deliveryPid: delivery.pid,
+					deliveryStartedAtMs: Math.floor(Date.now() / 1000) * 1000,
 				}),
 			);
 
@@ -456,6 +458,97 @@ describe("schedule runner", () => {
 			expect(() => process.kill(spawned[0] ?? 0, 0)).toThrow();
 		},
 	);
+
+	it.skipIf(process.platform === "win32")("does not treat a reused pid as the dead runner's delivery", async () => {
+		const dir = await tempScheduleDir();
+		const gone = spawn("/usr/bin/true");
+		await new Promise<void>((resolve) => gone.once("exit", () => resolve()));
+		// A live group leader whose start time is not the recorded one: a reused pid.
+		const unrelated = spawn("/bin/sleep", ["60"], { detached: true, stdio: "ignore" });
+		const unrelatedExited = new Promise<void>((resolve) => unrelated.once("exit", () => resolve()));
+		const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+		await writeAtomic(
+			lockFile,
+			JSON.stringify({
+				pid: gone.pid,
+				bootAtMs: processBootAtMs(),
+				processStartedAtMs: 1,
+				deliveryPid: unrelated.pid,
+				deliveryStartedAtMs: 1,
+			}),
+		);
+
+		const lock = await acquireSessionDeliveryLock(dir, "session-a");
+		process.kill(-(unrelated.pid ?? 0), "SIGKILL");
+		await unrelatedExited;
+
+		expect(lock.acquired).toBe(true);
+		if (lock.acquired) await lock.release();
+	});
+
+	it("serializes a pending attach with release so the lock is never left behind", async () => {
+		const dir = await tempScheduleDir();
+		const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+		const lock = await acquireSessionDeliveryLock(dir, "session-a");
+		if (!lock.acquired) throw new Error("expected the lock");
+
+		const attaching = lock.attachDelivery(process.pid);
+		await lock.release();
+		await attaching;
+
+		expect(existsSync(lockFile)).toBe(false);
+	});
+
+	it.skipIf(process.platform === "win32")(
+		"leaves no session lock behind after fast deliveries, attaching each before release",
+		async () => {
+			const dir = await tempScheduleDir();
+			for (let index = 0; index < 20; index += 1) {
+				await createScheduledJob(dir, jobInput({ dueAt: T0 }), T0);
+			}
+			const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+			const lockSeen: string[] = [];
+			const deliver: Delivery = (_event, context) =>
+				runDeliveryProcess({ command: "/usr/bin/true", args: [] }, 30_000, {
+					onSpawn: async (pid) => {
+						await context?.onSpawn?.(pid);
+						lockSeen.push(
+							JSON.parse(await readFile(lockFile, "utf8")).deliveryPid === pid ? "attached" : "missing",
+						);
+					},
+				});
+
+			const result = await runDueJobs({
+				dir,
+				now: () => T0 + 1,
+				owner: { pid: process.pid, processStartedAtMs: 0 },
+				deliver,
+				runners: async () => [],
+			});
+
+			expect(result.events.filter((event) => event.event === "fired" && event.outcome === "delivered")).toHaveLength(
+				20,
+			);
+			expect(lockSeen).toEqual(Array.from({ length: 20 }, () => "attached"));
+			expect(existsSync(lockFile)).toBe(false);
+		},
+	);
+
+	it.skipIf(process.platform === "win32")("never starts a delivery whose registration failed", async () => {
+		const root = await tempDir();
+		const marker = join(root, "ran");
+
+		const result = await runDeliveryProcess({ command: "/bin/sh", args: ["-c", `touch '${marker}'`] }, 30_000, {
+			onSpawn: async () => {
+				// Give an ungated command every chance to run before registration fails.
+				await new Promise((resolve) => setTimeout(resolve, 300));
+				throw new Error("lock lost");
+			},
+		});
+
+		expect(result.ok).toBe(false);
+		expect(existsSync(marker)).toBe(false);
+	});
 
 	it("cancels only the owning session's job when a session id is given", async () => {
 		const dir = await tempScheduleDir();

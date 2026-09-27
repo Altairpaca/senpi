@@ -17,6 +17,7 @@ import {
 	unlinkIfPresent,
 } from "../terminal/lease-file.ts";
 import { ownProcessStartedAtMs, processBootAtMs, sameBoot, sameProcessStart } from "../terminal/process-identity.ts";
+import { readProcessStartMs } from "../terminal/process-start-probe.ts";
 import { type RunnerIdentity, runnersDir } from "./store.ts";
 
 /** A lease whose heartbeat is older than this does not count as an available runner. */
@@ -114,13 +115,16 @@ function sessionLockPath(dir: string, sessionId: string): string {
 export type SessionDeliveryLock =
 	| {
 			readonly acquired: true;
-			/** Records the delivery process (group) so the lock outlives a crashed runner while it runs. */
+			/**
+			 * Records the delivery process (group) so the lock outlives a crashed runner while it runs.
+			 * Serialized with `release`; a failure rejects, and the caller must not start the delivery.
+			 */
 			attachDelivery(pid: number): Promise<void>;
 			release(): Promise<void>;
 	  }
 	| { readonly acquired: false; readonly heldByPid: number | undefined };
 
-/** Whether the delivery process group recorded in a lock still has a live member. */
+/** Whether any member of the delivery process group (POSIX) or the delivery process (win32) is alive. */
 export function isDeliveryGroupAlive(pid: number): boolean {
 	try {
 		process.kill(process.platform === "win32" ? pid : -pid, 0);
@@ -130,45 +134,73 @@ export function isDeliveryGroupAlive(pid: number): boolean {
 	}
 }
 
-/** A lock whose runner died is still held while the delivery it started (same boot) is running. */
-function orphanedDelivery(raw: string): number | undefined {
+export interface LockProbes {
+	readonly readProcessStartMs?: (pid: number) => Promise<number | undefined>;
+}
+
+/**
+ * A lock whose runner died is still held while the delivery it started is running: same boot, the
+ * group has a live member, and - when the leader itself is still there - it is the same process
+ * (a reused pid with a different start time is not the delivery).
+ */
+async function orphanedDelivery(raw: string, probes: LockProbes): Promise<number | undefined> {
+	let parsed: unknown;
 	try {
-		const parsed: unknown = JSON.parse(raw);
-		if (typeof parsed !== "object" || parsed === null) return undefined;
-		const pid = "deliveryPid" in parsed ? parsed.deliveryPid : undefined;
-		const boot = "bootAtMs" in parsed ? parsed.bootAtMs : undefined;
-		if (typeof pid !== "number" || typeof boot !== "number" || !sameBoot(boot, processBootAtMs())) return undefined;
-		return isDeliveryGroupAlive(pid) ? pid : undefined;
+		parsed = JSON.parse(raw);
 	} catch {
 		return undefined;
 	}
+	if (typeof parsed !== "object" || parsed === null) return undefined;
+	const pid = "deliveryPid" in parsed ? parsed.deliveryPid : undefined;
+	const startedAt = "deliveryStartedAtMs" in parsed ? parsed.deliveryStartedAtMs : undefined;
+	const boot = "bootAtMs" in parsed ? parsed.bootAtMs : undefined;
+	if (typeof pid !== "number" || typeof startedAt !== "number" || typeof boot !== "number") return undefined;
+	if (!sameBoot(boot, processBootAtMs()) || !isDeliveryGroupAlive(pid)) return undefined;
+	const leaderStart = await (probes.readProcessStartMs ?? readProcessStartMs)(pid).catch(() => undefined);
+	// Leader gone but group alive: its descendants are still running the delivery.
+	if (leaderStart === undefined) return pid;
+	return sameProcessStart(startedAt, leaderStart) ? pid : undefined;
 }
 
 /**
  * Takes the cross-process delivery lock of one session: `sessions/<id>.lock`, published exclusively
  * in the lease format. Every runner takes it before it claims a job of that session and holds it
  * until the delivery has settled, so two runner processes never deliver into the same session at
- * once. The delivery process is attached to the lock, and a lock whose runner died is reclaimed only
- * once that delivery process group has exited too.
+ * once. The delivery process is attached to the lock before it may start its work, and a lock whose
+ * runner died is reclaimed only once that delivery has exited too.
  */
-export async function acquireSessionDeliveryLock(dir: string, sessionId: string): Promise<SessionDeliveryLock> {
+export async function acquireSessionDeliveryLock(
+	dir: string,
+	sessionId: string,
+	probes: LockProbes = {},
+): Promise<SessionDeliveryLock> {
 	const path = sessionLockPath(dir, sessionId);
 	const identity = { pid: process.pid, bootAtMs: processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
 	let mine = JSON.stringify(identity);
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
 			await publishExclusive(path, mine);
+			let tail: Promise<unknown> = Promise.resolve();
+			const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
+				const run = tail.then(operation);
+				tail = run.catch(() => undefined);
+				return run;
+			};
 			return {
 				acquired: true,
-				attachDelivery: async (pid) => {
-					const next = JSON.stringify({ ...identity, deliveryPid: pid });
-					if ((await readLeaseText(path)) !== mine) return;
-					await publishReplace(path, next);
-					mine = next;
-				},
-				release: async () => {
-					if ((await readLeaseText(path)) === mine) await unlinkIfPresent(path);
-				},
+				attachDelivery: (pid) =>
+					serialized(async () => {
+						// The runner spawned it a moment ago; `ps` may not list a just-forked process yet.
+						const startedAt = Math.floor(Date.now() / 1000) * 1000;
+						if ((await readLeaseText(path)) !== mine) throw new Error("session delivery lock was lost");
+						const next = JSON.stringify({ ...identity, deliveryPid: pid, deliveryStartedAtMs: startedAt });
+						await publishReplace(path, next);
+						mine = next;
+					}),
+				release: () =>
+					serialized(async () => {
+						if ((await readLeaseText(path)) === mine) await unlinkIfPresent(path);
+					}),
 			};
 		} catch (error) {
 			const code = errorCode(error);
@@ -181,7 +213,7 @@ export async function acquireSessionDeliveryLock(dir: string, sessionId: string)
 		const state = await reclaimLockState(path);
 		if (state.state === "held") return { acquired: false, heldByPid: state.holder?.pid };
 		if (state.state === "stale") {
-			const delivering = orphanedDelivery(state.raw);
+			const delivering = await orphanedDelivery(state.raw, probes);
 			if (delivering !== undefined) return { acquired: false, heldByPid: delivering };
 			await breakStaleLock(path, state.raw);
 		}

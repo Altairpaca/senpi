@@ -54,9 +54,32 @@ export interface ProcessLaunch {
 const STDERR_TAIL_CHARS = 2000;
 
 /**
- * Runs one delivery process to completion; exit 0 means delivered. On POSIX the process leads its
- * own process group, so a timeout kills the whole tree, and the result is only reported once the
- * process has actually exited.
+ * POSIX gate: the delivery command only starts once the runner writes a line on fd 3, which it does
+ * after the process is attached to the session lock. If the runner dies first, fd 3 closes, `read`
+ * fails, and nothing is delivered.
+ */
+const POSIX_GATE = 'IFS= read -r _ <&3 || exit 75; exec 3<&-; exec "$0" "$@"';
+
+function killTree(pid: number): void {
+	if (process.platform === "win32") {
+		spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on(
+			"error",
+			() => {},
+		);
+		return;
+	}
+	try {
+		process.kill(-pid, "SIGKILL");
+	} catch {
+		// Already gone: "close" follows.
+	}
+}
+
+/**
+ * Runs one delivery process to completion; exit 0 means delivered. The process is registered via
+ * `context.onSpawn` before it may do any work (POSIX: it leads its own process group and waits on a
+ * gate); a failed registration kills it and fails the delivery. A timeout kills the whole tree, and
+ * the result is only reported once the process has exited.
  */
 export function runDeliveryProcess(
 	launch: ProcessLaunch,
@@ -64,43 +87,56 @@ export function runDeliveryProcess(
 	context: DeliveryContext = {},
 ): Promise<DeliveryResult> {
 	return new Promise((resolve) => {
-		const ownGroup = process.platform !== "win32";
-		const child = spawn(launch.command, [...launch.args], {
-			cwd: launch.cwd,
-			env: launch.env,
-			stdio: ["pipe", "ignore", "pipe"],
-			detached: ownGroup,
-		});
+		const posix = process.platform !== "win32";
+		const child = posix
+			? spawn("/bin/sh", ["-c", POSIX_GATE, launch.command, ...launch.args], {
+					cwd: launch.cwd,
+					env: launch.env,
+					stdio: ["pipe", "ignore", "pipe", "pipe"],
+					detached: true,
+				})
+			: spawn(launch.command, [...launch.args], {
+					cwd: launch.cwd,
+					env: launch.env,
+					stdio: ["pipe", "ignore", "pipe"],
+					windowsHide: true,
+				});
 		let stderr = "";
-		let timedOut = false;
+		let failure: string | undefined;
 		const timer = setTimeout(() => {
-			timedOut = true;
-			try {
-				if (ownGroup && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-				else child.kill("SIGKILL");
-			} catch {
-				// Already gone: "close" follows.
-			}
+			failure ??= `delivery timed out after ${Math.round(timeoutMs / 1000)}s`;
+			if (child.pid !== undefined) killTree(child.pid);
 		}, timeoutMs);
-		if (child.pid !== undefined) void context.onSpawn?.(child.pid).catch(() => undefined);
 		child.stderr?.on("data", (chunk: Buffer) => {
 			stderr = (stderr + chunk.toString("utf8")).slice(-STDERR_TAIL_CHARS);
 		});
+		child.stdin?.on("error", () => {});
+		const gate = posix ? child.stdio[3] : null;
+		gate?.on("error", () => {});
 		child.on("error", (error) => {
-			clearTimeout(timer);
-			resolve({ ok: false, error: error.message });
+			failure ??= error.message;
 		});
 		child.on("close", (code, signal) => {
 			clearTimeout(timer);
-			if (timedOut) resolve({ ok: false, error: `delivery timed out after ${Math.round(timeoutMs / 1000)}s` });
+			if (failure !== undefined) resolve({ ok: false, error: failure });
 			else if (code === 0) resolve({ ok: true });
 			else {
 				const status = code === null ? `signal ${signal}` : `exit code ${code}`;
 				resolve({ ok: false, error: stderr.trim() ? `${status}: ${stderr.trim()}` : status });
 			}
 		});
-		child.stdin?.on("error", () => {});
-		child.stdin?.end(launch.stdin ?? "");
+		const pid = child.pid;
+		if (pid === undefined) return; // "error" + "close" report the spawn failure
+		void Promise.resolve(context.onSpawn?.(pid)).then(
+			() => {
+				if (gate !== null && gate !== undefined && "end" in gate) gate.end("go\n");
+				child.stdin?.end(launch.stdin ?? "");
+			},
+			(error: unknown) => {
+				failure ??= `could not register the delivery: ${error instanceof Error ? error.message : String(error)}`;
+				killTree(pid);
+			},
+		);
 	});
 }
 
