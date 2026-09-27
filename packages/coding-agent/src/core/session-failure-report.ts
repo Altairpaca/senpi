@@ -2,8 +2,10 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "./session-manager.ts";
 
 /**
- * Prompts below this size cannot be prefix-cached by the major providers, so a
- * zero cache read on them is not evidence of a lost cache.
+ * Providers only cache a prompt prefix above a model-specific minimum size, so a
+ * zero cache read on a small prompt is not evidence of a lost cache. The report
+ * uses one fixed threshold of 2,048 prompt tokens for every provider; smaller
+ * prompts are never counted as full misses.
  */
 export const MIN_CACHEABLE_PROMPT_TOKENS = 2048;
 
@@ -15,11 +17,19 @@ export interface SessionFailureReport {
 	failureShare: number;
 	/** Wall time from each failed request's start to its recorded end. */
 	failedDurationMs: number;
-	/** First successful responses after one or more failed requests. */
+	/**
+	 * Retries that succeeded after a failure: the first successful response after
+	 * one or more failed requests within the same user turn (no user message in
+	 * between), whichever chain entry answered.
+	 */
 	postFailureRequests: number;
-	/** Post-failure responses that read nothing from the prompt cache on a cacheable prompt. */
+	/** Those retries that read nothing from the prompt cache on a prompt of at least MIN_CACHEABLE_PROMPT_TOKENS. */
 	postFailureFullMissRequests: number;
-	/** Uncached prompt tokens (input + cache writes) those full misses re-sent. */
+	/**
+	 * Uncached prompt tokens (input + cache writes) of those retries: what the retry
+	 * sent without a cache hit. The provider's usage report is exact; attributing the
+	 * miss to the failure is the report's reading of the sequence, not a provider fact.
+	 */
 	postFailureFullMissInputTokens: number;
 }
 
@@ -42,6 +52,10 @@ export function computeSessionFailureReport(entries: readonly SessionEntry[]): S
 	let postFailureFullMissInputTokens = 0;
 	let previousFailed = false;
 	for (const entry of entries) {
+		if (entry.type === "message" && entry.message.role === "user") {
+			previousFailed = false;
+			continue;
+		}
 		if (!isAssistantEntry(entry)) continue;
 		const { message } = entry;
 		requests++;

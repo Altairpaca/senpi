@@ -14,7 +14,7 @@ export function formatSessionFailureInfo(report: SessionFailureReport | undefine
 	if (report.postFailureRequests > 0) {
 		const misses = report.postFailureFullMissRequests;
 		const tokens = report.postFailureFullMissInputTokens.toLocaleString();
-		info += `${label("Full cache misses after a failure:")} ${misses} of ${report.postFailureRequests} ${label(`(${tokens} input tokens re-sent)`)}\n`;
+		info += `${label("Retries after a failure with no cache hit:")} ${misses} of ${report.postFailureRequests} ${label(`(${tokens} uncached input tokens)`)}\n`;
 	}
 	return info;
 }

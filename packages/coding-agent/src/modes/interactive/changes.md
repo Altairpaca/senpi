@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleSessionCommand` appends `formatSessionFailureInfo(stats.failures)` (`session-failure-info.ts`, new) after the Cost block: failed requests with their errored/aborted split and share, time in failed requests, and full cache misses after a failure with the input tokens they re-sent. Nothing is shown for a session without a failed request or a host that predates the report.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleSessionCommand` appends `formatSessionFailureInfo(stats.failures)` (`session-failure-info.ts`, new) after the Cost block: failed requests with their errored/aborted split and share, time in failed requests, and retries after a failure (same user turn) that had no cache hit, with their uncached input tokens. Nothing is shown for a session without a failed request or a host that predates the report.
 
 ### Why
 

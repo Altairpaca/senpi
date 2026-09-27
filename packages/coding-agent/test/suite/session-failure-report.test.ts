@@ -64,6 +64,23 @@ describe("computeSessionFailureReport", () => {
 		expect(report.postFailureFullMissInputTokens).toBe(0);
 	});
 
+	it("does not attribute a later user turn to an earlier failure", () => {
+		const nextDay = START + 86_400_000;
+		const report = computeSessionFailureReport([
+			assistantEntry("a", START, 50, { stopReason: "aborted" }),
+			{
+				type: "message",
+				id: "u",
+				parentId: null,
+				timestamp: new Date(nextDay).toISOString(),
+				message: { role: "user", content: "an unrelated question", timestamp: nextDay },
+			},
+			assistantEntry("b", nextDay + 1_000, 900, { stopReason: "stop", usage: usage(5_000, 0) }),
+		]);
+
+		expect(report).toMatchObject({ abortedRequests: 1, postFailureRequests: 0, postFailureFullMissInputTokens: 0 });
+	});
+
 	it("reports an empty session as zero failures", () => {
 		expect(computeSessionFailureReport([])).toMatchObject({ requests: 0, failureShare: 0, failedDurationMs: 0 });
 	});

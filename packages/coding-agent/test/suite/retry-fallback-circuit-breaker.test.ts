@@ -44,18 +44,52 @@ describe("FallbackCircuitBreaker", () => {
 		expect(breaker.isOpen(head, 600_100, "a")).toBe(false);
 	});
 
-	it("hands the half-open probe to exactly one owner until the lease expires", () => {
+	it("keeps an outstanding Retry-After deadline when a later failure carries no hint", () => {
+		const breaker = new FallbackCircuitBreaker();
+
+		expect(breaker.open(head, { now: 0, ...window, retryAfterMs: 600_000 })).toBe(600_000);
+		expect(breaker.open(head, { now: 1_000, ...window })).toBe(600_000);
+		expect(breaker.isOpen(head, 599_999, "a")).toBe(true);
+	});
+
+	it("admits exactly one probe owner and keeps it exclusive until it settles", () => {
 		const breaker = new FallbackCircuitBreaker();
 		breaker.open(head, { now: 0, ...window });
-		expect(breaker.isOpen(head, 999, "a")).toBe(true);
+		expect(breaker.admit(head, 999, "a")).toEqual({ kind: "open" });
 
-		breaker.claimProbe(head, 1_000, "a");
-		breaker.claimProbe(head, 1_000, "b");
+		const first = breaker.admit(head, 1_000, "a");
+		expect(first.kind).toBe("probe");
+		expect(breaker.admit(head, 1_000, "b")).toEqual({ kind: "open" });
+		expect(breaker.admit(head, 1_000_000, "b")).toEqual({ kind: "open" });
+		expect(breaker.admit(head, 1_000_000, "a")).toEqual(first);
+	});
 
-		expect(breaker.isOpen(head, 1_000, "a")).toBe(false);
+	it("releases a probe only for the token that holds it", () => {
+		const breaker = new FallbackCircuitBreaker();
+		breaker.open(head, { now: 0, ...window });
+		const first = breaker.admit(head, 1_000, "a");
+		if (first.kind !== "probe") throw new Error("expected a probe");
+
+		breaker.release({ ...first.token, owner: "b" });
 		expect(breaker.isOpen(head, 1_000, "b")).toBe(true);
-		expect(breaker.isOpen(head, 1_999, "b")).toBe(true);
-		expect(breaker.isOpen(head, 2_000, "b")).toBe(false);
+		breaker.open(head, { now: 1_000, ...window });
+		breaker.release(first.token);
+		expect(breaker.admit(head, 3_000, "b").kind).toBe("probe");
+		breaker.releaseOwner("b");
+		expect(breaker.admit(head, 3_000, "c").kind).toBe("probe");
+	});
+
+	it("sweeps only circuits idle for a full ceiling window after they half-opened", () => {
+		const breaker = new FallbackCircuitBreaker();
+		breaker.open(head, { now: 0, ...window });
+		breaker.open("provider-b/model-y", { now: 0, ...window });
+		breaker.admit("provider-b/model-y", 1_000, "a");
+
+		breaker.sweep(3_999);
+		expect(breaker.size).toBe(2);
+		breaker.sweep(4_000);
+		expect(breaker.size).toBe(1);
+		expect(breaker.isOpen("provider-b/model-y", 4_000, "b")).toBe(true);
 	});
 
 	it("shares one breaker per resolved agent directory", () => {
@@ -107,6 +141,16 @@ describe("createFallbackCircuitAccess", () => {
 		expect(circuits.isOpen(head)).toBe(true);
 	});
 
+	it("reads a Retry-After carried as the error-message marker", () => {
+		const breaker = new FallbackCircuitBreaker();
+		const circuits = access(1_000, breaker);
+
+		circuits.noteFailure(head, { errorMessage: "503: Provider unavailable (retry-after-ms: 90000)" });
+
+		expect(breaker.isOpen(head, 89_999, "session-b")).toBe(true);
+		expect(breaker.isOpen(head, 90_000, "session-b")).toBe(false);
+	});
+
 	it("neither opens nor honours circuits when circuitCooldownMs is 0", () => {
 		const breaker = new FallbackCircuitBreaker();
 		breaker.open(head, { now: 0, ...window });
@@ -115,6 +159,7 @@ describe("createFallbackCircuitAccess", () => {
 		circuits.noteFailure("provider-b/model-y", {});
 
 		expect(circuits.isOpen(head)).toBe(false);
+		expect(circuits.admit(head)).toEqual({ kind: "closed" });
 		expect(breaker.isOpen("provider-b/model-y", 0, "session-a")).toBe(false);
 	});
 });

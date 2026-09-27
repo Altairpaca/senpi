@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import type { FallbackLogger } from "./log.ts";
 
 /**
@@ -32,15 +33,25 @@ export interface CircuitOpenRequest {
 	now: number;
 	cooldownMs: number;
 	maxCooldownMs: number;
-	/** Provider Retry-After: authoritative, the circuit stays open until `now + retryAfterMs`. */
 	retryAfterMs?: number;
 }
 
+export interface ProbeToken {
+	readonly selector: string;
+	readonly owner: string;
+	readonly generation: number;
+}
+
+export type CircuitAdmission = { kind: "closed" } | { kind: "open" } | { kind: "probe"; token: ProbeToken };
+
 interface SelectorCircuit {
 	openUntil: number;
+	retryFloorUntil: number;
 	consecutiveOpens: number;
 	cooldownMs: number;
-	probe: { owner: string; leaseUntil: number } | undefined;
+	maxCooldownMs: number;
+	generation: number;
+	probe: { owner: string; generation: number } | undefined;
 }
 
 function nonNegativeMs(value: unknown, fallback: number): number {
@@ -57,52 +68,91 @@ export function resolveFallbackCircuitSettings(
 
 export class FallbackCircuitBreaker {
 	private readonly circuits = new Map<string, SelectorCircuit>();
+	private generations = 0;
+
+	get size(): number {
+		return this.circuits.size;
+	}
 
 	open(selector: string, request: CircuitOpenRequest): number {
-		const consecutiveOpens = (this.circuits.get(selector)?.consecutiveOpens ?? 0) + 1;
+		const previous = this.circuits.get(selector);
+		const consecutiveOpens = (previous?.consecutiveOpens ?? 0) + 1;
 		const cooldownMs = Math.min(request.cooldownMs * 2 ** (consecutiveOpens - 1), request.maxCooldownMs);
 		const retryAfterMs = request.retryAfterMs;
-		const waitMs =
+		const hinted =
 			retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0
-				? Math.max(retryAfterMs, cooldownMs)
-				: cooldownMs;
-		const openUntil = request.now + waitMs;
-		this.circuits.set(selector, { openUntil, consecutiveOpens, cooldownMs, probe: undefined });
+				? request.now + retryAfterMs
+				: 0;
+		const retryFloorUntil = Math.max(
+			hinted,
+			previous && previous.retryFloorUntil > request.now ? previous.retryFloorUntil : 0,
+		);
+		const openUntil = Math.max(request.now + cooldownMs, retryFloorUntil);
+		this.circuits.set(selector, {
+			openUntil,
+			retryFloorUntil,
+			consecutiveOpens,
+			cooldownMs,
+			maxCooldownMs: request.maxCooldownMs,
+			generation: ++this.generations,
+			probe: undefined,
+		});
 		return openUntil;
 	}
 
-	/**
-	 * Whether chain resolution must skip the selector for `owner`: it is cooling
-	 * down, or half-open while a different owner holds the live probe lease.
-	 */
 	isOpen(selector: string, now: number, owner: string): boolean {
 		const circuit = this.circuits.get(selector);
 		if (!circuit) return false;
 		if (now < circuit.openUntil) return true;
-		const probe = circuit.probe;
-		return probe !== undefined && now < probe.leaseUntil && probe.owner !== owner;
+		return circuit.probe !== undefined && circuit.probe.owner !== owner;
 	}
 
 	/**
-	 * Hands the half-open probe to `owner` for one cooldown window, so exactly one
-	 * session probes a recovered entry; a crashed prober's lease simply expires.
+	 * Atomic admission: a closed selector passes, a cooling one or one whose probe
+	 * another owner holds is refused, and a half-open one hands `owner` its single
+	 * probe. The probe stays exclusive until released or settled - it never
+	 * expires on a timer, so a slow probe cannot overlap a second one.
 	 */
-	claimProbe(selector: string, now: number, owner: string): void {
+	admit(selector: string, now: number, owner: string): CircuitAdmission {
 		const circuit = this.circuits.get(selector);
-		if (!circuit || this.isOpen(selector, now, owner)) return;
-		circuit.probe = { owner, leaseUntil: now + Math.max(circuit.cooldownMs, 1) };
+		if (!circuit) return { kind: "closed" };
+		if (now < circuit.openUntil) return { kind: "open" };
+		if (circuit.probe && circuit.probe.owner !== owner) return { kind: "open" };
+		circuit.probe ??= { owner, generation: circuit.generation };
+		return { kind: "probe", token: { selector, owner, generation: circuit.probe.generation } };
+	}
+
+	release(token: ProbeToken): void {
+		const probe = this.circuits.get(token.selector)?.probe;
+		if (probe && probe.owner === token.owner && probe.generation === token.generation) {
+			const circuit = this.circuits.get(token.selector);
+			if (circuit) circuit.probe = undefined;
+		}
+	}
+
+	releaseOwner(owner: string): void {
+		for (const circuit of this.circuits.values()) {
+			if (circuit.probe?.owner === owner) circuit.probe = undefined;
+		}
 	}
 
 	close(selector: string): void {
 		this.circuits.delete(selector);
 	}
+
+	sweep(now: number): void {
+		for (const [selector, circuit] of this.circuits) {
+			if (!circuit.probe && now >= circuit.openUntil + circuit.maxCooldownMs) this.circuits.delete(selector);
+		}
+	}
 }
 
-/** One session's view of the shared breaker: its owner id, clock, and live settings are bound in. */
 export interface FallbackCircuitAccess {
-	noteFailure(selector: string, failure: { retryAfterMs?: number }): void;
+	noteFailure(selector: string, failure: { retryAfterMs?: number; errorMessage?: string }): void;
 	isOpen(selector: string): boolean;
-	claimProbe(selector: string): void;
+	admit(selector: string): CircuitAdmission;
+	release(token: ProbeToken): void;
+	releaseAll(): void;
 	close(selector: string): void;
 }
 
@@ -121,13 +171,17 @@ export function createFallbackCircuitAccess(deps: FallbackCircuitAccessDeps): Fa
 			if (!enabled()) return;
 			const { cooldownMs, maxCooldownMs } = deps.settings();
 			const now = deps.now();
-			const openUntil = deps.breaker.open(selector, { now, cooldownMs, maxCooldownMs, ...failure });
-			deps.logger.info("circuit_opened", { selector, durationMs: openUntil - now });
+			const retryAfterMs =
+				failure.retryAfterMs ??
+				(failure.errorMessage === undefined ? undefined : parseRetryAfterMsMarker(failure.errorMessage));
+			deps.breaker.sweep(now);
+			const openUntil = deps.breaker.open(selector, { now, cooldownMs, maxCooldownMs, retryAfterMs });
+			deps.logger.info("circuit_opened", { selector, durationMs: openUntil - now, retryAfterMs });
 		},
 		isOpen: (selector) => enabled() && deps.breaker.isOpen(selector, deps.now(), deps.owner()),
-		claimProbe(selector) {
-			if (enabled()) deps.breaker.claimProbe(selector, deps.now(), deps.owner());
-		},
+		admit: (selector) => (enabled() ? deps.breaker.admit(selector, deps.now(), deps.owner()) : { kind: "closed" }),
+		release: (token) => deps.breaker.release(token),
+		releaseAll: () => deps.breaker.releaseOwner(deps.owner()),
 		close: (selector) => deps.breaker.close(selector),
 	};
 }
@@ -138,8 +192,15 @@ export function fallbackCircuitsFor(agentDir: string): FallbackCircuitBreaker {
 	const key = resolve(agentDir);
 	let breaker = breakersByAgentDir.get(key);
 	if (!breaker) {
+		for (const [otherKey, other] of breakersByAgentDir) {
+			if (other.size === 0) breakersByAgentDir.delete(otherKey);
+		}
 		breaker = new FallbackCircuitBreaker();
 		breakersByAgentDir.set(key, breaker);
 	}
 	return breaker;
+}
+
+export function monotonicNow(): number {
+	return performance.timeOrigin + performance.now();
 }

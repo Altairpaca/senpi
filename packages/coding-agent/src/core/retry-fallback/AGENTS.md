@@ -8,7 +8,9 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 |---|---|
 | `controller.ts` | `RetryFallbackController`: turn-scoped tried-selector set, `ActiveFallbackState`, `tryFallback` / `maybeRestorePrimary(revertPolicy)` / `notifyCompactionApplied` / `clearForManualModelChange`, content-keyed memo of canonicalized chains |
 | `candidates.ts` | `firstUsableCandidate`: the chain scan after the current entry (unknown/self/tried/suppressed/unauthenticated/circuit-open skips; an all-open chain returns its first open entry as the probe) |
-| `circuit.ts` | `FallbackCircuitBreaker` shared per resolved agent dir (`fallbackCircuitsFor`): doubling cooldown, Retry-After, single half-open probe lease; `createFallbackCircuitAccess` binds a session's owner id, clock, and `fallback.*` settings |
+| `circuit-probes.ts` | `CircuitProbes`: a session's single probe token (admit / accept / noteFailure / release) and `isHealthExhaustionFailure` (billing + quota exhaustion) |
+| `controller-types.ts` | Controller type declarations (`ActiveFallbackState`, deps, reasons) |
+| `circuit.ts` | `FallbackCircuitBreaker` shared per resolved agent dir (`fallbackCircuitsFor`): doubling cooldown, Retry-After, single half-open probe lease; `createFallbackCircuitAccess` binds a session's owner id, clock (monotonic by default), and `fallback.*` settings; `admit()` is the only way to route to a half-open entry |
 | `chains.ts` | Selector parse/format, chain-key resolution, `canonicalizeFallbackChains` (bare-selector expansion + registry eligibility) |
 | `expansion.ts` | Bare-selector family expansion; OpenRouter denylist; OAuth-first auth tiers; `PROVIDER_PRECEDENCE` tie-break |
 | `hint-policy.ts` | Pure 429 hint tiers (`no-hint-fast-fallback` / `tier1-in-turn` / `tier2-fallback-probe-back` / `tier3-fallback-only`) + probe schedule math |
