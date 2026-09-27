@@ -2,8 +2,8 @@
  * A REFUSED handoff leaves the endpoint exactly as it found it: the successor it started is gone, its
  * generation record and directory with it - so `status --all` never lists a dead refused successor - and
  * the boot `settings.json` it overwrote before spawning is byte-identical to what the running
- * generation was started with. Both refusal exits: the successor never answering, and a failure after
- * it was spawned and recorded.
+ * generation was started with. Every refusal exit: the successor never answering, a failure after it
+ * was spawned and recorded, and a failure before it was ever spawned.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -81,5 +81,37 @@ describe.skipIf(process.platform === "win32")("a refused handoff leaves the endp
 			detail: "successor lost after spawn",
 		});
 		await expectUntouched(qa, refused);
+	}, 180_000);
+
+	it("restores the boot settings when the successor fails before it was ever spawned", async () => {
+		const qa = endpointScratch("hrb");
+		await realHost(qa, qa.legacy);
+		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
+		const settingsBefore = await readFile(paths.settingsFile);
+		const generationsBefore = (await readdir(paths.generationsDir)).sort();
+
+		// The overwrite of the boot settings has already happened when this hook runs; the failure
+		// sits before the old guarded section, so nothing but the refusal path can put them back.
+		const result = await handoffHost({
+			socket: qa.legacy,
+			agentDir: qa.agentDir,
+			hostArgs: hostArgs(),
+			env: hostEnv(qa),
+			_test: {
+				launch: neverAnswers,
+				readinessTimeoutMs: 1_000,
+				beforeSpawn: async () => {
+					throw new Error("successor never spawned");
+				},
+			} satisfies HandoffHostOptions["_test"],
+		});
+
+		expect(result).toMatchObject({
+			action: "refuse",
+			reason: "successor_unavailable",
+			detail: "successor never spawned",
+		});
+		expect.soft((await readFile(paths.settingsFile)).toString("utf8")).toBe(settingsBefore.toString("utf8"));
+		expect.soft((await readdir(paths.generationsDir)).sort()).toEqual(generationsBefore);
 	}, 180_000);
 });

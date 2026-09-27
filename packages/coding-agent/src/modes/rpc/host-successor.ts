@@ -76,33 +76,39 @@ export async function startSuccessor(context: {
 		generation,
 		instanceId,
 	});
-	await options._test?.beforeSpawn?.();
-	const argv = [
-		"--socket",
-		options.socket,
-		"--bind",
-		bindSocket,
-		"--replace",
-		`${replaced.dev}:${replaced.ino}`,
-		...(options.hostArgs ?? []),
-	];
-	const launch = options._test?.launch?.(argv) ?? defaultHostLaunch(argv);
-	const stderr = await open(paths.stderrLog, "a", 0o600);
-	const child = spawn(launch.command, [...launch.args], {
-		detached: true,
-		windowsHide: true,
-		env: successorHostEnvironment({
-			agentDir: options.agentDir,
-			env: options.env,
-			paths,
-			generation,
-			instanceId,
-		}),
-		stdio: ["ignore", "ignore", stderr.fd],
-	});
-	await stderr.close();
-	const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+	// From the overwrite on, every exit is a refusal that puts the boot settings back: a failure BEFORE
+	// the successor existed (the hook, the launch build, the stderr open, the spawn itself) has nothing
+	// to kill or release, but the settings it already overwrote are not the successor's to keep.
+	let child: ChildProcess | undefined;
+	let exited: Promise<void> | undefined;
 	try {
+		await options._test?.beforeSpawn?.();
+		const argv = [
+			"--socket",
+			options.socket,
+			"--bind",
+			bindSocket,
+			"--replace",
+			`${replaced.dev}:${replaced.ino}`,
+			...(options.hostArgs ?? []),
+		];
+		const launch = options._test?.launch?.(argv) ?? defaultHostLaunch(argv);
+		const stderr = await open(paths.stderrLog, "a", 0o600);
+		const spawned = spawn(launch.command, [...launch.args], {
+			detached: true,
+			windowsHide: true,
+			env: successorHostEnvironment({
+				agentDir: options.agentDir,
+				env: options.env,
+				paths,
+				generation,
+				instanceId,
+			}),
+			stdio: ["ignore", "ignore", stderr.fd],
+		});
+		await stderr.close();
+		child = spawned;
+		exited = new Promise<void>((resolve) => spawned.once("exit", () => resolve()));
 		if (child.pid === undefined) throw new Error("failed to spawn the successor generation");
 		const processStartTime = (await waitForStartTime(child.pid, 10_000).catch(() => undefined)) ?? null;
 		const registration = {
@@ -158,23 +164,25 @@ export async function startSuccessor(context: {
  * Undoes what a refused handoff left: kills the successor, releases its generation once it has exited
  * (a successor that never got a pid never ran, so its directory goes at once; one that outlives the wait
  * keeps its record until pruning finds it dead), and puts the boot settings back as they were. A
- * cleanup that fails is answered, not thrown: the handoff still refused, and the caller is told why
+ * successor that was never spawned leaves only the boot settings to undo. A cleanup that fails is
+ * answered, not thrown: the handoff still refused, and the caller is told why
  * the endpoint may not be as it was.
  */
 async function abandonSuccessor(context: {
-	child: ChildProcess;
-	exited: Promise<void>;
+	/** Undefined when the successor was never spawned: nothing to kill or release. */
+	child: ChildProcess | undefined;
+	exited: Promise<void> | undefined;
 	paths: HostDaemonPaths;
 	instanceId: string;
 	bootSettings: string | undefined;
 }): Promise<string | undefined> {
 	const { child, exited, paths, instanceId, bootSettings } = context;
-	if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+	if (child !== undefined && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 	try {
 		if (bootSettings === undefined) await rm(paths.settingsFile, { force: true });
 		else await writeFile(paths.settingsFile, bootSettings, { mode: HOST_STATE_FILE_MODE });
-		if (child.pid === undefined) await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true });
-		else if (await exitedWithin(exited, SUCCESSOR_EXIT_WAIT_MS)) {
+		if (child?.pid === undefined) await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true });
+		else if (exited !== undefined && (await exitedWithin(exited, SUCCESSOR_EXIT_WAIT_MS))) {
 			await releaseGeneration(paths, { instanceId, pid: child.pid });
 		}
 		return undefined;

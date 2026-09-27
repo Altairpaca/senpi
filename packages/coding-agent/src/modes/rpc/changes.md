@@ -1,3 +1,22 @@
+## 2026-09-28 - A successor that fails before it was spawned also restores the boot settings
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: everything `startSuccessor` does after `writeHostSettings` overwrote the boot `settings.json` - the `beforeSpawn` hook, the launch build, the stderr open, the spawn and the exit promise - now runs inside the guarded section that already covered the successor's life: a throw there is answered as a `successor_unavailable` refusal whose cleanup puts `settings.json` back byte for byte, instead of escaping `startSuccessor` and leaving the endpoint's boot settings naming a successor that never ran. `abandonSuccessor` accepts a successor that was never spawned (nothing to kill or release; only the settings need restoring) and one that was spawned but never got an exit promise.
+- Tests: `test/rpc-host-handoff-refused.test.ts` - a handoff whose `beforeSpawn` hook throws refuses with `successor_unavailable`, leaves `settings.json` byte-identical and `generations/` exactly as it was. Before the fix the throw escaped `handoffHost` and the boot settings kept the successor's generation and instanceId (verify-t33 N5).
+
+### Why
+
+`settings.json` is what the supervisor reads at its next boot; between the overwrite and the old guarded section sat the `beforeSpawn` hook, the stderr open and the spawn itself, none of which restored anything on failure (verify-t33 N5).
+
+### Why an extension could not handle it
+
+The handoff runs from `senpi host handoff` and `ensureHost`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor`'s spawn section (the hoisted `child`/`exited` and the widened guarded region) and `abandonSuccessor`'s signature and kill/release guards.
+
 ## 2026-09-28 - A refused handoff leaves no successor record and restores the boot settings
 
 ### What changed
