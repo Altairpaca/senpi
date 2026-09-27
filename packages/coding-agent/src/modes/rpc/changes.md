@@ -41,6 +41,29 @@ The throw happens inside the registry's own listing and open path, before any se
 - `session-registry.ts`: `openSession`'s canonical path and `syncRuntimeMetadata`.
 - `session-command-router.ts`: `sweepIdleSessions`.
 
+## 2026-09-27 - Memory never refuses an open; status names the host's own memory (#2207)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the CRITICAL band and `SENPI_RPC_HOST_RSS_REFUSE_MB` are gone. Above `SENPI_RPC_HOST_RSS_WARN_MB` the sampler still broadcasts `host_memory_pressure`, writes its stderr line and halves idle parking.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: `onCritical`, `setMemoryCritical`, `setWorkerAdmission` and the worker-open refusal are removed; `RpcSessionRegistryError` no longer carries `host_memory_pressure`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_HOST_MEMORY_PRESSURE` stays for clients that still talk to an older generation, documented as sent only by hosts released before #2207.
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`, `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-generations.ts`: `host status` and each generation row carry `host_rss_mb` (the supervisor and its host process) beside `rss_mb` (the whole tree).
+- `test/suite/regressions/issue-2207-no-memory-admission-refusal.test.ts` (was `issue-1905-memory-critical-worker-admission.test.ts`): a worker open is admitted at four times the warning threshold with the retired variable set, and the pressure record is still emitted.
+
+### Why
+
+The shared host has no resource caps by product decision. The refusal declined every task child on a machine once a long-lived host crossed the watermark. Operators also compared `status.rss_mb` (the whole tree, 9302 MB) with `ps` of the host process (1775 MB) and could not tell which number admission used.
+
+### Why an extension could not handle it
+
+Admission and status live in the host's own registry and daemon-control surface, before any session's extensions exist.
+
+### Expected merge conflict zones
+
+- `session-registry.ts` `openSession` and `session-command-router.ts` memory setters.
+- `host-process-metrics.ts` `readHostProcessMetrics` return shape.
+
 ## 2026-09-22 - Daemon status metrics read the process table through the kernel, never a `ps` child (omo-desktop#594)
 
 ### What changed
