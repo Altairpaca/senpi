@@ -1,8 +1,8 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { firstUsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
-	candidatesAfter,
 	canonicalizeFallbackChains,
 	type FallbackChains,
 	type FallbackSelector,
@@ -245,36 +245,16 @@ export class RetryFallbackController {
 			if (logDecision) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
 			return undefined;
 		}
-		for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
-			const selector = parseFallbackSelector(raw, this.deps.registry);
-			if (!selector) {
-				this.skip(raw, "unknown");
-				continue;
-			}
-			if (selector.provider === current.model.provider && selector.id === current.model.id) {
-				this.skip(raw, "self");
-				continue;
-			}
-			const base = baseSelector(selector);
-			if (this.triedSelectors.has(base)) {
-				this.skip(raw, "tried");
-				continue;
-			}
-			if (this.deps.cooldowns.isSuppressed(base)) {
-				this.skip(raw, "suppressed");
-				continue;
-			}
-			if (!this.deps.isAuthAvailable(selector.provider)) {
-				this.skip(raw, "unauthenticated");
-				continue;
-			}
-			const model = this.deps.registry.find(selector.provider, selector.id);
-			if (!model) {
-				this.skip(raw, "unknown");
-				continue;
-			}
-			if (reserve) this.triedSelectors.add(base);
-			return { chainKey, selector, model };
+		const candidate = firstUsableCandidate(entries, current, {
+			registry: this.deps.registry,
+			tried: this.triedSelectors,
+			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
+			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
+			skip: (raw, skipReason) => this.skip(raw, skipReason),
+		});
+		if (candidate) {
+			if (reserve) this.triedSelectors.add(baseSelector(candidate.selector));
+			return { chainKey, ...candidate };
 		}
 		this.lastExhaustedChainKey = chainKey;
 		if (logDecision) this.deps.logger.info("candidates_exhausted", { chainKey });
