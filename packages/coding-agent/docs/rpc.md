@@ -627,6 +627,12 @@ teardown is complete. After an idle exit, the next `ensureHost()` transparently
 starts a fresh host. `get_protocol_info` over the public socket behaves exactly as before; the supervisor is
 wire-transparent.
 
+`ensureHost()` hands its caller an attach hold: the connection its readiness answer arrived on stays open and counts
+as an attached client, so the idle window cannot close between the ensure and the caller's own attach, however slow
+that attach is. Call `release()` on the returned `EnsuredHost` once your client is attached (or when you no longer
+need the host); the window starts from there. The hold never keeps the calling process alive, and it ends by itself
+when that process exits, so an abandoned ensure never pins a host.
+
 The RPC host can never outlive its supervisor. It is spawned with an extra inherited pipe on fd 3 whose write end the
 supervisor holds and never writes to; the kernel closes that end whenever the supervisor dies — including `SIGKILL`, an
 OOM kill, or a crash, where no signal handler runs — so the host reads EOF, shuts down cleanly and removes its private

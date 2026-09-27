@@ -43,6 +43,29 @@ Daemon registration and the host's crash-path cleanup run in the supervisor and 
 - `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration` and `releaseGeneration`.
 - `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: `cleanupWatchdogPaths`.
 
+## 2026-09-28 - An ensured host stays up until the ensuring client attaches (#2227)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-attach-hold.ts` (new): `holdAttachment` keeps an answered probe connection open as the ensuring client's attach hold (drained, unref'd, idempotent `release()`).
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `holdProtocolInfo` asks `get_protocol_info` and keeps the answering connection as the hold, so "ready" and "held" are the same instant.
+- `packages/coding-agent/src/modes/rpc/host-readiness.ts` (new, moved out of `host-ensure.ts` unchanged first): the spawned-host readiness poll now returns the hold with a compatible answer and releases every other probe.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost` gains `release()`. A reuse is held from the connection that proved it compatible; a start from its readiness answer; a handoff (or a refused handoff) takes one hold on the host it ends with. Every other decision releases its probe connection first.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `senpi host ensure` releases the hold after its final probe.
+
+### Why
+
+The supervisor starts a transient host's idle window when the last client detaches, and `ensureHost()`'s own readiness probe was that client: it detached before `ensureHost()` even returned. Anything slower than the window between that probe and the caller's attach - measured on windows-latest: the ensure lock release alone took up to 1.5 s - found the host gone (`connect ENOENT`, the RPC named pipes (Windows) CI failure).
+
+### Why an extension could not handle it
+
+The gap sits between two steps of `ensureHost()` and the caller's connect; no extension runs in the ensuring client or the supervisor.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
+
 ## 2026-09-27 - open_session waits for the host that acknowledged it instead of a fixed 30 s (#2209)
 
 ### What changed

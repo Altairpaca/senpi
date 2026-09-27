@@ -35,9 +35,9 @@ import {
 import { handoffHost } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS, type HostColdStart, type HostLifecyclePolicyInput } from "./host-lifecycle.ts";
-import { probeProtocolInfo, probeSocketReachable } from "./host-probe.ts";
-import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
+import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
+import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
@@ -99,6 +99,12 @@ export interface EnsuredHost {
 	readonly pid: number;
 	readonly socket: string;
 	readonly reused: boolean;
+	/**
+	 * Ends this ensure's attach hold (host-attach-hold.ts). Until then the host counts this client as
+	 * attached, so its idle window cannot close before the client's own connection is up; release it
+	 * once that connection is attached, or when the client no longer needs the host.
+	 */
+	readonly release: () => void;
 }
 
 const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
@@ -155,15 +161,21 @@ async function ensureHostLocked(
 	// makes that structural, and the field stays as the second guard for a directory that was
 	// somehow reused: a second socket must never read the first socket's daemon as its own.
 	const registeredHere = registersSocket(registered, socket);
-	const protocol = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	// A reusable host is held from the connection that proved it compatible, never re-probed later.
+	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	const protocol = held?.info;
 	const startedByUs = registeredHere && (await writtenByThisProcess(registered?.writer));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
 	const decision = decide(options, startedByUs, protocol);
+	if (decision.action === "reuse" && held) {
+		// A compatible socket is attachable even when another client surface
+		// started it. Only hosts we spawned are eligible for lifecycle management.
+		return { pid: attachedPid, socket, reused: true, release: held.hold.release };
+	}
+	held?.hold.release();
 	switch (decision.action) {
 		case "reuse":
-			// A compatible socket is attachable even when another client surface
-			// started it. Only hosts we spawned are eligible for lifecycle management.
-			return { pid: attachedPid, socket, reused: true };
+			throw new Error(`host at ${socket} was reused without answering its probe`);
 		case "refuse":
 			throw new HostEnsureRefusedError(socket, decision.reason, protocol);
 		case "handoff":
@@ -267,12 +279,20 @@ async function upgradeGeneration(
 			...(options._test?.readinessTimeoutMs ? { readinessTimeoutMs: options._test.readinessTimeoutMs } : {}),
 		},
 	});
-	if (result.action === "handoff") return { pid: result.pid, socket, reused: false };
+	if (result.action === "handoff")
+		return { pid: result.pid, socket, reused: false, release: await holdEnsured(socket) };
 	await appendStderr(
 		paths,
 		`generation handoff refused: ${result.reason}${result.detail ? ` (${result.detail})` : ""}`,
 	);
-	return { pid: attachedPid, socket, reused: true };
+	return { pid: attachedPid, socket, reused: true, release: await holdEnsured(socket) };
+}
+
+/** The attach hold for a host another step already proved ready (a handoff successor, a refused handoff). */
+async function holdEnsured(socket: string): Promise<() => void> {
+	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	if (!held) throw new Error(`RPC socket host at ${socket} stopped answering before this ensure could hold it`);
+	return held.hold.release;
 }
 
 /** This build as a client: which protocol it speaks, what it needs from a host, and which build it is. */
@@ -419,7 +439,7 @@ async function startHost(
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
-	if (isCompatible(result.protocol)) return { pid: pidFile.pid, socket, reused: false };
+	if (result.ready) return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-
 	// wise propagate instead of the readiness message and skip cleanupState below,

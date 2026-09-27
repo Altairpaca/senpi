@@ -216,9 +216,10 @@ describe("ensureHost-spawned host lifecycle", () => {
 
 	it("does not exit while a client is attached, then exits after it detaches", async () => {
 		const qa = scratch("conn");
-		await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
+		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 }, hold: true });
 		const entry = currentManaged();
 		const peer = await JsonlPeer.connect(qa.socket);
+		ensured.release();
 		await delay(2_000);
 		await expectHostAlive(qa, entry.pidFile);
 		peer.destroy();
@@ -230,12 +231,14 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const model = await HeldAnthropicModel.start();
 		models.push(model);
 		writeRpcModelsJson(qa.agentDir, model.origin);
-		await ensureLifecycleHost(qa, {
+		const ensured = await ensureLifecycleHost(qa, {
 			policy: { idleExitMs: 800 },
 			hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
+			hold: true,
 		});
 		const entry = currentManaged();
 		const peer = await JsonlPeer.connect(qa.socket);
+		ensured.release();
 		const opened = await peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
 		const sessionId = openedSessionId(opened);
 		const agentStart = peer.waitFor((value) => value.type === "agent_start" && value.sessionId === sessionId);
@@ -247,6 +250,20 @@ describe("ensureHost-spawned host lifecycle", () => {
 		model.release();
 		await waitForHostExit(entry, 20_000);
 	}, 60_000);
+
+	// senpi#2227: the idle window used to start when ensureHost's readiness probe detached, so a
+	// client slower than the window to attach (a loaded runner, a lock release) found no host.
+	it("keeps an ensured host up past its idle window until the ensuring client attaches", async () => {
+		const qa = scratch("hold");
+		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 }, hold: true });
+		const entry = currentManaged();
+		await delay(2_000);
+		const peer = await JsonlPeer.connect(qa.socket);
+		expect(await peer.request({ id: "held", type: "get_protocol_info" })).toMatchObject({ success: true });
+		ensured.release();
+		peer.destroy();
+		await waitForHostExit(entry);
+	}, 45_000);
 
 	it("starts a fresh host transparently on the next ensure after an idle exit", async () => {
 		const qa = scratch("ensure");
@@ -704,6 +721,8 @@ async function ensureLifecycleHost(
 		hostArgs?: string[];
 		env?: Record<string, string>;
 		spawn?: { command: string; args: string[] };
+		/** Keep the ensure's attach hold; the test releases it once its own client is attached. */
+		hold?: boolean;
 	} = {},
 ) {
 	const hostArgs = options.hostArgs ?? [];
@@ -739,6 +758,7 @@ async function ensureLifecycleHost(
 					: { command: process.execPath, args: [hostLifecycleEntry(), "--socket", qa.socket, ...hostArgs] },
 			},
 		});
+		if (!options.hold) ensured.release();
 		managed.push({ pidFile: await recordedPidFile(qa, ensured.pid), pidFilePath: qa.pidFilePath });
 		return ensured;
 	} catch (error) {
