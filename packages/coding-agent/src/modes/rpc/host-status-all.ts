@@ -16,41 +16,34 @@ import { readGenerationRows } from "./host-generations.ts";
 import { type HostStatusReport, readHostStatus } from "./host-status.ts";
 import { readClaimRows } from "./host-status-rows.ts";
 
-/** Endpoints read at once: bounded, because each one is a socket probe plus a directory walk. */
-const STATUS_ALL_CONCURRENCY = 4;
-
 export interface HostEndpointStatus extends Omit<HostStatusReport, "socket"> {
 	readonly socket: string | null;
 	readonly dir: string;
 	readonly identity: HostEndpointIdentitySource;
 }
 
-export async function readAllHostStatus(options: {
+interface StatusAllOptions {
 	readonly agentDir: string;
 	readonly includeWorkers: boolean;
-}): Promise<readonly HostEndpointStatus[]> {
-	const endpoints = await listHostEndpoints(options.agentDir);
-	const rows: HostEndpointStatus[] = new Array(endpoints.length);
-	let next = 0;
-	const worker = async (): Promise<void> => {
-		for (let index = next++; index < endpoints.length; index = next++) {
-			const endpoint = endpoints[index];
-			if (endpoint !== undefined) rows[index] = await endpointStatus(endpoint, options);
-		}
-	};
-	await Promise.all(Array.from({ length: Math.min(STATUS_ALL_CONCURRENCY, endpoints.length) }, worker));
-	return rows;
+	/** Budget for each read of each endpoint's socket, default 10 s (`readHostStatus`). */
+	readonly timeoutMs?: number;
 }
 
-async function endpointStatus(
-	endpoint: HostEndpointEntry,
-	options: { readonly agentDir: string; readonly includeWorkers: boolean },
-): Promise<HostEndpointStatus> {
+/**
+ * Every endpoint is read at once, each under its own budget, so hung hosts cost about one budget in
+ * total rather than one each; rows keep the enumeration order (sorted by directory name).
+ */
+export async function readAllHostStatus(options: StatusAllOptions): Promise<readonly HostEndpointStatus[]> {
+	const endpoints = await listHostEndpoints(options.agentDir);
+	return Promise.all(endpoints.map((endpoint) => endpointStatus(endpoint, options)));
+}
+
+async function endpointStatus(endpoint: HostEndpointEntry, options: StatusAllOptions): Promise<HostEndpointStatus> {
 	const located = { dir: endpoint.dir, identity: endpoint.identity };
 	if (endpoint.socket === null) return { ...(await unaddressableStatus(endpoint.dir)), socket: null, ...located };
 	const report = await readHostStatus(
 		{ socket: endpoint.socket, agentDir: options.agentDir, includeWorkers: options.includeWorkers },
-		{ prune: false },
+		{ prune: false, ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) },
 	);
 	return { ...report, ...located };
 }

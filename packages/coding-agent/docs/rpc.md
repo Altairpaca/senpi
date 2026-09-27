@@ -465,8 +465,9 @@ which prints the bare socket path).
   shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
   the single-socket form, `--all` REMOVES NOTHING: a dead generation is a row with `alive: false`, an endpoint
   whose host exited stays listed through its `endpoint.json` with `reachable: false` and `generations: []`,
-  and reclaiming what ended is left to the explicit, evidence-gated `gc`. Endpoints are read four at a
-  time. Exit `0` while at least one endpoint answers, `3` when none does or none exists.
+  and reclaiming what ended is left to the explicit, evidence-gated `gc`. Every endpoint is read at
+  once, each under its own budget (10 s per read), and a socket that does not answer the identity probe is
+  not asked for its session listing, so hung hosts cost about one budget in total; rows stay in directory order. Exit `0` while at least one endpoint answers, `3` when none does or none exists.
 - `shard-path` computes a shard socket without contacting any host, so a client that does not link senpi
   can check its own copy of the naming contract against the engine: `{ kind, key, socket }` under `--json`,
   the socket path otherwise. `--root` defaults to `<agentDir>/rpc/shards`.

@@ -67,6 +67,27 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - `status --all` reads every endpoint at once under its own budget
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `readAllHostStatus` reads every endpoint concurrently (the four-at-a-time pool is gone) and takes an optional per-read `timeoutMs`; rows keep the enumeration order.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReadOptions.timeoutMs` (default 10 s) budgets both reads, and `readHostStatus` skips the `list_sessions` read when the identity probe got no answer (the report is `reachable: false` with empty occupancy either way).
+- Tests: `test/rpc-host-status-all-concurrency.test.ts` - eight endpoints that accept and never answer are read in under 2.5 budgets (40 s with the old pool and default budget), in directory order.
+
+### Why
+
+A hung endpoint cost 20 s (the probe, then a listing asked even though the probe went unanswered) and only four were read at a time, so eight accepting-but-silent sockets made `senpi host status --all` take 40 s - on exactly the machine where an operator is asking what is wrong (senpi#2245 review m2).
+
+### Why an extension could not handle it
+
+`senpi host status` runs before and outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `readAllHostStatus` and `endpointStatus`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReadOptions`, `readHostStatus` and `readSessionListing`.
+
 ## 2026-09-28 - `endpoint.json` is written atomically and an ensure repairs a torn one
 
 ### What changed

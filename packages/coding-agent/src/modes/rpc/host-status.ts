@@ -89,6 +89,8 @@ export interface HostStatusOptions {
  */
 export interface HostStatusReadOptions {
 	readonly prune?: boolean;
+	/** Budget for each read of the socket, default 10 s. */
+	readonly timeoutMs?: number;
 }
 
 export async function readHostStatus(
@@ -102,14 +104,17 @@ export async function readHostStatus(
 	const prune = read.prune !== false;
 	const includeWorkers = options.includeWorkers === true;
 	// Both reads observe: looking at a host must never be what keeps it from idling out.
-	const host = await observeProtocolInfo(options.socket, STATUS_PROBE_TIMEOUT_MS);
+	const timeoutMs = read.timeoutMs ?? STATUS_PROBE_TIMEOUT_MS;
+	const host = await observeProtocolInfo(options.socket, timeoutMs);
 	// Reading the directory is also when it is cleaned: an operator asking what runs here must not
 	// be shown generations that ended, and the next reader must get the same answer.
 	if (prune) await pruneDeadGenerations(paths);
 	const generations = await readGenerationRows(paths, { includeDead: !prune });
 	const current = generations.find((row) => row.current && row.alive);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
-	const listing = await readSessionListing(options.socket, includeWorkers);
+	// A socket that did not answer who it is will not answer what it holds: asking again would only
+	// spend a second budget on a hung endpoint.
+	const listing = host === undefined ? [] : await readSessionListing(options.socket, includeWorkers, timeoutMs);
 	const claims = await readClaimRows(paths, generations);
 	return {
 		reachable: host !== undefined,
@@ -144,11 +149,15 @@ export async function readSessionCounts(socket: string, includeWorkers: boolean)
 	return countSessions(await readSessionListing(socket, includeWorkers));
 }
 
-async function readSessionListing(socket: string, includeWorkers: boolean): Promise<readonly HostSessionRow[]> {
+async function readSessionListing(
+	socket: string,
+	includeWorkers: boolean,
+	timeoutMs = STATUS_PROBE_TIMEOUT_MS,
+): Promise<readonly HostSessionRow[]> {
 	const reply = await requestOnSocket(
 		socket,
 		{ type: "list_sessions", [OBSERVE_REQUEST_FIELD]: true, ...(includeWorkers ? { include_workers: true } : {}) },
-		STATUS_PROBE_TIMEOUT_MS,
+		timeoutMs,
 	);
 	return parseSessionRows(reply);
 }
