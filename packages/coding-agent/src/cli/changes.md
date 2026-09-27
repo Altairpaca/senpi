@@ -1,3 +1,21 @@
+## 2026-09-27 - --rebind <path|id> (senpi#2181)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--rebind <path|id>` into `Args.rebind` and lists it in the help text beside `--fork`.
+
+### Why
+
+- Scripts need a non-interactive way to move a session of a moved or re-cloned repository into the current directory; the interactive prompt alone cannot serve them.
+
+### Why an extension could not handle it
+
+- CLI argument parsing and session resolution run before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: `Args` (after `fork`), the `--fork` parse branch, and the `--fork` help line.
+
 ## 2026-09-22 - --provider rejects a typed legacy provider id (senpi#1989)
 
 ### What changed

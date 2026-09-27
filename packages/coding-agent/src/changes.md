@@ -1,3 +1,21 @@
+## 2026-09-27 - Rebind a moved repository's session instead of only forking it (senpi#2181)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createSessionManager` classifies a cross-project `--session` hit with `classifySessionRepository` and hands the decision to `chooseCrossProjectAction` (`src/cli/cross-project-session.ts`): the same git repository gets a rebind prompt showing both paths (`rebindSessionFile`, `src/core/session-rebind.ts`), a different or unrecognised one keeps the fork prompt, and a non-interactive run prints the exact `--rebind` / `--fork` commands and exits 1. A new `--rebind <path|id>` branch (`validateRebindFlags`) rebinds without asking and refuses a provably different repository. `--resume` offers the same rebind when the picked session belongs to this repository at another path.
+
+### Why
+
+- Sessions are filed by absolute path, so moving a repository stranded its sessions: they could only be forked into copies, and the originals never listed under the moved project again (senpi#2181, oh-my-openagent#8914).
+
+### Why an extension could not handle it
+
+- `--session` / `--resume` resolution runs in the CLI before any extension or session exists; the recording half (`repository-identity` builtin) is an extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `case "global"` branch of `--session`, the `--resume` branch after `selectSession`, the new `--rebind` branch after `--fork`, `validateRebindFlags` / `rebindSessionOrExit` / `sessionCwdOrUndefined` beside `validateForkFlags` / `forkSessionOrExit`, and two imports.
+
 ## 2026-09-27 - Preserve interactive cross-project session confirmations (senpi#2180)
 
 ### What changed
