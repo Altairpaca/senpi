@@ -219,6 +219,10 @@ export async function createDaemonDirectories(paths: HostDaemonPaths): Promise<v
  * lock, where `gc` cannot be deciding about the directory - also replaces a file that does not name a
  * socket of this directory (torn by a crash of an older build, or foreign), which would otherwise
  * leave the endpoint unaddressable, and never `gc`-able, for good.
+ *
+ * A filesystem without hard links (exFAT/FAT, some network and FUSE mounts: `link()` fails with
+ * ENOTSUP, EPERM, ENOSYS...) gets the exclusive create of the final file instead. That write is not
+ * atomic, but the first writer still wins, and a file torn by a crash is exactly what `repair` rewrites.
  */
 export async function ensureEndpointIdentity(
 	paths: HostDaemonPaths,
@@ -228,22 +232,35 @@ export async function ensureEndpointIdentity(
 	const temporary = `${paths.endpointFile}.${process.pid}-${randomUUID()}.tmp`;
 	try {
 		await mkdir(paths.dir, { recursive: true, mode: DIRECTORY_MODE });
-		await writeFile(
-			temporary,
-			`${JSON.stringify({ layout: HOST_DAEMON_LAYOUT, socket, created_at: new Date().toISOString() })}\n`,
-			{ mode: HOST_STATE_FILE_MODE, flag: "wx" },
+		const record = `${JSON.stringify({ layout: HOST_DAEMON_LAYOUT, socket, created_at: new Date().toISOString() })}\n`;
+		await writeFile(temporary, record, { mode: HOST_STATE_FILE_MODE, flag: "wx" });
+		const placed = await link(temporary, paths.endpointFile).then(
+			() => true,
+			(cause: unknown) => (isErrorCode(cause, "EEXIST") ? false : createExclusively(paths.endpointFile, record)),
 		);
-		try {
-			await link(temporary, paths.endpointFile);
-		} catch (cause) {
-			if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST")) throw cause;
-			if (options.repair === true && !(await namesThisDirectory(paths))) await rename(temporary, paths.endpointFile);
+		if (!placed && options.repair === true && !(await namesThisDirectory(paths))) {
+			await rename(temporary, paths.endpointFile);
 		}
 	} catch (cause) {
 		throw new HostDaemonStateError(paths.endpointFile, cause);
 	} finally {
 		await rm(temporary, { force: true });
 	}
+}
+
+/** The pre-link write: create the file only if absent. `false` when another writer got there first. */
+async function createExclusively(path: string, content: string): Promise<boolean> {
+	try {
+		await writeFile(path, content, { mode: HOST_STATE_FILE_MODE, flag: "wx" });
+		return true;
+	} catch (cause) {
+		if (isErrorCode(cause, "EEXIST")) return false;
+		throw cause;
+	}
+}
+
+function isErrorCode(cause: unknown, code: string): boolean {
+	return cause instanceof Error && "code" in cause && cause.code === code;
 }
 
 async function namesThisDirectory(paths: HostDaemonPaths): Promise<boolean> {

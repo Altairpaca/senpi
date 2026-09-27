@@ -67,6 +67,25 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - `endpoint.json` is written without hard links where the filesystem has none
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity` still writes the record to a temporary file and `link()`s it into place, but a `link()` failure other than `EEXIST` (ENOTSUP, EPERM, ENOSYS, EXDEV...) now falls back to `createExclusively`: the pre-link `writeFile(..., { flag: "wx" })` of the final file, where `EEXIST` means another writer won. `repair` works the same after either path.
+- Tests: `test/rpc-host-endpoint-identity-no-link.test.ts` - with `link()` into `endpoint.json` failing ENOTSUP, the identity is written whole, the first writer's file survives a repairing call, a torn file is rewritten under `repair`, no temporary file remains, and `ensureHost` starts a host whose `endpoint.json` is correct.
+
+### Why
+
+Writing `endpoint.json` atomically (senpi#2245) used `link()` and failed on anything but `EEXIST`, so on a filesystem without hard links - exFAT/FAT volumes, some network and FUSE mounts - every `ensure` and `handoff` failed with "endpoint.json is not usable: ENOTSUP", where the previous exclusive create had worked (senpi#2245 round-2 review B1). Atomicity is only lost on filesystems that cannot provide it, and a torn file there is what the ensure's `repair` rewrites.
+
+### Why an extension could not handle it
+
+The endpoint directory is written by `ensureHost`/`handoffHost` before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity` and the new `createExclusively`/`isErrorCode` after it.
+
 ## 2026-09-28 - `host gc` never takes a non-socket file at the socket path for a dead socket
 
 ### What changed
