@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+	acquireFallbackCircuits,
 	createFallbackCircuitAccess,
 	DEFAULT_CIRCUIT_COOLDOWN_MS,
 	DEFAULT_CIRCUIT_MAX_COOLDOWN_MS,
@@ -75,7 +76,7 @@ describe("FallbackCircuitBreaker", () => {
 		breaker.open(head, { now: 1_000, ...window });
 		breaker.release(first.token);
 		expect(breaker.admit(head, 3_000, "b").kind).toBe("probe");
-		breaker.releaseOwner("b");
+		breaker.releaseOwnersWithPrefix("b");
 		expect(breaker.admit(head, 3_000, "c").kind).toBe("probe");
 	});
 
@@ -90,6 +91,29 @@ describe("FallbackCircuitBreaker", () => {
 		breaker.sweep(4_000);
 		expect(breaker.size).toBe(1);
 		expect(breaker.isOpen("provider-b/model-y", 4_000, "b")).toBe(true);
+	});
+
+	it("keeps a held breaker's identity while other agent directories come and go", () => {
+		const agentDir = join(tmpdir(), "circuit-breaker-held");
+		const lease = acquireFallbackCircuits(agentDir);
+
+		fallbackCircuitsFor(`${agentDir}-unrelated`);
+		expect(fallbackCircuitsFor(agentDir)).toBe(lease.breaker);
+
+		lease.release();
+		lease.release();
+		fallbackCircuitsFor(`${agentDir}-another`);
+		expect(fallbackCircuitsFor(agentDir)).not.toBe(lease.breaker);
+	});
+
+	it("keeps an unheld breaker that still has circuits to share", () => {
+		const agentDir = join(tmpdir(), "circuit-breaker-unheld-open");
+		const lease = acquireFallbackCircuits(agentDir);
+		lease.breaker.open(head, { now: 0, ...window });
+		lease.release();
+
+		fallbackCircuitsFor(`${agentDir}-unrelated`);
+		expect(fallbackCircuitsFor(agentDir)).toBe(lease.breaker);
 	});
 
 	it("shares one breaker per resolved agent directory", () => {

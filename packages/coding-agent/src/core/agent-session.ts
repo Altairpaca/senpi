@@ -235,9 +235,9 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
 import {
+	acquireFallbackCircuits,
 	createFallbackCircuitAccess,
 	type FallbackCircuitAccess,
-	fallbackCircuitsFor,
 	monotonicNow,
 } from "./retry-fallback/circuit.ts";
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
@@ -1089,6 +1089,8 @@ export class AgentSession {
 	private readonly _retryFallback: RetryFallbackController;
 	private readonly _selectorCooldowns: SelectorCooldowns;
 	private readonly _fallbackCircuits: FallbackCircuitAccess;
+	private readonly _fallbackCircuitsLease: { release(): void };
+	private _probeBackLaneSeq = 0;
 	private _circuitProbeWatchdog: ReturnType<typeof setTimeout> | undefined;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
@@ -1159,12 +1161,16 @@ export class AgentSession {
 				source: fallbackChainsSource,
 			});
 		}
-		this._selectorCooldowns = new SelectorCooldowns(config.fallbackNow ?? (() => Date.now()));
-		this._fallbackNow = config.fallbackNow ?? (() => Date.now());
+		// Cooldowns, probe schedules, and circuits measure elapsed time, so they all
+		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
+		this._fallbackNow = config.fallbackNow ?? monotonicNow;
+		this._selectorCooldowns = new SelectorCooldowns(this._fallbackNow);
+		const circuitsLease = acquireFallbackCircuits(this._agentDir);
+		this._fallbackCircuitsLease = circuitsLease;
 		this._fallbackCircuits = createFallbackCircuitAccess({
-			breaker: fallbackCircuitsFor(this._agentDir),
+			breaker: circuitsLease.breaker,
 			owner: () => this.sessionId,
-			now: config.fallbackNow ?? monotonicNow,
+			now: this._fallbackNow,
 			settings: () => this.settingsManager.getFallbackCircuitSettings(),
 			logger: fallbackLogger,
 		});
@@ -2784,7 +2790,7 @@ export class AgentSession {
 				// The shared circuit gates probe-back like any other request: no probe
 				// before the provider's Retry-After or the cooldown elapses, and none
 				// while another session holds the circuit's single probe.
-				const admission = this._fallbackCircuits.admit(selector);
+				const admission = this._fallbackCircuits.admit(selector, `probe-back:${++this._probeBackLaneSeq}`);
 				if (admission.kind === "open") return false;
 				try {
 					const result = await this._modelRuntime.completeSimple(
@@ -3061,6 +3067,7 @@ export class AgentSession {
 			this._probeBackScheduler.cancel("dispose");
 			this._clearCircuitProbeWatchdog();
 			this._retryFallback.probes.releaseAll();
+			this._fallbackCircuitsLease.release();
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();

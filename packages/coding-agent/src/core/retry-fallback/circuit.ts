@@ -50,7 +50,6 @@ interface SelectorCircuit {
 	consecutiveOpens: number;
 	cooldownMs: number;
 	maxCooldownMs: number;
-	generation: number;
 	probe: { owner: string; generation: number } | undefined;
 }
 
@@ -94,7 +93,6 @@ export class FallbackCircuitBreaker {
 			consecutiveOpens,
 			cooldownMs,
 			maxCooldownMs: request.maxCooldownMs,
-			generation: ++this.generations,
 			probe: undefined,
 		});
 		return openUntil;
@@ -109,16 +107,18 @@ export class FallbackCircuitBreaker {
 
 	/**
 	 * Atomic admission: a closed selector passes, a cooling one or one whose probe
-	 * another owner holds is refused, and a half-open one hands `owner` its single
-	 * probe. The probe stays exclusive until released or settled - it never
-	 * expires on a timer, so a slow probe cannot overlap a second one.
+	 * another requester holds is refused, and a half-open one hands `owner` its
+	 * single probe under a fresh generation. The probe stays exclusive until its
+	 * token is released or the circuit settles - it never expires on a timer, so a
+	 * slow probe cannot overlap a second one, and a stale token never releases a
+	 * later acquisition.
 	 */
 	admit(selector: string, now: number, owner: string): CircuitAdmission {
 		const circuit = this.circuits.get(selector);
 		if (!circuit) return { kind: "closed" };
 		if (now < circuit.openUntil) return { kind: "open" };
 		if (circuit.probe && circuit.probe.owner !== owner) return { kind: "open" };
-		circuit.probe ??= { owner, generation: circuit.generation };
+		circuit.probe ??= { owner, generation: ++this.generations };
 		return { kind: "probe", token: { selector, owner, generation: circuit.probe.generation } };
 	}
 
@@ -130,14 +130,18 @@ export class FallbackCircuitBreaker {
 		}
 	}
 
-	releaseOwner(owner: string): void {
+	releaseOwnersWithPrefix(prefix: string): void {
 		for (const circuit of this.circuits.values()) {
-			if (circuit.probe?.owner === owner) circuit.probe = undefined;
+			if (circuit.probe?.owner.startsWith(prefix)) circuit.probe = undefined;
 		}
 	}
 
 	close(selector: string): void {
 		this.circuits.delete(selector);
+	}
+
+	has(selector: string): boolean {
+		return this.circuits.has(selector);
 	}
 
 	sweep(now: number): void {
@@ -147,10 +151,20 @@ export class FallbackCircuitBreaker {
 	}
 }
 
+/**
+ * A session's requests are admitted per lane, not per session: the foreground
+ * turn is one lane, each background probe-back its own. Two lanes of one session
+ * never share a probe, so a probe-back in flight keeps the foreground turn off
+ * the entry exactly as it keeps a sibling session off.
+ */
+export type CircuitLane = "turn" | `probe-back:${number}`;
+
 export interface FallbackCircuitAccess {
 	noteFailure(selector: string, failure: { retryAfterMs?: number; errorMessage?: string }): void;
-	isOpen(selector: string): boolean;
-	admit(selector: string): CircuitAdmission;
+	/** Whether the breaker holds any state for the selector, i.e. it, not a session cooldown, governs recovery. */
+	governs(selector: string): boolean;
+	isOpen(selector: string, lane?: CircuitLane): boolean;
+	admit(selector: string, lane?: CircuitLane): CircuitAdmission;
 	release(token: ProbeToken): void;
 	releaseAll(): void;
 	close(selector: string): void;
@@ -178,27 +192,67 @@ export function createFallbackCircuitAccess(deps: FallbackCircuitAccessDeps): Fa
 			const openUntil = deps.breaker.open(selector, { now, cooldownMs, maxCooldownMs, retryAfterMs });
 			deps.logger.info("circuit_opened", { selector, durationMs: openUntil - now, retryAfterMs });
 		},
-		isOpen: (selector) => enabled() && deps.breaker.isOpen(selector, deps.now(), deps.owner()),
-		admit: (selector) => (enabled() ? deps.breaker.admit(selector, deps.now(), deps.owner()) : { kind: "closed" }),
+		governs: (selector) => enabled() && deps.breaker.has(selector),
+		isOpen: (selector, lane = "turn") =>
+			enabled() && deps.breaker.isOpen(selector, deps.now(), laneOwner(deps.owner(), lane)),
+		admit: (selector, lane = "turn") =>
+			enabled() ? deps.breaker.admit(selector, deps.now(), laneOwner(deps.owner(), lane)) : { kind: "closed" },
 		release: (token) => deps.breaker.release(token),
-		releaseAll: () => deps.breaker.releaseOwner(deps.owner()),
+		releaseAll: () => deps.breaker.releaseOwnersWithPrefix(`${deps.owner()}:`),
 		close: (selector) => deps.breaker.close(selector),
 	};
 }
 
-const breakersByAgentDir = new Map<string, FallbackCircuitBreaker>();
+function laneOwner(session: string, lane: CircuitLane): string {
+	return `${session}:${lane}`;
+}
+
+interface BreakerEntry {
+	readonly breaker: FallbackCircuitBreaker;
+	owners: number;
+}
+
+const breakersByAgentDir = new Map<string, BreakerEntry>();
+
+/**
+ * An entry leaves the registry only when no live session holds it and it has no
+ * circuit left to share; a held breaker keeps its identity however empty it is.
+ */
+function evictUnheldEmptyBreakers(): void {
+	for (const [key, entry] of breakersByAgentDir) {
+		if (entry.owners === 0 && entry.breaker.size === 0) breakersByAgentDir.delete(key);
+	}
+}
+
+function entryFor(agentDir: string): BreakerEntry {
+	const key = resolve(agentDir);
+	let entry = breakersByAgentDir.get(key);
+	if (!entry) {
+		evictUnheldEmptyBreakers();
+		entry = { breaker: new FallbackCircuitBreaker(), owners: 0 };
+		breakersByAgentDir.set(key, entry);
+	}
+	return entry;
+}
 
 export function fallbackCircuitsFor(agentDir: string): FallbackCircuitBreaker {
-	const key = resolve(agentDir);
-	let breaker = breakersByAgentDir.get(key);
-	if (!breaker) {
-		for (const [otherKey, other] of breakersByAgentDir) {
-			if (other.size === 0) breakersByAgentDir.delete(otherKey);
-		}
-		breaker = new FallbackCircuitBreaker();
-		breakersByAgentDir.set(key, breaker);
-	}
-	return breaker;
+	return entryFor(agentDir).breaker;
+}
+
+/** Holds the agent dir's breaker for one session; `release` is idempotent. */
+export function acquireFallbackCircuits(agentDir: string): { breaker: FallbackCircuitBreaker; release(): void } {
+	const entry = entryFor(agentDir);
+	entry.owners++;
+	let released = false;
+	return {
+		breaker: entry.breaker,
+		release() {
+			if (released) return;
+			released = true;
+			entry.owners--;
+			evictUnheldEmptyBreakers();
+		},
+	};
 }
 
 export function monotonicNow(): number {

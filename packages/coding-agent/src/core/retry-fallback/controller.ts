@@ -94,8 +94,12 @@ export class RetryFallbackController {
 	async maybeRestorePrimary(revertPolicy: "cooldown-expiry" | "never"): Promise<boolean> {
 		const state = this.state;
 		if (!state || state.pinned || revertPolicy !== "cooldown-expiry") return false;
-		if (this.deps.cooldowns.isSuppressed(state.originalSelector)) return false;
-		if (this.probes.isOpen(state.originalSelector)) return false;
+		// An entry the breaker tracks recovers on the circuit's clock; the per-session
+		// cooldown only governs entries the breaker never opened (hard errors, breaker off).
+		const suppressed = this.probes.governs(state.originalSelector)
+			? this.probes.isOpen(state.originalSelector)
+			: this.deps.cooldowns.isSuppressed(state.originalSelector);
+		if (suppressed) return false;
 		const selector = parseFallbackSelector(state.originalSelector, this.deps.registry);
 		if (!selector || !this.deps.isAuthAvailable(selector.provider)) return false;
 		const model = this.deps.registry.find(selector.provider, selector.id);
