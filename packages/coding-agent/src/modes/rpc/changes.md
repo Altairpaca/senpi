@@ -67,6 +67,25 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - `host gc` drops its redundant pointer check
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `endpointInUse` no longer runs `pointerNamesLiveGeneration` (removed). The evidence is three parts: no live generation record (the scan of every `generations/*/host.pid`, which includes the one the pointer names), no live claim owner, a silent socket and successor binds.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`, `packages/coding-agent/src/modes/rpc/host-runner.ts`: doc comments say three-part.
+
+### Why
+
+The pointer names a generation by its instance id, and that generation's record is `generations/<instanceId>/host.pid` - a file the preceding scan of every generation directory already read and judged with the same liveness rule. The pointer check could therefore never change the outcome (senpi#2245 review m3); it only suggested a fourth kind of evidence that does not exist. Every `host gc` result is unchanged.
+
+### Why an extension could not handle it
+
+`host gc` runs outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `endpointInUse` and the helpers after it.
+
 ## 2026-09-28 - A handoff records its successor the moment it is spawned
 
 ### What changed

@@ -66,7 +66,7 @@ export type HostRequest =
 	  }
 	| { readonly action: "stop"; readonly target: HostTarget; readonly drain: boolean; readonly force: boolean }
 	| { readonly action: "handoff"; readonly target: HostTarget; readonly spec: ResolvedHostLaunchSpec }
-	/** Removes endpoint state under `agentDir` only on the four-part evidence (`host-gc.ts`). */
+	/** Removes endpoint state under `agentDir` only on the three-part evidence (`host-gc.ts`). */
 	| { readonly action: "gc"; readonly agentDir: string }
 	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 

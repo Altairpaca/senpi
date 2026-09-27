@@ -4,12 +4,12 @@
  * Endpoint state accumulates by design - `endpoint.json` outlives every generation so `status --all`
  * can still name an endpoint whose host exited - and this is the only path that ever removes it. It
  * never runs implicitly (not inside `ensure`, not inside `status`), it never signals a process, and it
- * removes an endpoint only on four-part evidence evaluated INSIDE that endpoint's ensure lock, the one
+ * removes an endpoint only on three-part evidence evaluated INSIDE that endpoint's ensure lock, the one
  * `ensureHost` serializes on (`hostEnsureLockTarget`), so an ensure can neither start a host into a
  * directory being removed nor have its fresh registration removed under it. Every endpoint that fails
  * any part of the evidence is kept, with the reason:
  *
- *     live_generation   a generation pidfile (any, or the pointer's) names a live process
+ *     live_generation   a generation pidfile (any, the pointer's included) names a live process
  *     live_claim        a session-path claim in `reservations/` has a live owner
  *     reachable         the socket (or a `.next-*` successor bind) did not refuse the connection
  *     locked            the ensure lock was not free within 2 s

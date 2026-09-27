@@ -29,16 +29,16 @@ export type SocketSilence = "socket_refused" | "socket_absent";
 const SOCKET_PROBE_TIMEOUT_MS = 2_000;
 
 /**
- * The four-part test, in the order its answers are reported: (a) no generation pidfile names a live
- * process, (d) neither does the pointer, (b) no session-path claim has a live owner, (c) the public
- * socket - and every `.next-*` successor bind beside it - refuses the connection or does not exist.
+ * The three-part test, in the order its answers are reported: (a) no generation pidfile names a live
+ * process - the pointer's generation included, since its record lives under `generations/` too - (b) no
+ * session-path claim has a live owner, (c) the public socket - and every `.next-*` successor bind beside
+ * it - refuses the connection or does not exist.
  */
 export async function endpointInUse(
 	paths: HostDaemonDirectory,
 	socket: string,
 ): Promise<{ readonly inUse: EndpointInUse } | { readonly inUse: undefined; readonly silence: SocketSilence }> {
 	if (await anyGenerationLive(paths)) return { inUse: "live_generation" };
-	if (await pointerNamesLiveGeneration(paths)) return { inUse: "live_generation" };
 	for (const claim of await readSessionPathClaims(paths.reservationsDir)) {
 		if (await claimOwnerIsLive(claim.owner)) return { inUse: "live_claim" };
 	}
@@ -66,13 +66,6 @@ async function anyGenerationLive(paths: HostDaemonDirectory): Promise<boolean> {
 		if (record !== undefined && (await recordIsLive(record))) return true;
 	}
 	return false;
-}
-
-async function pointerNamesLiveGeneration(paths: HostDaemonDirectory): Promise<boolean> {
-	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
-	if (typeof pointer?.instance_id !== "string") return false;
-	const record = generationRecord(await readFileOrUndefined(generationPaths(paths, pointer.instance_id).pidFile));
-	return record !== undefined && (await recordIsLive(record));
 }
 
 /**

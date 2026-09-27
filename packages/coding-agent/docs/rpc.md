@@ -476,11 +476,11 @@ which prints the bare socket path).
   dir, reason }] }` with exit `0` whatever it found (`2` for a bad flag). It never signals a process and never
   runs implicitly - not inside `ensure`, not inside `status`. For each endpoint whose socket is known it takes
   that socket's ENSURE lock (`<tmp>/senpi-rpc-host-locks/<sha256(transport address)[:32]>.lock`, the one
-  `ensureHost` serializes on - not `daemon.lock`) for at most 2 s, and inside it requires all four: (a) no
+  `ensureHost` serializes on - not `daemon.lock`) for at most 2 s, and inside it requires all three: (a) no
   `generations/*/host.pid` names a live process (pid live and start time matching; a live pid whose identity
-  cannot be read counts as live), (b) no claim in `reservations/` has a live owner, (c) connecting to the socket
-  fails with `ECONNREFUSED` or `ENOENT` - and so does every `<socket>.next-*` successor bind beside it - and (d)
-  the pointer names no live generation. Only then does it remove the endpoint directory and unlink the socket
+  cannot be read counts as live; the generation the pointer names is one of them), (b) no claim in
+  `reservations/` has a live owner, and (c) connecting to the socket fails with `ECONNREFUSED` or `ENOENT` - and so
+  does every `<socket>.next-*` successor bind beside it. Only then does it remove the endpoint directory and unlink the socket
   and its `<socket>.next-*` / `<socket>.shield-*` siblings, still under the lock; `reason` is `socket_refused`
   or `socket_absent`. Everything else is kept with its reason: `live_generation`, `live_claim`, `reachable`,
   `locked` (an ensure held the lock for 2 s), `legacy_layout` (a flat directory without `layout.json` - a

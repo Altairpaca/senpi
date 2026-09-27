@@ -37,7 +37,7 @@ host-runner.ts            The `senpi host` requests -> { payload, exitCode }
 host-status.ts, host-process-metrics.ts   status report: identity, sessions, generations, tree
 host-status-rows.ts       status detail: listed session rows, reservations/ claim rows
 host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dirs, report without pruning
-host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on four-part evidence
+host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit
 host-lifecycle-policy.ts  Cold-start / idle-exit policy resolution + the pure IdleExitDecider
 host-client-occupancy.ts, host-observe-request.ts
@@ -68,7 +68,7 @@ One host per endpoint; a client may run many endpoints under one agent dir (omo 
 - **I1** — never terminate, signal or replace a host this process did not start. A mismatch ends in `refuse`, never in a second host bound over somebody else's endpoint. The only carve-outs are `stopHost` against a validated own-writer pidfile with zero foreign attached/retained sessions (or explicit `force`), and a drain, which ends no work.
 - **I2** — compatibility is `protocolVersion` + capabilities, never a version-string comparison. An uncomparable `engineOrdinal` is EQUAL, and a handoff needs STRICTLY greater, so an unknown-age build attaches instead of upgrading.
 - **I3** — only the owning generation writes its daemon state; everyone else reads. Clients fail CLOSED (report, or start their own private host) and never edit, unlink or delete a shared host's files, socket or pidfile. Layout 2 deliberately writes no flat `host.pid`, which is what makes pre-layout-2 clients fail closed instead of taking the daemon over.
-- **Endpoint removal** — `gcHostEndpoints` (`senpi host gc`) is the ONLY path that removes an endpoint directory (`endpoint.json` included), its socket or its `.next-*`/`.shield-*` siblings, and only on the four-part evidence read INSIDE that socket's ensure lock (`hostEnsureLockTarget`): no live generation pidfile, no live claim owner, a socket that refuses or is absent (successor binds included), no live pointer generation. It never signals, never runs inside `ensure`/`status`, and never touches a layout-1 flat directory or a directory whose socket nothing names.
+- **Endpoint removal** — `gcHostEndpoints` (`senpi host gc`) is the ONLY path that removes an endpoint directory (`endpoint.json` included), its socket or its `.next-*`/`.shield-*` siblings, and only on the three-part evidence read INSIDE that socket's ensure lock (`hostEnsureLockTarget`): no live generation pidfile (the pointer's generation included), no live claim owner, a socket that refuses or is absent (successor binds included). It never signals, never runs inside `ensure`/`status`, and never touches a layout-1 flat directory or a directory whose socket nothing names.
 - **I4** — worker sessions are invisible by default: `kind: "worker"` rows need `include_workers: true`, `context` is published on that listing only, and their `session_closed`/`session_parked` records go to attached connections only.
 
 ### The no-sync rule
