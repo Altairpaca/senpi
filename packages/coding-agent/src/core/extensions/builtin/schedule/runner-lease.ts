@@ -16,7 +16,7 @@ import {
 	reclaimLockState,
 	unlinkIfPresent,
 } from "../terminal/lease-file.ts";
-import { ownProcessStartedAtMs, processBootAtMs, sameProcessStart } from "../terminal/process-identity.ts";
+import { ownProcessStartedAtMs, processBootAtMs, sameBoot, sameProcessStart } from "../terminal/process-identity.ts";
 import { type RunnerIdentity, runnersDir } from "./store.ts";
 
 /** A lease whose heartbeat is older than this does not count as an available runner. */
@@ -112,27 +112,60 @@ function sessionLockPath(dir: string, sessionId: string): string {
 }
 
 export type SessionDeliveryLock =
-	| { readonly acquired: true; release(): Promise<void> }
+	| {
+			readonly acquired: true;
+			/** Records the delivery process (group) so the lock outlives a crashed runner while it runs. */
+			attachDelivery(pid: number): Promise<void>;
+			release(): Promise<void>;
+	  }
 	| { readonly acquired: false; readonly heldByPid: number | undefined };
+
+/** Whether the delivery process group recorded in a lock still has a live member. */
+export function isDeliveryGroupAlive(pid: number): boolean {
+	try {
+		process.kill(process.platform === "win32" ? pid : -pid, 0);
+		return true;
+	} catch (error) {
+		return errorCode(error) === "EPERM";
+	}
+}
+
+/** A lock whose runner died is still held while the delivery it started (same boot) is running. */
+function orphanedDelivery(raw: string): number | undefined {
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null) return undefined;
+		const pid = "deliveryPid" in parsed ? parsed.deliveryPid : undefined;
+		const boot = "bootAtMs" in parsed ? parsed.bootAtMs : undefined;
+		if (typeof pid !== "number" || typeof boot !== "number" || !sameBoot(boot, processBootAtMs())) return undefined;
+		return isDeliveryGroupAlive(pid) ? pid : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * Takes the cross-process delivery lock of one session: `sessions/<id>.lock`, published exclusively
- * in the lease format so a dead or reused-pid holder is reclaimed. Every runner takes it before it
- * claims a job of that session and holds it until the delivery has settled, so two runner processes
- * never deliver into the same session at once.
+ * in the lease format. Every runner takes it before it claims a job of that session and holds it
+ * until the delivery has settled, so two runner processes never deliver into the same session at
+ * once. The delivery process is attached to the lock, and a lock whose runner died is reclaimed only
+ * once that delivery process group has exited too.
  */
 export async function acquireSessionDeliveryLock(dir: string, sessionId: string): Promise<SessionDeliveryLock> {
 	const path = sessionLockPath(dir, sessionId);
-	const mine = JSON.stringify({
-		pid: process.pid,
-		bootAtMs: processBootAtMs(),
-		processStartedAtMs: ownProcessStartedAtMs(),
-	});
+	const identity = { pid: process.pid, bootAtMs: processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
+	let mine = JSON.stringify(identity);
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
 			await publishExclusive(path, mine);
 			return {
 				acquired: true,
+				attachDelivery: async (pid) => {
+					const next = JSON.stringify({ ...identity, deliveryPid: pid });
+					if ((await readLeaseText(path)) !== mine) return;
+					await publishReplace(path, next);
+					mine = next;
+				},
 				release: async () => {
 					if ((await readLeaseText(path)) === mine) await unlinkIfPresent(path);
 				},
@@ -146,8 +179,12 @@ export async function acquireSessionDeliveryLock(dir: string, sessionId: string)
 			if (code !== "EEXIST") throw error;
 		}
 		const state = await reclaimLockState(path);
-		if (state.state === "stale") await breakStaleLock(path, state.raw);
-		else if (state.state === "held") return { acquired: false, heldByPid: state.holder?.pid };
+		if (state.state === "held") return { acquired: false, heldByPid: state.holder?.pid };
+		if (state.state === "stale") {
+			const delivering = orphanedDelivery(state.raw);
+			if (delivering !== undefined) return { acquired: false, heldByPid: delivering };
+			await breakStaleLock(path, state.raw);
+		}
 	}
 	return { acquired: false, heldByPid: undefined };
 }

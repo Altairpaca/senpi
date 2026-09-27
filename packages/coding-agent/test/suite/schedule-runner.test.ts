@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,15 +7,22 @@ import {
 	type Delivery,
 	type DeliveryResult,
 	deferWhileSessionOpen,
+	runDeliveryProcess,
 	type ScheduledPromptEvent,
 } from "../../src/cli/schedule-delivery.ts";
-import { ABANDONED_OCCURRENCE_ERROR, type RunDueOptions, runDueJobs } from "../../src/cli/schedule-runner.ts";
+import {
+	ABANDONED_OCCURRENCE_ERROR,
+	DEFERRED_RETRY_MS,
+	type RunDueOptions,
+	runDueJobs,
+} from "../../src/cli/schedule-runner.ts";
 import {
 	cancelScheduledJob,
 	claimOccurrence,
 	rearmRecurringJob,
 	restorePending,
 } from "../../src/core/extensions/builtin/schedule/occurrences.ts";
+import { acquireSessionDeliveryLock } from "../../src/core/extensions/builtin/schedule/runner-lease.ts";
 import {
 	createScheduledJob,
 	listScheduledJobs,
@@ -24,6 +32,7 @@ import {
 	writeAtomic,
 } from "../../src/core/extensions/builtin/schedule/store.ts";
 import { nextRecurringDueAt } from "../../src/core/extensions/builtin/schedule/types.ts";
+import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 import { holdSessionFile } from "../../src/core/session-holders.ts";
 
 const T0 = Date.parse("2026-09-27T12:00:00Z");
@@ -371,7 +380,7 @@ describe("schedule runner", () => {
 			reason: "session is open",
 		});
 		expect((await states(dir)).filter(({ state }) => state === "pending")).toHaveLength(2);
-		expect(result.nextDueAt).toBe(T0);
+		expect(result.nextDueAt).toBe(T0 + 61_000 + DEFERRED_RETRY_MS);
 	});
 
 	it("does not let a stuck delivery for one session hold back another session", async () => {
@@ -398,6 +407,55 @@ describe("schedule runner", () => {
 			[stuck.id, quick.id].sort(),
 		);
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"keeps a dead runner's session lock while the delivery it started is still running",
+		async () => {
+			const dir = await tempScheduleDir();
+			const exited = (child: ReturnType<typeof spawn>) =>
+				new Promise<void>((resolve) => child.once("exit", () => resolve()));
+			const gone = spawn("/usr/bin/true");
+			await exited(gone);
+			const delivery = spawn("/bin/sleep", ["60"], { detached: true, stdio: "ignore" });
+			const deliveryExited = exited(delivery);
+			const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+			await writeAtomic(
+				lockFile,
+				JSON.stringify({
+					pid: gone.pid,
+					bootAtMs: processBootAtMs(),
+					processStartedAtMs: 1,
+					deliveryPid: delivery.pid,
+				}),
+			);
+
+			const whileRunning = await acquireSessionDeliveryLock(dir, "session-a");
+			process.kill(-(delivery.pid ?? 0), "SIGKILL");
+			await deliveryExited;
+			const afterExit = await acquireSessionDeliveryLock(dir, "session-a");
+
+			expect(whileRunning).toEqual({ acquired: false, heldByPid: delivery.pid });
+			expect(afterExit.acquired).toBe(true);
+			if (afterExit.acquired) await afterExit.release();
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"reports a timed-out delivery only after its process has exited, and names it on spawn",
+		async () => {
+			const spawned: number[] = [];
+
+			const result = await runDeliveryProcess({ command: "/bin/sh", args: ["-c", "sleep 60 & wait"] }, 200, {
+				onSpawn: async (pid) => {
+					spawned.push(pid);
+				},
+			});
+
+			expect(result).toEqual({ ok: false, error: "delivery timed out after 0s" });
+			expect(spawned).toHaveLength(1);
+			expect(() => process.kill(spawned[0] ?? 0, 0)).toThrow();
+		},
+	);
 
 	it("cancels only the owning session's job when a session id is given", async () => {
 		const dir = await tempScheduleDir();

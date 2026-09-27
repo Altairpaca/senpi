@@ -27,7 +27,11 @@ export interface ScheduledPromptEvent {
 }
 
 export type DeliveryResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
-export type Delivery = (event: ScheduledPromptEvent) => Promise<DeliveryResult>;
+/** Called with the delivery process pid as soon as it exists, so the session lock can record it. */
+export interface DeliveryContext {
+	readonly onSpawn?: (pid: number) => Promise<void>;
+}
+export type Delivery = (event: ScheduledPromptEvent, context?: DeliveryContext) => Promise<DeliveryResult>;
 /** Returns a reason to leave a due job pending for now (for example: its session is open elsewhere). */
 export type DeferProbe = (job: ScheduledJob) => Promise<string | undefined>;
 
@@ -49,35 +53,50 @@ export interface ProcessLaunch {
 
 const STDERR_TAIL_CHARS = 2000;
 
-/** Runs one delivery process to completion; exit 0 means delivered. */
-export function runDeliveryProcess(launch: ProcessLaunch, timeoutMs: number): Promise<DeliveryResult> {
+/**
+ * Runs one delivery process to completion; exit 0 means delivered. On POSIX the process leads its
+ * own process group, so a timeout kills the whole tree, and the result is only reported once the
+ * process has actually exited.
+ */
+export function runDeliveryProcess(
+	launch: ProcessLaunch,
+	timeoutMs: number,
+	context: DeliveryContext = {},
+): Promise<DeliveryResult> {
 	return new Promise((resolve) => {
+		const ownGroup = process.platform !== "win32";
 		const child = spawn(launch.command, [...launch.args], {
 			cwd: launch.cwd,
 			env: launch.env,
 			stdio: ["pipe", "ignore", "pipe"],
+			detached: ownGroup,
 		});
 		let stderr = "";
-		let settled = false;
-		const finish = (result: DeliveryResult) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			resolve(result);
-		};
+		let timedOut = false;
 		const timer = setTimeout(() => {
-			child.kill("SIGKILL");
-			finish({ ok: false, error: `delivery timed out after ${Math.round(timeoutMs / 1000)}s` });
+			timedOut = true;
+			try {
+				if (ownGroup && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+				else child.kill("SIGKILL");
+			} catch {
+				// Already gone: "close" follows.
+			}
 		}, timeoutMs);
+		if (child.pid !== undefined) void context.onSpawn?.(child.pid).catch(() => undefined);
 		child.stderr?.on("data", (chunk: Buffer) => {
 			stderr = (stderr + chunk.toString("utf8")).slice(-STDERR_TAIL_CHARS);
 		});
-		child.on("error", (error) => finish({ ok: false, error: error.message }));
+		child.on("error", (error) => {
+			clearTimeout(timer);
+			resolve({ ok: false, error: error.message });
+		});
 		child.on("close", (code, signal) => {
-			if (code === 0) finish({ ok: true });
+			clearTimeout(timer);
+			if (timedOut) resolve({ ok: false, error: `delivery timed out after ${Math.round(timeoutMs / 1000)}s` });
+			else if (code === 0) resolve({ ok: true });
 			else {
 				const status = code === null ? `signal ${signal}` : `exit code ${code}`;
-				finish({ ok: false, error: stderr.trim() ? `${status}: ${stderr.trim()}` : status });
+				resolve({ ok: false, error: stderr.trim() ? `${status}: ${stderr.trim()}` : status });
 			}
 		});
 		child.stdin?.on("error", () => {});
@@ -104,10 +123,11 @@ export function execHookDelivery(command: string, timeoutMs: number): Delivery {
 		process.platform === "win32"
 			? { command: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", command] }
 			: { command: "/bin/sh", args: ["-c", command] };
-	return (event) =>
+	return (event, context) =>
 		runDeliveryProcess(
 			{ ...shell, env: eventEnv(event), stdin: `${JSON.stringify(event)}\n`, cwd: process.cwd() },
 			timeoutMs,
+			context,
 		);
 }
 
@@ -119,7 +139,7 @@ export function sessionResumeDelivery(
 	senpi: { command: string; args: readonly string[] },
 	timeoutMs: number,
 ): Delivery {
-	return async (event) => {
+	return async (event, context) => {
 		if (!existsSync(event.cwd)) return { ok: false, error: `working directory no longer exists: ${event.cwd}` };
 		if (event.sessionFile !== null && !existsSync(event.sessionFile)) {
 			return { ok: false, error: `session file no longer exists: ${event.sessionFile}` };
@@ -132,6 +152,7 @@ export function sessionResumeDelivery(
 				env: eventEnv(event),
 			},
 			timeoutMs,
+			context,
 		);
 	};
 }

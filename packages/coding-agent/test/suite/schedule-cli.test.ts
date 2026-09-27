@@ -3,9 +3,9 @@
  * a service manager (launchd, systemd, cron) observes when it runs the runner - stdout lines, exit
  * codes, and what the delivery hook receives - so nothing here is stubbed.
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,8 +23,17 @@ const cliEntry = join(import.meta.dirname, "..", "..", "src", "cli.ts");
 const sandboxes: string[] = [];
 const children: ChildProcess[] = [];
 
+const orphanGroups: number[] = [];
+
 afterEach(async () => {
 	for (const child of children.splice(0)) if (child.exitCode === null) child.kill("SIGKILL");
+	for (const group of orphanGroups.splice(0)) {
+		try {
+			process.kill(-group, "SIGKILL");
+		} catch {
+			// already exited
+		}
+	}
 	await Promise.all(sandboxes.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -57,11 +66,18 @@ function runCli(agentDir: string, args: string[]): Promise<{ code: number | null
 	return new Promise((resolve) => child.on("close", (code) => resolve({ code, stdout, stderr })));
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error(`expected a JSON object line, got ${JSON.stringify(value)}`);
+	}
+	return Object.fromEntries(Object.entries(value));
+}
+
 function jsonLines(stdout: string): Record<string, unknown>[] {
 	return stdout
 		.split("\n")
 		.filter((line) => line.trim().startsWith("{"))
-		.map((line) => JSON.parse(line) as Record<string, unknown>);
+		.map((line) => asRecord(JSON.parse(line)));
 }
 
 /** Resolves with the first complete stdout JSON line matching `predicate`, or rejects after `timeoutMs`. */
@@ -80,7 +96,7 @@ function nextJsonLine(
 				pending = pending.slice(newline + 1);
 				newline = pending.indexOf("\n");
 				if (!line.startsWith("{")) continue;
-				const parsed = JSON.parse(line) as Record<string, unknown>;
+				const parsed = asRecord(JSON.parse(line));
 				if (predicate(parsed)) {
 					finish();
 					resolve(parsed);
@@ -199,6 +215,41 @@ describe.skipIf(process.platform === "win32")("senpi schedule", () => {
 		runner.kill("SIGTERM");
 		expect(await exited).toBe(0);
 		expect(existsSync(join(dir, "runners", `${runner.pid}.json`))).toBe(false);
+	}, 90_000);
+
+	it("does not start a second delivery into a session while a crashed runner's delivery still runs", async () => {
+		const { root, agentDir, dir } = await sandbox();
+		const started = join(root, "started");
+		const release = join(root, "release");
+		const second = join(root, "second-delivered");
+		execFileSync("mkfifo", [started, release]);
+		const first = await createScheduledJob(dir, job(Date.now() - 2000), Date.now() - 60_000);
+		const next = await createScheduledJob(dir, job(Date.now() - 1000), Date.now() - 60_000);
+
+		// Runner 1 delivers job 1 through a hook that reports itself, then blocks until released.
+		const runner1 = spawnCli(agentDir, [
+			"run",
+			"--exec",
+			`cat > /dev/null; echo "$$ $SENPI_SCHEDULE_ID" > '${started}'; cat '${release}' > /dev/null`,
+		]);
+		const [hookPid, deliveredId] = (await readFile(started, "utf8")).trim().split(" ");
+		orphanGroups.push(Number(hookPid));
+		const runner1Closed = new Promise<void>((resolve) => runner1.on("close", () => resolve()));
+		runner1.kill("SIGKILL");
+		await runner1Closed;
+
+		// Runner 2 must not deliver job 2 while the orphaned hook of job 1 is still running.
+		const runner2 = await runCli(agentDir, ["run", "--exec", `cat > /dev/null; touch '${second}'`]);
+		await writeFile(release, "go\n");
+
+		expect(deliveredId).toBe(first.id);
+		expect(jsonLines(runner2.stdout)).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ event: "abandoned", id: first.id }),
+				expect.objectContaining({ event: "deferred", id: next.id }),
+			]),
+		);
+		expect(existsSync(second)).toBe(false);
 	}, 90_000);
 
 	it("rejects an unknown subcommand with usage and exit 2", async () => {

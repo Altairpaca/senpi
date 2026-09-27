@@ -63,6 +63,9 @@ export interface RunDueResult {
 	readonly nextDueAt: number | undefined;
 }
 
+/** How long a deferred job waits before the next attempt (a shorter poll interval still wins). */
+export const DEFERRED_RETRY_MS = 15_000;
+
 export const ABANDONED_OCCURRENCE_ERROR =
 	"the runner exited while delivering this occurrence; outcome unknown, not retried";
 
@@ -115,7 +118,7 @@ async function freshPendingJob(options: RunDueOptions, id: string): Promise<Sche
 async function fireOne(options: RunDueOptions, listed: ScheduledJob): Promise<RunnerEvent | undefined> {
 	const lock = await acquireSessionDeliveryLock(options.dir, listed.sessionId);
 	if (!lock.acquired) {
-		const holder = lock.heldByPid === undefined ? "another runner" : `runner pid ${lock.heldByPid}`;
+		const holder = lock.heldByPid === undefined ? "another runner" : `process ${lock.heldByPid}`;
 		return {
 			event: "deferred",
 			id: listed.id,
@@ -129,13 +132,17 @@ async function fireOne(options: RunDueOptions, listed: ScheduledJob): Promise<Ru
 		const deferReason = await options.shouldDefer?.(job);
 		if (deferReason !== undefined)
 			return { event: "deferred", id: job.id, sessionId: job.sessionId, reason: deferReason };
-		return await deliverClaimed(options, job);
+		return await deliverClaimed(options, job, (pid) => lock.attachDelivery(pid));
 	} finally {
 		await lock.release();
 	}
 }
 
-async function deliverClaimed(options: RunDueOptions, job: ScheduledJob): Promise<RunnerEvent | undefined> {
+async function deliverClaimed(
+	options: RunDueOptions,
+	job: ScheduledJob,
+	onSpawn: (pid: number) => Promise<void>,
+): Promise<RunnerEvent | undefined> {
 	const record = await claimOccurrence(options.dir, job, options.owner);
 	if (record === undefined) return undefined;
 	const occurrence = job.fireCount + 1;
@@ -148,19 +155,22 @@ async function deliverClaimed(options: RunDueOptions, job: ScheduledJob): Promis
 	}
 	let result: DeliveryResult;
 	try {
-		result = await options.deliver({
-			type: "scheduled_prompt",
-			id: job.id,
-			sessionId: job.sessionId,
-			sessionFile: job.sessionFile,
-			cwd: job.cwd,
-			prompt: job.prompt,
-			message: formatScheduledMessage(job, firedAt),
-			dueAt: job.dueAt,
-			firedAt,
-			everyMs: job.everyMs,
-			fireCount: occurrence,
-		});
+		result = await options.deliver(
+			{
+				type: "scheduled_prompt",
+				id: job.id,
+				sessionId: job.sessionId,
+				sessionFile: job.sessionFile,
+				cwd: job.cwd,
+				prompt: job.prompt,
+				message: formatScheduledMessage(job, firedAt),
+				dueAt: job.dueAt,
+				firedAt,
+				everyMs: job.everyMs,
+				fireCount: occurrence,
+			},
+			{ onSpawn },
+		);
 	} catch (error) {
 		result = { ok: false, error: error instanceof Error ? error.message : String(error) };
 	}
@@ -220,7 +230,8 @@ export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> 
 					events.push(event);
 					if (event.event === "fired" && event.nextDueAt !== undefined) noteNext(event.nextDueAt);
 					if (event.event === "deferred") {
-						noteNext(job.dueAt);
+						// Retry later, not at the (past) due time: a busy session must not make --watch spin.
+						noteNext(options.now() + DEFERRED_RETRY_MS);
 						break; // keep this session's later jobs behind the deferred one
 					}
 				}

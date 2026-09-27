@@ -54,7 +54,7 @@ Options:
 | `--watch` | off | Keep running |
 | `--exec <command>` | none | Deliver through a shell command instead of resuming the session |
 | `--poll-seconds <n>` | 60 | Longest `--watch` sleep between scans; a new job and the next due time wake it sooner |
-| `--timeout-seconds <n>` | 900 | Time limit for one delivery |
+| `--timeout-seconds <n>` | 900 | Time limit for one delivery; on POSIX the delivery's whole process group is killed |
 | `--concurrency <n>` | 4 | Sessions delivered in parallel; one session's jobs always run one at a time |
 
 ### Default delivery: resume the session
@@ -67,7 +67,7 @@ senpi -p --session <session file or id> "<message>"
 
 The message is the prompt with a one-line header, `[Scheduled prompt <id>: created ..., due ..., fired ...]`, so the model can tell a scheduled turn from a user message.
 
-Deliveries into one session never overlap. Every runner takes the session's delivery lock (`<agent dir>/schedule/sessions/<session>.lock`, reclaimed when its holder process is gone) before it claims a job and holds it until the delivery has finished, so two runner processes cannot write the same session at once. The default delivery also waits while another senpi process has that session open (an interactive session, for example): the job is deferred and fires once the session is closed. That check runs right before the resume starts; a session opened in the moment between the check and the resume is not detected, the same as two senpi processes opening one session by hand.
+Deliveries into one session never overlap. Every runner takes the session's delivery lock (`<agent dir>/schedule/sessions/<session>.lock`) before it claims a job and holds it until the delivery has finished, so two runner processes cannot write the same session at once. The lock records the delivery process as well: if the runner dies while a delivery is still running, the lock is only reclaimed once that delivery process (and, on POSIX, its whole process group) has exited. A job deferred for any of these reasons is retried 15 seconds later. The default delivery also waits while another senpi process has that session open (an interactive session, for example): the job is deferred and fires once the session is closed. That check runs right before the resume starts; a session opened in the moment between the check and the resume is not detected, the same as two senpi processes opening one session by hand.
 
 ### Hook delivery: `--exec`
 

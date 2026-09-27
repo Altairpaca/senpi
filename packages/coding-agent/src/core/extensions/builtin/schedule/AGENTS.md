@@ -20,7 +20,7 @@ User docs: `packages/coding-agent/docs/schedule.md`.
 - **Re-arm before delivery**: a recurring job is back in `pending/` before its occurrence is delivered, so a crash loses at most that occurrence.
 - **Tombstone first**: cancel writes `cancelled/<id>` before removing files; claim and re-arm re-check it after their write, so a cancelled job cannot be resurrected.
 - **Abandoned, not retried**: an occurrence whose owner lease is gone moves to `failed/`; it may already have been delivered.
-- **One writer per session**: every runner holds `sessions/<id>.lock` from before the claim until the delivery settles (re-reading the pending job under the lock), and default delivery also defers while `liveSessionHolders` reports another process on the session file.
+- **One writer per session**: every runner holds `sessions/<id>.lock` from before the claim until the delivery settles (re-reading the pending job under the lock); the lock records the delivery pid (its own process group on POSIX) and a dead runner's lock is reclaimed only after that group is gone; deferred jobs retry after `DEFERRED_RETRY_MS`, never at their past due time; and default delivery also defers while `liveSessionHolders` reports another process on the session file.
 - **Put-back never overwrites**: a generation claimed by mistake returns to `pending/` via `link` (EEXIST keeps the newer one) and is dropped if a tombstone appeared.
 - **Fail closed**: an unparseable or oversized job file is reported (`invalid`) and never fired or deleted.
 - **Session scoping**: the tool lists and cancels only the calling session's jobs; the CLI sees all.
