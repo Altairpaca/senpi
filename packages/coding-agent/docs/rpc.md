@@ -735,8 +735,10 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   `position` is 1-based and `in_flight` counts opens already accepted across the whole host,
   since every session shares one loop. It is addressed to the opener only, carries the request
   id under `for_request` rather than the response-id field, and is dropped if that connection
-  has disconnected. A client that later times out can report where it was queued instead of a
-  bare deadline.
+  has disconnected. The bundled `RpcClient` treats it as the host's acknowledgement: an
+  acknowledged open waits up to 10 minutes for its response instead of the 30 s request
+  deadline (a busy host was measured answering after 57 s), and a timeout after it names the
+  queue position instead of a bare deadline. A lost transport still rejects at once.
   `SENPI_RPC_LOOP_LAG_ERROR_MS` (default 5000) additionally broadcasts a `host_stalled` record
   (`{ type, driftMs, sessionId?, tool? }`) to every connection, like the other content-free lifecycle records.
 - **Stall attribution**: each routed command is dispatched inside an `AsyncLocalStorage` scope carrying its routing
@@ -1134,6 +1136,8 @@ Response:
 The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
+
+`lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
 
 #### get_messages
 

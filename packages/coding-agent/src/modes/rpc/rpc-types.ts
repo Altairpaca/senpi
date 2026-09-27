@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, ThinkingSelection } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-works/pi-ai";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
@@ -442,6 +442,11 @@ export interface RpcSessionState {
 	 * fall back to generic wording instead of "Operation aborted".
 	 */
 	lastAbortSource?: AgentAbortSource;
+	/**
+	 * Structured provider failure family of the most recent failed assistant turn, when its
+	 * provider adapter supplied one (same lifetime as the agent's `errorMessage`).
+	 */
+	lastProviderDiagnostic?: ProviderDiagnostic;
 	/** Service tier the session resolved for the active model, if any. */
 	serviceTier?: ServiceTier;
 	/** True when the active model is served at the priority ("fast") tier. */
