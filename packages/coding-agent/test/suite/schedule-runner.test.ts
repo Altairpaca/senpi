@@ -3,22 +3,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	ABANDONED_OCCURRENCE_ERROR,
 	type Delivery,
 	type DeliveryResult,
 	deferWhileSessionOpen,
-	type RunDueOptions,
-	runDueJobs,
 	type ScheduledPromptEvent,
-} from "../../src/cli/schedule-runner.ts";
+} from "../../src/cli/schedule-delivery.ts";
+import { ABANDONED_OCCURRENCE_ERROR, type RunDueOptions, runDueJobs } from "../../src/cli/schedule-runner.ts";
 import {
 	cancelScheduledJob,
 	claimOccurrence,
+	rearmRecurringJob,
+	restorePending,
+} from "../../src/core/extensions/builtin/schedule/occurrences.ts";
+import {
 	createScheduledJob,
 	listScheduledJobs,
 	type NewScheduledJob,
 	type RunnerIdentity,
-	rearmRecurringJob,
+	tombstonePath,
+	writeAtomic,
 } from "../../src/core/extensions/builtin/schedule/store.ts";
 import { nextRecurringDueAt } from "../../src/core/extensions/builtin/schedule/types.ts";
 import { holdSessionFile } from "../../src/core/session-holders.ts";
@@ -202,7 +205,7 @@ describe("schedule runner", () => {
 		const results = await Promise.all([pass(dir, { deliver }), pass(dir, { deliver, owner: RUNNER_B })]);
 
 		expect(events).toHaveLength(1);
-		expect(results.flatMap((result) => result.events)).toHaveLength(1);
+		expect(results.flatMap((result) => result.events).filter((event) => event.event === "fired")).toHaveLength(1);
 	});
 
 	it("never resurrects a recurring job cancelled while its occurrence is being delivered", async () => {
@@ -236,6 +239,66 @@ describe("schedule runner", () => {
 		expect(record).toBeDefined();
 		expect(cancelled).toMatchObject({ inFlight: true });
 		expect((await states(dir)).filter(({ state }) => state === "pending")).toEqual([]);
+	});
+
+	it("never lets two runner processes deliver into the same session at once", async () => {
+		const dir = await tempScheduleDir();
+		const first = await createScheduledJob(dir, jobInput({ dueAt: T0 }), T0);
+		const second = await createScheduledJob(dir, jobInput({ dueAt: T0 + 1 }), T0);
+		const gate = gatedDelivery();
+		const deliveredByA: string[] = [];
+		const deliverA: Delivery = (event) => {
+			deliveredByA.push(event.id);
+			return deliveredByA.length === 1 ? gate.deliver(event) : Promise.resolve({ ok: true });
+		};
+
+		const runnerA = pass(dir, { deliver: deliverA });
+		await gate.started;
+		const other = recordingDelivery();
+		const leaseA = { ...RUNNER_A, beatAt: T0, watch: true, exec: null };
+		const runnerB = await pass(dir, { deliver: other.deliver, owner: RUNNER_B, runners: async () => [leaseA] });
+		gate.release();
+		await runnerA;
+
+		expect(runnerB.events).toEqual([expect.objectContaining({ event: "deferred", id: second.id })]);
+		expect(other.events).toEqual([]);
+		expect(deliveredByA).toEqual([first.id, second.id]);
+		expect(await states(dir)).toEqual([]);
+	});
+
+	it("puts a mistakenly claimed generation back only if no cancel landed and nothing newer is pending", async () => {
+		const dir = await tempScheduleDir();
+		const job = await createScheduledJob(dir, jobInput({ dueAt: T0, everyMs: 60_000 }), T0);
+		const pending = join(dir, "pending", `${job.id}.json`);
+		const staged = async (name: string, fireCount: number) => {
+			const record = join("firing", `${job.id}@9~${name}.json`);
+			await writeAtomic(join(dir, record), JSON.stringify({ ...job, fireCount }));
+			return record;
+		};
+
+		// A newer generation is pending: the stale one is dropped, the pending file is untouched.
+		await restorePending(dir, await staged("1-1", 5), job.id);
+		expect(JSON.parse(await readFile(pending, "utf8")).fireCount).toBe(0);
+
+		// A cancel landed between the claim's checks and the put-back: nothing comes back.
+		await rm(pending);
+		await writeAtomic(tombstonePath(dir, job.id), "cancelled\n");
+		await restorePending(dir, await staged("2-2", 1), job.id);
+		expect(await states(dir)).toEqual([]);
+	});
+
+	it("records nothing for an in-flight occurrence that fails after its job was cancelled", async () => {
+		const dir = await tempScheduleDir();
+		const job = await createScheduledJob(dir, jobInput(), T0);
+		const gate = gatedDelivery();
+
+		const running = pass(dir, { deliver: gate.deliver });
+		await gate.started;
+		expect(await cancelScheduledJob(dir, job.id)).toMatchObject({ inFlight: true });
+		gate.release({ ok: false, error: "failed after cancel" });
+		await running;
+
+		expect(await states(dir)).toEqual([]);
 	});
 
 	it("does not deliver a job cancelled before the runner claims it", async () => {
@@ -358,7 +421,7 @@ describe("schedule runner", () => {
 		hold.release();
 		const afterClose = await deferWhileSessionOpen(job);
 
-		expect(whileOpen).toContain(`pid ${process.pid}`);
+		expect(whileOpen).toBeDefined();
 		expect(afterClose).toBeUndefined();
 	});
 

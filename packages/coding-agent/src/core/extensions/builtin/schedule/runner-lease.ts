@@ -9,6 +9,8 @@ import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	breakStaleLock,
+	errorCode,
+	publishExclusive,
 	publishReplace,
 	readLeaseText,
 	reclaimLockState,
@@ -103,4 +105,49 @@ export function isOwnerAmong(owner: RunnerIdentity, runners: readonly LiveRunner
 	return runners.some(
 		(runner) => runner.pid === owner.pid && sameProcessStart(runner.processStartedAtMs, owner.processStartedAtMs),
 	);
+}
+
+function sessionLockPath(dir: string, sessionId: string): string {
+	return join(dir, "sessions", `${encodeURIComponent(sessionId)}.lock`);
+}
+
+export type SessionDeliveryLock =
+	| { readonly acquired: true; release(): Promise<void> }
+	| { readonly acquired: false; readonly heldByPid: number | undefined };
+
+/**
+ * Takes the cross-process delivery lock of one session: `sessions/<id>.lock`, published exclusively
+ * in the lease format so a dead or reused-pid holder is reclaimed. Every runner takes it before it
+ * claims a job of that session and holds it until the delivery has settled, so two runner processes
+ * never deliver into the same session at once.
+ */
+export async function acquireSessionDeliveryLock(dir: string, sessionId: string): Promise<SessionDeliveryLock> {
+	const path = sessionLockPath(dir, sessionId);
+	const mine = JSON.stringify({
+		pid: process.pid,
+		bootAtMs: processBootAtMs(),
+		processStartedAtMs: ownProcessStartedAtMs(),
+	});
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		try {
+			await publishExclusive(path, mine);
+			return {
+				acquired: true,
+				release: async () => {
+					if ((await readLeaseText(path)) === mine) await unlinkIfPresent(path);
+				},
+			};
+		} catch (error) {
+			const code = errorCode(error);
+			if (code === "ENOENT") {
+				await mkdir(join(dir, "sessions"), { recursive: true, mode: 0o700 });
+				continue;
+			}
+			if (code !== "EEXIST") throw error;
+		}
+		const state = await reclaimLockState(path);
+		if (state.state === "stale") await breakStaleLock(path, state.raw);
+		else if (state.state === "held") return { acquired: false, heldByPid: state.holder?.pid };
+	}
+	return { acquired: false, heldByPid: undefined };
 }

@@ -11,15 +11,9 @@
 
 import { Type } from "typebox";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { cancelScheduledJob } from "./occurrences.ts";
 import { isWatchRunnerAvailable } from "./runner-lease.ts";
-import {
-	cancelScheduledJob,
-	createScheduledJob,
-	type JobRecord,
-	listScheduledJobs,
-	type ScheduledJobState,
-	scheduleDir,
-} from "./store.ts";
+import { createScheduledJob, type JobRecord, listScheduledJobs, type ScheduledJobState, scheduleDir } from "./store.ts";
 import {
 	MAX_PENDING_JOBS_PER_SESSION,
 	MAX_PENDING_JOBS_TOTAL,

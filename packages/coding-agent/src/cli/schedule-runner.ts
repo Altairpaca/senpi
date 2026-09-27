@@ -7,49 +7,33 @@
  * `concurrency`, strictly one at a time within a session.
  */
 
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { isOwnerAmong, type LiveRunner, liveRunners } from "../core/extensions/builtin/schedule/runner-lease.ts";
+import { join } from "node:path";
 import {
 	claimOccurrence,
+	pruneTombstones,
+	rearmRecurringJob,
+	settleOccurrence,
+} from "../core/extensions/builtin/schedule/occurrences.ts";
+import {
+	acquireSessionDeliveryLock,
+	isOwnerAmong,
+	type LiveRunner,
+	liveRunners,
+} from "../core/extensions/builtin/schedule/runner-lease.ts";
+import {
 	type InvalidJobFile,
 	isCancelled,
 	type JobRecord,
 	listScheduledJobs,
-	pruneTombstones,
 	type RunnerIdentity,
-	rearmRecurringJob,
-	settleOccurrence,
+	readJobFile,
 } from "../core/extensions/builtin/schedule/store.ts";
 import {
 	formatScheduledMessage,
 	nextRecurringDueAt,
 	type ScheduledJob,
 } from "../core/extensions/builtin/schedule/types.ts";
-import { liveSessionHolders } from "../core/session-holders.ts";
-
-/** What a delivery hook receives on stdin, one JSON object. */
-export interface ScheduledPromptEvent {
-	readonly type: "scheduled_prompt";
-	readonly id: string;
-	readonly sessionId: string;
-	readonly sessionFile: string | null;
-	readonly cwd: string;
-	/** The prompt exactly as scheduled. */
-	readonly prompt: string;
-	/** The prompt with a one-line provenance header; what the default delivery sends. */
-	readonly message: string;
-	readonly dueAt: number;
-	readonly firedAt: number;
-	readonly everyMs: number | null;
-	/** Occurrence number, starting at 1. */
-	readonly fireCount: number;
-}
-
-export type DeliveryResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
-export type Delivery = (event: ScheduledPromptEvent) => Promise<DeliveryResult>;
-/** Returns a reason to leave a due job pending for now (for example: its session is open elsewhere). */
-export type DeferProbe = (job: ScheduledJob) => Promise<string | undefined>;
+import type { DeferProbe, Delivery, DeliveryResult } from "./schedule-delivery.ts";
 
 export type RunnerEvent =
 	| {
@@ -118,10 +102,40 @@ async function recoverAbandoned(options: RunDueOptions, records: readonly JobRec
 	return events;
 }
 
-async function fireOne(options: RunDueOptions, job: ScheduledJob): Promise<RunnerEvent | undefined> {
-	const deferReason = await options.shouldDefer?.(job);
-	if (deferReason !== undefined)
-		return { event: "deferred", id: job.id, sessionId: job.sessionId, reason: deferReason };
+/** Re-reads a pending job under the session lock; undefined when it is gone, cancelled, or not due. */
+async function freshPendingJob(options: RunDueOptions, id: string): Promise<ScheduledJob | undefined> {
+	const job = await readJobFile(join(options.dir, "pending", `${id}.json`), id).catch((error: unknown) => {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+		throw error;
+	});
+	if (job === undefined || job.dueAt > options.now() || (await isCancelled(options.dir, id))) return undefined;
+	return job;
+}
+
+async function fireOne(options: RunDueOptions, listed: ScheduledJob): Promise<RunnerEvent | undefined> {
+	const lock = await acquireSessionDeliveryLock(options.dir, listed.sessionId);
+	if (!lock.acquired) {
+		const holder = lock.heldByPid === undefined ? "another runner" : `runner pid ${lock.heldByPid}`;
+		return {
+			event: "deferred",
+			id: listed.id,
+			sessionId: listed.sessionId,
+			reason: `${holder} is delivering to this session`,
+		};
+	}
+	try {
+		const job = await freshPendingJob(options, listed.id);
+		if (job === undefined) return undefined;
+		const deferReason = await options.shouldDefer?.(job);
+		if (deferReason !== undefined)
+			return { event: "deferred", id: job.id, sessionId: job.sessionId, reason: deferReason };
+		return await deliverClaimed(options, job);
+	} finally {
+		await lock.release();
+	}
+}
+
+async function deliverClaimed(options: RunDueOptions, job: ScheduledJob): Promise<RunnerEvent | undefined> {
 	const record = await claimOccurrence(options.dir, job, options.owner);
 	if (record === undefined) return undefined;
 	const occurrence = job.fireCount + 1;
@@ -214,109 +228,4 @@ export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> 
 		}),
 	);
 	return { events, nextDueAt };
-}
-
-/** Default-delivery guard: do not start a second writer on a session another process has open. */
-export async function deferWhileSessionOpen(job: ScheduledJob): Promise<string | undefined> {
-	if (job.sessionFile === null || !existsSync(job.sessionFile)) return undefined;
-	const holders = await liveSessionHolders(job.sessionFile, job.sessionId);
-	if (holders.length === 0) return undefined;
-	return `session is open in pid ${holders.map((holder) => holder.pid).join(", ")}; waiting until it closes`;
-}
-
-export interface ProcessLaunch {
-	readonly command: string;
-	readonly args: readonly string[];
-	readonly cwd?: string;
-	readonly env?: NodeJS.ProcessEnv;
-	readonly stdin?: string;
-}
-
-const STDERR_TAIL_CHARS = 2000;
-
-/** Runs one delivery process to completion; exit 0 means delivered. */
-export function runDeliveryProcess(launch: ProcessLaunch, timeoutMs: number): Promise<DeliveryResult> {
-	return new Promise((resolve) => {
-		const child = spawn(launch.command, [...launch.args], {
-			cwd: launch.cwd,
-			env: launch.env,
-			stdio: ["pipe", "ignore", "pipe"],
-		});
-		let stderr = "";
-		let settled = false;
-		const finish = (result: DeliveryResult) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			resolve(result);
-		};
-		const timer = setTimeout(() => {
-			child.kill("SIGKILL");
-			finish({ ok: false, error: `delivery timed out after ${Math.round(timeoutMs / 1000)}s` });
-		}, timeoutMs);
-		child.stderr?.on("data", (chunk: Buffer) => {
-			stderr = (stderr + chunk.toString("utf8")).slice(-STDERR_TAIL_CHARS);
-		});
-		child.on("error", (error) => finish({ ok: false, error: error.message }));
-		child.on("close", (code, signal) => {
-			if (code === 0) finish({ ok: true });
-			else {
-				const status = code === null ? `signal ${signal}` : `exit code ${code}`;
-				finish({ ok: false, error: stderr.trim() ? `${status}: ${stderr.trim()}` : status });
-			}
-		});
-		child.stdin?.on("error", () => {});
-		child.stdin?.end(launch.stdin ?? "");
-	});
-}
-
-function eventEnv(event: ScheduledPromptEvent): NodeJS.ProcessEnv {
-	return {
-		...process.env,
-		SENPI_SCHEDULE_ID: event.id,
-		SENPI_SCHEDULE_SESSION_ID: event.sessionId,
-		SENPI_SCHEDULE_SESSION_FILE: event.sessionFile ?? "",
-		SENPI_SCHEDULE_CWD: event.cwd,
-	};
-}
-
-/**
- * `--exec <command>`: a shell command receives the event as JSON on stdin. It inherits the runner's
- * environment (the operator chose both the command and the environment the runner starts with).
- */
-export function execHookDelivery(command: string, timeoutMs: number): Delivery {
-	const shell =
-		process.platform === "win32"
-			? { command: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", command] }
-			: { command: "/bin/sh", args: ["-c", command] };
-	return (event) =>
-		runDeliveryProcess(
-			{ ...shell, env: eventEnv(event), stdin: `${JSON.stringify(event)}\n`, cwd: process.cwd() },
-			timeoutMs,
-		);
-}
-
-/**
- * Default delivery: resume the scheduling session headlessly (`senpi -p --session <file|id>`) in
- * its working directory, so the fired prompt runs as a new turn of that session.
- */
-export function sessionResumeDelivery(
-	senpi: { command: string; args: readonly string[] },
-	timeoutMs: number,
-): Delivery {
-	return async (event) => {
-		if (!existsSync(event.cwd)) return { ok: false, error: `working directory no longer exists: ${event.cwd}` };
-		if (event.sessionFile !== null && !existsSync(event.sessionFile)) {
-			return { ok: false, error: `session file no longer exists: ${event.sessionFile}` };
-		}
-		return runDeliveryProcess(
-			{
-				command: senpi.command,
-				args: [...senpi.args, "-p", "--session", event.sessionFile ?? event.sessionId, event.message],
-				cwd: event.cwd,
-				env: eventEnv(event),
-			},
-			timeoutMs,
-		);
-	};
 }

@@ -15,28 +15,11 @@
  * `run` prints one JSON line per event on stdout so a service log is machine-readable.
  */
 
-import { type FSWatcher, mkdirSync, watch } from "node:fs";
-import { join } from "node:path";
-import { APP_NAME, getAgentDir, isBunBinary } from "../config.ts";
-import {
-	liveRunners,
-	ownRunnerIdentity,
-	RUNNER_HEARTBEAT_INTERVAL_MS,
-	RUNNER_HEARTBEAT_STALE_MS,
-	removeRunnerLease,
-	writeRunnerLease,
-} from "../core/extensions/builtin/schedule/runner-lease.ts";
-import { cancelScheduledJob, listScheduledJobs, scheduleDir } from "../core/extensions/builtin/schedule/store.ts";
-import { resolveCliMainPath } from "../modes/rpc/host-lifecycle.ts";
-import {
-	type DeferProbe,
-	type Delivery,
-	deferWhileSessionOpen,
-	execHookDelivery,
-	type RunDueResult,
-	runDueJobs,
-	sessionResumeDelivery,
-} from "./schedule-runner.ts";
+import { APP_NAME, getAgentDir } from "../config.ts";
+import { cancelScheduledJob } from "../core/extensions/builtin/schedule/occurrences.ts";
+import { liveRunners, RUNNER_HEARTBEAT_STALE_MS } from "../core/extensions/builtin/schedule/runner-lease.ts";
+import { listScheduledJobs, scheduleDir } from "../core/extensions/builtin/schedule/store.ts";
+import { type RunOptions, runPasses, writeLine } from "./schedule-watch.ts";
 
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
@@ -63,24 +46,12 @@ waiting while another process has that session open.`;
 
 class UsageError extends Error {}
 
-function writeLine(value: unknown): void {
-	process.stdout.write(`${JSON.stringify(value)}\n`);
-}
-
 function positiveInteger(flag: string, value: string | undefined): number {
 	const parsed = Number(value);
 	if (value === undefined || !Number.isSafeInteger(parsed) || parsed < 1) {
 		throw new UsageError(`${flag} needs a positive integer`);
 	}
 	return parsed;
-}
-
-interface RunOptions {
-	readonly watch: boolean;
-	readonly exec: string | undefined;
-	readonly pollSeconds: number;
-	readonly timeoutSeconds: number;
-	readonly concurrency: number;
 }
 
 function parseRunOptions(args: readonly string[]): RunOptions {
@@ -101,109 +72,6 @@ function parseRunOptions(args: readonly string[]): RunOptions {
 		else throw new UsageError(`unknown option for run: ${arg}`);
 	}
 	return { watch, exec, pollSeconds, timeoutSeconds, concurrency };
-}
-
-interface DeliveryPlan {
-	readonly deliver: Delivery;
-	readonly shouldDefer: DeferProbe | undefined;
-}
-
-function resolveDelivery(options: RunOptions): DeliveryPlan {
-	const timeoutMs = options.timeoutSeconds * 1000;
-	if (options.exec !== undefined)
-		return { deliver: execHookDelivery(options.exec, timeoutMs), shouldDefer: undefined };
-	return {
-		deliver: sessionResumeDelivery(
-			{ command: process.execPath, args: isBunBinary ? [] : [...process.execArgv, resolveCliMainPath()] },
-			timeoutMs,
-		),
-		shouldDefer: deferWhileSessionOpen,
-	};
-}
-
-/** Reports a pass; a job deferred for the same reason is reported once per runner, not every pass. */
-function reporter(): (result: RunDueResult) => boolean {
-	const deferred = new Map<string, string>();
-	return (result) => {
-		let ok = true;
-		for (const event of result.events) {
-			if (event.event === "deferred") {
-				if (deferred.get(event.id) === event.reason) continue;
-				deferred.set(event.id, event.reason);
-			} else if (event.event === "fired") {
-				deferred.delete(event.id);
-				if (event.outcome === "failed") ok = false;
-			}
-			writeLine(event);
-		}
-		return ok;
-	};
-}
-
-async function runPasses(dir: string, options: RunOptions): Promise<number> {
-	const plan = resolveDelivery(options);
-	const owner = ownRunnerIdentity();
-	const startedAt = Date.now();
-	const lease = () =>
-		writeRunnerLease(dir, { startedAt, watch: options.watch, exec: options.exec ?? null }, Date.now());
-	const report = reporter();
-	const pass = () =>
-		runDueJobs({
-			dir,
-			now: Date.now,
-			deliver: plan.deliver,
-			owner,
-			concurrency: options.concurrency,
-			shouldDefer: plan.shouldDefer,
-		});
-
-	await lease();
-	// The heartbeat keeps beating while a long delivery runs, so this runner never looks dead mid-delivery.
-	const heartbeat = setInterval(() => void lease().catch(() => undefined), RUNNER_HEARTBEAT_INTERVAL_MS);
-	let watcher: FSWatcher | undefined;
-	let stopping = false;
-	let wake: (() => void) | undefined;
-	const stop = () => {
-		stopping = true;
-		wake?.();
-	};
-	try {
-		if (!options.watch) return report(await pass()) ? EXIT_OK : EXIT_FAILED;
-
-		process.on("SIGTERM", stop);
-		process.on("SIGINT", stop);
-		// A job created by another process wakes the runner at once instead of at the next poll.
-		const pendingDir = join(dir, "pending");
-		mkdirSync(pendingDir, { recursive: true, mode: 0o700 });
-		watcher = watch(pendingDir, () => wake?.());
-		writeLine({ event: "watching", pid: process.pid, dir, pollSeconds: options.pollSeconds });
-		while (!stopping) {
-			let rescan = false;
-			const woken = new Promise<void>((resolve) => {
-				wake = () => {
-					rescan = true;
-					resolve();
-				};
-			});
-			const result = await pass();
-			report(result);
-			if (stopping) break;
-			if (rescan) continue; // something changed during the pass
-			const untilDue = result.nextDueAt === undefined ? Number.POSITIVE_INFINITY : result.nextDueAt - Date.now();
-			const waitMs = Math.max(0, Math.min(options.pollSeconds * 1000, untilDue));
-			let timer: NodeJS.Timeout | undefined;
-			await Promise.race([woken, new Promise<void>((resolve) => (timer = setTimeout(resolve, waitMs)))]);
-			clearTimeout(timer);
-		}
-		writeLine({ event: "stopped", pid: process.pid });
-		return EXIT_OK;
-	} finally {
-		clearInterval(heartbeat);
-		watcher?.close();
-		process.off("SIGTERM", stop);
-		process.off("SIGINT", stop);
-		await removeRunnerLease(dir);
-	}
 }
 
 function formatRelative(ms: number): string {

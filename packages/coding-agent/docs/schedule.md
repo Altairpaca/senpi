@@ -43,7 +43,7 @@ senpi schedule cancel <id>
 {"event":"fired","id":"sch_3f9c2a1b7d04","sessionId":"my-session","occurrence":1,"outcome":"delivered","firedAt":1790520000000,"dueAt":1790519990000}
 ```
 
-Other events: `deferred` (the job's session is open in another process; printed once per reason), `abandoned` (an occurrence whose runner died mid-delivery, moved to `failed/`), and `invalid` (an unreadable job file). A `--watch` runner also prints `{"event":"watching",...}` when it starts and `{"event":"stopped",...}` after `SIGTERM` or `SIGINT`. One-shot `run` exits `1` when any delivery failed, `2` on a usage error, and `0` otherwise.
+Other events: `deferred` (another runner is delivering into the job's session, or the session is open in another process; printed once per reason), `lease_error` (the runner could not refresh its heartbeat; printed once per failure streak), `abandoned` (an occurrence whose runner died mid-delivery, moved to `failed/`), and `invalid` (an unreadable job file). A `--watch` runner also prints `{"event":"watching",...}` when it starts and `{"event":"stopped",...}` after `SIGTERM` or `SIGINT`. One-shot `run` exits `1` when any delivery failed, `2` on a usage error, and `0` otherwise.
 
 Every runner holds a lease `<agent dir>/schedule/runners/<pid>.json` with its process identity and a heartbeat refreshed every 30 seconds, also while a delivery runs.
 
@@ -67,7 +67,7 @@ senpi -p --session <session file or id> "<message>"
 
 The message is the prompt with a one-line header, `[Scheduled prompt <id>: created ..., due ..., fired ...]`, so the model can tell a scheduled turn from a user message.
 
-While another senpi process has that session open (an interactive session, for example), the job is deferred rather than started as a second writer on the same session file; it fires once the session is closed. The check happens right before delivery.
+Deliveries into one session never overlap. Every runner takes the session's delivery lock (`<agent dir>/schedule/sessions/<session>.lock`, reclaimed when its holder process is gone) before it claims a job and holds it until the delivery has finished, so two runner processes cannot write the same session at once. The default delivery also waits while another senpi process has that session open (an interactive session, for example): the job is deferred and fires once the session is closed. That check runs right before the resume starts; a session opened in the moment between the check and the resume is not detected, the same as two senpi processes opening one session by hand.
 
 ### Hook delivery: `--exec`
 
@@ -98,7 +98,7 @@ Use this when something else owns the session, for example a chat bridge that ru
 - Each occurrence is delivered at most once. A runner claims occurrence `n` of a due job by renaming its file from `pending/` to `firing/<id>@<n>~<runner>.json`; when several runners race, exactly one claim succeeds.
 - A recurring job is re-armed at its next slot right after the claim and before the delivery, so a runner crash can lose at most the occurrence in flight, never the schedule. Missed occurrences (no runner was running) collapse into one delivery.
 - If a runner dies while delivering, the next runner finds the occurrence record whose owner is no longer alive and moves it to `failed/` as `abandoned`. It is not retried, because it may already have been delivered.
-- A failed delivery is kept as `failed/<id>@<n>.json` with the error in `lastError`, where `senpi schedule list` shows it; `cancel` removes the job and its failed records.
+- A failed delivery is kept as `failed/<id>@<n>.json` with the error in `lastError`, where `senpi schedule list` shows it; `cancel` removes the job and its failed records, and an in-flight occurrence that fails after the cancel leaves no record.
 - Cancelling writes a tombstone before removing anything, and every claim and re-arm checks it afterwards, so a cancelled job never comes back.
 - A job file that cannot be parsed, or is larger than 64 KiB, is reported by `list` and `run` and never fired.
 
@@ -110,6 +110,7 @@ Use this when something else owns the session, for example a chat bridge that ru
   firing/<id>@<n>~<runner>.json   occurrence n being delivered by a runner
   failed/<id>@<n>.json            occurrence n that failed or was abandoned
   cancelled/<id>                  tombstone of a cancelled job
+  sessions/<session>.lock         delivery lock of a session
   runners/<pid>.json              lease and heartbeat of each live runner
 ```
 

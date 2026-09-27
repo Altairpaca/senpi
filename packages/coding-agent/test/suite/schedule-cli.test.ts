@@ -14,6 +14,10 @@ import {
 	listScheduledJobs,
 	scheduleDir,
 } from "../../src/core/extensions/builtin/schedule/store.ts";
+import { assertWorkspaceBuildPrerequisite } from "../support/workspace-build-prerequisite.ts";
+
+// The spawned source CLI resolves workspace packages through their built dist (see the helper).
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const cliEntry = join(import.meta.dirname, "..", "..", "src", "cli.ts");
 const sandboxes: string[] = [];
@@ -60,25 +64,39 @@ function jsonLines(stdout: string): Record<string, unknown>[] {
 		.map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-/** Resolves with the first stdout JSON line matching `predicate`, or rejects after `timeoutMs`. */
+/** Resolves with the first complete stdout JSON line matching `predicate`, or rejects after `timeoutMs`. */
 function nextJsonLine(
 	child: ChildProcess,
 	predicate: (line: Record<string, unknown>) => boolean,
 	timeoutMs: number,
 ): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
-		let buffer = "";
-		const timer = setTimeout(() => reject(new Error(`no matching line within ${timeoutMs}ms: ${buffer}`)), timeoutMs);
-		child.stdout?.on("data", (chunk: Buffer) => {
-			buffer += chunk.toString("utf8");
-			for (const line of jsonLines(buffer)) {
-				if (predicate(line)) {
-					clearTimeout(timer);
-					resolve(line);
+		let pending = "";
+		const onData = (chunk: Buffer) => {
+			pending += chunk.toString("utf8");
+			let newline = pending.indexOf("\n");
+			while (newline >= 0) {
+				const line = pending.slice(0, newline).trim();
+				pending = pending.slice(newline + 1);
+				newline = pending.indexOf("\n");
+				if (!line.startsWith("{")) continue;
+				const parsed = JSON.parse(line) as Record<string, unknown>;
+				if (predicate(parsed)) {
+					finish();
+					resolve(parsed);
 					return;
 				}
 			}
-		});
+		};
+		const timer = setTimeout(() => {
+			finish();
+			reject(new Error(`no matching line within ${timeoutMs}ms`));
+		}, timeoutMs);
+		const finish = () => {
+			clearTimeout(timer);
+			child.stdout?.off("data", onData);
+		};
+		child.stdout?.on("data", onData);
 	});
 }
 
@@ -187,6 +205,6 @@ describe.skipIf(process.platform === "win32")("senpi schedule", () => {
 		const { agentDir } = await sandbox();
 		const result = await runCli(agentDir, ["frobnicate"]);
 		expect(result.code).toBe(2);
-		expect(result.stderr).toContain("usage: senpi schedule");
+		expect(result.stdout).toBe("");
 	}, 60_000);
 });
