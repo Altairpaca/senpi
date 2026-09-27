@@ -36,6 +36,9 @@ import {
 /** How long the successor has to answer on the PUBLIC socket before the handoff is abandoned. */
 const DEFAULT_HANDOFF_READINESS_MS = 30_000;
 
+/** The longest `startSuccessor` runs: its start-time read, the readiness window and one last probe. */
+export const SUCCESSOR_START_BUDGET_MS = 10_000 + DEFAULT_HANDOFF_READINESS_MS + 2_000;
+
 export async function startSuccessor(context: {
 	options: HandoffHostOptions;
 	paths: HostDaemonPaths;

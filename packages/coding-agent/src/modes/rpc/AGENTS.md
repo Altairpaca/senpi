@@ -26,6 +26,7 @@ loop-lag-watchdog.ts      200 ms drift probe -> stderr line + `host_stalled` rec
 host-memory-sampler.ts    30 s RSS sampler -> `host_memory_pressure`; halves the idle window
 child-reaper.ts           Reaps exited children no live thread is left to wait on
 host-ensure.ts            ensureHost(): probe, decide, spawn through the lifecycle supervisor
+host-ensure-lock.ts       The per-endpoint ensure lock ensure, handoff and gc all take (canonical socket key)
 host-decision.ts          decideHostAction(): start|reuse|handoff|refuse|fallback (I1, I2)
 host-protocol-info.ts     get_protocol_info boundary parse (identity, ordinal, launch profile)
 host-handoff.ts, host-successor.ts, host-stop.ts, host-probe.ts, host-launch.ts

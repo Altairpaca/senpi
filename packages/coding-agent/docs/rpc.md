@@ -506,7 +506,11 @@ which prints the bare socket path).
   overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no
   work.
 - `handoff` forces a generation handoff from THIS binary. A host that cannot drain and a platform that
-  cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`.
+  cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
+  endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
+  waits and then attaches to the successor, and `gc` reports the endpoint `locked` rather than judging it
+  halfway. An `ensure` waits for the lock as long as the longest holder can keep it: a probe plus either a
+  stop-and-restart or a handoff (probe, successor start, 30 s readiness).
 
 #### Shard naming contract (`shardKey`, `shardSocketPath`)
 

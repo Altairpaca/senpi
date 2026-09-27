@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { gcHostEndpoints } from "../src/modes/rpc/host-gc.ts";
+import { endpointInUse } from "../src/modes/rpc/host-gc-evidence.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { HeldAnthropicModel, JsonlPeer, openedSessionId } from "./helpers/rpc-generation-support.ts";
@@ -161,6 +162,7 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 		await realHost(qa, qa.legacy);
 		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
 		let gcWhileBooting: Awaited<ReturnType<typeof gcHostEndpoints>> | undefined;
+		let evidenceWhileBooting: Awaited<ReturnType<typeof endpointInUse>> | undefined;
 		const successor = await handoffHost({
 			socket: qa.legacy,
 			agentDir: qa.agentDir,
@@ -174,12 +176,14 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 					const death = await killEndpointUnclean(qa.legacy, qa.agentDir);
 					tracked.internalDirs.push(...death.internalDirs);
 				},
-				// Frozen, the successor can bind nothing: gc sees only what the records say about it.
+				// Frozen, the successor can bind nothing: the evidence is only what the records say about it.
+				// gc itself waits on the handoff's ensure lock; the evidence it would read is read directly.
 				afterSpawn: async (pid) => {
 					trackSupervisor(pid);
 					process.kill(pid, "SIGSTOP");
 					try {
 						gcWhileBooting = await gcHostEndpoints(qa.agentDir);
+						evidenceWhileBooting = await endpointInUse(paths, qa.legacy);
 					} finally {
 						process.kill(pid, "SIGCONT");
 					}
@@ -189,8 +193,9 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 
 		expect(gcWhileBooting).toEqual({
 			removed: [],
-			kept: [{ socket: qa.legacy, dir: paths.dir, reason: "live_generation" }],
+			kept: [{ socket: qa.legacy, dir: paths.dir, reason: "locked" }],
 		});
+		expect(evidenceWhileBooting).toEqual({ inUse: "live_generation" });
 		expect(successor).toMatchObject({ action: "handoff", socket: qa.legacy });
 		expect(await probeHost({ socket: qa.legacy })).toBeDefined();
 	}, 240_000);

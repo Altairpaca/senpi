@@ -23,14 +23,13 @@
  * and not gc's to delete; it stays, and is reported under `skipped`. One endpoint's failure is recorded
  * and the run goes on to the next.
  */
-import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { listHostEndpoints } from "./host-endpoints.ts";
-import { hostEnsureLockTarget } from "./host-ensure.ts";
+import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings } from "./host-gc-evidence.ts";
-import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
 export type HostGcKeptReason = EndpointInUse | "locked" | "legacy_layout" | "unknown_identity" | "failed";
 
@@ -63,7 +62,7 @@ export interface HostGcOptions {
 }
 
 /** 2 s, the budget a concurrent ensure's critical section gets before gc reports `locked`. */
-const GC_LOCK_OPTIONS = { retries: { retries: 20, minTimeout: 20, maxTimeout: 100 } } as const;
+const GC_LOCK_WAIT_MS = 2_000;
 
 export async function gcHostEndpoints(agentDir: string, options: HostGcOptions = {}): Promise<HostGcResult> {
 	const removed: HostGcEntry<SocketSilence>[] = [];
@@ -128,10 +127,7 @@ async function removeEndpoint(socket: string, dir: string): Promise<readonly Hos
 
 /** The ensure lock of `socket`, taken exactly as `ensureHost` takes it; `undefined` when not free in time. */
 async function acquireEnsureLock(socket: string): Promise<(() => Promise<void>) | undefined> {
-	const lockTarget = hostEnsureLockTarget(socket);
-	await mkdir(dirname(lockTarget), { recursive: true });
-	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
-	return acquireOwnershipSafeLock(`${lockTarget}.lock`, GC_LOCK_OPTIONS).catch(() => undefined);
+	return acquireHostEnsureLock(socket, GC_LOCK_WAIT_MS).catch(() => undefined);
 }
 
 /** The flat daemon directory when it holds state but no layout-2 marker: a legacy host's, never touched. */

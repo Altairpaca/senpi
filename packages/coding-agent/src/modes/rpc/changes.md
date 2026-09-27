@@ -1,3 +1,29 @@
+## 2026-09-28 - A forced handoff runs inside the endpoint's ensure lock
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-lock.ts` (new): the ensure lock of one endpoint, moved out of `host-ensure.ts` - `hostEnsureLockTarget`, the canonical lock address, `hostEnsureLockOptions(waitMs)` and `acquireHostEnsureLock(socket, waitMs)`.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHost` takes that lock (budget `HANDOFF_LOCK_WAIT_MS`: an ensure's probe plus a handoff of its own, plus 10 s) around the handoff; the body is `handoffHostLocked`, for a caller that already holds it. `HANDOFF_LOCK_HOLD_MS` is the longest a handoff holds it.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: exports `SUCCESSOR_START_BUDGET_MS` (start-time read + readiness window + last probe).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the upgrade path calls `handoffHostLocked` (it already holds the lock); `ENSURE_LOCK_WAIT_MS` is the probe plus the longer of stop-and-restart and `HANDOFF_LOCK_HOLD_MS`, plus 10 s; the lock helpers are imported from `host-ensure-lock.ts` and `hostEnsureLockTarget` is re-exported.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: takes the lock through `acquireHostEnsureLock` with the same 2 s budget.
+- Tests: `test/rpc-host-handoff-lock.test.ts` - inside a real handoff's critical section the ensure lock is held, and an ensure started there attaches to the successor (its probe under the lock sees the successor's instance, it returns the successor's pid, and the pointer names the successor). It failed before the fix: the lock was free during the handoff. `test/rpc-host-gc.test.ts` ("handoff successor is still booting"): a gc run inside the handoff now reports `locked`, and the evidence it would read there (`endpointInUse`) still says `live_generation` from the successor's record written at spawn, so that guard (senpi#2245 m7) keeps its teeth.
+
+### Why
+
+`senpi host handoff` called `handoffHost` outside the ensure lock, so an ensure racing it probed the endpoint mid-handoff and attached to the predecessor that was about to drain, and nothing ordered the handoff against `host gc` either (rpc-host-sharding todo 33 c). The lock waiter budget grows because a handoff can hold the lock longer (up to about 52 s) than the stop-and-restart the old budget was sized for, and an ensure's upgrade path already ran one inside its own critical section.
+
+### Why an extension could not handle it
+
+The handoff runs from `senpi host handoff` and `ensureHost`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: the imports, the constants and `handoffHost`/`handoffHostLocked`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the imports, `ENSURE_LOCK_WAIT_MS`/`lockOptions`, `upgradeGeneration`, and the removed lock helpers at the end of the file.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `acquireEnsureLock`.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `SUCCESSOR_START_BUDGET_MS`.
+
 ## 2026-09-28 - Every spelling of one socket shares one daemon directory
 
 ### What changed
