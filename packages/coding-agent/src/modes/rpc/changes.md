@@ -52,6 +52,7 @@ Daemon registration and the host's crash-path cleanup run in the supervisor and 
 - `packages/coding-agent/src/modes/rpc/host-readiness.ts` (new, moved out of `host-ensure.ts` unchanged first): the spawned-host readiness poll now returns the hold with a compatible answer and releases every other probe.
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost` gains `release()`. A reuse is held from the connection that proved it compatible; a start from its readiness answer; a handoff (or a refused handoff) takes one hold on the host it ends with. Every other decision releases its probe connection first.
 - `packages/coding-agent/src/modes/rpc/host-runner.ts`: `senpi host ensure` releases the hold after its final probe.
+- Contract: `EnsuredHost` is a public SDK type, and every `ensureHost()` caller now owns the hold and must call `release()` once its own client is attached (or right away when it attaches later); a live process that never releases keeps a transient host from idle-exiting. `docs/rpc.md` states this. In-repo callers release: the interactive runtime, `senpi host ensure`, the tests, and the live QA scripts `scripts/qa-rpc-socket/{host-lifecycle,ensure-host,interactive-host,generation-handoff}.mjs`. The omo task daemon (`packages/senpi-task/src/runners/rpc-host/daemon.ts` in omo) caches its ensure result and must release right after ensuring when it adopts this.
 
 ### Why
 

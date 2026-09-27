@@ -629,9 +629,11 @@ wire-transparent.
 
 `ensureHost()` hands its caller an attach hold: the connection its readiness answer arrived on stays open and counts
 as an attached client, so the idle window cannot close between the ensure and the caller's own attach, however slow
-that attach is. Call `release()` on the returned `EnsuredHost` once your client is attached (or when you no longer
-need the host); the window starts from there. The hold never keeps the calling process alive, and it ends by itself
-when that process exits, so an abandoned ensure never pins a host.
+that attach is. Every caller must call `release()` on the returned `EnsuredHost` once its own client is
+attached, or right away when it attaches later on its own connections; the idle window starts from there. Until then
+the host counts the calling process as an attached client, so a transient host whose ensuring process is still running
+never starts its idle window: a long-lived caller that ensures and never releases keeps the host up for its whole
+lifetime. The hold never keeps the calling process alive, and the operating system ends it when that process exits.
 
 The RPC host can never outlive its supervisor. It is spawned with an extra inherited pipe on fd 3 whose write end the
 supervisor holds and never writes to; the kernel closes that end whenever the supervisor dies — including `SIGKILL`, an

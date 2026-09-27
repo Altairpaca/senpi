@@ -10,6 +10,7 @@
 
 ### Changed
 
+- `ensureHost()` returns `release()` on `EnsuredHost` (public SDK type), and every caller must call it once its own client is attached, or right away when it attaches later: until then the host counts the calling process as attached, so a running process that never releases keeps a transient host from idle-exiting. The interactive host runtime and `senpi host ensure` release after attaching; embedders that call `ensureHost()` directly need the same call. ([#2227](https://github.com/code-yeongyu/senpi/issues/2227))
 - A shared RPC host's stall report now says whether the host was busy or was not running: the stderr line gains `cpu=<ms> heap=<+/-MB>` for the stalled window, and the `host_stalled` record gains `processCpuMs` and `heapDeltaMb`. CPU close to the stall length means the host's own work (or a garbage collection) held the loop; CPU close to zero means the machine did not schedule the process. ([#2211](https://github.com/code-yeongyu/senpi/issues/2211))
 
 ### Fixed
