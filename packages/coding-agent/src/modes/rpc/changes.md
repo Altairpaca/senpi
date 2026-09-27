@@ -67,6 +67,25 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - `host gc` never takes a non-socket file at the socket path for a dead socket
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `socketSilence` counts an `ECONNREFUSED` connect as `socket_refused` only when `lstat` shows the entry is a socket (`refusedBySocket`); an entry of any other type is an answer (the endpoint is kept as `reachable`), and an entry that vanished meanwhile is `socket_absent`. Named pipes and abstract sockets, which have no entry, are unchanged. The same probe covers every `.next-*` successor bind.
+- Tests: `test/rpc-host-gc-evidence.test.ts` - a regular file at the socket path (with a `.shield-*` sibling) keeps the endpoint as `reachable` and leaves the file, the sibling and the directory byte-identical. On Linux it fails without the fix (gc reported `socket_refused` and removed them); darwin never refused a regular file this way.
+
+### Why
+
+On Linux, `connect()` to a path that is a regular file fails with `ECONNREFUSED`, the same error as a dead socket, so a hash-matching `endpoint.json` naming a regular file let `host gc` unlink that file and its `.next-*`/`.shield-*` siblings (senpi#2245 review m8). Only an entry that is a socket can be a dead socket.
+
+### Why an extension could not handle it
+
+`host gc` runs outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `socketSilence` and the new `refusedBySocket`, plus the `node:fs/promises` import.
+
 ## 2026-09-28 - Every spelling of one socket shares one ensure lock
 
 ### What changed

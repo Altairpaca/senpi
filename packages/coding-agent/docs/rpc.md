@@ -480,8 +480,9 @@ which prints the bare socket path).
   realpath-canonicalized, so every spelling of one socket shares one lock) for at most 2 s, and inside it requires all three: (a) no
   `generations/*/host.pid` names a live process (pid live and start time matching; a live pid whose identity
   cannot be read counts as live; the generation the pointer names is one of them), (b) no claim in
-  `reservations/` has a live owner, and (c) connecting to the socket fails with `ECONNREFUSED` or `ENOENT` - and so
-  does every `<socket>.next-*` successor bind beside it. Only then does it remove the endpoint directory and unlink the socket
+  `reservations/` has a live owner, and (c) connecting to the socket fails with `ENOENT`, or with `ECONNREFUSED`
+  on an entry that is a socket (a regular file where the socket should be is kept as `reachable`) - and so does
+  every `<socket>.next-*` successor bind beside it. Only then does it remove the endpoint directory and unlink the socket
   and its `<socket>.next-*` / `<socket>.shield-*` siblings, still under the lock; `reason` is `socket_refused`
   or `socket_absent`. Everything else is kept with its reason: `live_generation`, `live_claim`, `reachable`,
   `locked` (an ensure held the lock for 2 s), `legacy_layout` (a flat directory without `layout.json` - a

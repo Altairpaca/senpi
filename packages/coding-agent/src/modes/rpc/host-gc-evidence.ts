@@ -7,7 +7,7 @@
  *
  * Reading only: nothing here writes, unlinks or signals.
  */
-import { readdir } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { basename, dirname, join } from "node:path";
 import {
@@ -93,6 +93,8 @@ async function recordIsLive(record: DaemonPidFile): Promise<boolean> {
 /**
  * How the socket proved silent, or `undefined` when it did not: only ECONNREFUSED and ENOENT prove
  * nobody listens. A connect that succeeds, times out or fails any other way is treated as an answer.
+ * ECONNREFUSED counts only when the entry IS a socket: Linux refuses a connect to a regular file the
+ * same way it refuses a dead socket, and a file named where the socket should be is not ours to unlink.
  */
 async function socketSilence(socket: string): Promise<SocketSilence | undefined> {
 	let secret: Buffer | undefined;
@@ -111,9 +113,20 @@ async function socketSilence(socket: string): Promise<SocketSilence | undefined>
 		const timeout = setTimeout(() => finish(undefined), SOCKET_PROBE_TIMEOUT_MS);
 		connection.once("connect", () => finish(undefined));
 		connection.once("error", (error: NodeJS.ErrnoException) => {
-			if (error.code === "ECONNREFUSED") finish("socket_refused");
+			if (error.code === "ECONNREFUSED") void refusedBySocket(socket).then(finish);
 			else if (error.code === "ENOENT") finish("socket_absent");
 			else finish(undefined);
 		});
 	});
+}
+
+/** A refusal proves silence only from a socket entry; an entry of any other type is an answer. */
+async function refusedBySocket(socket: string): Promise<SocketSilence | undefined> {
+	// Named pipes and abstract sockets have no filesystem entry to be of the wrong type.
+	if (process.platform === "win32" || socket.startsWith("\0")) return "socket_refused";
+	try {
+		return (await lstat(socket)).isSocket() ? "socket_refused" : undefined;
+	} catch (error: unknown) {
+		return error instanceof Error && "code" in error && error.code === "ENOENT" ? "socket_absent" : undefined;
+	}
 }

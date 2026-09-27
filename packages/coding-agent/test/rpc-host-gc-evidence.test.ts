@@ -4,7 +4,7 @@
  * otherwise dead endpoint is kept - a paused ensure, a live claim, an answering socket or successor bind.
  */
 import { realpathSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { daemonDirectoryName } from "../src/modes/rpc/host-daemon-paths.ts";
@@ -197,6 +197,22 @@ describe.skipIf(process.platform === "win32")("gc evidence read from disk and so
 		} finally {
 			await closeServer(server);
 		}
+	});
+
+	it("keeps an endpoint whose socket path is a regular file, and unlinks nothing", async () => {
+		const qa = endpointScratch("gcr");
+		const paths = await deadEndpoint(qa.legacy, qa.agentDir);
+		await writeFile(qa.legacy, "not a socket\n");
+		await writeJson(siblingPath(qa.legacy, ".shield-7"), {});
+		const before = await daemonTreeDigest(flatDir(qa.agentDir));
+
+		expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+			removed: [],
+			kept: [{ socket: qa.legacy, dir: paths.dir, reason: "reachable" }],
+		});
+		await expect(readFile(qa.legacy, "utf8")).resolves.toBe("not a socket\n");
+		await expect(stat(siblingPath(qa.legacy, ".shield-7"))).resolves.toBeDefined();
+		expect(await daemonTreeDigest(flatDir(qa.agentDir))).toEqual(before);
 	});
 
 	it("keeps an endpoint whose public socket refuses while a successor bind beside it answers", async () => {
