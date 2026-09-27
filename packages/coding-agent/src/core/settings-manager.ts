@@ -40,11 +40,6 @@ import {
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
-import {
-	type FallbackCircuitSettings,
-	type ResolvedFallbackCircuitSettings,
-	resolveFallbackCircuitSettings,
-} from "./retry-fallback/circuit.ts";
 import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
 import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
@@ -174,7 +169,6 @@ export interface Settings {
 	compaction?: CompactionSettings & { model?: string };
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
-	fallback?: FallbackCircuitSettings;
 	hideThinkingBlock?: boolean;
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
@@ -1517,10 +1511,6 @@ export class SettingsManager {
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
 		return resolveRetryFallbackSettings(this.settings.retry);
-	}
-
-	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
-		return resolveFallbackCircuitSettings(this.settings.fallback);
 	}
 
 	getHintPolicySettings(): ResolvedHintPolicySettings {

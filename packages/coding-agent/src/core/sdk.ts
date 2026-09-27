@@ -546,36 +546,29 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
 		: 0;
 	try {
-		try {
-			session.assertModelUsable(
-				undefined,
-				liveContextTokens,
-				hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
-			);
-		} catch (error) {
-			if (
-				!hasExistingSession ||
-				!(error instanceof ModelUsabilityBudgetError) ||
-				!session.settingsManager.getCompactionEnabled()
-			) {
-				throw error;
-			}
-			if (error.projection.liveContextTokens > error.projection.contextWindow) {
-				const plan = planResumeSlice({
-					entries: session.sessionManager.getBranch(),
-					projection: error.projection,
-				});
-				if (!plan) throw error;
-				session.applyResumeSlice(plan);
-			} else {
-				session.admitResumeCompactionRequired(error.projection);
-			}
-		}
+		session.assertModelUsable(
+			undefined,
+			liveContextTokens,
+			hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
+		);
 	} catch (error) {
-		// A refused startup returns no session to its caller, so nothing else would ever
-		// release what the constructed session holds (its shared fallback breaker, writer).
-		session.dispose();
-		throw error;
+		if (
+			!hasExistingSession ||
+			!(error instanceof ModelUsabilityBudgetError) ||
+			!session.settingsManager.getCompactionEnabled()
+		) {
+			throw error;
+		}
+		if (error.projection.liveContextTokens > error.projection.contextWindow) {
+			const plan = planResumeSlice({
+				entries: session.sessionManager.getBranch(),
+				projection: error.projection,
+			});
+			if (!plan) throw error;
+			session.applyResumeSlice(plan);
+		} else {
+			session.admitResumeCompactionRequired(error.projection);
+		}
 	}
 	sessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
