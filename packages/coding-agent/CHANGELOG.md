@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Automatic session titles work on models that cannot turn reasoning off, such as `openrouter/meta/muse-spark-1.3-contributor` and Z.ai GLM 5.3. The title request now asks for the model's lowest supported reasoning level and no longer fails with `Reasoning is mandatory for this endpoint and cannot be disabled. (HTTP 400)`. A title that still fails is recorded in `logs/session.log` instead of showing a runtime error. ([#2163](https://github.com/code-yeongyu/senpi/issues/2163))
+
 ### Removed
 
 ## [2026.9.26] - 2026-09-26
