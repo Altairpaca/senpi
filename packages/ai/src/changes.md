@@ -1,4 +1,25 @@
-## 2026-09-27 - Terminal provider errors keep the provider Retry-After; quota exhaustion wording is shared (senpi#2198)
+## 2026-09-27 - openai-responses falls back without tool_choice when a provider refuses the forced choice (senpi#2224)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: the SSE request path wraps `client.responses.create` in `createRequest`, which retries once without `tool_choice` when `isForcedToolChoiceUnsupportedError` matches and the sent `tool_choice` was forced (anything but `auto`/`none`), mirroring `openai-completions.ts`. The request now goes through `awaitProviderTransport`/`iterateProviderTransport` with `openAICompatibleProviderDiagnosticFromError`, matching the completions adapter's transport wrapping.
+- `packages/ai/src/utils/tool-choice-fallback.ts` `isForcedToolChoiceUnsupportedError`: the wording patterns accept `not currently compatible`/`not currently supported`, and a new pattern matches the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\`` (observed on OmniRoute for `opencode-go/muse-spark-1.3-contributor`, 2026-09-27).
+- `packages/ai/test/openai-responses-tool-choice.test.ts`: retry-without-tool_choice cases for the shared "not supported" wording and the #2224 auto-only wording, plus a no-retry case when `tool_choice` was not forced.
+
+### Why
+
+- The coding-agent first-turn todo forcing sends a named `tool_choice` on the session's first provider request. On `openai-responses` models that only accept `tool_choice: "auto"`, the request failed with a hard 400 and no retry, killing the session's first turn, while `openai-completions` and `anthropic-messages` already degraded to an unforced request for the same class of refusal (senpi#2224).
+
+### Why an extension could not handle it
+
+- The retry decision runs inside the adapter's `createRequest` after the provider rejects the request; an extension only sees the payload before it is sent (`before_provider_request`) and cannot observe or retry the rejection.
+
+### Expected merge conflict zones
+
+- LOW: the `requestOptions`/`retryProviderRequest` block in `api/openai-responses.ts` if upstream restructures the SSE request path or adds its own transport wrapping.
+- LOW: the regex list in `utils/tool-choice-fallback.ts` (same zone as the senpi#2121 entry).
+
+
 
 ### What changed
 

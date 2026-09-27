@@ -13,6 +13,7 @@
 ### Fixed
 
 - A terminal 429 or 503 error from an OpenAI-compatible (or Azure, Google, OpenRouter) provider keeps the provider's `Retry-After` (seconds or HTTP-date) as the `(retry-after-ms: N)` marker, so callers can honour it even when no retry ran. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
+- `openai-responses` retries once without `tool_choice` when the provider rejects a forced choice with a "not supported"-class 400 (matching `openai-completions`), and the classifier also recognises `not currently supported` and the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\``. ([#2224](https://github.com/code-yeongyu/senpi/issues/2224))
 
 ### Removed
 

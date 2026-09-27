@@ -37,9 +37,17 @@ export function isForcedToolChoiceUnsupportedError(error: unknown, sentForcedToo
 
 	const message = errorMessage(error);
 	return (
-		/tool[_\s-]?choices?\b.*?(not\s+compatible|incompatible|not\s+supported|unsupported)/is.test(message) ||
-		/forces?\s+tool\s+use.*?(not\s+compatible|incompatible|not\s+supported|unsupported)/is.test(message) ||
+		/tool[_\s-]?choices?\b.*?(not\s+(?:currently\s+)?compatible|incompatible|not\s+(?:currently\s+)?supported|unsupported)/is.test(
+			message,
+		) ||
+		/forces?\s+tool\s+use.*?(not\s+(?:currently\s+)?compatible|incompatible|not\s+(?:currently\s+)?supported|unsupported)/is.test(
+			message,
+		) ||
 		/does\s+not\s+support\s+forced\s+tool[_\s-]?choices?/is.test(message) ||
+		// OpenAI-compatible gateways serving auto-only tool-choice models (observed on OmniRoute for
+		// opencode-go/muse-spark-1.3-contributor, 2026-09-27): "only `\"auto\"` is supported for `tool_choice`.
+		// `\"none\"`, `\"required\"`, and named function choices are not currently supported"
+		/only\s+`?"?auto"?`?\s+is\s+supported\s+for\s+`?tool[_\s-]?choice/is.test(message) ||
 		// Anthropic Messages with extended thinking on: "Thinking may not be enabled when tool_choice forces tool use."
 		/thinking\s+may\s+not\s+be\s+enabled\s+when\s+tool[_\s-]?choice\s+forces\s+tool\s+use/is.test(message) ||
 		// OpenAI-compatible gateways serving always-thinking Claude models (observed on opengateway for
