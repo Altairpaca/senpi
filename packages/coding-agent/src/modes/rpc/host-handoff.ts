@@ -44,6 +44,8 @@ export interface HandoffHostOptions {
 		readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
 		/** Runs after the public socket identity is captured and before the successor is spawned. */
 		readonly beforeSpawn?: () => Promise<void>;
+		/** Runs once the successor is spawned and its generation recorded, before its answer is awaited. */
+		readonly afterSpawn?: (pid: number) => Promise<void>;
 		readonly platform?: NodeJS.Platform;
 	};
 }

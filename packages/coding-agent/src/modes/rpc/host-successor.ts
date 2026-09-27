@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { open } from "node:fs/promises";
 import { waitForStartTime } from "../app-server/daemon/process.ts";
 import type { HostDaemonPaths } from "./host-daemon-paths.ts";
-import { writeHostRegistration } from "./host-daemon-registration.ts";
+import { writeGenerationRecord, writeHostRegistration } from "./host-daemon-registration.ts";
 import { readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
@@ -92,15 +92,8 @@ export async function startSuccessor(context: {
 	const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
 	try {
 		if (child.pid === undefined) throw new Error("failed to spawn the successor generation");
-		const answer = await awaitSuccessor(options, host, exited);
-		if (!answer) {
-			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-			return { action: "refuse", reason: await abortReason(options.socket, replaced), upgradeable: true };
-		}
 		const processStartTime = (await waitForStartTime(child.pid, 10_000).catch(() => undefined)) ?? null;
-		// The pointer moves to the successor only now: until the rename landed, the generation the
-		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
-		await writeHostRegistration(paths, {
+		const registration = {
 			record: { pid: child.pid, processStartTime },
 			socket: options.socket,
 			instanceId,
@@ -109,7 +102,20 @@ export async function startSuccessor(context: {
 				["--mode", "rpc", "--multi-session", ...(options.hostArgs ?? [])],
 				process.cwd(),
 			).profile_id,
-		});
+		};
+		// The successor is running from this instant, long before it binds anything: its own record says
+		// so, so `host gc` never judges the endpoint by a predecessor that died meanwhile. The pointer is
+		// NOT moved here - the predecessor still owns the socket until the rename lands.
+		await writeGenerationRecord(paths, registration);
+		await options._test?.afterSpawn?.(child.pid);
+		const answer = await awaitSuccessor(options, host, exited);
+		if (!answer) {
+			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+			return { action: "refuse", reason: await abortReason(options.socket, replaced), upgradeable: true };
+		}
+		// The pointer moves to the successor only now: until the rename landed, the generation the
+		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
+		await writeHostRegistration(paths, registration);
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,
 		// to a pid the record proved and a host that advertised it can survive the signal. A

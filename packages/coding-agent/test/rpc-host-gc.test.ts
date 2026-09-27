@@ -1,7 +1,8 @@
 /**
  * `senpi host gc` against REAL supervised hosts: a live endpoint is kept, an endpoint that died (uncleanly,
  * by its supervisor alone, or by idling out) is removed with its socket and siblings, a handoff whose
- * successor died is kept for its draining predecessor, and an ensure racing gc is strictly ordered by the
+ * successor died is kept for its draining predecessor, a handoff whose predecessor died is kept for its booting
+ * successor, and an ensure racing gc is strictly ordered by the
  * shared ensure lock. The evidence read from disk and sockets alone is `rpc-host-gc-evidence.test.ts`.
  */
 import { realpathSync } from "node:fs";
@@ -153,6 +154,45 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 			kept: [{ socket: qa.legacy, dir: paths.dir, reason: "live_generation" }],
 		});
 		expect(await daemonTreeDigest(paths.reservationsDir)).toEqual(claims);
+	}, 240_000);
+
+	it("keeps an endpoint whose handoff successor is still booting after its predecessor died", async () => {
+		const qa = endpointScratch("gcs");
+		await realHost(qa, qa.legacy);
+		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
+		let gcWhileBooting: Awaited<ReturnType<typeof gcHostEndpoints>> | undefined;
+		const successor = await handoffHost({
+			socket: qa.legacy,
+			agentDir: qa.agentDir,
+			hostArgs: hostArgs(),
+			env: hostEnv(qa),
+			_test: {
+				launch: supervisorLaunch,
+				readinessTimeoutMs: 60_000,
+				// The predecessor dies after the handoff proved it, leaving its socket entry behind.
+				beforeSpawn: async () => {
+					const death = await killEndpointUnclean(qa.legacy, qa.agentDir);
+					tracked.internalDirs.push(...death.internalDirs);
+				},
+				// Frozen, the successor can bind nothing: gc sees only what the records say about it.
+				afterSpawn: async (pid) => {
+					trackSupervisor(pid);
+					process.kill(pid, "SIGSTOP");
+					try {
+						gcWhileBooting = await gcHostEndpoints(qa.agentDir);
+					} finally {
+						process.kill(pid, "SIGCONT");
+					}
+				},
+			},
+		});
+
+		expect(gcWhileBooting).toEqual({
+			removed: [],
+			kept: [{ socket: qa.legacy, dir: paths.dir, reason: "live_generation" }],
+		});
+		expect(successor).toMatchObject({ action: "handoff", socket: qa.legacy });
+		expect(await probeHost({ socket: qa.legacy })).toBeDefined();
 	}, 240_000);
 
 	it("lets an ensure that recreated endpoint.json while gc held the lock start a host that stays listed", async () => {

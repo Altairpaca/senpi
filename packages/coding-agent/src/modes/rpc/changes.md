@@ -67,6 +67,29 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - A handoff records its successor the moment it is spawned
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: new `writeGenerationRecord(paths, registration)` writes one generation's `generations/<instanceId>/host.pid` (pid, start time, build, launch profile, socket, writer stamp) without touching the pointer; `writeHostRegistration` now calls it and then moves the pointer as before.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor` reads the successor's start time and writes its generation record right after the spawn, before awaiting its answer on the public socket; the pointer still moves only after the rename landed (the same `writeHostRegistration` call, with the same record).
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `HandoffHostOptions._test.afterSpawn(pid)`, run after that record is written.
+- Tests: `test/rpc-host-gc.test.ts` - the predecessor is killed uncleanly after the handoff proved it, the successor is frozen right after its spawn, and `gc` keeps the endpoint as `live_generation`; the handoff then completes on the public socket.
+
+### Why
+
+A successor writes no record of its own until its rename lands and binds `.next-<gen>` only after it booted. When the predecessor died in that window, `host gc` found only the predecessor's dead pidfile, no live claim and a refusing socket, removed the endpoint directory and the socket, and the successor then refused its rename (senpi#2245 review m7). The successor is a running process from its spawn, so its own record now says so, and gc's existing check of every generation record keeps the endpoint. A successor that never answers is killed and leaves a record naming a dead pid, which `pruneDeadGenerations` and gc already treat as gone.
+
+### Why an extension could not handle it
+
+Generation handoff and `host gc` run outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `writeHostRegistration` and the new `writeGenerationRecord` after it.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `try` block of `startSuccessor`.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: the `_test` members of `HandoffHostOptions`.
+
 ## 2026-09-28 - A socket host's own empty-exit window ignores observing connections
 
 ### What changed
