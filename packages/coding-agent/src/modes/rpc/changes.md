@@ -3335,3 +3335,23 @@ wire shape, multi-session tagging, and payload validation responsibilities.
 
 - LOW: the `stop()` implementation and the spawn bookkeeping in `rpc-client.ts`.
 
+## 2026-09-27 — get_state reports lastProviderDiagnostic (#2197)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcSessionState.lastProviderDiagnostic?: ProviderDiagnostic`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `buildRpcSessionState` projects `sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic)` and omits the field when absent.
+
+### Why
+
+- `get_state` is the status snapshot RPC clients read after a turn settles; without the field a client that missed the `message_end` event had only error text to classify.
+
+### Why an extension could not handle it
+
+- `RpcSessionState` is a fixed wire projection built in core; extensions cannot add fields to `get_state`.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcSessionState` interface near `lastAbortSource`; the `buildRpcSessionState` return literal.
+
+- Covered production paths: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
