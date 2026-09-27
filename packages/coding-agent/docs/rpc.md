@@ -2156,7 +2156,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `loaded_surfaces_changed` | Loaded skills, extensions, or MCP inventory changed; re-read `get_commands` and `get_loaded_surfaces` |
 | `model_changed` | Active model changed (any source), with the thinking level in force afterwards |
 | `service_tier_changed` | Effective service tier or fast-mode state changed |
-| `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `error` |
+| `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `session_dir_removed`, `error` |
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: RSS is above `SENPI_RPC_HOST_RSS_WARN_MB`, with the live session count |
@@ -2182,6 +2182,7 @@ When a multi-session host ends a routing handle it may name why:
 | --- | --- |
 | `client_close` | An attached client sent `close_session` |
 | `idle_evicted` | The idle sweep ended a session that was not retained |
+| `session_dir_removed` | No client held the session and its transcript directory was deleted; the sweep ended it, whatever the idle window |
 | `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session is closed, not parked |
 | `replaced` | The routing handle ended because the live session behind it was replaced |
 | `handoff_parked` | A generation handoff drained this host; reopen with `open_session { sessionPath }` |
