@@ -871,7 +871,14 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   minutes, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions return
   their memory sooner. It is released as soon as RSS falls back under the threshold. Memory never refuses an open: the
   shared host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
-  before #2207 refused NEW worker sessions above `SENPI_RPC_HOST_RSS_REFUSE_MB`; that variable is no longer read.
+  before #2207 had a second admission watermark; current hosts have no such admission path.
+- **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
+  samples and reports its own memory pressure. `host_memory_pressure` describes only the host that emitted it; pressure
+  on one `p-*` or `i-*` endpoint does not gate opens on another endpoint. In `host status --all`, `rss_mb` is the
+  endpoint generation's whole process tree and `host_rss_mb` is the supervisor plus host processes. Read both on the
+  endpoint row (and its generation rows) rather than treating an aggregate agent-directory number as an admission
+  signal. The warning threshold remains observability-only: every endpoint continues to admit worker `open_session`
+  requests while pressured.
 - **Stall-proof dead-peer detection**: the socket dead-peer budget (30 s, `socket-event-fanout.ts`) counts only time
   the host loop actually SERVED. The loop-lag watchdog deposits each measured drift into a process-wide ledger
   (`loop-blocked-time.ts`) and the deadline re-arms for whatever blocked time landed inside its window, so a host that

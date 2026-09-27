@@ -67,6 +67,28 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - Per-endpoint memory pressure remains observable without admission refusal
+
+### What changed
+
+- `packages/coding-agent/docs/rpc.md`: documents that sharded endpoints report pressure independently, with `rss_mb` for the endpoint process tree and `host_rss_mb` for the supervisor plus host, and that pressure never gates worker opens.
+- `packages/coding-agent/src/modes/rpc/AGENTS.md`: records the per-endpoint observability invariant and the no-admission-gate rule.
+- `packages/coding-agent/test/rpc-host-status-all.test.ts`: adds a real supervised-host case that lowers the warning threshold, opens three worker sessions while pressured, and verifies both RSS fields in the `status --all` row.
+
+### Why
+
+Sharding spreads memory across independent endpoints. Operators need to attribute pressure to the endpoint that owns it, while the senpi#2213 baseline must remain provably admission-free for every endpoint.
+
+### Why an extension could not handle it
+
+Memory sampling, host process metrics, `status --all`, and worker session admission are RPC engine surfaces that run outside extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/docs/rpc.md`: host self-observation memory-pressure section.
+- `packages/coding-agent/src/modes/rpc/AGENTS.md`: shared-daemon no-sync and capacity invariants.
+- `packages/coding-agent/test/rpc-host-status-all.test.ts`: real-host status scenarios.
+
 ## 2026-09-28 - `senpi host gc`: evidence-gated removal of dead endpoint state under the ensure lock
 
 ### What changed
@@ -174,8 +196,8 @@ The throw happens inside the registry's own listing and open path, before any se
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the CRITICAL band and `SENPI_RPC_HOST_RSS_REFUSE_MB` are gone. Above `SENPI_RPC_HOST_RSS_WARN_MB` the sampler still broadcasts `host_memory_pressure`, writes its stderr line and halves idle parking.
-- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: `onCritical`, `setMemoryCritical`, `setWorkerAdmission` and the worker-open refusal are removed; `RpcSessionRegistryError` no longer carries `host_memory_pressure`.
+- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the former admission band is gone. Above `SENPI_RPC_HOST_RSS_WARN_MB` the sampler still broadcasts `host_memory_pressure`, writes its stderr line and halves idle parking.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the memory admission hook and worker-open refusal are removed; `RpcSessionRegistryError` no longer carries the pressure refusal code.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_HOST_MEMORY_PRESSURE` stays for clients that still talk to an older generation, documented as sent only by hosts released before #2207.
 - `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`, `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-generations.ts`: `host status` and each generation row carry `host_rss_mb` (the supervisor and its host process) beside `rss_mb` (the whole tree).
 - `test/suite/regressions/issue-2207-no-memory-admission-refusal.test.ts` (was `issue-1905-memory-critical-worker-admission.test.ts`): a worker open is admitted at four times the warning threshold with the retired variable set, and the pressure record is still emitted.
@@ -527,11 +549,9 @@ Three changes on the shared in-process host.
   `@earendil-works/pi-ai/node/provider-scope` gained `activeProviderScope()` for it.
 - `host-memory-sampler.ts` + `session-registry.ts` + `session-command-router.ts` +
   `multi-session-host.ts` (wiring) + `worker-session-registry.ts` (no-op `setWorkerAdmission`):
-  a second watermark, `SENPI_RPC_HOST_RSS_REFUSE_MB` (default twice `SENPI_RPC_HOST_RSS_WARN_MB`),
-  raises `onCritical(critical, rssMb)`; the router forwards it as `registry.setWorkerAdmission(...)`,
-  and an `openSession` that would CREATE a `kind: "worker"` session while it is set throws
-  `RpcSessionRegistryError("host_memory_pressure", ..., { rssMb, retry_after_ms })`, which the
-  router answers as the stable code `host_memory_pressure`.
+  a second admission watermark, raises a critical callback; the router forwards it to the registry,
+  and an `openSession` that would CREATE a `kind: "worker"` session while it is set throws a
+  memory-pressure refusal.
 - `rpc-types.ts`: `RPC_ERROR_HOST_MEMORY_PRESSURE` joins `RpcErrorCode`. Attaches to a live path,
   interactive opens and every existing session are untouched. The stderr pressure line names the
   policy in force.
@@ -567,7 +587,7 @@ decision.
 `socket-event-fanout.ts` (`waitForDrainOrStall`), `loop-lag-watchdog.ts` (`tick`),
 `session-teardown.ts` (`closeScopeOnce`), `host-memory-sampler.ts` (constructor and `sample`),
 `session-registry.ts` (`openSession` admission check, `RpcSessionRegistryError.code` union),
-`session-command-router.ts` (registry `Pick`, `setMemoryCritical`), `multi-session-host.ts`
+`session-command-router.ts` (registry `Pick`, memory-pressure wiring), `multi-session-host.ts`
 (`startHostObservers`), `rpc-types.ts` (`RpcErrorCode`).
 
 ## 2026-09-21 — a superseded generation drains itself, and the daemon directory is pruned (#1893)

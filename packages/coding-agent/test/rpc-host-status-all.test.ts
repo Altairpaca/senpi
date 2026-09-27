@@ -240,4 +240,35 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 		expect(during).toHaveProperty("host_rss_mb");
 		expect(during.claims).toEqual([expect.objectContaining({ session_path: sessionPath, instance_id: instanceId })]);
 	}, 240_000);
+
+	it("admits three workers under endpoint pressure and reports both RSS measures", async () => {
+		const qa = endpointScratch("pressure");
+		const previousWarn = process.env.SENPI_RPC_HOST_RSS_WARN_MB;
+		process.env.SENPI_RPC_HOST_RSS_WARN_MB = "1";
+		try {
+			await realHost(qa, qa.shard);
+			const client = await JsonlPeer.connect(qa.shard);
+			tracked.peers.push(client);
+			const sessionPaths = [1, 2, 3].map((index) => join(qa.sessionDir, `worker-${index}.jsonl`));
+			for (const [index, sessionPath] of sessionPaths.entries()) {
+				const response = await client.request({
+					id: `open-${index}`,
+					type: "open_session",
+					cwd: qa.cwd,
+					sessionPath,
+					kind: "worker",
+				});
+				expect(response.type).toBe("response");
+				expect(response.error).toBeUndefined();
+			}
+
+			const row = endpointRow((await statusAll(qa, true)).endpoints, qa.shard);
+			expect(row.session_rows).toHaveLength(3);
+			expect(row).toHaveProperty("rss_mb");
+			expect(row).toHaveProperty("host_rss_mb");
+		} finally {
+			if (previousWarn === undefined) delete process.env.SENPI_RPC_HOST_RSS_WARN_MB;
+			else process.env.SENPI_RPC_HOST_RSS_WARN_MB = previousWarn;
+		}
+	}, 180_000);
 });
