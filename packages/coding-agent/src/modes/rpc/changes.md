@@ -67,6 +67,25 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - `status --all` reads at most 64 endpoints at once
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `readAllHostStatus` reads endpoints through an order-preserving pool of `STATUS_ALL_MAX_IN_FLIGHT` (64) concurrent reads instead of starting every read at once; rows still follow the enumeration order, and up to 64 hung endpoints still cost about one budget. `StatusAllOptions._test.readEndpoint` replaces the per-endpoint read for tests.
+- Tests: `test/rpc-host-status-all-concurrency.test.ts` - over 70 endpoints the reads in flight peak at exactly 64 (70 without the pool) and every row comes back in directory order.
+
+### Why
+
+Every read holds a socket and a few state files open until its budget runs out. Starting all of them at once meant a machine with hundreds of hung endpoints under a hard descriptor limit of 256 failed the whole `senpi host status --all` with EMFILE and got no rows at all (senpi#2245 round-2 review, F4 note).
+
+### Why an extension could not handle it
+
+`senpi host status` runs before and outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `STATUS_ALL_MAX_IN_FLIGHT`, `StatusAllOptions` and `readAllHostStatus`.
+
 ## 2026-09-28 - `endpoint.json` is written without hard links where the filesystem has none
 
 ### What changed
