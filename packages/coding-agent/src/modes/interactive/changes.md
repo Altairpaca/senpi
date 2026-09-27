@@ -1,3 +1,21 @@
+## 2026-09-27 - /session shows what failed provider requests cost (senpi#2198)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleSessionCommand` appends `formatSessionFailureInfo(stats.failures)` (`session-failure-info.ts`, new) after the Cost block: failed requests with their errored/aborted split and share, time in failed requests, and retries after a failure (same user turn) that had no cache hit, with their uncached input tokens. Nothing is shown for a session without a failed request or a host that predates the report.
+
+### Why
+
+- Provider failures had no visible cost in the session stats surface (senpi#2198).
+
+### Why an extension could not handle it
+
+- `/session` is a builtin interactive command rendered inside `InteractiveMode`.
+
+### Expected merge conflict zones
+
+- LOW: the end of the Cost block in `handleSessionCommand` and one import in `interactive-mode.ts`.
+
 ## 2026-09-27 - Tips for the /computer command (senpi#2204)
 
 ### What changed
