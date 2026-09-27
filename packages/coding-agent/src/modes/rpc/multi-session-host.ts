@@ -16,6 +16,7 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
+import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
@@ -229,6 +230,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	await prepareSocketPath(socketPath);
 	const writer = new SessionEventWriter(() => {});
 	const connections = new Map<string, Connection>();
+	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
+	// connection that has only sent observing reads (`status`) is not occupancy.
+	const occupancy = new ClientOccupancy(() => {});
 	let draining = false;
 	let handoffAnnounced = false;
 	const hostContext = hostSessionContext(socketPath);
@@ -247,12 +251,13 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		// Supervised hosts idle-exit via the supervisor, but a socket host that
 		// outlives its supervisor (or is started bare) still self-exits when empty.
 		// A connected client counts as occupancy even with no session open: exiting
-		// under it would drop its socket and read as a crash to the supervisor.
+		// under it would drop its socket and read as a crash to the supervisor. Only an
+		// OBSERVER does not - one whose every request so far was an `observe: true` read.
 		// While DRAINING the opposite is true: the successor generation owns the socket, so a
 		// sessionless connection must not hold this host open.
 		{
 			onEmptyExit: () => void shutdown(0),
-			canExitWhenEmpty: () => draining || connections.size === 0,
+			canExitWhenEmpty: () => draining || (occupancy.attachedCount === 0 && occupancy.unclassifiedCount === 0),
 			onHandoffParked: async (ids) => {
 				await Promise.all(
 					ids.map(async (id) => {
@@ -309,6 +314,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			const id = `socket-${++nextConnection}`;
 			const sink = socketSink(socket);
 			writer.registerConnection(id, sink);
+			occupancy.admit(socket);
 			const detachReader = attachJsonlLineReader(
 				socket,
 				(line) => {
@@ -338,6 +344,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				detachReader();
 				writer.unregisterConnection(id);
 				connections.delete(id);
+				occupancy.release(socket);
 				// A socket that dies without close_session still owns its sessions' attachments
 				// and path reservations. Release them on the command chain so this runs after any
 				// in-flight command for this connection settles, otherwise the path stays pinned

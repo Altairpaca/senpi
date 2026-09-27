@@ -1,5 +1,6 @@
 /**
- * The supervisor's view of its public-socket clients, split by what they mean for idle exit.
+ * The supervisor's view of its public-socket clients, split by what they mean for idle exit. A socket
+ * host applies the same view to its own connections for its empty-exit window.
  *
  * A client is UNCLASSIFIED until its first request line arrives, an OBSERVER while every line it has
  * sent is an observing read (`host-observe-request.ts`), and ATTACHED from the first line that is

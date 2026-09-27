@@ -850,7 +850,9 @@ What the host does enforce are lifecycle windows, and they only ever return memo
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
-  so the host never drops a live socket under itself. Supervised hosts stay clean either way: a supervisor reads a
+  so the host never drops a live socket under itself - except a connection whose every request so far was an
+  observing read (`"observe": true`, the same rule as the idle-exit window above), which never holds the host open.
+  A connection that has not sent its first request yet still counts. Supervised hosts stay clean either way: a supervisor reads a
   child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
 
 Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,

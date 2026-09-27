@@ -67,6 +67,26 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - A socket host's own empty-exit window ignores observing connections
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` classifies each connection with `ClientOccupancy` (`host-client-occupancy.ts`, the supervisor's rule) and its `canExitWhenEmpty` gate holds the host open only for an ATTACHED connection (one that sent any request other than an `observe: true` read) or one that has not sent its first request yet. Before, every open connection held it.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: doc comment only - the host applies the same view to its own connections.
+- Tests: `test/rpc-host-status-observe.test.ts` - a bare `--listen` host with a 3 s empty-exit window exits on schedule while one open connection keeps sending `get_protocol_info` with `observe: true` every second.
+
+### Why
+
+senpi#2245 made status reads observing reads so a poller no longer resets the SUPERVISOR's idle window, but the host child's own empty-exit sweep still counted every open connection, so a panel or doctor that keeps one connection open and observes over it kept a host with no sessions alive forever wherever that sweep is the exit (a host started bare with `--listen`). A supervised host is unaffected, persistent or not: the supervisor's own observer connection never sends a request, so it stays unclassified and keeps holding the child exactly as before, and the supervisor's idle window stays the only exit there.
+
+### Why an extension could not handle it
+
+The socket host's connection accounting runs below every session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` - the connection map, the `canExitWhenEmpty` gate, and `accept`/`detach` in the server callback.
+
 ## 2026-09-28 - `status --all` reads every endpoint at once under its own budget
 
 ### What changed
