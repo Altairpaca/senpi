@@ -482,11 +482,15 @@ which prints the bare socket path).
   cannot be read counts as live; the generation the pointer names is one of them), (b) no claim in
   `reservations/` has a live owner, and (c) connecting to the socket fails with `ENOENT`, or with `ECONNREFUSED`
   on an entry that is a socket (a regular file where the socket should be is kept as `reachable`) - and so does
-  every `<socket>.next-*` successor bind beside it. Only then does it remove the endpoint directory and unlink the socket
-  and its `<socket>.next-*` / `<socket>.shield-*` siblings, still under the lock; `reason` is `socket_refused`
-  or `socket_absent`. Everything else is kept with its reason: `live_generation`, `live_claim`, `reachable`,
-  `locked` (an ensure held the lock for 2 s), `legacy_layout` (a flat directory without `layout.json` - a
-  legacy host's, never touched), or `unknown_identity` (nothing names the socket, so its lock cannot be taken).
+  every `<socket>.next-*` successor bind beside it. Only then does it unlink the `<socket>.next-*` /
+  `<socket>.shield-*` siblings, then the socket, then remove the endpoint directory LAST, still under the lock;
+  `reason` is `socket_refused` or `socket_absent`. A sibling that is a directory is not unlinked: it stays and
+  the removed entry lists it as `skipped: [{ path, type: "directory" }]`. Because the directory goes last, a
+  removal that fails part-way leaves the endpoint listed for the next gc. Everything else is kept with its
+  reason: `live_generation`, `live_claim`, `reachable`, `locked` (an ensure held the lock for 2 s),
+  `legacy_layout` (a flat directory without `layout.json` - a legacy host's, never touched), `unknown_identity`
+  (nothing names the socket, so its lock cannot be taken), or `failed` (reading the evidence or removing threw;
+  the entry carries `error`) - and a `failed` endpoint never stops gc from going on to the others.
   An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
   its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
   An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.

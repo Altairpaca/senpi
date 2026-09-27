@@ -1,3 +1,22 @@
+## 2026-09-28 - `host gc` removes the endpoint directory last and never aborts on one endpoint
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `removeEndpoint` unlinks the `.next-*`/`.shield-*` siblings by their `lstat` type (a directory is left in place and returned as `skipped: [{ path, type: "directory" }]` on the removed entry), then the socket, then the endpoint directory LAST. `gcHostEndpoints` catches a throw from one endpoint (evidence read or removal) and keeps it with the new reason `failed` plus `error`, then goes on to the next endpoint. `HostGcEntry` gains the optional `skipped` and `error`; `HostGcKeptReason` gains `failed`.
+- Tests: `test/rpc-host-gc-removal.test.ts` - a dead endpoint with a directory named `<socket>.shield-7` is removed (directory, socket, the file sibling) and the directory sibling is reported and left intact; with the socket's directory read-only, that endpoint is kept as `failed` (`EACCES`) with its `endpoint.json` and socket intact, and a second dead endpoint is still removed. Both failed before the fix: gc rejected with EISDIR / EACCES after it had already removed the first endpoint's directory.
+
+### Why
+
+The removal ran `rm(dir)` first and then `rm(sibling, { force: true })`, which throws EISDIR on a directory and EACCES where the socket's directory is not writable. The throw aborted the whole gc run after the endpoint directory was gone, so the socket stayed behind with nothing left to name it (no endpoint, no lock identity) and every later endpoint was skipped (rpc-host-sharding todo 33 a).
+
+### Why an extension could not handle it
+
+`host gc` runs outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: the header comment, `HostGcKeptReason`/`HostGcEntry`, the loop in `gcHostEndpoints`, `gcEndpoint`'s removal and the new `removeEndpoint`.
+
 ## 2026-09-28 - A host stall reports the CPU and heap of the stalled window (#2211)
 
 ### What changed

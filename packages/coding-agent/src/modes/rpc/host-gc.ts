@@ -15,8 +15,15 @@
  *     locked            the ensure lock was not free within 2 s
  *     legacy_layout     the agent dir predates layout 2; its flat files belong to a legacy host
  *     unknown_identity  nothing in the directory names its socket, so its lock cannot be taken
+ *     failed            reading the evidence or removing the endpoint threw; `error` says what
+ *
+ * A removal goes siblings first, the socket next and the endpoint directory LAST: until the directory
+ * is gone the endpoint is still listed, so a removal that fails part-way is finished by a later gc
+ * instead of leaving a socket nothing names. A sibling that is a directory is not a socket's leftover
+ * and not gc's to delete; it stays, and is reported under `skipped`. One endpoint's failure is recorded
+ * and the run goes on to the next.
  */
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -25,12 +32,22 @@ import { hostEnsureLockTarget } from "./host-ensure.ts";
 import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings } from "./host-gc-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
-export type HostGcKeptReason = EndpointInUse | "locked" | "legacy_layout" | "unknown_identity";
+export type HostGcKeptReason = EndpointInUse | "locked" | "legacy_layout" | "unknown_identity" | "failed";
+
+/** A sibling a removal left in place because of what it is. */
+export interface HostGcSkippedEntry {
+	readonly path: string;
+	readonly type: "directory";
+}
 
 export interface HostGcEntry<Reason extends string> {
 	readonly socket: string | null;
 	readonly dir: string;
 	readonly reason: Reason;
+	/** Removed entries only, and only when a sibling was left in place. */
+	readonly skipped?: readonly HostGcSkippedEntry[];
+	/** `failed` entries only: the message of what threw. */
+	readonly error?: string;
 }
 
 export interface HostGcResult {
@@ -58,9 +75,15 @@ export async function gcHostEndpoints(agentDir: string, options: HostGcOptions =
 			kept.push({ socket: null, dir: endpoint.dir, reason: "unknown_identity" });
 			continue;
 		}
-		const outcome = await gcEndpoint(endpoint.socket, endpoint.dir, options);
-		if (outcome.removed) removed.push({ socket: endpoint.socket, dir: endpoint.dir, reason: outcome.reason });
-		else kept.push({ socket: endpoint.socket, dir: endpoint.dir, reason: outcome.reason });
+		const entry = { socket: endpoint.socket, dir: endpoint.dir };
+		try {
+			const outcome = await gcEndpoint(endpoint.socket, endpoint.dir, options);
+			if (!outcome.removed) kept.push({ ...entry, reason: outcome.reason });
+			else if (outcome.skipped.length === 0) removed.push({ ...entry, reason: outcome.reason });
+			else removed.push({ ...entry, reason: outcome.reason, skipped: outcome.skipped });
+		} catch (error: unknown) {
+			kept.push({ ...entry, reason: "failed", error: error instanceof Error ? error.message : String(error) });
+		}
 	}
 	return { removed, kept };
 }
@@ -70,7 +93,7 @@ async function gcEndpoint(
 	dir: string,
 	options: HostGcOptions,
 ): Promise<
-	| { readonly removed: true; readonly reason: SocketSilence }
+	| { readonly removed: true; readonly reason: SocketSilence; readonly skipped: readonly HostGcSkippedEntry[] }
 	| { readonly removed: false; readonly reason: HostGcKeptReason }
 > {
 	const release = await acquireEnsureLock(socket);
@@ -79,13 +102,28 @@ async function gcEndpoint(
 		await options._test?.afterLockAcquired?.(socket);
 		const evidence = await endpointInUse(hostDaemonDirectoryPaths(dir), socket);
 		if (evidence.inUse !== undefined) return { removed: false, reason: evidence.inUse };
-		await rm(dir, { recursive: true, force: true });
-		for (const sibling of await socketSiblings(socket)) await rm(join(dirname(socket), sibling), { force: true });
-		await rm(socket, { force: true });
-		return { removed: true, reason: evidence.silence };
+		const skipped = await removeEndpoint(socket, dir);
+		return { removed: true, reason: evidence.silence, skipped };
 	} finally {
 		await release();
 	}
+}
+
+/** Siblings by their actual type, then the socket, then the directory that lists the endpoint. */
+async function removeEndpoint(socket: string, dir: string): Promise<readonly HostGcSkippedEntry[]> {
+	const skipped: HostGcSkippedEntry[] = [];
+	for (const sibling of await socketSiblings(socket)) {
+		const path = join(dirname(socket), sibling);
+		const entry = await lstat(path).catch((error: unknown) => {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+			throw error;
+		});
+		if (entry?.isDirectory()) skipped.push({ path, type: "directory" });
+		else if (entry !== undefined) await rm(path, { force: true });
+	}
+	await rm(socket, { force: true });
+	await rm(dir, { recursive: true, force: true });
+	return skipped;
 }
 
 /** The ensure lock of `socket`, taken exactly as `ensureHost` takes it; `undefined` when not free in time. */
