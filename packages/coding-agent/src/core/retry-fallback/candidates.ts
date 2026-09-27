@@ -1,6 +1,12 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { baseSelector, candidatesAfter, type FallbackSelector, formatSelector, parseFallbackSelector } from "./chains.ts";
+import {
+	baseSelector,
+	candidatesAfter,
+	type FallbackSelector,
+	formatSelector,
+	parseFallbackSelector,
+} from "./chains.ts";
 
 export interface CandidateRegistry {
 	find(provider: string, id: string): Model<Api> | undefined;
@@ -12,12 +18,15 @@ export interface CandidateFilters {
 	tried: ReadonlySet<string>;
 	isSuppressed(base: string): boolean;
 	isAuthAvailable(provider: string): boolean;
+	isCircuitOpen(base: string): boolean;
 	skip(candidate: string, skipReason: string): void;
 }
 
 export interface UsableCandidate {
 	selector: FallbackSelector;
 	model: Model<Api>;
+	/** True only when every usable entry is circuit-open: the chain then probes instead of refusing. */
+	circuitOpen: boolean;
 }
 
 export function firstUsableCandidate(
@@ -25,6 +34,7 @@ export function firstUsableCandidate(
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 	filters: CandidateFilters,
 ): UsableCandidate | undefined {
+	let probe: UsableCandidate | undefined;
 	for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
 		const selector = parseFallbackSelector(raw, filters.registry);
 		if (!selector) {
@@ -53,7 +63,12 @@ export function firstUsableCandidate(
 			filters.skip(raw, "unknown");
 			continue;
 		}
-		return { selector, model };
+		if (filters.isCircuitOpen(base)) {
+			filters.skip(raw, "circuit-open");
+			probe ??= { selector, model, circuitOpen: true };
+			continue;
+		}
+		return { selector, model, circuitOpen: false };
 	}
-	return undefined;
+	return probe;
 }

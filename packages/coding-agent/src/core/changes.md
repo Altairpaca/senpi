@@ -1,3 +1,24 @@
+## 2026-09-27 - Fallback-chain entries that fail out of their chain are circuit-broken across sessions; /session reports failure cost (senpi#2198)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the constructor binds a `FallbackCircuitAccess` (`core/retry-fallback/circuit.ts`, new) to the breaker shared per resolved agent dir (`fallbackCircuitsFor(this._agentDir)`; each `/new`, `/resume`, and `/fork` gets a fresh `ModelRuntime` from the CLI factory, so the runtime cannot be the key), with the session id as probe owner, the injected fallback clock, and live `fallback.*` settings, and hands it to `RetryFallbackController`. An accepted assistant response closes its model's circuit; a successful probe-back closes it too. `_maybeRestoreFallbackPrimary` also runs `rerouteAroundOpenCircuit()`, so every turn boundary moves a session off an entry whose circuit another session opened. `getSessionStats()` adds `failures` from `computeSessionFailureReport` (`core/session-failure-report.ts`, new).
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.fallback` (`circuitCooldownMs`, `circuitMaxCooldownMs`) and `getFallbackCircuitSettings()`.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` opens the current entry's circuit for `transient` and `billing` failures under a managed chain (advance and exhaustion), claims the half-open probe of the entry it switches to, and shares `applyCandidate` with the new `rerouteAroundOpenCircuit`; `maybeRestorePrimary` waits for the primary's circuit and claims its probe; a manual model change closes that model's circuit. `core/retry-fallback/candidates.ts` (extracted from the controller) skips circuit-open entries and returns the first of them only when no closed entry is left.
+
+### Why
+
+- Fallback cooldowns lived in one `AgentSession`, never escalated, and were invisible to new sessions and in-process subagents, so a dead provider cost its full retry budget again in every session and after every revert (senpi#2198, prior art gajae-code #5965).
+
+### Why an extension could not handle it
+
+- Chain candidate selection, the turn-boundary revert, and the accepted-response signal all live inside `AgentSession`'s retry pipeline, and `SessionStats` is the core stats contract behind `/session` and `get_session_stats`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`: two imports, one field, the constructor after `_fallbackNow`, the controller deps, the `succeeded` block of the assistant `message_end` handler, the probe-back `onCleared`, `_maybeRestoreFallbackPrimary`, `SessionStats`, and the `getSessionStats` return.
+- LOW: `packages/coding-agent/src/core/settings-manager.ts`: one import, one `Settings` field, one getter.
+
 ## 2026-09-27 - Sessions are held against moves by other processes; SessionInfo carries the recorded repository (senpi#2184)
 
 ### What changed

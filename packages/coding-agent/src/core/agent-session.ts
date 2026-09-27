@@ -233,6 +233,11 @@ import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./p
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
+import {
+	createFallbackCircuitAccess,
+	type FallbackCircuitAccess,
+	fallbackCircuitsFor,
+} from "./retry-fallback/circuit.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
@@ -247,6 +252,7 @@ import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
+import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import {
@@ -833,6 +839,8 @@ export interface SessionStats {
 	};
 	cost: number;
 	contextUsage?: ContextUsage;
+	/** Absent from hosts that predate the report. */
+	failures?: SessionFailureReport;
 }
 
 interface ToolDefinitionEntry {
@@ -1073,6 +1081,7 @@ export class AgentSession {
 	private readonly _fallbackValidationWarnings: readonly string[];
 	private readonly _retryFallback: RetryFallbackController;
 	private readonly _selectorCooldowns: SelectorCooldowns;
+	private readonly _fallbackCircuits: FallbackCircuitAccess;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
 	private readonly _retryRandom: () => number;
@@ -1144,12 +1153,20 @@ export class AgentSession {
 		}
 		this._selectorCooldowns = new SelectorCooldowns(config.fallbackNow ?? (() => Date.now()));
 		this._fallbackNow = config.fallbackNow ?? (() => Date.now());
+		this._fallbackCircuits = createFallbackCircuitAccess({
+			breaker: fallbackCircuitsFor(this._agentDir),
+			owner: () => this.sessionId,
+			now: this._fallbackNow,
+			settings: () => this.settingsManager.getFallbackCircuitSettings(),
+			logger: fallbackLogger,
+		});
 		this._retryRandom = config.retryRandom ?? Math.random;
 		this._environmentContextEnabled = config.environmentContext ?? true;
 		this._retryFallback = new RetryFallbackController({
 			getSettings: () => this.settingsManager.getRetryFallbackSettings(),
 			registry: this._modelRegistry,
 			cooldowns: this._selectorCooldowns,
+			circuits: this._fallbackCircuits,
 			logger: fallbackLogger,
 			switchModel: async (model, thinking, reason) => {
 				await this._switchActiveModel(model, {
@@ -2448,6 +2465,7 @@ export class AgentSession {
 					assistantMsg.stopReason !== "error" &&
 					assistantMsg.stopReason !== "aborted" &&
 					!isClassifierRefusal(assistantMsg);
+				if (succeeded) this._fallbackCircuits.close(`${assistantMsg.provider}/${assistantMsg.model}`);
 				if (succeeded && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryAttempted = false;
 				}
@@ -2712,6 +2730,7 @@ export class AgentSession {
 			},
 			onCleared: (sel: string) => {
 				this._selectorCooldowns.clear(sel);
+				this._fallbackCircuits.close(sel);
 			},
 			emit: (event) => {
 				if (event.type === "retry_probe_scheduled") {
@@ -5268,6 +5287,7 @@ export class AgentSession {
 	private async _maybeRestoreFallbackPrimary(): Promise<void> {
 		try {
 			await this._retryFallback.maybeRestorePrimary(this.settingsManager.getRetryFallbackSettings().revertPolicy);
+			await this._retryFallback.rerouteAroundOpenCircuit();
 		} catch (error) {
 			this._retryFallback.clear();
 			console.error("fallback revert failed; cleared fallback state", error);
@@ -9560,6 +9580,7 @@ export class AgentSession {
 			},
 			cost: usageTotals.cost,
 			contextUsage: this.getContextUsage(),
+			failures: computeSessionFailureReport(this.sessionManager.getEntries()),
 		};
 	}
 

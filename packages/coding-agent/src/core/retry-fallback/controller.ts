@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
-import { firstUsableCandidate } from "./candidates.ts";
+import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
 	canonicalizeFallbackChains,
@@ -10,6 +10,7 @@ import {
 	parseFallbackSelector,
 	resolveChainKey,
 } from "./chains.ts";
+import type { FallbackCircuitAccess } from "./circuit.ts";
 import type { SelectorCooldowns } from "./cooldown.ts";
 import type { FallbackLogger } from "./log.ts";
 
@@ -43,6 +44,8 @@ export interface RetryFallbackControllerDeps {
 		isFallbackEligible?(model: Model<Api>): boolean;
 	};
 	cooldowns: SelectorCooldowns;
+	/** Chain-entry circuits shared with every session on the same model runtime. */
+	circuits?: FallbackCircuitAccess;
 	logger: FallbackLogger;
 	switchModel(model: Model<Api>, thinking: ThinkingLevel, reason: "fallback" | "fallback-revert"): Promise<void>;
 	emit(
@@ -133,6 +136,7 @@ export class RetryFallbackController {
 		const state = this.state;
 		if (!state || state.pinned || revertPolicy !== "cooldown-expiry") return false;
 		if (this.deps.cooldowns.isSuppressed(state.originalSelector)) return false;
+		if (this.deps.circuits?.isOpen(state.originalSelector)) return false;
 		const selector = parseFallbackSelector(state.originalSelector, this.deps.registry);
 		if (!selector || !this.deps.isAuthAvailable(selector.provider)) return false;
 		const model = this.deps.registry.find(selector.provider, selector.id);
@@ -146,6 +150,7 @@ export class RetryFallbackController {
 				? (state.originalThinkingLevel ?? current.thinkingLevel ?? "off")
 				: (current.thinkingLevel ?? "off");
 		await this.deps.switchModel(model, thinking, "fallback-revert");
+		this.deps.circuits?.claimProbe(state.originalSelector);
 		const from = formatSelector(current.model);
 		this.state = undefined;
 		this.deps.logger.info("fallback_reverted", { from, to: state.originalSelector });
@@ -192,6 +197,29 @@ export class RetryFallbackController {
 		}
 		this.state = undefined;
 		this.deps.cooldowns.clear(formatSelector(model));
+		this.deps.circuits?.close(formatSelector(model));
+	}
+
+	/**
+	 * Turn-boundary skip: when the current entry's circuit was opened by this or a
+	 * sibling session, move to the next closed entry without spending a request on
+	 * it. With no closed entry left the current one stays and probes, so the chain
+	 * never refuses a turn; a half-open current entry is claimed for this session.
+	 */
+	async rerouteAroundOpenCircuit(): Promise<boolean> {
+		const circuits = this.deps.circuits;
+		const current = this.deps.getCurrentSelector();
+		if (!circuits || !current) return false;
+		const currentBase = formatSelector(current.model);
+		if (!circuits.isOpen(currentBase)) {
+			circuits.claimProbe(currentBase);
+			return false;
+		}
+		const candidate = this.nextCandidate(false, true);
+		if (!candidate || candidate.circuitOpen) return false;
+		this.deps.logger.info("circuit_open_skip", { selector: currentBase });
+		await this.applyCandidate(current, candidate, "transient");
+		return true;
 	}
 
 	async tryFallback(
@@ -199,6 +227,11 @@ export class RetryFallbackController {
 		failure: { errorMessage?: string; retryAfterMs?: number },
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
+		// Only provider-health failures open the shared circuit: a refusal or a
+		// request-shaped hard error says nothing about the entry for other sessions.
+		if (current && (reason === "transient" || reason === "billing") && this.managedChainKey(current)) {
+			this.deps.circuits?.noteFailure(formatSelector(current.model), failure);
+		}
 		const candidate = this.nextCandidate(false, true);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
@@ -206,10 +239,19 @@ export class RetryFallbackController {
 			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
+		await this.applyCandidate(current, candidate, reason);
+		return true;
+	}
 
+	private async applyCandidate(
+		current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
+		candidate: { chainKey: string } & UsableCandidate,
+		reason: FallbackReason,
+	): Promise<void> {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		await this.deps.switchModel(candidate.model, thinking, "fallback");
 		this.triedSelectors.add(baseSelector(candidate.selector));
+		this.deps.circuits?.claimProbe(baseSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
@@ -226,21 +268,22 @@ export class RetryFallbackController {
 		};
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
-		return true;
 	}
 
-	private nextCandidate(
-		reserve = true,
-		logDecision = reserve,
-	): { chainKey: string; selector: FallbackSelector; model: Model<Api> } | undefined {
-		const settings = this.deps.getSettings();
-		const current = this.deps.getCurrentSelector();
-		if (!settings.modelFallback || !current) return undefined;
+	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
+	private managedChainKey(current: { model: Model<Api>; thinkingLevel?: ThinkingLevel }): string | undefined {
+		if (!this.deps.getSettings().modelFallback) return undefined;
 		const chains = this.canonicalChains();
-		// A model's own chain wins; models without an explicitly configured chain
-		// do not enter an implicit fallback lane.
 		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
-		const entries = chainKey ? chains[chainKey] : undefined;
+		return chainKey && chains[chainKey] ? chainKey : undefined;
+	}
+
+	private nextCandidate(reserve = true, logDecision = reserve): ({ chainKey: string } & UsableCandidate) | undefined {
+		const current = this.deps.getCurrentSelector();
+		if (!this.deps.getSettings().modelFallback || !current) return undefined;
+		// Models without an explicitly configured chain do not enter an implicit fallback lane.
+		const chainKey = this.managedChainKey(current);
+		const entries = chainKey ? this.canonicalChains()[chainKey] : undefined;
 		if (!chainKey || !entries) {
 			if (logDecision) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
 			return undefined;
@@ -250,6 +293,7 @@ export class RetryFallbackController {
 			tried: this.triedSelectors,
 			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
+			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {
