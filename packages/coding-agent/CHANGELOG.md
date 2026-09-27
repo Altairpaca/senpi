@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- On Bun 1.3.x, extensions now load when they declare a package directory as their entry (`"pi": { "extensions": ["."] }`) or depend on a package that requires a JSON file, such as ajv. Both used to fail with `Cannot find module 'file:/…'` or `ENOENT reading "file:/…"` even though Bun itself loads them. ([#2164](https://github.com/code-yeongyu/senpi/issues/2164))
+
 ### Removed
 
 ## [2026.9.26] - 2026-09-26
