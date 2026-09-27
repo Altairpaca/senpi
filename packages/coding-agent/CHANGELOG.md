@@ -10,6 +10,8 @@
 
 ### Changed
 
+- A shared RPC host's stall report now says whether the host was busy or was not running: the stderr line gains `cpu=<ms> heap=<+/-MB>` for the stalled window, and the `host_stalled` record gains `processCpuMs` and `heapDeltaMb`. CPU close to the stall length means the host's own work (or a garbage collection) held the loop; CPU close to zero means the machine did not schedule the process. ([#2211](https://github.com/code-yeongyu/senpi/issues/2211))
+
 ### Fixed
 
 ### Removed

@@ -1,3 +1,24 @@
+## 2026-09-28 - A host stall reports the CPU and heap of the stalled window (#2211)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`: every tick records the process CPU time (`process.cpuUsage()`) and the JS heap (`process.memoryUsage().heapUsed`), and a stall past the warning threshold reports their change across the stalled window. The stderr line gains `cpu=<ms> heap=<+/-MB>` and the `host_stalled` record gains `processCpuMs` and `heapDeltaMb`. Both probes are injectable like the clock.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostStalledEvent` gains the optional `processCpuMs` and `heapDeltaMb`.
+- `packages/coding-agent/test/suite/rpc-loop-lag-watchdog.test.ts`: a stall with the process busy reports its CPU and heap drop; a stall with the process idle reports zero CPU and no heap movement.
+
+### Why
+
+Multi-second stalls on a shared host (up to 44 s in one generation's log) could not be explained after the fact. A stall line named only the session and tool that ran, and a native sample or profile has to be taken while the stall happens, which kept missing the window. Busy JS work, a garbage collection, and a machine that never scheduled the process look identical in the old line. The CPU and heap of the stalled window tell them apart for every stall, with no external probe.
+
+### Why an extension could not handle it
+
+The watchdog is the host's own timer on the host loop. An extension cannot observe the window between two of its ticks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`: the options interface, the constructor, `start()` and `tick()`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `RpcHostStalledEvent` interface.
+
 ## 2026-09-27 - open_session waits for the host that acknowledged it instead of a fixed 30 s (#2209)
 
 ### What changed

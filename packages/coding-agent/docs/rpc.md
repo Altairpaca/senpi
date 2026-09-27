@@ -754,7 +754,11 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   deadline (a busy host was measured answering after 57 s), and a timeout after it names the
   queue position instead of a bare deadline. A lost transport still rejects at once.
   `SENPI_RPC_LOOP_LAG_ERROR_MS` (default 5000) additionally broadcasts a `host_stalled` record
-  (`{ type, driftMs, sessionId?, tool? }`) to every connection, like the other content-free lifecycle records.
+  (`{ type, driftMs, sessionId?, tool?, processCpuMs?, heapDeltaMb? }`) to every connection, like the other content-free lifecycle records.
+  `processCpuMs` is the process CPU time spent during the stalled window and `heapDeltaMb` the JS heap change across it, so a
+  stall explains itself: CPU close to `driftMs` means the host was busy (a large heap drop in the same window points at a
+  collection), and CPU close to zero means the process did not run at all (the machine starved it, or it sat in a blocking
+  wait). The stderr line carries the same two numbers as `cpu=<ms> heap=<+/-MB>`.
 - **Stall attribution**: each routed command is dispatched inside an `AsyncLocalStorage` scope carrying its routing
   `sessionId`, and an in-process session's tool executions open a span carrying `{ sessionId, tool }` for as long as
   the tool runs. A stall is blamed on the synchronous work that finished inside the measured window, or on the tool
@@ -798,7 +802,7 @@ absolute: **no blocking primitive, and no unbounded synchronous filesystem read.
   sleeps synchronously, or reads a large file synchronously inside an event handler freezes every other client's
   session on that host. Use the async API, and give genuinely CPU-bound work its own worker or child process.
 - The rule is observable rather than enforced at runtime: the stall watchdog above is what names the offender.
-  `host_stalled { driftMs, sessionId, tool }` and the matching stderr line are how a blocking call in a session or a
+  `host_stalled { driftMs, sessionId, tool, processCpuMs, heapDeltaMb }` and the matching stderr line are how a blocking call in a session or a
   tool becomes a report instead of an unexplained freeze.
 
 ### Worker ownership and flow control
