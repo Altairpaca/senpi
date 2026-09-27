@@ -16,6 +16,24 @@
 
 - None upstream: `bun-runtime.ts` is fork-only and `cli.ts` is unchanged.
 
+## 2026-09-27 - Export the tool hook types
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `KernelPreludeContribution` and `ToolPermissionRequest` for extension packages.
+
+### Why
+
+- Extension packages type their tool definitions against the package entry.
+
+### Why an extension could not handle it
+
+- Package entry exports.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export list.
+
 ## 2026-09-24 - Profile /resume session switches under TIMING (senpi#2087)
 
 ### What changed

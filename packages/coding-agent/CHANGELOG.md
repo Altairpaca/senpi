@@ -6,6 +6,10 @@
 
 ### Added
 
+- Extension tools can declare `kernelPrelude` (JavaScript/Python snippets, one documentation line, exported names) to add globals to eval kernels while the tool is active; `getAllTools()` projects it and rejects exports that shadow built-in kernel helpers. ([#2128](https://github.com/code-yeongyu/senpi/issues/2128))
+- Extension tools can declare `permissionParser(input, cwd)`, so permission rules can gate their calls by tier (for example `my_tool:exec=deny`). A built-in parser for the same tool name always wins.
+- New `tool_activated` extension event, fired when the active tool set gains tools through `pi.setActiveTools()`, `tool_search` promotion, or a lazy by-name activation.
+
 ### Changed
 
 ### Fixed
