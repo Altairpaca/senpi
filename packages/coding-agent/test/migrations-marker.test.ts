@@ -81,7 +81,7 @@ describe("migrations marker", () => {
 		const marker: unknown = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
 		expect(marker).toEqual({
 			schemaVersion: 1,
-			completed: ["migrateLegacySenpiDirs", "migrateSessionsFromAgentRoot"],
+			completed: ["migrateLegacySenpiDirs", "migrateSessionsFromAgentRoot", "restoreDrainedPiDirs"],
 		});
 	});
 
