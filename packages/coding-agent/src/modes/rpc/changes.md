@@ -19,6 +19,30 @@ The watchdog is the host's own timer on the host loop. An extension cannot obser
 - `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`: the options interface, the constructor, `start()` and `tick()`.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `RpcHostStalledEvent` interface.
 
+## 2026-09-28 - A leaving host removes its registration pointer last (#2241)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-cleanup-paths.ts` (new): `hostCrashCleanupPaths` builds the crash-path cleanup list the supervisor hands its host child, ending with the registration pointer (a successor still gets only the Windows pipe entry).
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the child's `HOST_CLEANUP_PATHS_ENV` comes from `hostCrashCleanupPaths` instead of an inline list that started with the pointer.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: `cleanupWatchdogPaths` (now exported for its test) removes paths one at a time in list order on every platform; POSIX removed them in parallel.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` and `clearHostRegistration` remove `settings.json` and the generation directory before the pointer.
+- `packages/coding-agent/test/rpc-host-teardown-order.test.ts` (new): the list order, sequential watchdog removal, and pointer-last on both registration paths, through recording doubles of the real fs functions.
+
+### Why
+
+Every reader treats the pointer as "a host is registered for this endpoint". Removing it first made "no host" observable while `settings.json` and the generation record still existed; on Windows the crash path removes the rest with `rmSync` retries, so the window reached hundreds of milliseconds and the RPC named pipes (Windows) job failed intermittently on the SIGKILL lifecycle case (3 of 23 runs without #2201).
+
+### Why an extension could not handle it
+
+Daemon registration and the host's crash-path cleanup run in the supervisor and the host child, before and after any session exists.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the child spawn environment in the supervisor.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration` and `releaseGeneration`.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: `cleanupWatchdogPaths`.
+
 ## 2026-09-27 - open_session waits for the host that acknowledged it instead of a fixed 30 s (#2209)
 
 ### What changed

@@ -55,6 +55,7 @@ import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 // exported from here so every existing importer keeps resolving it at its original home.
 export { classifyChildExit } from "./host-child-exit.ts";
 
+import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths, HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { releaseGeneration } from "./host-daemon-registration.ts";
 import { watchForSupersession } from "./host-supersession.ts";
@@ -514,18 +515,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			[HOST_WATCH_PPID_ENV]: String(process.pid),
 			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
 			...(internalSecret ? { [SOCKET_SECRET_FILE_ENV]: internalSecretPath } : {}),
-			[HOST_CLEANUP_PATHS_ENV]: [
-				// A successor writes no registration of its own until the ensure that spawned it does,
-				// and the files under these paths still describe the generation being replaced.
-				...(successor ? [] : [paths.pointerFile, generation.pidFile, paths.settingsFile]),
-				// POSIX public sockets are removed ownership-checked by the host child
-				// (token: the scratch-directory sidecar plus HOST_PUBLIC_SOCKET_ENV),
-				// never by path from a crash-path cleanup: a blind removal here would
-				// unlink a newer host's freshly published entry after a takeover.
-				// Windows named pipes have no filesystem entry to own, so they stay
-				// listed for the crash-path cleanup.
-				...(process.platform === "win32" ? [publicSocket] : []),
-			].join("\n"),
+			[HOST_CLEANUP_PATHS_ENV]: hostCrashCleanupPaths({
+				pointerFile: paths.pointerFile,
+				generationPidFile: generation.pidFile,
+				settingsFile: paths.settingsFile,
+				publicSocket,
+				successor: Boolean(successor),
+				platform: process.platform,
+			}).join("\n"),
 			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 		},
 		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
