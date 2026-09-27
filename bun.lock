@@ -196,52 +196,6 @@
         "@types/ms": "2.1.0",
       },
     },
-    "packages/desktop-engine": {
-      "name": "@code-yeongyu/senpi-desktop-engine",
-      "version": "2026.9.24-2",
-      "dependencies": {
-        "@code-yeongyu/senpi-desktop-protocol": "^2026.9.24-2",
-      },
-      "devDependencies": {
-        "@types/node": "26.6.2",
-      },
-    },
-    "packages/desktop-prelude": {
-      "name": "@code-yeongyu/senpi-desktop-prelude",
-      "version": "2026.9.24-2",
-      "devDependencies": {
-        "@types/node": "26.6.2",
-        "shx": "0.4.0",
-        "vitest": "5.0.1",
-      },
-    },
-    "packages/desktop-protocol": {
-      "name": "@code-yeongyu/senpi-desktop-protocol",
-      "version": "2026.9.24-2",
-      "devDependencies": {
-        "@types/node": "26.6.2",
-        "shx": "0.4.0",
-        "vitest": "5.0.1",
-      },
-    },
-    "packages/desktop-service": {
-      "name": "@code-yeongyu/senpi-desktop-service",
-      "version": "2026.9.24-2",
-      "devDependencies": {
-        "@types/node": "26.6.2",
-        "shx": "0.4.0",
-        "vitest": "5.0.1",
-      },
-    },
-    "packages/desktop-tool": {
-      "name": "@code-yeongyu/senpi-desktop-tool",
-      "version": "2026.9.24-2",
-      "devDependencies": {
-        "@types/node": "26.6.2",
-        "shx": "0.4.0",
-        "vitest": "5.0.1",
-      },
-    },
     "packages/evals": {
       "name": "@code-yeongyu/senpi-evals",
       "version": "2026.7.25",
@@ -467,16 +421,6 @@
     "@code-yeongyu/senpi": ["@code-yeongyu/senpi@workspace:packages/coding-agent"],
 
     "@code-yeongyu/senpi-codemode": ["@code-yeongyu/senpi-codemode@workspace:packages/senpi-codemode"],
-
-    "@code-yeongyu/senpi-desktop-engine": ["@code-yeongyu/senpi-desktop-engine@workspace:packages/desktop-engine"],
-
-    "@code-yeongyu/senpi-desktop-prelude": ["@code-yeongyu/senpi-desktop-prelude@workspace:packages/desktop-prelude"],
-
-    "@code-yeongyu/senpi-desktop-protocol": ["@code-yeongyu/senpi-desktop-protocol@workspace:packages/desktop-protocol"],
-
-    "@code-yeongyu/senpi-desktop-service": ["@code-yeongyu/senpi-desktop-service@workspace:packages/desktop-service"],
-
-    "@code-yeongyu/senpi-desktop-tool": ["@code-yeongyu/senpi-desktop-tool@workspace:packages/desktop-tool"],
 
     "@code-yeongyu/senpi-evals": ["@code-yeongyu/senpi-evals@workspace:packages/evals"],
 
