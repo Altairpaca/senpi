@@ -389,6 +389,7 @@ export { type MainOptions, main } from "./main.ts";
 export {
 	createHostDaemonPaths,
 	DEFAULT_HOST_LAUNCH_SPEC,
+	daemonDirectoryName,
 	decideHostAction,
 	type EnsuredHost,
 	type EnsureHostOptions,
@@ -455,8 +456,12 @@ export {
 	runHostRequest,
 	runPrintMode,
 	runRpcMode,
+	type ShardKind,
 	type StopHostOptions,
 	type StopHostResult,
+	shardKey,
+	shardSocketPath,
+	shardSocketPathForKey,
 	stopHost,
 } from "./modes/index.ts";
 // UI components for extensions

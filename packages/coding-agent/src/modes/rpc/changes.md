@@ -125,7 +125,7 @@ The memory sampler, `get_protocol_info` and `senpi host status` are host-core su
 - `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `unaddressableStatus`.
 - `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc comment.
 
-## 2026-09-28 - One canonical `host_socket` for every generation of an endpoint
+## 2026-09-28 - `host_socket` is the canonical endpoint path from the first generation on
 
 ### What changed
 
@@ -135,7 +135,7 @@ The memory sampler, `get_protocol_info` and `senpi host status` are host-core su
 
 ### Why
 
-A supervised host child computes its identity before its supervisor binds the public socket, and the supervisor creates `rpc/shards/` only then. On darwin the first generation of a shard under `/var/folders/...` therefore reported `/var/...` while every successor reported `/private/var/...`, so a client comparing `host_socket` against the realpath of its own endpoint mismatched on first start and saw the value change across a handoff. Canonicalizing through the deepest existing ancestor makes both starts produce the same spelling.
+`host_socket` (introduced in the same change set as `status --all`) must be one stable string per endpoint. A supervised host child computes its identity before its supervisor binds the public socket, and the supervisor creates `rpc/shards/` only then, so a plain `realpath(dirname(endpoint))` would give the first generation of a new shard under `/var/folders/...` the as-typed `/var/...` spelling and every successor `/private/var/...`. Canonicalizing through the deepest existing ancestor makes every generation produce the same spelling.
 
 ### Why an extension could not handle it
 

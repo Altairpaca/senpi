@@ -1,6 +1,8 @@
 /** The shard naming contract senpi, omo and the Desktop compute identically. */
 import { describe, expect, it } from "vitest";
+import * as packageEntry from "../src/index.ts";
 import {
+	daemonDirectoryName,
 	parseShardSocket,
 	shardKey,
 	shardSocketPath,
@@ -25,6 +27,18 @@ describe("shard naming contract", () => {
 				key: vector.key,
 			});
 		}
+	});
+
+	// omo imports senpi only through the package root, so the contract must be reachable there.
+	it("is exported from the package entry point", () => {
+		expect(packageEntry.shardKey).toBe(shardKey);
+		expect(packageEntry.shardSocketPath).toBe(shardSocketPath);
+		expect(packageEntry.shardSocketPathForKey).toBe(shardSocketPathForKey);
+		expect(packageEntry.daemonDirectoryName).toBe(daemonDirectoryName);
+		const [vector] = VECTORS;
+		expect(packageEntry.shardSocketPath("/r", vector.kind, vector.owner)).toBe(
+			`/r/${vector.kind}-${vector.key}.sock`,
+		);
 	});
 
 	it("is deterministic, 16 hex, key-addressable and kind-separated", () => {
