@@ -276,6 +276,7 @@ export class SessionCommandRouter {
 					capabilities: [...capabilities],
 					mode: "multi",
 					...protocolIdentity(),
+					memory_pressure: this.memoryPressure,
 				},
 			};
 		}

@@ -523,6 +523,11 @@ export interface RpcProtocolInfo extends RpcProtocolIdentity {
 	readonly serverVersion: string;
 	readonly capabilities: string[];
 	readonly mode: "classic" | "multi";
+	/**
+	 * Multi-session hosts only: whether this host's memory sampler currently reads RSS above
+	 * `SENPI_RPC_HOST_RSS_WARN_MB` (the state `host_memory_pressure` records announce). Observability only.
+	 */
+	readonly memory_pressure?: boolean;
 }
 
 // Success responses with data

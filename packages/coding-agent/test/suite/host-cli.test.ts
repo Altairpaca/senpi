@@ -27,6 +27,7 @@ const STATUS_FIELDS = [
 	"host_rss_mb",
 	"instanceId",
 	"launchProfile",
+	"memory_pressure",
 	"open_fds",
 	"pid",
 	"reachable",

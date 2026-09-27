@@ -54,6 +54,11 @@ export interface HostStatusReport {
 	readonly rss_mb: number | null;
 	readonly host_rss_mb: number | null;
 	readonly open_fds: number | null;
+	/**
+	 * Whether the ANSWERING generation's memory sampler reads pressure right now (RSS above
+	 * `SENPI_RPC_HOST_RSS_WARN_MB`); `null` when nothing answers or the host predates the field.
+	 */
+	readonly memory_pressure: boolean | null;
 	/** Environment NAMES the daemon was granted, never values. */
 	readonly env_keys: readonly string[];
 	readonly generations: readonly HostGenerationRow[];
@@ -118,6 +123,7 @@ export async function readHostStatus(
 		rss_mb: metrics.rss_mb,
 		host_rss_mb: metrics.host_rss_mb,
 		open_fds: metrics.open_fds,
+		memory_pressure: host?.memory_pressure ?? null,
 		env_keys: await readDaemonEnvKeys(paths),
 		generations,
 		crashes: readHostCrashRecords(paths.dir).length,

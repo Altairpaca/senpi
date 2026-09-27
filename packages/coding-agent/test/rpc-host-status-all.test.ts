@@ -241,7 +241,7 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 		expect(during.claims).toEqual([expect.objectContaining({ session_path: sessionPath, instance_id: instanceId })]);
 	}, 240_000);
 
-	it("admits three workers under endpoint pressure and reports both RSS measures", async () => {
+	it("admits three workers under endpoint pressure and reports both RSS measures and the pressure state", async () => {
 		const qa = endpointScratch("pressure");
 		const previousWarn = process.env.SENPI_RPC_HOST_RSS_WARN_MB;
 		process.env.SENPI_RPC_HOST_RSS_WARN_MB = "1";
@@ -249,6 +249,9 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 			await realHost(qa, qa.shard);
 			const client = await JsonlPeer.connect(qa.shard);
 			tracked.peers.push(client);
+			// The sampler's first reading lands one sample interval after start; the record it broadcasts
+			// is the moment the host holds the pressure state.
+			const pressured = client.waitFor((record) => record.type === "host_memory_pressure", 90_000);
 			const sessionPaths = [1, 2, 3].map((index) => join(qa.sessionDir, `worker-${index}.jsonl`));
 			for (const [index, sessionPath] of sessionPaths.entries()) {
 				const response = await client.request({
@@ -262,13 +265,21 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 				expect(response.error).toBeUndefined();
 			}
 
+			await pressured;
+
 			const row = endpointRow((await statusAll(qa, true)).endpoints, qa.shard);
 			expect(row.session_rows).toHaveLength(3);
 			expect(row).toHaveProperty("rss_mb");
 			expect(row).toHaveProperty("host_rss_mb");
+			expect(row.memory_pressure).toBe(true);
 		} finally {
 			if (previousWarn === undefined) delete process.env.SENPI_RPC_HOST_RSS_WARN_MB;
 			else process.env.SENPI_RPC_HOST_RSS_WARN_MB = previousWarn;
 		}
-	}, 180_000);
+		await realHost(qa, qa.legacy);
+
+		const rows = (await statusAll(qa)).endpoints;
+		expect(endpointRow(rows, qa.legacy).memory_pressure).toBe(false);
+		expect(endpointRow(rows, qa.shard).memory_pressure).toBe(true);
+	}, 240_000);
 });

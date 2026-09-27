@@ -67,6 +67,35 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - Host status rows show the memory pressure state
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: a multi-session host's `get_protocol_info` answer adds `memory_pressure` - the boolean its `HostMemorySampler` last raised through `setMemoryPressure`. Read only; the sampler, its cadence and the idle-window halving are unchanged.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProtocolInfo.memory_pressure?: boolean` (classic hosts omit it).
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: `HostProtocolInfo.memory_pressure?` and its tolerant parse (a non-boolean is dropped).
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReport.memory_pressure: boolean | null` - the answering generation's state, `null` when nothing answers or the host predates the field.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: an unaddressable directory's row reports `memory_pressure: null`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc row for `get_protocol_info`.
+- Tests: `test/rpc-host-status-all.test.ts` - a real host under `SENPI_RPC_HOST_RSS_WARN_MB=1` admits three worker opens and, once its `host_memory_pressure` record arrives, its `--all` row shows `memory_pressure: true` while a default-threshold host shows `false`; `test/suite/host-cli.test.ts` pins the field in the status shape.
+
+### Why
+
+The sharding plan requires the `--all` row to show `rss_mb`, `host_rss_mb` and the pressure state. The state lives only inside the host process (the sampler's flag), so a status reader could see memory numbers but not whether the host considered itself pressured. The value is per generation, but only the generation that answers the public socket can be asked, so it is reported at the endpoint level; generation rows keep the RSS pair only.
+
+### Why an extension could not handle it
+
+The memory sampler, `get_protocol_info` and `senpi host status` are host-core surfaces that run before and outside any extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the `get_protocol_info` branch of `dispatch`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProtocolInfo`.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: `HostProtocolInfo` and `parseHostProtocolInfo`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReport` and `readHostStatus`.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `unaddressableStatus`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc comment.
+
 ## 2026-09-28 - One canonical `host_socket` for every generation of an endpoint
 
 ### What changed
