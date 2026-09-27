@@ -632,8 +632,9 @@ auth, model, extension or resource resolution, and they are never merged into th
 
 A socket host also stamps its own identity into every session's context, overwriting any client-supplied
 value for the same keys, because the host is the authority: `host_socket` is the PUBLIC endpoint clients
-address (the supervisor's path for a supervised host, the bound path for a bare one), realpath-canonicalized,
-and stays the same across a generation handoff; `host_instance` is the answering generation's `instanceId`
+address (the supervisor's path for a supervised host, the bound path for a bare one), realpath-canonicalized
+through the deepest existing ancestor of its directory (so the first generation of a shard, which starts before
+`rpc/shards/` exists, and every successor stamp the same string), and stays the same across a generation handoff; `host_instance` is the answering generation's `instanceId`
 (`get_protocol_info`) and changes with every handoff. So an extension can tell which endpoint and generation
 it runs behind without an environment variable. `host_socket` is omitted where no public path exists (an
 abstract socket, a supervised win32 host); a stdio host adds neither key.

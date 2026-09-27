@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- A session on a new RPC host shard now sees the same `host_socket` in its context before and after a generation handoff. The first generation of a shard started before its `rpc/shards/` directory existed and reported the path as typed (`/var/...` on macOS) while its successor reported the resolved path (`/private/var/...`); both now report the resolved path.
 - RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
 
 ### Removed

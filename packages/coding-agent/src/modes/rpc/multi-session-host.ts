@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, realpath, unlink } from "node:fs/promises";
+import { access, chmod, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
@@ -30,6 +30,7 @@ import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 import { RpcSessionRegistry } from "./session-registry.ts";
 import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
@@ -230,7 +231,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const connections = new Map<string, Connection>();
 	let draining = false;
 	let handoffAnnounced = false;
-	const hostContext = await hostSessionContext(socketPath);
+	const hostContext = hostSessionContext(socketPath);
 	const { router, handle } = createHostCore(
 		options,
 		writer,
@@ -502,14 +503,16 @@ function errorMessage(cause: unknown): string {
  * endpoint clients address (the supervisor's path for a supervised host, whose own listener is a
  * private hop; the bound path for a bare one), realpath-canonicalized so it compares equal however
  * the path was spelled; and `host_instance`, this generation. The endpoint is stable across handoffs,
- * the instance is not. `host_socket` is omitted where no public path exists (abstract sockets, a
- * supervised win32 host, whose supervisor publishes none).
+ * the instance is not. The FIRST generation runs this before its supervisor has created the socket's
+ * directory, a successor after, so the directory is canonicalized through its deepest existing
+ * ancestor: both then stamp the same spelling. `host_socket` is omitted where no public path exists
+ * (abstract sockets, a supervised win32 host, whose supervisor publishes none).
  */
-async function hostSessionContext(socketPath: string): Promise<SessionContext> {
+function hostSessionContext(socketPath: string): SessionContext {
 	const supervised = readHostWatchdogConfigFromBrandEnv();
 	const endpoint = supervised === undefined ? socketPath : supervised.publicSocket;
 	if (endpoint === undefined || endpoint.startsWith("\0")) return { host_instance: hostInstanceId() };
-	const directory = await realpath(dirname(endpoint)).catch(() => dirname(endpoint));
+	const directory = canonicalSessionPath(dirname(endpoint));
 	return { host_socket: join(directory, basename(endpoint)), host_instance: hostInstanceId() };
 }
 

@@ -5,7 +5,7 @@
  * sandbox path before deleting it.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -38,13 +38,22 @@ export interface EndpointScratch {
 }
 
 const scratches: EndpointScratch[] = [];
+const aliasTargets: string[] = [];
 const ensured: { socket: string; agentDir: string }[] = [];
 const supervisors: number[] = [];
 export const tracked = { peers: [] as JsonlPeer[], models: [] as HeldAnthropicModel[], internalDirs: [] as string[] };
 
-/** The agent dir IS the temp root: `<root>/rpc/shards/p-<16hex>.sock` must fit in sun_path. */
-export function endpointScratch(label: string, modelOrigin = "http://127.0.0.1:1"): EndpointScratch {
-	const root = mkdtempSync(join(tmpdir(), `sa-${label}-`));
+/**
+ * The agent dir IS the temp root: `<root>/rpc/shards/p-<16hex>.sock` must fit in sun_path. With
+ * `aliasedRoot` the root is a symlink under `/tmp` to the real directory, so its realpath differs on
+ * every POSIX platform while a successor's `.next-<n>` bind still fits.
+ */
+export function endpointScratch(
+	label: string,
+	modelOrigin = "http://127.0.0.1:1",
+	options: { readonly aliasedRoot?: boolean } = {},
+): EndpointScratch {
+	const root = options.aliasedRoot ? aliasedTempRoot(label) : mkdtempSync(join(tmpdir(), `sa-${label}-`));
 	const qa = {
 		root,
 		agentDir: root,
@@ -76,6 +85,18 @@ export async function sweepEndpointScratches(): Promise<void> {
 		await reapProcessesUnder(qa.root);
 		await rm(qa.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 	}
+	for (const target of aliasTargets.splice(0)) {
+		await reapProcessesUnder(target);
+		await rm(target, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+	}
+}
+
+function aliasedTempRoot(label: string): string {
+	const target = mkdtempSync(join("/tmp", `sa-${label}-`));
+	aliasTargets.push(target);
+	const alias = `${target}-l`;
+	symlinkSync(target, alias);
+	return alias;
 }
 
 export function supervisorLaunch(args: readonly string[]): { command: string; args: string[] } {

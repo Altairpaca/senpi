@@ -67,6 +67,27 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - One canonical `host_socket` for every generation of an endpoint
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `hostSessionContext` builds `host_socket` from `canonicalSessionPath(dirname(endpoint))` plus the socket's basename (synchronously, once per host start) instead of `realpath(dirname(endpoint))`, which fell back to the as-typed directory whenever that directory did not exist yet.
+- `packages/coding-agent/src/modes/rpc/session-path-key.ts`: the doc comment records the second caller; `canonicalSessionPath` itself is unchanged.
+- `packages/coding-agent/test/rpc-host-session-identity.test.ts`: a real supervised shard host started in a fresh `rpc/shards/` directory under the platform tmpdir stamps the realpath spelling, and its successor after `handoffHost` stamps the identical string.
+
+### Why
+
+A supervised host child computes its identity before its supervisor binds the public socket, and the supervisor creates `rpc/shards/` only then. On darwin the first generation of a shard under `/var/folders/...` therefore reported `/var/...` while every successor reported `/private/var/...`, so a client comparing `host_socket` against the realpath of its own endpoint mismatched on first start and saw the value change across a handoff. Canonicalizing through the deepest existing ancestor makes both starts produce the same spelling.
+
+### Why an extension could not handle it
+
+`host_socket` is stamped by the host core over the client's `open_session.context` before any extension runs; an extension only reads it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `hostSessionContext` and its call in `runSocketHost`, the `node:fs/promises` import.
+- `packages/coding-agent/src/modes/rpc/session-path-key.ts`: the `canonicalSessionPath` doc comment.
+
 ## 2026-09-28 - Per-endpoint memory pressure remains observable without admission refusal
 
 ### What changed
