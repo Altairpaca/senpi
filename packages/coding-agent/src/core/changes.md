@@ -1,3 +1,23 @@
+## 2026-09-27 - Session titles on endpoints that mandate reasoning (senpi#2163)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-title-reasoning.ts` (new): `initialTitleReasoning()` returns the lowest supported level when the catalog says a model cannot turn reasoning off, otherwise `undefined`. `mandatoryReasoningRetryLevel()` returns `clampThinkingLevel(model, "low")` for one retry after a reasoning-free request failed with "Reasoning is mandatory".
+- `packages/coding-agent/src/core/session-title-generator.ts`: `generateSessionTitle()` sends that level and raises `maxTokens` from 64 to 1024 when reasoning is on. It retries once when a stale catalog entry hits the mandatory 400. Normal models keep the reasoning-free 64-token request.
+- `packages/coding-agent/src/core/agent-session.ts`: `_generateSessionTitle()` writes a `session_title_failed` debug line to `logs/session.log` instead of emitting the `session_title_generation` runtime error.
+
+### Why
+
+With `reasoning` unset, `openai-completions` sends the provider's disabled value (`reasoning: { effort: "none" }` on OpenRouter). Mandatory-reasoning endpoints (`meta/muse-spark-1.3-contributor`, Z.ai GLM 5.3) answered with a deterministic 400, and every session showed a runtime-error toast for a cosmetic background call. A missing title is not a runtime error, so failures stay in the session log. This supersedes senpi#1266, which only added the reactive retry.
+
+### Why an extension could not handle it
+
+Title generation is internal background work started from `AgentSession`. Extensions cannot change its request options, retry, or error reporting.
+
+### Expected merge conflict zones
+
+- LOW: the `catch` block of `_generateSessionTitle()` in `agent-session.ts`.
+
 ## 2026-09-25 - An extension-triggered turn emits `before_agent_start` with `trigger: "extension"` (senpi#2137)
 
 ### What changed

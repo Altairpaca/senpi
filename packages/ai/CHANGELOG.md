@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- OpenRouter models that require reasoning, such as `meta/muse-spark-1.3-contributor` and `z-ai/glm-5.3`, are cataloged without an `off` thinking level again. Requests to them no longer send `reasoning: { effort: "none" }`, which those endpoints reject with HTTP 400. ([#1239](https://github.com/code-yeongyu/senpi/issues/1239))
+
 ### Removed
 
 ## [2026.9.26] - 2026-09-26

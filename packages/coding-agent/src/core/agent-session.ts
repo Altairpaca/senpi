@@ -4409,11 +4409,9 @@ export class AgentSession {
 			if (abortController.signal.aborted) {
 				return;
 			}
-			const message = error instanceof Error ? error.message : String(error);
-			this._extensionRunner.emitError({
-				extensionPath: RUNTIME_EXTENSION_PATH,
-				event: "session_title_generation",
-				error: message,
+			// A missing title is cosmetic, so the failure stays out of the runtime-error surface.
+			this._sessionLogger.debug("session_title_failed", {
+				error: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
 			if (this._sessionTitleAbortController === abortController) {
