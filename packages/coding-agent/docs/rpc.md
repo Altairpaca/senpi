@@ -1137,6 +1137,8 @@ The `model` field is a full [Model](#model) object or `null`. The `sessionName` 
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
+`lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
+
 #### get_messages
 
 Get all messages in the conversation.
