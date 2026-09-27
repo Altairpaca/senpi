@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "../../config.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
@@ -46,6 +46,7 @@ import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 import { statSocketIdentity } from "./socket-ownership.ts";
 import { createSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
 
@@ -639,10 +640,20 @@ export function hostEnsureLockTarget(socket: string): string {
 }
 
 function createSocketLockName(socket: string): string {
-	return createHash("sha256")
-		.update(resolveSocketTransportAddress(socket, process.platform), "utf8")
-		.digest("hex")
-		.slice(0, 32);
+	return createHash("sha256").update(socketLockAddress(socket), "utf8").digest("hex").slice(0, 32);
+}
+
+/**
+ * One address per PHYSICAL socket. A POSIX path is canonicalized through its deepest existing ancestor
+ * (`/tmp` vs `/private/tmp`, a symlinked agent directory), the rule `host_socket` uses, so two spellings
+ * of one socket share one lock - otherwise a gc holding one spelling's lock could unlink the socket an
+ * ensure through the other spelling just bound. Named pipes and abstract sockets have no directory.
+ */
+function socketLockAddress(socket: string): string {
+	if (process.platform === "win32" || socket.startsWith("\0")) {
+		return resolveSocketTransportAddress(socket, process.platform);
+	}
+	return join(canonicalSessionPath(dirname(socket)), basename(socket));
 }
 
 function normalizeSocketPath(value: string): string {

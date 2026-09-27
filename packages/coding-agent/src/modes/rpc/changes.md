@@ -67,6 +67,25 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - Every spelling of one socket shares one ensure lock
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `hostEnsureLockTarget(socket)` hashes `socketLockAddress(socket)`: on POSIX the socket's directory canonicalized through its deepest existing ancestor (`canonicalSessionPath`, the rule `host_socket` already uses) joined with its name; named pipes and abstract sockets keep the transport address as before. `ensureHost` and `host gc` both take their lock through it.
+- Tests: `test/rpc-host-gc-evidence.test.ts` - gc of an endpoint recorded under the realpath spelling reports `locked` while an ensure through a symlinked spelling holds its critical section, and the lock target is the same for both spellings, also when the socket's directory does not exist yet.
+
+### Why
+
+The lock was keyed by the socket path as typed, so `/tmp/x.sock` and `/private/tmp/x.sock` (or a symlinked agent directory) took two different locks for one physical socket. A gc holding one spelling's lock did not exclude an ensure through the other, and in the window between gc's silence probe and its unlink it could remove the socket that ensure had just bound (senpi#2245 review m6).
+
+### Why an extension could not handle it
+
+The ensure lock is taken by `senpi host ensure`/`gc` and by every client that starts a host, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `hostEnsureLockTarget`, `createSocketLockName` and the new `socketLockAddress`, plus the `node:path` and `session-path-key.ts` imports.
+
 ## 2026-09-28 - `host gc` drops its redundant pointer check
 
 ### What changed

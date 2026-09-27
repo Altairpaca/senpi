@@ -3,6 +3,7 @@
  * is never addressable (empty, layout-1, unnamed), which ensure lock is taken, and each single reason an
  * otherwise dead endpoint is kept - a paused ensure, a live claim, an answering socket or successor bind.
  */
+import { realpathSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +12,7 @@ import { ensureHost, hostEnsureLockTarget } from "../src/modes/rpc/host-ensure.t
 import { gcHostEndpoints } from "../src/modes/rpc/host-gc.ts";
 import { reservationFile } from "../src/modes/rpc/host-reservations.ts";
 import { runHostRequest } from "../src/modes/rpc/host-runner.ts";
-import { endpointScratch, sweepEndpointScratches } from "./helpers/rpc-host-endpoint-scratch.ts";
+import { canonicalSocket, endpointScratch, sweepEndpointScratches } from "./helpers/rpc-host-endpoint-scratch.ts";
 import { daemonTreeDigest } from "./helpers/rpc-host-endpoints.ts";
 import {
 	closeServer,
@@ -105,6 +106,40 @@ describe.skipIf(process.platform === "win32")("gc evidence read from disk and so
 		expect(await daemonTreeDigest(flatDir(qa.agentDir))).toEqual(before);
 		paused.open();
 		await expect(ensure).rejects.toThrow("gate released");
+	});
+
+	it("reports locked while an ensure of the same socket, spelled through a symlinked directory, holds the lock", async () => {
+		const qa = endpointScratch("gcl", undefined, { aliasedRoot: true });
+		const canonical = canonicalSocket(qa.legacy);
+		expect(canonical).not.toBe(qa.legacy);
+		const paths = await deadEndpoint(canonical, qa.agentDir);
+		const paused = gate("reject");
+		const ensure = ensureHost({
+			socket: qa.legacy,
+			agentDir: join(qa.root, "other"),
+			_test: { afterLockAcquired: paused.hook },
+		});
+		await paused.entered;
+		const before = await daemonTreeDigest(flatDir(qa.agentDir));
+
+		expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+			removed: [],
+			kept: [{ socket: canonical, dir: paths.dir, reason: "locked" }],
+		});
+		expect(await daemonTreeDigest(flatDir(qa.agentDir))).toEqual(before);
+		paused.open();
+		await expect(ensure).rejects.toThrow("gate released");
+	});
+
+	it("takes one ensure lock for every spelling of a socket, including one whose directory does not exist yet", async () => {
+		const qa = endpointScratch("gcm", undefined, { aliasedRoot: true });
+		const real = realpathSync(qa.root);
+
+		expect(hostEnsureLockTarget(qa.legacy)).toBe(hostEnsureLockTarget(join(real, "rpc", "rpc.sock")));
+		expect(hostEnsureLockTarget(join(qa.root, "later", "x.sock"))).toBe(
+			hostEnsureLockTarget(join(real, "later", "x.sock")),
+		);
+		expect(hostEnsureLockTarget(qa.legacy)).not.toBe(hostEnsureLockTarget(join(real, "rpc", "other.sock")));
 	});
 
 	it("reports locked within the 2 s budget while an ensure is paused in its critical section", async () => {
