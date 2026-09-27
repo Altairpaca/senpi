@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## Reject committed merge-conflict markers (2026-09-27)
+
+### What changed
+
+- `package.json`: `check` runs the new `check:conflict-markers` (`scripts/check-conflict-markers.mjs`), which fails on any tracked text line that opens (`<<<<<<< `), bases (`||||||| `) or closes (`>>>>>>> `) a conflict.
+
+### Why
+
+- Merge resolutions kept committing diff3 leftovers into trackers and changelogs (#963, #1189, and #2087's leftover in `core/changes.md`, senpi#2173).
+
+### Why an extension could not handle it
+
+- Repository validation gate.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script chain in the root `package.json`.
+
 ## Resolve the desktop packages from source in the root type check (2026-09-24)
 
 ### What changed
