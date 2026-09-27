@@ -6,6 +6,8 @@
 
 ### Added
 
+- `senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider in `models.json` and adds every listed model to that provider's `models` array (the previous file is kept as a timestamped backup). When the provider sets `"compat": { "supportsReasoningEffort": true }`, the `reasoning_efforts` each entry advertises become its `thinkingLevelMap` (the endpoint's own names are sent on the wire, levels it does not list are hidden) and its `default` becomes the model's new `defaultThinkingLevel`. A model's `defaultThinkingLevel` is where a session starts when you have not chosen a level for that model. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
+
 - The in-session `/resume` selector offers to move a session of this repository recorded at another path (a moved or re-cloned checkout) here, like `--session <id>` does, and both `/resume` and `--resume` list the sessions of this repository whose old path is gone in the current-folder view, marked "moved from <old path>". `--continue` in a project with no session of its own offers the newest moved one. A move now refuses while another senpi process still has the session open (naming its pid and directory), and concurrent moves of one session are serialized. ([#2184](https://github.com/code-yeongyu/senpi/issues/2184))
 
 ### Changed

@@ -205,6 +205,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
 | `thinkingLevelMap` | No | omitted | Maps senpi thinking levels to provider values and marks unsupported levels (see below) |
+| `defaultThinkingLevel` | No | omitted | Level a session starts at for this model when you have not chosen one for it (see below) |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
@@ -401,6 +402,33 @@ Example for a model where thinking cannot be disabled:
 ```
 
 Migration: older configs that used `compat.reasoningEffortMap` should move that mapping to model-level `thinkingLevelMap`. Use `null` for levels that should not appear in the UI.
+
+### Default Thinking Level
+
+`defaultThinkingLevel` names the level a session starts at on this model when you have not picked one for it yet. A level you chose for the model earlier (remembered per model) still wins; the model default wins over the global `defaultThinkingLevel` setting, which follows the last level you picked on any model. The value is clamped to the levels the model supports.
+
+### Discovering Models From an Endpoint
+
+`senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider defined in `models.json`, using the provider's configured key and headers, and adds every listed model to the provider's `models` array. Fields you already set on a listed model are kept, models the endpoint does not list are kept, and the previous file is saved next to it as `models.json.backup-<timestamp>`. Comments are not preserved in the rewritten file; the backup keeps them.
+
+Some endpoints advertise the reasoning efforts each model accepts:
+
+```json
+{ "id": "some-model", "reasoning_efforts": [{ "value": "low" }, { "value": "high", "default": true }] }
+```
+
+When the provider sets `"compat": { "supportsReasoningEffort": true }`, discovery turns that list into the model's `thinkingLevelMap` and `defaultThinkingLevel`: `none`/`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` (case-insensitive) map to the senpi level of the same name, the endpoint's own spelling is what senpi sends, and every level the endpoint does not list is set to `null`. The example above becomes:
+
+```json
+{
+  "id": "some-model",
+  "reasoning": true,
+  "thinkingLevelMap": { "off": null, "minimal": null, "low": "low", "medium": null, "high": "high", "xhigh": null, "max": null },
+  "defaultThinkingLevel": "high"
+}
+```
+
+Values that name no senpi level are reported and not used. Without the compat flag, advertised efforts are ignored and only the model ids are added.
 
 ## Overriding Built-in Providers
 

@@ -44,6 +44,7 @@ import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./c
 import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
+import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	createStartupLoadingIndicator,
@@ -1026,6 +1027,11 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await runAuthCommand(args)) {
+		return;
+	}
+
+	if (isModelsDiscoverCommand(args)) {
+		process.exitCode = await runModelsDiscoverCommand(args.slice(2));
 		return;
 	}
 
