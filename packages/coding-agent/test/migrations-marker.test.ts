@@ -73,7 +73,7 @@ describe("migrations marker", () => {
 
 		expect(fs.existsSync(planted.jsonlPath)).toBe(false);
 		expect(fs.existsSync(migratedSessionPath(agentDir))).toBe(true);
-		expect(fs.existsSync(planted.legacyProjectDir)).toBe(false);
+		expect(fs.existsSync(path.join(planted.legacyProjectDir, "settings.json"))).toBe(true);
 		expect(fs.existsSync(path.join(cwd, ".senpi", "settings.json"))).toBe(true);
 
 		const markerPath = path.join(agentDir, MARKER_NAME);
@@ -124,7 +124,7 @@ describe("migrations marker", () => {
 
 		expect(fs.existsSync(planted.jsonlPath)).toBe(false);
 		expect(fs.existsSync(migratedSessionPath(agentDir))).toBe(true);
-		expect(fs.existsSync(planted.legacyProjectDir)).toBe(false);
+		expect(fs.existsSync(path.join(planted.legacyProjectDir, "settings.json"))).toBe(true);
 		expect(fs.existsSync(path.join(cwd, ".senpi", "settings.json"))).toBe(true);
 	});
 });
