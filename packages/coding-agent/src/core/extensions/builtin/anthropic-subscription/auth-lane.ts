@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { loadAnthropicOAuth } from "@earendil-works/pi-ai/oauth";
 import { getAgentDir } from "../../../../config.ts";
@@ -128,7 +129,7 @@ async function prepareSlot(
 	pool: ManagedPool,
 	selected: AccountSlot,
 	signal: AbortSignal,
-): Promise<Record<string, string | undefined>> {
+): Promise<{ env: Record<string, string | undefined>; credentialDigest: string }> {
 	const environment = pool.environment;
 	const slot = selected;
 	if (slot.source !== "env" && activeBoundary.now() >= slot.expires - EXPIRING_WITHIN_MS) {
@@ -148,6 +149,9 @@ async function prepareSlot(
 			if (!updated) throw new Error("selected account disappeared during refresh");
 			Object.assign(slot, updated);
 		} catch (error) {
+			// A cancelled turn is not an authentication verdict: an aborted refresh
+			// must not surface as authentication_failed and auth-block the account.
+			signal.throwIfAborted();
 			const detail = error instanceof Error ? error.message : String(error);
 			const classification = classifySdkError(detail);
 			throw new Error(
@@ -160,9 +164,12 @@ async function prepareSlot(
 	const access = slot.source === "env" ? envSlotToken((name) => environment[name], slot.name) : slot.access;
 	if (!access) throw new Error("authentication_failed: selected OAuth token is unavailable");
 	const childEnvironment = stripManagedAuthEnvironment(environment);
-	if (pool.lane === "oauth-slots") return { ...childEnvironment, CLAUDE_CODE_OAUTH_TOKEN: access };
+	const credentialDigest = createHash("sha256").update(access).digest("hex");
+	if (pool.lane === "oauth-slots") {
+		return { env: { ...childEnvironment, CLAUDE_CODE_OAUTH_TOKEN: access }, credentialDigest };
+	}
 	const directory = writeConfigDirCredential(activeBoundary.getAgentDir(), slot, access);
-	return { ...childEnvironment, CLAUDE_CONFIG_DIR: directory };
+	return { env: { ...childEnvironment, CLAUDE_CONFIG_DIR: directory }, credentialDigest };
 }
 
 function sdkFailure(message: SDKMessage): unknown | undefined {
@@ -209,12 +216,14 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		runAttempt: async (slot) => {
 			const options = input.buildOptions(pool.lane);
 			const accounts = pool.accounts.map((account) => ({ ...account }));
-			options.env = await prepareSlot(pool, slot, signal);
+			const prepared = await prepareSlot(pool, slot, signal);
+			options.env = prepared.env;
 			return createAttemptMessages(input, {
 				accountName: slot.name,
 				accounts,
 				authLane: pool.lane,
 				options,
+				credentialDigest: prepared.credentialDigest,
 			});
 		},
 		classify: classifySdkError,
