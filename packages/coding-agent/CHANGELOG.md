@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- MCP tools are registered once per session. Before, a server whose catalog was still loading when the startup window ended had its catalog listed again and every tool registered twice, and each connect re-registered an unchanged catalog about 300ms later. ([#2177](https://github.com/code-yeongyu/senpi/issues/2177))
+
 - The built-in Fireworks default is `accounts/fireworks/models/kimi-k3`; the previous default `kimi-k2p6` is no longer in the Fireworks catalog. ([#2175](https://github.com/code-yeongyu/senpi/issues/2175))
 
 - Answering `y` or `yes` to "Fork this session into current directory?" (shown when `--session` finds the session in another project, for example after moving the repository) now forks the session instead of printing `Aborted.`; closing the input without an answer still declines. ([#2180](https://github.com/code-yeongyu/senpi/issues/2180), [#1042](https://github.com/code-yeongyu/senpi/pull/1042) by [@beengineer500](https://github.com/beengineer500))

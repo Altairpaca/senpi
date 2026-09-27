@@ -1,5 +1,30 @@
 # mcp Extension Changes
 
+## 2026-09-27 - Register a raced startup catalog exactly once (#2177)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: `raceMcpStartupConnect` puts a `startupCatalogClaim` on the connection entry for as long as the startup connect owns the server's first catalog registration, and releases it when the connect settles, right before a backgrounded refresh registers the catalog.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: `McpStartupCatalogClaim` (the catalog the entry had when the connect began, and whether the claim still owns registration) and the optional `startupCatalogClaim` entry field.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/expose/session.ts`: while a claim owns registration, a registration pass uses the claim's starting catalog and does not list a connected-but-unrefreshed server itself. Each pass records the `mcpToolListingIdentity` (`packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`) of the listing it registered as the entry's `registeredToolListing`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts` (moved out of `service.ts` `#handleServerToolsChanged`): the coalesced tools-changed relist re-registers only when the listing differs from the one the session last registered, and yields to a startup claim that still owns registration.
+
+### Why
+
+- When the startup-race deadline fell after `connect()` but before the catalog refresh finished, the attach pass listed the catalog itself and the backgrounded refresh then registered it again: two `tools/list` round trips, every tool registered twice, and two concurrent registration passes. The by-name tool registry hid the duplicates from provider requests, but the MCP threshold test counted 22 registrations for 11 tools.
+- Every connect, the first one included, raises the tools-changed signal so a reconnect re-lists. 300ms after startup that relist re-registered the catalog the startup connect had just registered. A reconnect or a real `list_changed` with a changed listing still re-registers (`recovery-reregister.test.ts`).
+
+### Why an extension could not handle it
+
+- The startup race and the registration pass are internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: `raceMcpStartupConnect` prologue.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`: entry mapping.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/session.ts`: live-catalog branch and listing record of `registerDirectMcpTools`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `#handleServerToolsChanged` now delegates to `service-tools-changed.ts`.
+
 ## 2026-09-23 - Keep native OAuth authorization usable (oh-my-openagent#6724)
 
 ### What changed

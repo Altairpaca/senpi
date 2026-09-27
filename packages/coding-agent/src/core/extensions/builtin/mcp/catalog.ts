@@ -49,6 +49,11 @@ export async function collectToolCatalog(
 	}));
 }
 
+/** What a registration of this listing exposes; equal identities register identical tools. */
+export function mcpToolListingIdentity(catalog: readonly McpToolCatalogEntry[]): string {
+	return JSON.stringify(catalog.map((entry) => [entry.tool, entry.description, entry.schema, entry.annotations]));
+}
+
 export function cachedToolsToCatalogEntries(
 	server: string,
 	catalog: McpCachedServerCatalog,
