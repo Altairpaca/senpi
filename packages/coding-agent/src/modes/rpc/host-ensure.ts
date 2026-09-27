@@ -36,6 +36,7 @@ import { handoffHost } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS, type HostColdStart, type HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo, probeSocketReachable } from "./host-probe.ts";
+import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
@@ -100,7 +101,6 @@ export interface EnsuredHost {
 	readonly reused: boolean;
 }
 
-const SPAWNED_HOST_PROBE_TIMEOUT_MS = 10_000;
 const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
 const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 10_000;
@@ -418,7 +418,7 @@ async function startHost(
 		await stderr.close();
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
-	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
+	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
 	if (isCompatible(result.protocol)) return { pid: pidFile.pid, socket, reused: false };
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-
@@ -547,49 +547,6 @@ async function waitForGone(
 		await delay(50);
 	}
 	return (await resolvePidFileOwnership(pidFile, readStartTime)) === "gone";
-}
-
-type ChildExit = { readonly code: number | null; readonly signal: NodeJS.Signals | null };
-
-type ProtocolPollResult = { readonly protocol?: HostProtocolInfo; readonly exited?: ChildExit };
-
-async function pollProtocolInfo(
-	socket: string,
-	timeoutMs: number,
-	childExit?: Promise<ChildExit>,
-): Promise<ProtocolPollResult> {
-	const deadline = Date.now() + timeoutMs;
-	let lastProtocol: HostProtocolInfo | undefined;
-	while (Date.now() <= deadline) {
-		const probe = probeProtocolInfo(
-			socket,
-			Math.min(SPAWNED_HOST_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
-		);
-		const raced = childExit ? await Promise.race([probe, childExit]) : await probe;
-		if (isChildExit(raced)) {
-			// A supervisor exit can be triggered by the Windows identity watchdog
-			// while a named-pipe client is still composing its protocol reply. Do
-			// not terminate the host based solely on that exit until this probe has
-			// had a chance to deliver an answer. A host that never answers still
-			// resolves through probeProtocolInfo's bounded timeout/close handling.
-			const info = await probe;
-			if (info) {
-				lastProtocol = info;
-				if (isCompatible(info)) return { protocol: info };
-			} else {
-				return { protocol: lastProtocol, exited: raced };
-			}
-		} else if (raced) {
-			lastProtocol = raced;
-			if (isCompatible(raced)) return { protocol: raced };
-		}
-		await delay(50);
-	}
-	return { protocol: lastProtocol };
-}
-
-function isChildExit(value: HostProtocolInfo | ChildExit | undefined): value is ChildExit {
-	return !!value && "code" in value && "signal" in value;
 }
 
 /**
