@@ -394,7 +394,10 @@ symmetry with other commands; the answer is always JSON.
   capabilities, launchProfileId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
   generation handoff, `never` only attaches or starts, and `fallback` answers exit 4 rather than attaching
   to a host this build disagrees with. `action` is `handoff` exactly when the socket was already served and
-  the process behind it changed.
+  the process behind it changed. An ensure invoked by an in-process session inside a multi-session host is
+  attach-only even when its caller requested an upgrade: a host generation never starts its own successor.
+  This is process-local state, not an environment marker, so a shell child remains free to run the explicit
+  `senpi host handoff` command.
 - `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, open_fds, env_keys, generations }` and exits 3 when nothing answers - with the same
@@ -453,6 +456,15 @@ the ensuring process's environment. It receives an allowlist of NAMES - `PATH`, 
 spec's `env` states. Matching is case-sensitive on POSIX and case-insensitive on win32, where the OS wiring
 (`SystemRoot`, `ComSpec`, `PATHEXT`, ...) is allowed as well. Values are never inspected; `status` reports
 the granted NAMES as `env_keys` and never a value.
+
+The product-lane allowlist has an explicit transient denylist. Session context (`PI_SESSION_*`,
+`PI_GOAL_STORE_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`,
+`PI_PROMPT_CACHE_SAFE_WAIT_SECONDS`), the Python eval-kernel parent
+(`SENPI_PY_KERNEL_PARENT_PID`), and inherited `SENPI_RPC_HOST_*` generation/watch/scratch identity never
+cross into either an initial daemon or a handoff successor. Legitimate daemon configuration in the same
+namespace, such as RSS thresholds, idle windows and feature flags, remains allowed. The spawn applies the
+new generation's own instance id, generation and daemon directory after filtering, so caller overrides
+cannot replace lifecycle identity.
 
 #### Verifying a daemon build (live QA drivers)
 
