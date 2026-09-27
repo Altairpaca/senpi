@@ -18,6 +18,29 @@ The deadline is armed inside `RpcClient.send`, which every embedder (task runner
 
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `send()`'s pending-request construction and `handleLine()`'s response dispatch.
 
+## 2026-09-27 - A held session whose directory was deleted no longer refuses every open (#2206)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-path-key.ts` (new): `canonicalSessionPath` canonicalizes the deepest ancestor that still exists and keeps the missing tail verbatim, so it never throws for a deleted directory; `sessionDirectoryRemoved` reports a session whose transcript directory is gone.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the open path and `syncRuntimeMetadata` (run by `list()`, every open and every teardown) use `canonicalSessionPath` instead of the local `canonicalPath`, whose `realpathSync(dirname(path))` threw `ENOENT` for every entry once one entry's directory was gone.
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts` (new) and `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the occupancy sweep's decisions move to `selectSweepEvictions`; besides idle sessions it names unattached sessions whose directory is gone, which the router closes with the new `session_closed` reason `session_dir_removed` whatever the idle window.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcSessionClosedReason` gains `session_dir_removed`.
+- `test/suite/regressions/retained-session-dir-removed.test.ts` (new): a retained, detached session whose directory is deleted no longer fails `list()`, an open at another path succeeds, and the next sweep ends the orphan. Before the fix the listing threw and the teardown hung on the same `ENOENT`.
+
+### Why
+
+A task owner deletes a finished child's directory when it expunges the record, and QA runs delete their temp project directories, while the shared host may still retain that child's session. On a live host one such directory produced ~26,700 `senpi rpc connection socket-N failed: ENOENT ... lstat` lines: every new connection failed, so every task child on the machine failed to start within ~3 s.
+
+### Why an extension could not handle it
+
+The throw happens inside the registry's own listing and open path, before any session's extensions exist.
+
+### Expected merge conflict zones
+
+- `session-registry.ts`: `openSession`'s canonical path and `syncRuntimeMetadata`.
+- `session-command-router.ts`: `sweepIdleSessions`.
+
 ## 2026-09-22 - Daemon status metrics read the process table through the kernel, never a `ps` child (omo-desktop#594)
 
 ### What changed
