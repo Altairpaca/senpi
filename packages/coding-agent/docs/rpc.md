@@ -397,14 +397,16 @@ symmetry with other commands; the answer is always JSON.
   the process behind it changed.
 - `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, open_fds, env_keys, generations }` and exits 3 when nothing answers - with the same
+  zombies, rss_mb, host_rss_mb, open_fds, env_keys, generations }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. `sessions` is what `list_sessions`
   reports under the same flag, so `worker` stays `0` without `--include-workers`; `foreign_*` is the same
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
-  `zombies` describe the daemon's whole process tree (supervisor plus host) and are `null` where the
-  platform does not publish them (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
-  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, sessions, current, alive }`, newest
-  ordinal last: `rss_mb` is that generation's own process tree, and `sessions` counts the session files it
+  `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
+  sessions spawned); `host_rss_mb` is only the supervisor and the host process, the number `ps` shows for those
+  pids and the one the host's memory sampler reads. All are `null` where the platform does not publish them
+  (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
+  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
+  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
@@ -750,13 +752,9 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 - **Memory pressure**: a 30-second sampler reads the host's RSS. Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096) it
   broadcasts `host_memory_pressure` (`{ type, rssMb, sessions }`) on every sample, writes one stderr line per five
   minutes, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions return
-  their memory sooner. It is released as soon as RSS falls back under the threshold. Above the REFUSE watermark
-  (`SENPI_RPC_HOST_RSS_REFUSE_MB`, default twice the warning threshold) the host is CRITICAL: an `open_session` that
-  would CREATE a `kind: "worker"` session is refused with the stable code `host_memory_pressure` and
-  `errorData { rssMb, retry_after_ms }`, until the next sample reads under the watermark. Nothing else changes: every
-  session the host already holds is served, an attach to a live path succeeds, interactive opens succeed, and nothing is
-  killed. This is the one memory-driven refusal on the in-process path; there is still no occupancy cap and no kill
-  policy. It exists because unbounded growth ended in a runtime crash that took every session with it (#1905).
+  their memory sooner. It is released as soon as RSS falls back under the threshold. Memory never refuses an open: the
+  shared host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
+  before #2207 refused NEW worker sessions above `SENPI_RPC_HOST_RSS_REFUSE_MB`; that variable is no longer read.
 - **Stall-proof dead-peer detection**: the socket dead-peer budget (30 s, `socket-event-fanout.ts`) counts only time
   the host loop actually SERVED. The loop-lag watchdog deposits each measured drift into a process-wide ledger
   (`loop-blocked-time.ts`) and the deadline re-arms for whatever blocked time landed inside its window, so a host that
@@ -905,7 +903,7 @@ In the response `error` field, machine-matchable:
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
 - `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean)
-- `host_memory_pressure` (the in-process host is above `SENPI_RPC_HOST_RSS_REFUSE_MB`, default twice `SENPI_RPC_HOST_RSS_WARN_MB`, and declined to CREATE a `kind: "worker"` session; `errorData { rssMb, retry_after_ms }` says when to ask again. An attach to a live path, an interactive open, and every command on an existing session are never refused for memory - the client waits and retries, it never starts a second host or a per-child process)
+- `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
 
 ### Tagging

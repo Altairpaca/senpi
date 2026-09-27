@@ -107,9 +107,8 @@ export function resolveHostIdlePolicy(
 
 /**
  * Arm the host's self-observation: event-loop stall detection with per-session
- * attribution, and RSS reporting that tightens idle parking under pressure and, above the
- * refuse watermark, declines NEW worker sessions (#1905). Both run on unref'd timers, and
- * neither aborts or kills anything the host already holds.
+ * attribution, and RSS reporting that tightens idle parking under pressure. Both run on
+ * unref'd timers, and neither refuses, aborts or kills anything (#2207).
  */
 function startHostObservers(
 	router: SessionCommandRouter,
@@ -121,7 +120,6 @@ function startHostObservers(
 		emit: (record) => writer.broadcastHostRecord(record),
 		sessions: () => router.sessionCount,
 		onPressure: (pressure) => router.setMemoryPressure(pressure),
-		onCritical: (critical, rssMb) => router.setMemoryCritical(critical, rssMb),
 		...(options.onIdlePressure ? { onIdlePressure: options.onIdlePressure } : {}),
 	});
 	loopLag.start();

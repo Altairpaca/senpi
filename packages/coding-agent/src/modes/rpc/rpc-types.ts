@@ -234,9 +234,9 @@ export const RPC_ERROR_INVALID_SESSION_ID = "invalid_session_id";
  */
 export const RPC_ERROR_SESSION_ID_IN_USE = "session_id_in_use";
 /**
- * The host is above its RSS refuse watermark and declined to create a NEW worker session;
- * `errorData { rssMb, retry_after_ms }` says when to ask again. Existing sessions, attaches
- * to a live path and interactive opens are never refused for memory.
+ * Sent only by hosts released before senpi#2207, which declined NEW worker sessions above an RSS
+ * watermark with `errorData { rssMb, retry_after_ms }`. Current hosts never refuse an open for
+ * memory; clients keep recognizing the code while older generations may still answer.
  */
 export const RPC_ERROR_HOST_MEMORY_PRESSURE = "host_memory_pressure";
 // Message-edit and tree-navigation failures (mirror AssistantEditError.code / UserEditError.code /

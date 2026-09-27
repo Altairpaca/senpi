@@ -25,6 +25,8 @@
 
 ### Changed
 
+- The shared RPC host no longer refuses new worker sessions when its memory crosses a watermark: it has no resource caps, so every open is admitted. Memory pressure is still reported and idle sessions still park sooner. `SENPI_RPC_HOST_RSS_REFUSE_MB` is no longer read. `senpi host status` adds `host_rss_mb` (the supervisor and host processes, as `ps` shows them) beside `rss_mb` (the whole process tree, including every tool the sessions spawned), per generation too. ([#2207](https://github.com/code-yeongyu/senpi/issues/2207))
+
 ### Fixed
 
 - Starting a branded install (such as omo) no longer empties an upstream pi install: `~/.pi/agent`, `~/.pi/mom` and a project's `.pi` are copied into the branded directories and left untouched. If an earlier start already moved them, the next start copies pi's settings, credentials, sessions and extensions back into a `~/.pi/agent` (and `~/.pi/mom`) that holds nothing of the user's, without overwriting any real file. ([oh-my-openagent#8039](https://github.com/code-yeongyu/oh-my-openagent/issues/8039))
