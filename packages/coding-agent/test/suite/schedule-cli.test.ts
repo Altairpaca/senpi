@@ -107,7 +107,7 @@ describe.skipIf(process.platform === "win32")("senpi schedule", () => {
 
 		expect(first.code).toBe(0);
 		expect(jsonLines(first.stdout)).toEqual([
-			expect.objectContaining({ event: "fired", id: created.id, outcome: "delivered" }),
+			expect.objectContaining({ event: "fired", id: created.id, occurrence: 1, outcome: "delivered" }),
 		]);
 		expect(JSON.parse(await readFile(out, "utf8"))).toMatchObject({
 			type: "scheduled_prompt",
@@ -138,7 +138,7 @@ describe.skipIf(process.platform === "win32")("senpi schedule", () => {
 			}),
 		]);
 		expect((await listScheduledJobs(dir)).jobs).toEqual([
-			expect.objectContaining({ state: "failed", job: expect.objectContaining({ id: created.id }) }),
+			expect.objectContaining({ state: "failed", occurrence: 1, job: expect.objectContaining({ id: created.id }) }),
 		]);
 	}, 60_000);
 
@@ -151,7 +151,7 @@ describe.skipIf(process.platform === "win32")("senpi schedule", () => {
 		expect(JSON.parse(listed.stdout)).toMatchObject({
 			jobs: [{ state: "pending", id: created.id, sessionId: "omocat-1553768016783867985" }],
 			invalid: [],
-			runner: { alive: false },
+			runners: [],
 		});
 
 		const cancelled = await runCli(agentDir, ["cancel", created.id]);
@@ -161,12 +161,16 @@ describe.skipIf(process.platform === "win32")("senpi schedule", () => {
 		expect((await listScheduledJobs(dir)).jobs).toEqual([]);
 	}, 60_000);
 
-	it("run --watch picks up a job created after it started and stops cleanly on SIGTERM", async () => {
+	it("run --watch is woken by a job created after it started and stops cleanly on SIGTERM", async () => {
 		const { root, agentDir, dir } = await sandbox();
 		const out = join(root, "watched.json");
-		const runner = spawnCli(agentDir, ["run", "--watch", "--poll-seconds", "1", "--exec", `cat > '${out}'`]);
+		// An hour-long poll: only the pending/ watch can deliver within the test deadline.
+		const runner = spawnCli(agentDir, ["run", "--watch", "--poll-seconds", "3600", "--exec", `cat > '${out}'`]);
 		await nextJsonLine(runner, (line) => line.event === "watching", 30_000);
-		expect(existsSync(join(dir, "runner.json"))).toBe(true);
+		const listed = await runCli(agentDir, ["list", "--json"]);
+		expect(JSON.parse(listed.stdout).runners).toEqual([
+			expect.objectContaining({ pid: runner.pid, watch: true, fresh: true }),
+		]);
 
 		const fired = nextJsonLine(runner, (line) => line.event === "fired", 30_000);
 		const created = await createScheduledJob(dir, job(Date.now()), Date.now());
@@ -176,7 +180,7 @@ describe.skipIf(process.platform === "win32")("senpi schedule", () => {
 		const exited = new Promise<number | null>((resolve) => runner.on("close", (code) => resolve(code)));
 		runner.kill("SIGTERM");
 		expect(await exited).toBe(0);
-		expect(existsSync(join(dir, "runner.json"))).toBe(false);
+		expect(existsSync(join(dir, "runners", `${runner.pid}.json`))).toBe(false);
 	}, 90_000);
 
 	it("rejects an unknown subcommand with usage and exit 2", async () => {

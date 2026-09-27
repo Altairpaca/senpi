@@ -4,53 +4,62 @@
  * The `schedule_prompt` tool only writes job files (`core/extensions/builtin/schedule/`); this
  * command fires them, so a job scheduled by a `--print` run that has long exited still runs.
  * `run` fires what is due once and exits (cron-friendly); `run --watch` stays up (launchd/systemd
- * friendly), writing a heartbeat the tool reads to tell the model whether a runner is live.
+ * friendly). Every runner holds a lease with a heartbeat, which lets other runners recover
+ * occurrences it abandoned by crashing and lets the tool tell the model whether a runner is live.
  *
  * Delivery: `--exec <command>` runs a shell command with the event as JSON on stdin (integrations
  * such as a chat bridge own the delivery); without it, the scheduling session is resumed headlessly
- * with `senpi -p --session <file|id> <message>` in the session's working directory.
+ * with `senpi -p --session <file|id> <message>` in the session's working directory, deferred while
+ * another process has that session open.
  *
  * `run` prints one JSON line per event on stdout so a service log is machine-readable.
  */
 
+import { type FSWatcher, mkdirSync, watch } from "node:fs";
+import { join } from "node:path";
 import { APP_NAME, getAgentDir, isBunBinary } from "../config.ts";
 import {
+	liveRunners,
+	ownRunnerIdentity,
+	RUNNER_HEARTBEAT_INTERVAL_MS,
+	RUNNER_HEARTBEAT_STALE_MS,
+	removeRunnerLease,
+	writeRunnerLease,
+} from "../core/extensions/builtin/schedule/runner-lease.ts";
+import { cancelScheduledJob, listScheduledJobs, scheduleDir } from "../core/extensions/builtin/schedule/store.ts";
+import { resolveCliMainPath } from "../modes/rpc/host-lifecycle.ts";
+import {
+	type DeferProbe,
 	type Delivery,
+	deferWhileSessionOpen,
 	execHookDelivery,
 	type RunDueResult,
 	runDueJobs,
 	sessionResumeDelivery,
-} from "../core/extensions/builtin/schedule/runner.ts";
-import {
-	cancelScheduledJob,
-	clearRunnerHeartbeat,
-	isRunnerAlive,
-	listScheduledJobs,
-	readRunnerHeartbeat,
-	scheduleDir,
-	writeRunnerHeartbeat,
-} from "../core/extensions/builtin/schedule/store.ts";
-import { resolveCliMainPath } from "../modes/rpc/host-lifecycle.ts";
+} from "./schedule-runner.ts";
 
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
 
-const DEFAULT_POLL_SECONDS = 15;
+const DEFAULT_POLL_SECONDS = 60;
 const DEFAULT_TIMEOUT_SECONDS = 900;
+const DEFAULT_CONCURRENCY = 4;
 
 const USAGE = `usage: ${APP_NAME} schedule <list|cancel|run> [options]
 
   list    [--json]                       every scheduled prompt, all sessions
-  cancel  <id>                           remove a scheduled prompt
+  cancel  <id>                           cancel a scheduled prompt for good
   run     [--watch] [--exec <command>]   fire due prompts (once, or keep running with --watch)
-          [--poll-seconds <n>]           --watch rescan interval (default ${DEFAULT_POLL_SECONDS})
+          [--poll-seconds <n>]           --watch rescan interval (default ${DEFAULT_POLL_SECONDS}; new jobs also wake it)
           [--timeout-seconds <n>]        per-delivery time limit (default ${DEFAULT_TIMEOUT_SECONDS})
+          [--concurrency <n>]            sessions delivered in parallel (default ${DEFAULT_CONCURRENCY})
 
 Scheduled prompts are created by the schedule_prompt tool from any session, including --print runs.
 With --exec, the command receives the due prompt as one JSON object on stdin (plus SENPI_SCHEDULE_ID,
 SENPI_SCHEDULE_SESSION_ID, SENPI_SCHEDULE_SESSION_FILE, SENPI_SCHEDULE_CWD); exit 0 means delivered.
-Without --exec, the scheduling session is resumed headlessly: ${APP_NAME} -p --session <session> <prompt>.`;
+Without --exec, the scheduling session is resumed headlessly: ${APP_NAME} -p --session <session> <prompt>,
+waiting while another process has that session open.`;
 
 class UsageError extends Error {}
 
@@ -60,7 +69,7 @@ function writeLine(value: unknown): void {
 
 function positiveInteger(flag: string, value: string | undefined): number {
 	const parsed = Number(value);
-	if (value === undefined || !Number.isInteger(parsed) || parsed < 1) {
+	if (value === undefined || !Number.isSafeInteger(parsed) || parsed < 1) {
 		throw new UsageError(`${flag} needs a positive integer`);
 	}
 	return parsed;
@@ -71,6 +80,7 @@ interface RunOptions {
 	readonly exec: string | undefined;
 	readonly pollSeconds: number;
 	readonly timeoutSeconds: number;
+	readonly concurrency: number;
 }
 
 function parseRunOptions(args: readonly string[]): RunOptions {
@@ -78,6 +88,7 @@ function parseRunOptions(args: readonly string[]): RunOptions {
 	let exec: string | undefined;
 	let pollSeconds = DEFAULT_POLL_SECONDS;
 	let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
+	let concurrency = DEFAULT_CONCURRENCY;
 	for (let index = 0; index < args.length; index += 1) {
 		const arg = args[index];
 		if (arg === "--watch") watch = true;
@@ -86,69 +97,113 @@ function parseRunOptions(args: readonly string[]): RunOptions {
 			if (exec === undefined || exec.trim().length === 0) throw new UsageError("--exec needs a command");
 		} else if (arg === "--poll-seconds") pollSeconds = positiveInteger(arg, args[++index]);
 		else if (arg === "--timeout-seconds") timeoutSeconds = positiveInteger(arg, args[++index]);
+		else if (arg === "--concurrency") concurrency = positiveInteger(arg, args[++index]);
 		else throw new UsageError(`unknown option for run: ${arg}`);
 	}
-	return { watch, exec, pollSeconds, timeoutSeconds };
+	return { watch, exec, pollSeconds, timeoutSeconds, concurrency };
 }
 
-function resolveDelivery(options: RunOptions): Delivery {
+interface DeliveryPlan {
+	readonly deliver: Delivery;
+	readonly shouldDefer: DeferProbe | undefined;
+}
+
+function resolveDelivery(options: RunOptions): DeliveryPlan {
 	const timeoutMs = options.timeoutSeconds * 1000;
-	if (options.exec !== undefined) return execHookDelivery(options.exec, timeoutMs);
-	return sessionResumeDelivery(
-		{ command: process.execPath, args: isBunBinary ? [] : [...process.execArgv, resolveCliMainPath()] },
-		timeoutMs,
-	);
+	if (options.exec !== undefined)
+		return { deliver: execHookDelivery(options.exec, timeoutMs), shouldDefer: undefined };
+	return {
+		deliver: sessionResumeDelivery(
+			{ command: process.execPath, args: isBunBinary ? [] : [...process.execArgv, resolveCliMainPath()] },
+			timeoutMs,
+		),
+		shouldDefer: deferWhileSessionOpen,
+	};
 }
 
-function report(result: RunDueResult): boolean {
-	for (const invalid of result.invalid) writeLine({ event: "invalid", ...invalid });
-	for (const fired of result.fired) writeLine({ event: "fired", ...fired });
-	return result.fired.every((fired) => fired.outcome === "delivered");
+/** Reports a pass; a job deferred for the same reason is reported once per runner, not every pass. */
+function reporter(): (result: RunDueResult) => boolean {
+	const deferred = new Map<string, string>();
+	return (result) => {
+		let ok = true;
+		for (const event of result.events) {
+			if (event.event === "deferred") {
+				if (deferred.get(event.id) === event.reason) continue;
+				deferred.set(event.id, event.reason);
+			} else if (event.event === "fired") {
+				deferred.delete(event.id);
+				if (event.outcome === "failed") ok = false;
+			}
+			writeLine(event);
+		}
+		return ok;
+	};
 }
 
-async function runOnce(dir: string, deliver: Delivery): Promise<number> {
-	const result = await runDueJobs({ dir, now: Date.now, deliver });
-	return report(result) ? EXIT_OK : EXIT_FAILED;
-}
-
-async function runWatch(dir: string, deliver: Delivery, options: RunOptions): Promise<number> {
+async function runPasses(dir: string, options: RunOptions): Promise<number> {
+	const plan = resolveDelivery(options);
+	const owner = ownRunnerIdentity();
 	const startedAt = Date.now();
-	const heartbeat = () =>
-		writeRunnerHeartbeat(dir, { pid: process.pid, startedAt, beatAt: Date.now(), exec: options.exec ?? null });
+	const lease = () =>
+		writeRunnerLease(dir, { startedAt, watch: options.watch, exec: options.exec ?? null }, Date.now());
+	const report = reporter();
+	const pass = () =>
+		runDueJobs({
+			dir,
+			now: Date.now,
+			deliver: plan.deliver,
+			owner,
+			concurrency: options.concurrency,
+			shouldDefer: plan.shouldDefer,
+		});
+
+	await lease();
+	// The heartbeat keeps beating while a long delivery runs, so this runner never looks dead mid-delivery.
+	const heartbeat = setInterval(() => void lease().catch(() => undefined), RUNNER_HEARTBEAT_INTERVAL_MS);
+	let watcher: FSWatcher | undefined;
 	let stopping = false;
 	let wake: (() => void) | undefined;
 	const stop = () => {
 		stopping = true;
 		wake?.();
 	};
-	process.on("SIGTERM", stop);
-	process.on("SIGINT", stop);
 	try {
-		await heartbeat();
+		if (!options.watch) return report(await pass()) ? EXIT_OK : EXIT_FAILED;
+
+		process.on("SIGTERM", stop);
+		process.on("SIGINT", stop);
+		// A job created by another process wakes the runner at once instead of at the next poll.
+		const pendingDir = join(dir, "pending");
+		mkdirSync(pendingDir, { recursive: true, mode: 0o700 });
+		watcher = watch(pendingDir, () => wake?.());
 		writeLine({ event: "watching", pid: process.pid, dir, pollSeconds: options.pollSeconds });
 		while (!stopping) {
-			const result = await runDueJobs({ dir, now: Date.now, deliver });
-			report(result);
-			await heartbeat();
-			if (stopping) break;
-			const untilDue = result.nextDueAt === undefined ? Number.POSITIVE_INFINITY : result.nextDueAt - Date.now();
-			const waitMs = Math.max(0, Math.min(options.pollSeconds * 1000, untilDue));
-			await new Promise<void>((resolve) => {
-				const timer = setTimeout(resolve, waitMs);
+			let rescan = false;
+			const woken = new Promise<void>((resolve) => {
 				wake = () => {
-					clearTimeout(timer);
+					rescan = true;
 					resolve();
 				};
 			});
-			wake = undefined;
+			const result = await pass();
+			report(result);
+			if (stopping) break;
+			if (rescan) continue; // something changed during the pass
+			const untilDue = result.nextDueAt === undefined ? Number.POSITIVE_INFINITY : result.nextDueAt - Date.now();
+			const waitMs = Math.max(0, Math.min(options.pollSeconds * 1000, untilDue));
+			let timer: NodeJS.Timeout | undefined;
+			await Promise.race([woken, new Promise<void>((resolve) => (timer = setTimeout(resolve, waitMs)))]);
+			clearTimeout(timer);
 		}
+		writeLine({ event: "stopped", pid: process.pid });
+		return EXIT_OK;
 	} finally {
+		clearInterval(heartbeat);
+		watcher?.close();
 		process.off("SIGTERM", stop);
 		process.off("SIGINT", stop);
-		await clearRunnerHeartbeat(dir, process.pid);
+		await removeRunnerLease(dir);
 	}
-	writeLine({ event: "stopped", pid: process.pid });
-	return EXIT_OK;
 }
 
 function formatRelative(ms: number): string {
@@ -160,27 +215,36 @@ function formatRelative(ms: number): string {
 
 async function list(dir: string, json: boolean): Promise<number> {
 	const { jobs, invalid } = await listScheduledJobs(dir);
-	const heartbeat = await readRunnerHeartbeat(dir);
-	const alive = await isRunnerAlive(dir);
+	const now = Date.now();
+	const runners = (await liveRunners(dir)).map((runner) => ({
+		...runner,
+		fresh: now - runner.beatAt <= RUNNER_HEARTBEAT_STALE_MS,
+	}));
 	if (json) {
 		writeLine({
-			jobs: jobs.map(({ state, job }) => ({ state, ...job })),
+			jobs: jobs.map((record) => ({
+				state: record.state,
+				file: record.file,
+				...(record.occurrence === undefined ? {} : { occurrence: record.occurrence }),
+				...record.job,
+			})),
 			invalid,
-			runner: alive && heartbeat !== undefined ? { alive, pid: heartbeat.pid, exec: heartbeat.exec } : { alive },
+			runners,
 		});
 		return EXIT_OK;
 	}
-	const now = Date.now();
-	const lines = jobs.map(({ state, job }) => {
+	const lines = jobs.map(({ state, job, occurrence }) => {
 		const every = job.everyMs === null ? "" : ` every ${Math.round(job.everyMs / 1000)}s`;
-		const error = job.lastError === null ? "" : ` (last error: ${job.lastError})`;
-		return `${job.id}  ${state}  ${new Date(job.dueAt).toISOString()} (${formatRelative(job.dueAt - now)})${every}  session ${job.sessionId}${error}\n    ${job.prompt.split("\n")[0]}`;
+		const which = occurrence === undefined ? "" : ` #${occurrence}`;
+		const error = job.lastError === null ? "" : ` (error: ${job.lastError})`;
+		return `${job.id}${which}  ${state}  ${new Date(job.dueAt).toISOString()} (${formatRelative(job.dueAt - now)})${every}  session ${job.sessionId}${error}\n    ${job.prompt.split("\n")[0]}`;
 	});
 	for (const bad of invalid) lines.push(`${bad.file}  invalid: ${bad.error}`);
 	if (lines.length === 0) lines.push("No scheduled prompts.");
+	const watchers = runners.filter((runner) => runner.watch && runner.fresh);
 	lines.push(
-		alive
-			? `Runner: active (pid ${heartbeat?.pid})`
+		watchers.length > 0
+			? `Runner: active (pid ${watchers.map((runner) => runner.pid).join(", ")})`
 			: `Runner: none (start one with \`${APP_NAME} schedule run --watch\`)`,
 	);
 	process.stdout.write(`${lines.join("\n")}\n`);
@@ -194,7 +258,11 @@ async function cancel(dir: string, id: string | undefined): Promise<number> {
 		process.stderr.write(`No scheduled prompt ${id}.\n`);
 		return EXIT_FAILED;
 	}
-	process.stdout.write(`Cancelled ${id} (${removed.state}).\n`);
+	process.stdout.write(
+		removed.inFlight
+			? `Cancelled ${id}. One delivery had already started and may still complete; nothing after it will run.\n`
+			: `Cancelled ${id}.\n`,
+	);
 	return EXIT_OK;
 }
 
@@ -211,11 +279,8 @@ export async function runScheduleCommand(args: readonly string[]): Promise<numbe
 			case "cancel":
 				if (rest.length > 1) throw new UsageError("cancel takes exactly one job id");
 				return await cancel(dir, rest[0]);
-			case "run": {
-				const options = parseRunOptions(rest);
-				const deliver = resolveDelivery(options);
-				return options.watch ? await runWatch(dir, deliver, options) : await runOnce(dir, deliver);
-			}
+			case "run":
+				return await runPasses(dir, parseRunOptions(rest));
 			case "--help":
 			case "-h":
 			case "help":

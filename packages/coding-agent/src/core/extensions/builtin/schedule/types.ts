@@ -14,9 +14,14 @@ export const MIN_EVERY_SECONDS = 60;
 /** Farthest a job may be scheduled ahead of its creation. */
 export const MAX_SCHEDULE_AHEAD_MS = 366 * 24 * 60 * 60 * 1000;
 
-/** Where a job file currently lives, which IS its state. */
-export const SCHEDULED_JOB_STATES = ["pending", "firing", "failed"] as const;
-export type ScheduledJobState = (typeof SCHEDULED_JOB_STATES)[number];
+/** Largest prompt a job may carry, in UTF-8 bytes. */
+export const MAX_PROMPT_BYTES = 16 * 1024;
+/** Job files larger than this are reported as invalid without being parsed. */
+export const MAX_JOB_FILE_BYTES = 64 * 1024;
+/** Pending jobs one session may hold at once. */
+export const MAX_PENDING_JOBS_PER_SESSION = 50;
+/** Pending jobs the whole agent directory may hold at once. */
+export const MAX_PENDING_JOBS_TOTAL = 1000;
 
 export interface ScheduledJob {
 	readonly version: typeof SCHEDULED_JOB_VERSION;
@@ -36,7 +41,7 @@ export interface ScheduledJob {
 	readonly everyMs: number | null;
 	readonly fireCount: number;
 	readonly lastFiredAt: number | null;
-	/** Last delivery failure of a recurring job, or the reason a one-shot job failed. */
+	/** Delivery error; set only on the occurrence records in `failed/`. */
 	readonly lastError: string | null;
 }
 
@@ -59,16 +64,17 @@ function requireString(raw: Record<string, unknown>, key: string): string {
 	return value;
 }
 
-function requireFiniteNumber(raw: Record<string, unknown>, key: string): number {
+/** Epoch milliseconds or counters: non-negative safe integers only. */
+function requireCount(raw: Record<string, unknown>, key: string): number {
 	const value = raw[key];
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		throw new InvalidScheduledJobError(`scheduled job field "${key}" must be a finite number`);
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+		throw new InvalidScheduledJobError(`scheduled job field "${key}" must be a non-negative integer`);
 	}
 	return value;
 }
 
-function nullableNumber(raw: Record<string, unknown>, key: string): number | null {
-	return raw[key] === null || raw[key] === undefined ? null : requireFiniteNumber(raw, key);
+function nullableCount(raw: Record<string, unknown>, key: string): number | null {
+	return raw[key] === null || raw[key] === undefined ? null : requireCount(raw, key);
 }
 
 function nullableString(raw: Record<string, unknown>, key: string): string | null {
@@ -78,28 +84,36 @@ function nullableString(raw: Record<string, unknown>, key: string): string | nul
 	return value;
 }
 
-/** Validates one parsed job file. Fails closed: a malformed job is reported, never fired. */
+/** Validates one parsed job. Fails closed: a malformed job is reported, never fired. */
 export function parseScheduledJob(raw: unknown): ScheduledJob {
 	if (!isRecord(raw)) throw new InvalidScheduledJobError("scheduled job must be a JSON object");
 	if (raw.version !== SCHEDULED_JOB_VERSION) {
 		throw new InvalidScheduledJobError(`unsupported scheduled job version: ${JSON.stringify(raw.version)}`);
 	}
-	const everyMs = nullableNumber(raw, "everyMs");
+	const id = requireString(raw, "id");
+	if (!/^sch_[a-z0-9]{12}$/.test(id)) throw new InvalidScheduledJobError(`invalid scheduled job id: ${id}`);
+	const everyMs = nullableCount(raw, "everyMs");
 	if (everyMs !== null && everyMs < MIN_EVERY_SECONDS * 1000) {
 		throw new InvalidScheduledJobError(`scheduled job recurrence must be at least ${MIN_EVERY_SECONDS}s`);
 	}
+	const prompt = requireString(raw, "prompt");
+	if (Buffer.byteLength(prompt, "utf8") > MAX_PROMPT_BYTES) {
+		throw new InvalidScheduledJobError(`scheduled job prompt exceeds ${MAX_PROMPT_BYTES} bytes`);
+	}
+	const createdAt = requireCount(raw, "createdAt");
+	const dueAt = requireCount(raw, "dueAt");
 	return {
 		version: SCHEDULED_JOB_VERSION,
-		id: requireString(raw, "id"),
+		id,
 		sessionId: requireString(raw, "sessionId"),
 		sessionFile: nullableString(raw, "sessionFile"),
 		cwd: requireString(raw, "cwd"),
-		prompt: requireString(raw, "prompt"),
-		createdAt: requireFiniteNumber(raw, "createdAt"),
-		dueAt: requireFiniteNumber(raw, "dueAt"),
+		prompt,
+		createdAt,
+		dueAt,
 		everyMs,
-		fireCount: requireFiniteNumber(raw, "fireCount"),
-		lastFiredAt: nullableNumber(raw, "lastFiredAt"),
+		fireCount: requireCount(raw, "fireCount"),
+		lastFiredAt: nullableCount(raw, "lastFiredAt"),
 		lastError: nullableString(raw, "lastError"),
 	};
 }

@@ -18,11 +18,13 @@ There are two parts:
 | `action` | all | `create`, `list` (this session's jobs), or `cancel` |
 | `prompt` | create | Text delivered to this session when the job fires |
 | `delaySeconds` | create | Fire this many seconds from now |
-| `at` | create | Absolute ISO 8601 date-time with a UTC offset, e.g. `2026-09-28T09:00:00+09:00` |
+| `at` | create | ISO 8601 date-time with `Z` or a UTC offset, e.g. `2026-09-28T09:00:00+09:00`; a time without one is rejected |
 | `everySeconds` | create | Repeat every N seconds (minimum 60) |
 | `id` | cancel | Job id (`sch_...`) |
 
-`create` needs exactly one of `delaySeconds` and `at`. A due time more than a minute in the past, or more than 366 days ahead, is rejected. The result says whether a `senpi schedule run --watch` runner is currently active.
+`create` needs exactly one of `delaySeconds` and `at`. A due time more than a minute in the past, or more than 366 days ahead, is rejected. A prompt may be at most 16 KiB, a session may hold 50 pending jobs, and the agent directory 1000. The result's `runnerAvailable` detail says whether a `senpi schedule run --watch` runner is currently live.
+
+`cancel` is final: nothing is delivered or re-armed after it. If one occurrence was already being delivered, that delivery cannot be recalled and the result says so (`inFlight`).
 
 A job belongs to the session that created it. It records the session id, the session file (when the session is persisted) and the working directory.
 
@@ -30,7 +32,7 @@ A job belongs to the session that created it. It records the session id, the ses
 
 ```bash
 senpi schedule run                      # fire what is due now, then exit
-senpi schedule run --watch              # keep running; rescan every 15s and wake at the next due time
+senpi schedule run --watch              # keep running; wake at the next due time or when a job is added
 senpi schedule list [--json]            # every job, in every state, for all sessions
 senpi schedule cancel <id>
 ```
@@ -38,10 +40,12 @@ senpi schedule cancel <id>
 `run` prints one JSON line per event on stdout:
 
 ```json
-{"event":"fired","id":"sch_3f9c2a1b7d04","sessionId":"my-session","outcome":"delivered","firedAt":1790520000000,"dueAt":1790519990000}
+{"event":"fired","id":"sch_3f9c2a1b7d04","sessionId":"my-session","occurrence":1,"outcome":"delivered","firedAt":1790520000000,"dueAt":1790519990000}
 ```
 
-A `--watch` runner also prints `{"event":"watching",...}` when it starts and `{"event":"stopped",...}` after `SIGTERM` or `SIGINT`, and writes a heartbeat to `<agent dir>/schedule/runner.json` while it runs. One-shot `run` exits `1` when any delivery failed, `2` on a usage error, and `0` otherwise.
+Other events: `deferred` (the job's session is open in another process; printed once per reason), `abandoned` (an occurrence whose runner died mid-delivery, moved to `failed/`), and `invalid` (an unreadable job file). A `--watch` runner also prints `{"event":"watching",...}` when it starts and `{"event":"stopped",...}` after `SIGTERM` or `SIGINT`. One-shot `run` exits `1` when any delivery failed, `2` on a usage error, and `0` otherwise.
+
+Every runner holds a lease `<agent dir>/schedule/runners/<pid>.json` with its process identity and a heartbeat refreshed every 30 seconds, also while a delivery runs.
 
 Options:
 
@@ -49,8 +53,9 @@ Options:
 |---|---|---|
 | `--watch` | off | Keep running |
 | `--exec <command>` | none | Deliver through a shell command instead of resuming the session |
-| `--poll-seconds <n>` | 15 | How often `--watch` rescans for jobs created by other processes |
+| `--poll-seconds <n>` | 60 | Longest `--watch` sleep between scans; a new job and the next due time wake it sooner |
 | `--timeout-seconds <n>` | 900 | Time limit for one delivery |
+| `--concurrency <n>` | 4 | Sessions delivered in parallel; one session's jobs always run one at a time |
 
 ### Default delivery: resume the session
 
@@ -61,6 +66,8 @@ senpi -p --session <session file or id> "<message>"
 ```
 
 The message is the prompt with a one-line header, `[Scheduled prompt <id>: created ..., due ..., fired ...]`, so the model can tell a scheduled turn from a user message.
+
+While another senpi process has that session open (an interactive session, for example), the job is deferred rather than started as a second writer on the same session file; it fires once the session is closed. The check happens right before delivery.
 
 ### Hook delivery: `--exec`
 
@@ -88,20 +95,22 @@ Use this when something else owns the session, for example a chat bridge that ru
 
 ## Delivery guarantees
 
-- Each occurrence is delivered at most once. A runner claims a due job by renaming its file from `pending/` to `firing/`; when several runners race, exactly one claim succeeds.
-- A job that became due while no runner was running fires when the next runner starts. A recurring job fires once for all missed occurrences and is then re-armed at its next future slot.
-- A failed one-shot delivery moves the job to `failed/`, with the error in `lastError`, where `senpi schedule list` shows it. A failed recurring delivery is recorded in `lastError` and the job stays scheduled.
-- A job file that cannot be parsed is reported by `list` and `run` and never fired.
-- If a runner dies while delivering, the job stays in `firing/`. `list` shows it and `cancel` removes it; it is not retried automatically.
+- Each occurrence is delivered at most once. A runner claims occurrence `n` of a due job by renaming its file from `pending/` to `firing/<id>@<n>~<runner>.json`; when several runners race, exactly one claim succeeds.
+- A recurring job is re-armed at its next slot right after the claim and before the delivery, so a runner crash can lose at most the occurrence in flight, never the schedule. Missed occurrences (no runner was running) collapse into one delivery.
+- If a runner dies while delivering, the next runner finds the occurrence record whose owner is no longer alive and moves it to `failed/` as `abandoned`. It is not retried, because it may already have been delivered.
+- A failed delivery is kept as `failed/<id>@<n>.json` with the error in `lastError`, where `senpi schedule list` shows it; `cancel` removes the job and its failed records.
+- Cancelling writes a tombstone before removing anything, and every claim and re-arm checks it afterwards, so a cancelled job never comes back.
+- A job file that cannot be parsed, or is larger than 64 KiB, is reported by `list` and `run` and never fired.
 
 ## Files
 
 ```text
 <agent dir>/schedule/
-  pending/<id>.json   waiting for its due time
-  firing/<id>.json    being delivered
-  failed/<id>.json    one-shot job whose delivery failed
-  runner.json         heartbeat of the live --watch runner
+  pending/<id>.json               waiting for its due time
+  firing/<id>@<n>~<runner>.json   occurrence n being delivered by a runner
+  failed/<id>@<n>.json            occurrence n that failed or was abandoned
+  cancelled/<id>                  tombstone of a cancelled job
+  runners/<pid>.json              lease and heartbeat of each live runner
 ```
 
-Job files are written atomically with mode `0600`.
+Files are written atomically with mode `0600` in `0700` directories.
