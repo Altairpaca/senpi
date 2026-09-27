@@ -39,6 +39,7 @@ host-status-rows.ts       status detail: listed session rows, reservations/ clai
 host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dirs, report without pruning
 host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on four-part evidence
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit
+host-lifecycle-policy.ts  Cold-start / idle-exit policy resolution + the pure IdleExitDecider
 host-client-occupancy.ts, host-observe-request.ts
                           Which public clients count for idle exit; `observe: true` reads never do
 rpc-client.ts, rpc-types.ts, custom-capability.ts, event-output-buffer.ts
