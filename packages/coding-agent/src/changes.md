@@ -1,3 +1,21 @@
+## 2026-09-27 - `senpi models discover <provider>` dispatch (senpi#2196)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `models discover ...` is routed to the fork-only `src/cli/models-command.ts` right after the auth commands and exits with its code. Any other `models` argument is still a prompt.
+
+### Why
+
+- Custom OpenAI-compatible providers had no model discovery; the command fetches `/models` once and records the listed models, with the reasoning efforts the endpoint advertises, in models.json (prior art: gajae-code #5979).
+
+### Why an extension could not handle it
+
+- Top-level subcommands are dispatched in `main()` before settings, extensions, or a session exist, like `auth`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the import block (`./cli/list-models.ts`) and the dispatch after `runAuthCommand`.
+
 ## 2026-09-27 - Branded starts copy an upstream pi install instead of moving it, and restore one they drained (oh-my-openagent#8039)
 
 ### What changed
