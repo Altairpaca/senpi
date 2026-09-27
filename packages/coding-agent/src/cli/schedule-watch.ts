@@ -86,6 +86,7 @@ export async function runPasses(dir: string, options: RunOptions): Promise<numbe
 			deliver: plan.deliver,
 			owner,
 			concurrency: options.concurrency,
+			deliveryTimeoutMs: options.timeoutSeconds * 1000,
 			shouldDefer: plan.shouldDefer,
 		});
 

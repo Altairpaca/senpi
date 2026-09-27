@@ -5,7 +5,7 @@
  * timer even while a delivery is running, tells the tool whether a runner will actually fire jobs.
  */
 
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	breakStaleLock,
@@ -24,6 +24,8 @@ import { type RunnerIdentity, runnersDir } from "./store.ts";
 export const RUNNER_HEARTBEAT_STALE_MS = 120_000;
 /** How often a runner refreshes its heartbeat. */
 export const RUNNER_HEARTBEAT_INTERVAL_MS = 30_000;
+/** Assumed delivery time limit when a lock does not state one (the CLI default). */
+export const DEFAULT_MAX_DELIVERY_MS = 900_000;
 
 export function ownRunnerIdentity(): RunnerIdentity {
 	return { pid: process.pid, processStartedAtMs: ownProcessStartedAtMs() };
@@ -138,12 +140,24 @@ export interface LockProbes {
 	readonly readProcessStartMs?: (pid: number) => Promise<number | undefined>;
 }
 
+function isPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return errorCode(error) === "EPERM";
+	}
+}
+
 /**
- * A lock whose runner died is still held while the delivery it started is running: same boot, the
- * group has a live member, and - when the leader itself is still there - it is the same process
- * (a reused pid with a different start time is not the delivery).
+ * A lock whose runner died is still held while the delivery it started may be running:
+ * - with a recorded delivery (same boot): while its group has a live member, and - when the leader
+ *   itself is alive - only if its start identity matches (a live leader that cannot be verified or
+ *   started at another time is a reused pid);
+ * - without one: only for an ungated delivery (Windows starts the command before it can be
+ *   recorded), and then until the runner's delivery timeout has passed since the lock was written.
  */
-async function orphanedDelivery(raw: string, probes: LockProbes): Promise<number | undefined> {
+async function orphanedDelivery(raw: string, lockAgeMs: number, probes: LockProbes): Promise<number | undefined> {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
@@ -151,15 +165,23 @@ async function orphanedDelivery(raw: string, probes: LockProbes): Promise<number
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const pid = "deliveryPid" in parsed ? parsed.deliveryPid : undefined;
-	const startedAt = "deliveryStartedAtMs" in parsed ? parsed.deliveryStartedAtMs : undefined;
-	const boot = "bootAtMs" in parsed ? parsed.bootAtMs : undefined;
-	if (typeof pid !== "number" || typeof startedAt !== "number" || typeof boot !== "number") return undefined;
-	if (!sameBoot(boot, processBootAtMs()) || !isDeliveryGroupAlive(pid)) return undefined;
+	const field = (key: string): unknown => (key in parsed ? Reflect.get(parsed, key) : undefined);
+	const boot = field("bootAtMs");
+	if (typeof boot !== "number" || !sameBoot(boot, processBootAtMs())) return undefined;
+	const pid = field("deliveryPid");
+	const startedAt = field("deliveryStartedAtMs");
+	if (typeof pid !== "number" || typeof startedAt !== "number") {
+		const maxDeliveryMs = field("maxDeliveryMs");
+		const runner = field("pid");
+		const ungated = field("gated") === false;
+		return ungated && typeof maxDeliveryMs === "number" && lockAgeMs <= maxDeliveryMs && typeof runner === "number"
+			? runner
+			: undefined;
+	}
+	if (!isDeliveryGroupAlive(pid)) return undefined;
+	if (!isPidAlive(pid)) return pid; // leader gone, descendants still delivering
 	const leaderStart = await (probes.readProcessStartMs ?? readProcessStartMs)(pid).catch(() => undefined);
-	// Leader gone but group alive: its descendants are still running the delivery.
-	if (leaderStart === undefined) return pid;
-	return sameProcessStart(startedAt, leaderStart) ? pid : undefined;
+	return leaderStart !== undefined && sameProcessStart(startedAt, leaderStart) ? pid : undefined;
 }
 
 /**
@@ -172,10 +194,17 @@ async function orphanedDelivery(raw: string, probes: LockProbes): Promise<number
 export async function acquireSessionDeliveryLock(
 	dir: string,
 	sessionId: string,
-	probes: LockProbes = {},
+	options: LockProbes & { readonly gated?: boolean; readonly maxDeliveryMs?: number } = {},
 ): Promise<SessionDeliveryLock> {
+	const probes = options;
 	const path = sessionLockPath(dir, sessionId);
-	const identity = { pid: process.pid, bootAtMs: processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
+	const identity = {
+		pid: process.pid,
+		bootAtMs: processBootAtMs(),
+		processStartedAtMs: ownProcessStartedAtMs(),
+		gated: options.gated ?? process.platform !== "win32",
+		maxDeliveryMs: options.maxDeliveryMs ?? DEFAULT_MAX_DELIVERY_MS,
+	};
 	let mine = JSON.stringify(identity);
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
@@ -213,7 +242,11 @@ export async function acquireSessionDeliveryLock(
 		const state = await reclaimLockState(path);
 		if (state.state === "held") return { acquired: false, heldByPid: state.holder?.pid };
 		if (state.state === "stale") {
-			const delivering = await orphanedDelivery(state.raw, probes);
+			const lockAgeMs = await stat(path).then(
+				(info) => Date.now() - info.mtimeMs,
+				() => 0,
+			);
+			const delivering = await orphanedDelivery(state.raw, lockAgeMs, probes);
 			if (delivering !== undefined) return { acquired: false, heldByPid: delivering };
 			await breakStaleLock(path, state.raw);
 		}

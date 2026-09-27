@@ -75,6 +75,8 @@ export interface RunDueOptions {
 	readonly deliver: Delivery;
 	readonly owner: RunnerIdentity;
 	readonly concurrency?: number;
+	/** Delivery time limit, recorded in the session lock for ungated (Windows) deliveries. */
+	readonly deliveryTimeoutMs?: number;
 	readonly shouldDefer?: DeferProbe;
 	/** Live runners, for recovering occurrences of dead ones; defaults to reading the leases. */
 	readonly runners?: () => Promise<readonly LiveRunner[]>;
@@ -116,7 +118,9 @@ async function freshPendingJob(options: RunDueOptions, id: string): Promise<Sche
 }
 
 async function fireOne(options: RunDueOptions, listed: ScheduledJob): Promise<RunnerEvent | undefined> {
-	const lock = await acquireSessionDeliveryLock(options.dir, listed.sessionId);
+	const lock = await acquireSessionDeliveryLock(options.dir, listed.sessionId, {
+		maxDeliveryMs: options.deliveryTimeoutMs,
+	});
 	if (!lock.acquired) {
 		const holder = lock.heldByPid === undefined ? "another runner" : `process ${lock.heldByPid}`;
 		return {

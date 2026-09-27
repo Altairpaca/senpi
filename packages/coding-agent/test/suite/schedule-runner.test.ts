@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, watch } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -486,6 +486,52 @@ describe("schedule runner", () => {
 		if (lock.acquired) await lock.release();
 	});
 
+	it.skipIf(process.platform === "win32")(
+		"does not trust a live delivery leader whose start time cannot be read",
+		async () => {
+			const dir = await tempScheduleDir();
+			const gone = spawn("/usr/bin/true");
+			await new Promise<void>((resolve) => gone.once("exit", () => resolve()));
+			const leader = spawn("/bin/sleep", ["60"], { detached: true, stdio: "ignore" });
+			const leaderExited = new Promise<void>((resolve) => leader.once("exit", () => resolve()));
+			const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+			await writeAtomic(
+				lockFile,
+				JSON.stringify({
+					pid: gone.pid,
+					bootAtMs: processBootAtMs(),
+					processStartedAtMs: 1,
+					deliveryPid: leader.pid,
+					deliveryStartedAtMs: Math.floor(Date.now() / 1000) * 1000,
+				}),
+			);
+
+			const lock = await acquireSessionDeliveryLock(dir, "session-a", { readProcessStartMs: async () => undefined });
+			process.kill(-(leader.pid ?? 0), "SIGKILL");
+			await leaderExited;
+
+			expect(lock.acquired).toBe(true);
+			if (lock.acquired) await lock.release();
+		},
+	);
+
+	it("holds a dead runner's ungated lock until its delivery time limit has passed", async () => {
+		const dir = await tempScheduleDir();
+		const gone = spawn(process.execPath, ["-e", ""]);
+		await new Promise<void>((resolve) => gone.once("exit", () => resolve()));
+		const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+		const deadRunner = { pid: gone.pid, bootAtMs: processBootAtMs(), processStartedAtMs: 1, gated: false };
+		await writeAtomic(lockFile, JSON.stringify({ ...deadRunner, maxDeliveryMs: 3_600_000 }));
+		const withinLimit = await acquireSessionDeliveryLock(dir, "session-a");
+		await writeAtomic(lockFile, JSON.stringify({ ...deadRunner, maxDeliveryMs: 0 }));
+		await utimes(lockFile, new Date(T0), new Date(T0));
+		const pastLimit = await acquireSessionDeliveryLock(dir, "session-a");
+
+		expect(withinLimit).toEqual({ acquired: false, heldByPid: gone.pid });
+		expect(pastLimit.acquired).toBe(true);
+		if (pastLimit.acquired) await pastLimit.release();
+	});
+
 	it("serializes a pending attach with release so the lock is never left behind", async () => {
 		const dir = await tempScheduleDir();
 		const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
@@ -540,8 +586,18 @@ describe("schedule runner", () => {
 
 		const result = await runDeliveryProcess({ command: "/bin/sh", args: ["-c", `touch '${marker}'`] }, 30_000, {
 			onSpawn: async () => {
-				// Give an ungated command every chance to run before registration fails.
-				await new Promise((resolve) => setTimeout(resolve, 300));
+				// An ungated command would create the marker now; wait for that exact event (bounded).
+				await new Promise<void>((resolve) => {
+					const watcher = watch(root, () => {
+						if (existsSync(marker)) finish();
+					});
+					const timer = setTimeout(finish, 2_000);
+					function finish() {
+						clearTimeout(timer);
+						watcher.close();
+						resolve();
+					}
+				});
 				throw new Error("lock lost");
 			},
 		});

@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { ScheduledJob } from "../core/extensions/builtin/schedule/types.ts";
 import { liveSessionHolders } from "../core/session-holders.ts";
+import { killWindowsProcessTree } from "../utils/shell.ts";
 
 /** What a delivery hook receives on stdin, one JSON object. */
 export interface ScheduledPromptEvent {
@@ -62,10 +63,7 @@ const POSIX_GATE = 'IFS= read -r _ <&3 || exit 75; exec 3<&-; exec "$0" "$@"';
 
 function killTree(pid: number): void {
 	if (process.platform === "win32") {
-		spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on(
-			"error",
-			() => {},
-		);
+		killWindowsProcessTree(pid); // bounded, absolute taskkill paths, direct-kill fallback
 		return;
 	}
 	try {
