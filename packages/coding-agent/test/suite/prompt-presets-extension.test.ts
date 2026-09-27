@@ -368,7 +368,6 @@ describe("prompt preset resolver", () => {
 		// then
 		expect(catalogModelIds).toEqual(
 			expect.arrayContaining([
-				"fireworks/accounts/fireworks/models/kimi-k2p6",
 				"moonshotai/kimi-k2.6",
 				"openrouter/moonshotai/kimi-k2.6",
 			]),
@@ -390,7 +389,6 @@ describe("prompt preset resolver", () => {
 		// then
 		expect(catalogModelIds).toEqual(
 			expect.arrayContaining([
-				"fireworks/accounts/fireworks/models/kimi-k2p7-code",
 				"moonshotai/kimi-k2.7-code",
 				"openrouter/moonshotai/kimi-k2.7-code",
 			]),

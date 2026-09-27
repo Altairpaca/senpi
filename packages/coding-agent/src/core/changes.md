@@ -19,6 +19,24 @@ The `context` hook cannot see failed assistant turns in a form that ties a rejec
 - LOW: the `return` of `convertToLlm()` in `messages.ts`.
 - LOW: the Cursor quota note block in the agent-end handler of `agent-session.ts`.
 
+## 2026-09-27 - Fireworks default follows the catalog after v2026.9.27 (senpi#2175)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in `fireworks` default is now `accounts/fireworks/models/kimi-k3`, because the release-regenerated catalog no longer lists `kimi-k2p6`.
+
+### Why
+
+- A default that is missing from its provider catalog cannot resolve, and `model-resolver.test.ts` failed on main.
+
+### Why an extension could not handle it
+
+- Built-in default model table.
+
+### Expected merge conflict zones
+
+- LOW: the `fireworks` row of the defaults table.
+
 ## 2026-09-27 - Session titles on endpoints that mandate reasoning (senpi#2163)
 
 ### What changed
