@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The built-in Fireworks default is `accounts/fireworks/models/kimi-k3`; the previous default `kimi-k2p6` is no longer in the Fireworks catalog. ([#2175](https://github.com/code-yeongyu/senpi/issues/2175))
+
 ### Removed
 
 ## [2026.9.27] - 2026-09-27
