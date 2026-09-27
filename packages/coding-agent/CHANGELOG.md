@@ -8,7 +8,11 @@
 
 ### Changed
 
+- The shared RPC host no longer refuses new worker sessions when its memory crosses a watermark: it has no resource caps, so every open is admitted. Memory pressure is still reported and idle sessions still park sooner. `SENPI_RPC_HOST_RSS_REFUSE_MB` is no longer read. `senpi host status` adds `host_rss_mb` (the supervisor and host processes, as `ps` shows them) beside `rss_mb` (the whole process tree, including every tool the sessions spawned), per generation too. ([#2207](https://github.com/code-yeongyu/senpi/issues/2207))
+
 ### Fixed
+
+- RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
 
 ### Removed
 
@@ -25,14 +29,11 @@
 
 ### Changed
 
-- The shared RPC host no longer refuses new worker sessions when its memory crosses a watermark: it has no resource caps, so every open is admitted. Memory pressure is still reported and idle sessions still park sooner. `SENPI_RPC_HOST_RSS_REFUSE_MB` is no longer read. `senpi host status` adds `host_rss_mb` (the supervisor and host processes, as `ps` shows them) beside `rss_mb` (the whole process tree, including every tool the sessions spawned), per generation too. ([#2207](https://github.com/code-yeongyu/senpi/issues/2207))
-
 ### Fixed
 
 - Starting a branded install (such as omo) no longer empties an upstream pi install: `~/.pi/agent`, `~/.pi/mom` and a project's `.pi` are copied into the branded directories and left untouched. If an earlier start already moved them, the next start copies pi's settings, credentials, sessions and extensions back into a `~/.pi/agent` (and `~/.pi/mom`) that holds nothing of the user's, without overwriting any real file. ([oh-my-openagent#8039](https://github.com/code-yeongyu/oh-my-openagent/issues/8039))
 - Task children and other RPC clients no longer fail to open a session after 30 s when the shared host is busy. Once the host acknowledges an `open_session` with its `queued` record, the client waits for the answer (up to 10 minutes) instead of giving up at the generic 30 s request deadline. A loaded host was measured answering after 57 s. A timeout after the acknowledgement names the queue position. ([#2209](https://github.com/code-yeongyu/senpi/issues/2209))
 - A shared RPC host keeps opening sessions after the directory of a session it still holds is deleted (a task child's directory removed with its record, or a QA run's temp project). Every listing and open used to fail with `ENOENT`, so every new task child on the machine failed to start. An unattached session whose directory is gone is now closed with the `session_closed` reason `session_dir_removed`. ([#2206](https://github.com/code-yeongyu/senpi/issues/2206))
-- RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
 - A Claude subscription (`anthropic-subscription`) turn no longer fails with "Anthropic Subscription pre-replay buffer overflow" or "result arrived before replay claim" when Claude Code is still running a turn of its own (a background task notification or a background subagent) as the message is sent. That turn's output is no longer counted against, or flushed into, the waiting turn, and the session stays open. ([#2192](https://github.com/code-yeongyu/senpi/issues/2192))
 - MCP tools are registered once per session. Before, a server whose catalog was still loading when the startup window ended had its catalog listed again and every tool registered twice, and each connect re-registered an unchanged catalog about 300ms later. ([#2177](https://github.com/code-yeongyu/senpi/issues/2177))
 
