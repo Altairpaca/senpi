@@ -1169,6 +1169,13 @@ export interface RpcHostStalledEvent {
 	sessionId?: string;
 	/** Tool that session was executing, when the stall happened inside one. */
 	tool?: string;
+	/**
+	 * Process CPU time spent during the stalled window, in milliseconds. Near `driftMs`: the host
+	 * was busy (JS work or a collection). Near zero: the process did not run (starved or waiting).
+	 */
+	processCpuMs?: number;
+	/** JS heap change across the stalled window, in megabytes; a large drop means a collection ran. */
+	heapDeltaMb?: number;
 }
 
 /**
