@@ -50,6 +50,7 @@ import { fileURLToPath } from "node:url";
 import { getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
+import { ClientOccupancy } from "./host-client-occupancy.ts";
 
 // The exit verdict moved to ./host-child-exit.ts with the crash recording it now feeds; it stays
 // exported from here so every existing importer keeps resolving it at its original home.
@@ -464,7 +465,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const internalSocket = internal.socket;
 	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
 	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
-	const clientSockets = new Set<Socket>();
+	const clients = new ClientOccupancy(() => decider.update(currentActivity()));
 	const busySessions = new Map<string, number>();
 	// Declared before anything that can reach `currentActivity()`. A client accepted during startup
 	// asks for the activity snapshot, and a `const` read before its initializer runs is a
@@ -561,12 +562,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				resolveSocketTransportAddress(internalSocket, process.platform, internalSecret),
 			);
 			if (internalSecret) sendSocketHandshake(internal, internalSecret);
-			clientSockets.add(client);
-			// A readiness exchange can begin and end between ticks. Record the
-			// attachment now, before a later tick can reuse the preceding idle window.
-			decider.update(currentActivity());
+			// A readiness exchange can begin and end between ticks: the client is recorded the
+			// moment its first request line arrives, before a later tick can reuse the preceding
+			// idle window. An observing read (`status`) is never recorded (host-client-occupancy.ts).
+			clients.admit(client);
 			const detach = (): void => {
-				clientSockets.delete(client);
+				clients.release(client);
 				decider.update(currentActivity());
 				internal.destroy();
 				client.destroy();
@@ -594,12 +595,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	);
 	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
 	const ticker = setInterval(() => {
-		if (!draining && decider.update(currentActivity()) === "exit") void shutdown("idle", 0);
+		if (!draining && decider.update(currentActivity()) === "exit" && clients.unclassifiedCount === 0)
+			void shutdown("idle", 0);
 	}, tickIntervalMs);
 
 	function currentActivity(): HostActivity {
 		return {
-			connections: clientSockets.size,
+			connections: clients.attachedCount,
 			activeTurns: activeTurnsForIdleDecision({
 				healthy: observerLink.healthy(),
 				unhealthySince: observerLink.unhealthySince(),
@@ -654,7 +656,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				: undefined;
 		try {
 			writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
-			for (const client of clientSockets) client.destroy();
+			clients.destroyAll();
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
 			// current entry for the close, then let the ownership check decide. A drained

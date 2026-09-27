@@ -67,6 +67,35 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - A status read no longer keeps an idle host alive
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts` (new): `OBSERVE_REQUEST_FIELD` and `isObservingRequest(line)` - a request line is an observing read only when it is `get_protocol_info` or `list_sessions` with `observe: true`.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` (new): `ClientOccupancy` classifies each public-socket client by its request lines - unclassified until the first line, an observer while every line is an observing read, attached from the first line that is anything else (or a first line over 64 KiB).
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor admits clients through `ClientOccupancy` instead of counting every accepted connection. Only attached clients are `connections` for the idle decider, the attachment is recorded (and the window reset) when the first non-observing line arrives instead of at accept, and the idle ticker does not exit while a client is still unclassified.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `observeProtocolInfo(socket, timeoutMs)`, a `get_protocol_info` probe marked `observe: true`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `readHostStatus` (single-socket `status` and every `--all` row) sends both of its reads as observing reads.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `observe?: boolean` on the `get_protocol_info` and `list_sessions` commands.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc rows for both commands.
+- Tests: `test/rpc-host-lifecycle.test.ts` drives the real supervisor on a test clock - observing reads between two ticks leave the window running, while `observe` on `get_commands` attaches and restarts it; `test/rpc-host-status-observe.test.ts` polls a real host with a 3 s window through `status --all` every second and it still exits on schedule.
+
+### Why
+
+Every accepted connection counted as an attachment and reset the idle window, and `status` connects to the host it reports on. A runtime panel or doctor loop polling `senpi host status --all` more often than the idle window therefore kept every per-session shard alive forever, so none of them ever became `gc`-eligible (senpi#2245 review M1). A readiness probe from `ensure` (and the attach hold of senpi#2242) must still count, so the distinction is an explicit marker on the read rather than the command type.
+
+### Why an extension could not handle it
+
+The lifecycle supervisor is a byte proxy in front of the host process; it runs no extensions, and `senpi host status` runs before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the client set in `runHostSupervisor`, the public server's `accept`/`detach`, the idle ticker, `currentActivity`, and the client teardown in `performShutdown`.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: the probe exports.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: the two reads in `readHostStatus`/`readSessionListing`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `get_protocol_info` and `list_sessions` members of `RpcCommand`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc comment.
+
 ## 2026-09-28 - Host status rows show the memory pressure state
 
 ### What changed

@@ -714,7 +714,14 @@ Environment overrides beat the file, and invalid values fall through to the next
 (`transient`|`persistent`) and `SENPI_RPC_HOST_IDLE_EXIT_MS` (positive integer milliseconds).
 
 The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
-Any connection or agent turn resets the window, so a busy host never exits. The supervisor learns about turns through
+Any attached connection or agent turn resets the window, so a busy host never exits. A connection attaches with its
+first request line, unless that line is an OBSERVING read: `get_protocol_info` or `list_sessions` carrying
+`"observe": true`. A connection that only ever sends observing reads never counts and never resets the window, so a
+poller (`senpi host status [--all]`, which marks both of its reads, a doctor loop, a runtime panel) can look at every
+endpoint as often as it likes without keeping any of them alive; the first request that is anything else attaches the
+connection from then on, and `observe` on any other command is ignored. While a connection has not sent its first
+line yet the host does not exit, and the window keeps running. Hosts that predate the field ignore it, so a marked read
+works against every generation. The supervisor learns about turns through
 its observer connection to the host; while that connection is unhealthy it cannot see turns, so it treats activity as
 unknown and keeps the host open as if a turn were running — but only for one idle window, during which it keeps
 reconnecting. An observer that stays unhealthy for longer than the window stops counting as busy, and the connection

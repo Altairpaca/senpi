@@ -276,7 +276,12 @@ export type RpcErrorCode =
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
 	| (RpcSessionCommand & { sessionId?: string })
-	| { id?: string; type: "get_protocol_info" }
+	| {
+			id?: string;
+			type: "get_protocol_info";
+			/** An observing read: this connection never counts as host activity (docs/rpc.md, idle exit). */
+			observe?: boolean;
+	  }
 	| {
 			id?: string;
 			type: "open_session";
@@ -340,6 +345,8 @@ export type RpcCommand =
 			 * default listing publishes interactive sessions only and carries no `context`.
 			 */
 			include_workers?: boolean;
+			/** An observing read, as on `get_protocol_info`. */
+			observe?: boolean;
 	  };
 
 // ============================================================================

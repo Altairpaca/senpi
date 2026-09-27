@@ -22,6 +22,8 @@
 - A transient RPC host with a short idle window no longer exits between `ensureHost()` and the ensuring client's first attach. `ensureHost()` now keeps the connection that proved the host ready as an attach hold and returns `release()` on `EnsuredHost`; the interactive host runtime and `senpi host ensure` release it once attached. A slow attach (a loaded machine, a slow lock release) found the host already gone (`connect ENOENT`). ([#2227](https://github.com/code-yeongyu/senpi/issues/2227))
 - An RPC host that goes away removes its registration pointer last, after `settings.json` and its generation record, on the graceful and the crash path alike, so "no host registered" is never observable while the rest of its daemon state still exists. On Windows the crash path removed the pointer first and then the other files one by one. ([#2241](https://github.com/code-yeongyu/senpi/issues/2241))
 
+- Polling `senpi host status` or `senpi host status --all` no longer keeps an RPC host alive. Each poll used to count as a client attaching and restarted the host's idle window, so a panel or doctor loop polling faster than the window (15 minutes by default) kept every host it looked at running forever. Status reads now mark themselves `observe: true` on `get_protocol_info`/`list_sessions`, and a connection that only sends such reads never counts as activity.
+
 ### Removed
 
 ## [2026.9.27-4] - 2026-09-27

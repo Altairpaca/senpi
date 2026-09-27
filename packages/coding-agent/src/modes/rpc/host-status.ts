@@ -15,7 +15,8 @@ import { readDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths, parseShardSocket, type ShardKind } from "./host-daemon-paths.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
-import { probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
+import { observeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { type HostPathClaimRow, type HostSessionRow, parseSessionRows, readClaimRows } from "./host-status-rows.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
@@ -100,7 +101,8 @@ export async function readHostStatus(
 	});
 	const prune = read.prune !== false;
 	const includeWorkers = options.includeWorkers === true;
-	const host = await probeProtocolInfo(options.socket, STATUS_PROBE_TIMEOUT_MS);
+	// Both reads observe: looking at a host must never be what keeps it from idling out.
+	const host = await observeProtocolInfo(options.socket, STATUS_PROBE_TIMEOUT_MS);
 	// Reading the directory is also when it is cleaned: an operator asking what runs here must not
 	// be shown generations that ended, and the next reader must get the same answer.
 	if (prune) await pruneDeadGenerations(paths);
@@ -145,7 +147,7 @@ export async function readSessionCounts(socket: string, includeWorkers: boolean)
 async function readSessionListing(socket: string, includeWorkers: boolean): Promise<readonly HostSessionRow[]> {
 	const reply = await requestOnSocket(
 		socket,
-		{ type: "list_sessions", ...(includeWorkers ? { include_workers: true } : {}) },
+		{ type: "list_sessions", [OBSERVE_REQUEST_FIELD]: true, ...(includeWorkers ? { include_workers: true } : {}) },
 		STATUS_PROBE_TIMEOUT_MS,
 	);
 	return parseSessionRows(reply);
