@@ -6,6 +6,7 @@
 
 ### Added
 
+- Interactive and print processes leave a record when they crash natively. Each writes a lifetime marker under `<agent dir>/process-crashes/live/` that any exit JavaScript can observe removes; the next start turns the marker of a dead process into one entry in `process-crashes/crashes.jsonl` with the process kind, uptime, and Bun and senpi versions. RPC host crash records now name their kind and versions too. ([#2194](https://github.com/code-yeongyu/senpi/issues/2194))
 - RPC `get_state` reports `lastProviderDiagnostic`, the structured provider failure family (auth, rate limit, quota, context limit, invalid request, provider unavailable) of the most recent failed turn; the failed assistant message in `message_end`, `--mode json` output and the session file carries the same `providerDiagnostic`. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
 - The in-session `/resume` selector offers to move a session of this repository recorded at another path (a moved or re-cloned checkout) here, like `--session <id>` does, and both `/resume` and `--resume` list the sessions of this repository whose old path is gone in the current-folder view, marked "moved from <old path>". `--continue` in a project with no session of its own offers the newest moved one. A move now refuses while another senpi process still has the session open (naming its pid and directory), and concurrent moves of one session are serialized. ([#2184](https://github.com/code-yeongyu/senpi/issues/2184))
 
