@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Re-logging in to an auth-blocked Claude subscription account now actually refreshes it. The login exchanged fresh tokens and reported success, but the credential-pool merge kept the stored slot for any name it already knew, so the revoked token and its `auth_error` block stayed on disk. A same-name slot with strictly newer material now replaces the stored copy; sibling accounts that rotated or were blocked during the browser round trip are still never rewound. ([#2222](https://github.com/code-yeongyu/senpi/issues/2222))
 - A terminal 429 or 503 error from an OpenAI-compatible (or Azure, Google, OpenRouter) provider keeps the provider's `Retry-After` (seconds or HTTP-date) as the `(retry-after-ms: N)` marker, so callers can honour it even when no retry ran. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
 
 ### Removed
