@@ -6,9 +6,22 @@
 
 ### Added
 
+- `senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider in `models.json` and adds every listed model to that provider's `models` array (the previous file is kept as a timestamped backup). When the provider sets `"compat": { "supportsReasoningEffort": true }`, the `reasoning_efforts` each entry advertises become its `thinkingLevelMap` (the endpoint's own names are sent on the wire, levels it does not list are hidden) and its `default` becomes the model's new `defaultThinkingLevel`. A model's `defaultThinkingLevel` is where a session starts when you have not chosen a level for that model. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
 - Startup and working tips for the `/computer` command (stop chord, background input, look-only permissions, macOS grants), shown only where an extension registers `/computer`. ([#2204](https://github.com/code-yeongyu/senpi/issues/2204))
 - Interactive and print processes leave a record when they crash natively. Each writes a lifetime marker under `<agent dir>/process-crashes/live/` that any exit JavaScript can observe removes; the next start turns the marker of a dead process into one entry in `process-crashes/crashes.jsonl` with the process kind, uptime, and Bun and senpi versions. RPC host crash records now name their kind and versions too. ([#2194](https://github.com/code-yeongyu/senpi/issues/2194))
-- `senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider in `models.json` and adds every listed model to that provider's `models` array (the previous file is kept as a timestamped backup). When the provider sets `"compat": { "supportsReasoningEffort": true }`, the `reasoning_efforts` each entry advertises become its `thinkingLevelMap` (the endpoint's own names are sent on the wire, levels it does not list are hidden) and its `default` becomes the model's new `defaultThinkingLevel`. A model's `defaultThinkingLevel` is where a session starts when you have not chosen a level for that model. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
 - RPC `get_state` reports `lastProviderDiagnostic`, the structured provider failure family (auth, rate limit, quota, context limit, invalid request, provider unavailable) of the most recent failed turn; the failed assistant message in `message_end`, `--mode json` output and the session file carries the same `providerDiagnostic`. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
 - The in-session `/resume` selector offers to move a session of this repository recorded at another path (a moved or re-cloned checkout) here, like `--session <id>` does, and both `/resume` and `--resume` list the sessions of this repository whose old path is gone in the current-folder view, marked "moved from <old path>". `--continue` in a project with no session of its own offers the newest moved one. A move now refuses while another senpi process still has the session open (naming its pid and directory), and concurrent moves of one session are serialized. ([#2184](https://github.com/code-yeongyu/senpi/issues/2184))
 
