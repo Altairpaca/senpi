@@ -14,7 +14,7 @@
  */
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { daemonDirectoryName, HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
+import { HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths, socketNamesDirectory } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 
 export type HostEndpointIdentitySource = "endpoint" | "settings" | "generation-settings" | "unknown";
@@ -63,5 +63,5 @@ async function socketNamedBy(file: string, dir: string): Promise<string | undefi
 	const record = parseJson(await readFileOrUndefined(file).catch(() => undefined));
 	const socket = record?.socket;
 	if (typeof socket !== "string" || socket === "") return undefined;
-	return daemonDirectoryName(socket) === basename(dir) ? socket : undefined;
+	return socketNamesDirectory(socket, basename(dir)) ? socket : undefined;
 }

@@ -37,6 +37,7 @@ import {
 	HOST_DAEMON_LAYOUT,
 	type HostDaemonPaths,
 	type HostGenerationPaths,
+	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import { isRecord, parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
 import { pruneDeadGenerations } from "./host-generations.ts";
@@ -187,7 +188,7 @@ export async function provenOwner(
 ): Promise<{ pid: number; processStartTime: string; instanceId: string } | undefined> {
 	const record = registered?.record;
 	if (!record || record.processStartTime === null) return undefined;
-	if (registered?.socket !== undefined && registered.socket !== socket) return undefined;
+	if (registered?.socket !== undefined && !sameEndpoint(registered.socket, socket)) return undefined;
 	const identity = { pid: record.pid, processStartTime: record.processStartTime };
 	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false))
 		? { ...identity, instanceId: registered.instanceId }

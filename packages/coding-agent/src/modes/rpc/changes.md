@@ -1,3 +1,28 @@
+## 2026-09-28 - Every spelling of one socket shares one daemon directory
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: new `canonicalEndpointPath(socket)` - on POSIX the socket path with its directory resolved through its deepest existing ancestor (`canonicalSessionPath`), unchanged for a path already spelled that way; on win32 the normalized lower-cased path; an abstract socket as given. `daemonDirectoryName` hashes it, so every spelling names one directory and a canonical spelling keeps its previous name. New `sameEndpoint(a, b)` and `socketNamesDirectory(socket, name)` (the canonical name, or the name a build hashing the spelling gave it); `namesThisDirectory` uses the latter.
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `socketNamedBy` accepts a record through `socketNamesDirectory`, so a directory an older build named after a non-canonical spelling stays listed (and `gc`-able).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `registersSocket` compares with `sameEndpoint`; `socketLockAddress` uses `canonicalEndpointPath`, which yields the identical lock address as before.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `provenOwner` compares the record's socket with `sameEndpoint`.
+- Tests: `test/rpc-host-daemon-dir-spelling.test.ts` - a canonical spelling keeps `sha256(path)[:16]`; a path through a symlinked directory (also one whose tail does not exist yet) and, on darwin, `/tmp` vs `/private/tmp` get the canonical name; an ensure through a second spelling attaches with the first spelling's pid, leaves one directory, and `stopHost` through it stops that host; a directory named after a non-canonical spelling is still removed by gc. `test/helpers/rpc-host-daemon-sandbox.ts` derives the expected directory from the realpath of the socket's directory.
+
+### Why
+
+The ensure lock was made per physical socket (senpi#2245 m6), but the daemon directory stayed per spelling, so two spellings of one socket kept two registrations: an ensure through the second attached with pid 0, and a stop through it refused a host it could not see (rpc-host-sharding todo 33 b).
+
+### Why an extension could not handle it
+
+The daemon directory is derived by `ensureHost`/`stopHost`/`handoffHost` before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `daemonDirectoryName` and the helpers beside it, `namesThisDirectory`.
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `socketNamedBy`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `registersSocket`, `socketLockAddress`, the imports.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `provenOwner`.
+
 ## 2026-09-28 - `host gc` removes the endpoint directory last and never aborts on one endpoint
 
 ### What changed

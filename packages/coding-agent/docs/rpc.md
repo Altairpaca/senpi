@@ -321,9 +321,15 @@ directory can never read each other's state:
     reservations/                              cross-generation session-path claims
 ```
 
-Directories are `0700` and every state file is `0600`. The canonical socket is the socket path on POSIX
-and the normalized lower-cased path on win32, so a client recomputes the directory name from the socket
-alone. `generation_dir` is relative to the directory holding the pointer (`generations/<instanceId>`), and
+Directories are `0700` and every state file is `0600`. The canonical socket is, on POSIX, the socket path
+with its directory resolved through its deepest existing ancestor (`realpath`; a missing tail is kept
+verbatim) - the same identity the ensure lock is keyed by - and on win32 the normalized lower-cased path, so
+a client recomputes the directory name from the socket alone and every spelling of one socket (`/tmp` vs
+`/private/tmp`, a path through a symlinked directory) shares one directory, one registration and one lock.
+A socket already spelled canonically hashes exactly as it did when the name was taken from the spelling
+itself, so an existing endpoint keeps its directory. A directory an older build named after a
+non-canonical spelling is still listed by `status --all` and collected by `gc`, but new state goes to the
+canonical directory. `generation_dir` is relative to the directory holding the pointer (`generations/<instanceId>`), and
 `instance_id` is the same id the host reports as `instanceId` in `get_protocol_info` - so a pointer that
 names a different id than the socket answers describes a generation that is no longer serving.
 
@@ -339,7 +345,8 @@ names is alive an ensure refuses (`legacy_host`) rather than starting a second h
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.
 
-`endpoint.json` names the socket the directory serves (the exact string its name was hashed from). It is
+`endpoint.json` names the socket the directory serves, in the spelling its first ensure used (its name
+is the hash of that spelling's canonical form). It is
 written `0600` when the directory is created and re-asserted under the ensure lock. It is written whole to a
 temporary name and linked into place, so no reader ever sees half a file, and a valid one is never rewritten, so
 `created_at` is the endpoint's first ensure. Under the lock the ensure does replace a file that does not name a

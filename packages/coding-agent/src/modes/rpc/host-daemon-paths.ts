@@ -6,7 +6,7 @@
  *
  *     <agentDir>/rpc-host-daemon/                 the flat directory - shared, and left legacy-empty
  *       layout.json                               { layout: 2, dir } - the only file this build writes here
- *       <sha256(socket)[:16]>/                    0700, one per endpoint
+ *       <sha256(canonical socket)[:16]>/          0700, one per endpoint
  *         endpoint.json                           { layout, socket, created_at } - WHICH socket this is
  *         host.pid                                POINTER: { layout, instance_id, generation_dir, writer }
  *         settings.json                           what the supervisor reads at boot
@@ -34,8 +34,9 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, join, win32 } from "node:path";
+import { basename, dirname, join, win32 } from "node:path";
 import { getAgentDir } from "../../config.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 
 /** The layout this build writes. A directory without the marker predates it and is never touched. */
 export const HOST_DAEMON_LAYOUT = 2;
@@ -55,7 +56,7 @@ export interface HostDaemonPaths {
 	readonly layoutMarker: string;
 	/** A LEGACY host's registration. Read-only evidence that another host may be running. */
 	readonly legacyPidFile: string;
-	/** This endpoint's state directory, `<flatDir>/<sha256(socket)[:16]>`. */
+	/** This endpoint's state directory, `<flatDir>/<sha256(canonical socket)[:16]>`. */
 	readonly dir: string;
 	/** Durable identity `{ layout, socket, created_at }`: survives every generation's release. */
 	readonly endpointFile: string;
@@ -82,15 +83,44 @@ export interface HostGenerationPaths {
 }
 
 /**
- * The directory name every client recomputes from the socket alone: `sha256(<canonical endpoint>)`,
- * where the canonical endpoint is the socket path on POSIX and the normalized lower-cased path on
- * win32 (the same canonicalization the pipe name is derived from, so two spellings of one endpoint
- * share one directory). Deliberately total: naming a directory must never fail on a path shape the
- * transport would reject, or a client could not even report WHERE it was looking.
+ * The one spelling of an endpoint every client derives the same way. On POSIX that is the socket path
+ * with its directory resolved through its deepest existing ancestor (`/tmp` vs `/private/tmp`, a
+ * symlinked agent directory) - the identity the ensure lock is keyed by - and a path already spelled
+ * that way comes back unchanged. On win32 it is the normalized lower-cased path the pipe name is derived
+ * from. An abstract socket has no directory to resolve. Deliberately total: naming a directory must never
+ * fail on a path shape the transport would reject, or a client could not even report WHERE it was looking.
+ */
+export function canonicalEndpointPath(socket: string, platform: NodeJS.Platform = process.platform): string {
+	if (platform === "win32") return win32.normalize(socket).toLowerCase();
+	if (socket.startsWith("\0") || process.platform === "win32") return socket;
+	return join(canonicalSessionPath(dirname(socket)), basename(socket));
+}
+
+/**
+ * The directory name every client recomputes from the socket alone: `sha256(<canonical endpoint>)`, so
+ * every spelling of one endpoint shares one directory, and a canonical spelling keeps the name it had
+ * when the name was hashed from the spelling itself.
  */
 export function daemonDirectoryName(socket: string, platform: NodeJS.Platform = process.platform): string {
-	const canonical = platform === "win32" ? win32.normalize(socket).toLowerCase() : socket;
-	return createHash("sha256").update(canonical, "utf8").digest("hex").slice(0, 16);
+	return directoryNameOf(canonicalEndpointPath(socket, platform));
+}
+
+/** Whether two spellings name one endpoint. */
+export function sameEndpoint(socket: string, other: string): boolean {
+	return socket === other || canonicalEndpointPath(socket) === canonicalEndpointPath(other);
+}
+
+/**
+ * Whether a record naming `socket` belongs in the directory called `name`: the canonical name, or the
+ * name a build that hashed the spelling itself gave it - that directory has to stay listable, and
+ * therefore collectable by `host gc`, after the upgrade.
+ */
+export function socketNamesDirectory(socket: string, name: string): boolean {
+	return daemonDirectoryName(socket) === name || (process.platform !== "win32" && directoryNameOf(socket) === name);
+}
+
+function directoryNameOf(endpoint: string): string {
+	return createHash("sha256").update(endpoint, "utf8").digest("hex").slice(0, 16);
 }
 
 /**
@@ -274,7 +304,7 @@ async function namesThisDirectory(paths: HostDaemonPaths): Promise<boolean> {
 	return (
 		typeof record.socket === "string" &&
 		record.socket !== "" &&
-		daemonDirectoryName(record.socket) === basename(paths.dir)
+		socketNamesDirectory(record.socket, basename(paths.dir))
 	);
 }
 

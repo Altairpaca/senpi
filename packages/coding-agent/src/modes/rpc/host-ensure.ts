@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { getAgentDir } from "../../config.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
@@ -14,10 +14,12 @@ import {
 	waitForStartTime,
 } from "../app-server/daemon/process.ts";
 import {
+	canonicalEndpointPath,
 	createDaemonDirectories,
 	createHostDaemonPaths,
 	ensureEndpointIdentity,
 	type HostDaemonPaths,
+	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import {
 	clearHostRegistration,
@@ -46,7 +48,6 @@ import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
-import { canonicalSessionPath } from "./session-path-key.ts";
 import { statSocketIdentity } from "./socket-ownership.ts";
 import { createSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
 
@@ -328,7 +329,7 @@ function hostChildArgv(hostArgs: readonly string[]): string[] {
 /** Whether a registration is about this endpoint. A record written before the field existed is. */
 function registersSocket(registered: RegisteredHost | undefined, socket: string): boolean {
 	if (registered === undefined) return false;
-	return registered.socket === undefined || registered.socket === socket;
+	return registered.socket === undefined || sameEndpoint(registered.socket, socket);
 }
 
 /**
@@ -653,7 +654,7 @@ function socketLockAddress(socket: string): string {
 	if (process.platform === "win32" || socket.startsWith("\0")) {
 		return resolveSocketTransportAddress(socket, process.platform);
 	}
-	return join(canonicalSessionPath(dirname(socket)), basename(socket));
+	return canonicalEndpointPath(socket);
 }
 
 function normalizeSocketPath(value: string): string {
