@@ -269,14 +269,14 @@ await session.agent.waitForIdle();
 A failed turn is an assistant message with `stopReason: "error"` and a human-readable `errorMessage`. When the provider rejected the request with structured evidence, the same message also carries an optional `providerDiagnostic`, so callers can branch on the failure family without parsing `errorMessage`:
 
 ```typescript
+// Shape of ProviderDiagnostic, exported from "@earendil-works/pi-ai":
+// {
+//   category: "auth" | "rate_limit" | "quota" | "context_limit" | "invalid_request" | "provider_unavailable" | "unknown";
+//   httpStatus?: number; // 400..599; absent for an error delivered inside an HTTP 200 stream
+//   code?: string; // provider token from a closed allowlist, e.g. "rate_limit_error", "insufficient_quota"
+//   evidence: "structured_status" | "structured_code";
+// }
 import type { ProviderDiagnostic } from "@earendil-works/pi-ai";
-
-interface ProviderDiagnostic {
-  category: "auth" | "rate_limit" | "quota" | "context_limit" | "invalid_request" | "provider_unavailable" | "unknown";
-  httpStatus?: number; // 400..599; absent for an error delivered inside an HTTP 200 stream
-  code?: string; // provider token from a closed allowlist, e.g. "rate_limit_error", "insufficient_quota"
-  evidence: "structured_status" | "structured_code";
-}
 
 session.subscribe((event) => {
   if (event.type !== "message_end" || event.message.role !== "assistant") return;
@@ -284,7 +284,7 @@ session.subscribe((event) => {
 });
 
 // After the run settles, the latest failure is also on the agent state
-const diagnostic = session.agent.state.providerDiagnostic;
+const diagnostic: ProviderDiagnostic | undefined = session.agent.state.providerDiagnostic;
 ```
 
 - Only the Anthropic Messages and OpenAI-compatible Chat Completions adapters mint it today, from the HTTP status and error code of the SDK error their own transport call raised, an Anthropic `event: error` SSE envelope, or an OpenAI-compatible in-stream `error` chunk. Message text, response headers, request ids, and errors thrown by caller callbacks such as `onPayload` never produce one.

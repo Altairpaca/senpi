@@ -40,7 +40,7 @@ export interface ProviderDiagnostic {
 export { PROVIDER_DIAGNOSTIC_MAX_BYTES };
 
 function readField(value: object, key: "category" | "evidence" | "httpStatus" | "code"): unknown {
-	return (value as Record<string, unknown>)[key];
+	return Reflect.get(value, key);
 }
 
 /**

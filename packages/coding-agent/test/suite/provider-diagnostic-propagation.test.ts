@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { type AssistantMessage, fauxAssistantMessage, type ProviderDiagnostic } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentSession } from "../../src/core/agent-session.ts";
-import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
+import { afterEach, describe, expect, it } from "vitest";
+import { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
+import type { AgentSessionServices } from "../../src/core/agent-session-services.ts";
 import { toJsonEvent } from "../../src/modes/json-event.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "../../src/modes/rpc/connection-handler.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -17,22 +17,40 @@ const DIAGNOSTIC: ProviderDiagnostic = {
 	evidence: "structured_code",
 };
 
-interface WireRecord {
-	id?: string;
-	type?: string;
-	data?: Record<string, unknown>;
-	message?: { role?: string; providerDiagnostic?: unknown };
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function createRuntimeHost(session: AgentSession): AgentSessionRuntime {
-	return {
-		session,
-		newSession: vi.fn(async () => ({ cancelled: true })),
-		switchSession: vi.fn(async () => ({ cancelled: true })),
-		fork: vi.fn(async () => ({ cancelled: true, selectedText: "" })),
-		dispose: vi.fn(async () => {}),
-		setRebindSession: vi.fn(),
-	} as unknown as AgentSessionRuntime;
+function parseRecord(line: string): Record<string, unknown> {
+	const parsed: unknown = JSON.parse(line);
+	if (!isRecord(parsed)) throw new Error(`Expected a JSON object line: ${line}`);
+	return parsed;
+}
+
+function assistantDiagnostic(record: Record<string, unknown>): unknown {
+	const message = record.message;
+	if (!isRecord(message) || message.role !== "assistant") return undefined;
+	return message.providerDiagnostic;
+}
+
+function isAssistantRecord(record: Record<string, unknown>): boolean {
+	return isRecord(record.message) && record.message.role === "assistant";
+}
+
+function createRuntime(harness: Harness): AgentSessionRuntime {
+	const services: AgentSessionServices = {
+		cwd: harness.tempDir,
+		agentDir: harness.tempDir,
+		authStorage: harness.authStorage,
+		settingsManager: harness.settingsManager,
+		modelRegistry: harness.modelRegistry,
+		modelRuntime: harness.session.modelRuntime,
+		resourceLoader: harness.session.resourceLoader,
+		diagnostics: [],
+	};
+	return new AgentSessionRuntime(harness.session, services, async () => {
+		throw new Error("provider-diagnostic propagation test does not replace sessions");
+	});
 }
 
 function failedTurn(providerDiagnostic?: ProviderDiagnostic): AssistantMessage {
@@ -45,13 +63,12 @@ describe("providerDiagnostic propagation through the session surfaces", () => {
 
 	afterEach(async () => {
 		while (cleanups.length > 0) await cleanups.pop()?.();
-		vi.restoreAllMocks();
 	});
 
 	async function createRpcHarness(): Promise<{
 		harness: Harness;
-		send(command: Record<string, unknown>): Promise<WireRecord>;
-		records(): WireRecord[];
+		send(command: Record<string, unknown>): Promise<Record<string, unknown>>;
+		records(): Record<string, unknown>[];
 	}> {
 		const harness = await createHarness({ persistSession: true, settings: { retry: { enabled: false } } });
 		cleanups.push(harness.cleanup);
@@ -61,15 +78,10 @@ describe("providerDiagnostic propagation through the session surfaces", () => {
 			writeRaw: (chunk) => lines.push(chunk),
 			waitForBackpressure: async () => {},
 		};
-		const handler = createRpcConnectionHandler(createRuntimeHost(harness.session), sink);
+		const handler = createRpcConnectionHandler(createRuntime(harness), sink);
 		cleanups.push(() => handler.dispose());
 		await handler.ready;
-		const records = (): WireRecord[] =>
-			lines
-				.join("")
-				.split("\n")
-				.filter(Boolean)
-				.map((line) => JSON.parse(line) as WireRecord);
+		const records = (): Record<string, unknown>[] => lines.join("").split("\n").filter(Boolean).map(parseRecord);
 		let sequence = 0;
 		return {
 			harness,
@@ -84,6 +96,11 @@ describe("providerDiagnostic propagation through the session surfaces", () => {
 		};
 	}
 
+	function stateData(response: Record<string, unknown>): Record<string, unknown> {
+		if (!isRecord(response.data)) throw new Error("Expected get_state data");
+		return response.data;
+	}
+
 	it("carries the diagnostic to session events, JSONL, print JSON, and RPC events + get_state", async () => {
 		const rpc = await createRpcHarness();
 		rpc.harness.setResponses([failedTurn(DIAGNOSTIC)]);
@@ -95,27 +112,25 @@ describe("providerDiagnostic propagation through the session surfaces", () => {
 		expect(assistantEnd.message.errorMessage).toBe("429 rate limited by provider");
 		expect(assistantEnd.message.providerDiagnostic).toEqual(DIAGNOSTIC);
 
-		const printed = JSON.parse(JSON.stringify(toJsonEvent(assistantEnd))) as WireRecord;
-		expect(printed.message?.providerDiagnostic).toEqual(DIAGNOSTIC);
+		const printed = parseRecord(JSON.stringify(toJsonEvent(assistantEnd)));
+		expect(assistantDiagnostic(printed)).toEqual(DIAGNOSTIC);
 
 		const sessionFile = rpc.harness.session.sessionFile;
 		if (!sessionFile) throw new Error("Expected a persisted session file");
 		const persisted = readFileSync(sessionFile, "utf-8")
 			.split("\n")
 			.filter(Boolean)
-			.map(
-				(line) => JSON.parse(line) as { type?: string; message?: { role?: string; providerDiagnostic?: unknown } },
-			)
-			.find((entry) => entry.type === "message" && entry.message?.role === "assistant");
-		expect(persisted?.message?.providerDiagnostic).toEqual(DIAGNOSTIC);
+			.map(parseRecord)
+			.find((entry) => entry.type === "message" && isAssistantRecord(entry));
+		if (!persisted) throw new Error("Expected a persisted assistant entry");
+		expect(assistantDiagnostic(persisted)).toEqual(DIAGNOSTIC);
 
-		const wireEnd = rpc
-			.records()
-			.find((record) => record.type === "message_end" && record.message?.role === "assistant");
-		expect(wireEnd?.message?.providerDiagnostic).toEqual(DIAGNOSTIC);
+		const wireEnd = rpc.records().find((record) => record.type === "message_end" && isAssistantRecord(record));
+		if (!wireEnd) throw new Error("Expected an RPC assistant message_end");
+		expect(assistantDiagnostic(wireEnd)).toEqual(DIAGNOSTIC);
 
-		const state = await rpc.send({ type: "get_state" });
-		expect(state.data?.lastProviderDiagnostic).toEqual(DIAGNOSTIC);
+		const state = stateData(await rpc.send({ type: "get_state" }));
+		expect(state.lastProviderDiagnostic).toEqual(DIAGNOSTIC);
 	});
 
 	it("omits lastProviderDiagnostic when the failed turn carries none", async () => {
@@ -124,7 +139,7 @@ describe("providerDiagnostic propagation through the session surfaces", () => {
 
 		await rpc.harness.session.prompt("hello");
 
-		const state = await rpc.send({ type: "get_state" });
-		expect(state.data !== undefined && "lastProviderDiagnostic" in state.data).toBe(false);
+		const state = stateData(await rpc.send({ type: "get_state" }));
+		expect("lastProviderDiagnostic" in state).toBe(false);
 	});
 });

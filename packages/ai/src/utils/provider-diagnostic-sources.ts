@@ -24,10 +24,9 @@ function optionalString(value: unknown): string | undefined | null {
 export function anthropicProviderDiagnosticFromError(error: unknown): ProviderDiagnostic | undefined {
 	try {
 		if (!(error instanceof Error)) return undefined;
-		const candidate = error as Error & { status?: unknown; type?: unknown; error?: unknown };
-		const status = candidate.status;
-		const direct = optionalString(candidate.type);
-		const body = candidate.error;
+		const status = Reflect.get(error, "status");
+		const direct = optionalString(Reflect.get(error, "type"));
+		const body = Reflect.get(error, "error");
 		const nested = isRecord(body) && isRecord(body.error) ? optionalString(body.error.type) : undefined;
 		if (direct === null || nested === null) return undefined;
 		if (direct !== undefined && nested !== undefined && direct !== nested) return undefined;
@@ -61,9 +60,8 @@ export function anthropicProviderDiagnosticFromSseData(data: string): ProviderDi
 export function openAICompatibleProviderDiagnosticFromError(error: unknown): ProviderDiagnostic | undefined {
 	try {
 		if (!(error instanceof Error)) return undefined;
-		const candidate = error as Error & { status?: unknown; code?: unknown };
-		const status = candidate.status;
-		const code = optionalString(candidate.code);
+		const status = Reflect.get(error, "status");
+		const code = optionalString(Reflect.get(error, "code"));
 		if (code === null) return undefined;
 		if (code === undefined && (status === undefined || status === null)) return undefined;
 		return classifyProviderFailure({ status, code });
