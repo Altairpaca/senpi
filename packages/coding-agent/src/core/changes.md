@@ -37,6 +37,24 @@ The `context` hook cannot see failed assistant turns in a form that ties a rejec
 
 - LOW: the `fireworks` row of the defaults table.
 
+## 2026-09-27 - Tool kernel preludes, tool-owned permission parsers, and `tool_activated`
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getAllTools()` projects each tool's `kernelPrelude` (validated by `extensions/kernel-prelude.ts`) and `permissionParser`. `setActiveToolsByName` emits `tool_activated` with only the newly active tool names, and nothing awaits the handlers.
+
+### Why
+
+- Extensions need three generic hooks so a capability can live entirely in an extension package: eval-kernel globals for their tools, permission tiers for their own tools, and a signal when a deferred tool becomes active.
+
+### Why an extension could not handle it
+
+- Tool metadata projection and active-set changes happen inside `AgentSession`.
+
+### Expected merge conflict zones
+
+- LOW: the `getAllTools()` field list and the tail of `setActiveToolsByName`.
+
 ## 2026-09-27 - Session titles on endpoints that mandate reasoning (senpi#2163)
 
 ### What changed

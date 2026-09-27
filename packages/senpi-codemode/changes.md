@@ -1,5 +1,23 @@
 # senpi-codemode fork changes
 
+## 2026-09-27 - Tool kernel preludes in the eval kernels
+
+### What changed
+
+- `packages/senpi-codemode`: installs each active tool's `kernelPrelude` in the JS and Python kernels before a cell (only when an export is missing), removes a deactivated tool's exports, and lists each prelude's documentation line in the eval prompt.
+
+### Why
+
+- Extension tools can offer eval globals with no codemode edit.
+
+### Why an extension could not handle it
+
+- The kernels and the eval prompt belong to codemode.
+
+### Expected merge conflict zones
+
+- LOW: the kernel prelude plan, the eval prompt helper list, and the eval tool options.
+
 ## 2026-09-24 - Eval language errors list the enabled kernels
 
 ### What changed
