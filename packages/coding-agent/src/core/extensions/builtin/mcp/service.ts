@@ -17,14 +17,13 @@ import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
 import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
-import { createMcpListChangeCoalescer } from "./notifications.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
 import { getMcpServiceExposureStatus } from "./service-exposure.ts";
 import { registerMcpServiceDirectTools } from "./service-register.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
-import { refreshMcpToolsOnListChanged } from "./service-tools-changed.ts";
+import { refreshMcpToolsOnListChanged, subscribeMcpToolsChanged } from "./service-tools-changed.ts";
 import type {
 	McpConnectionEntry,
 	McpDisposeReason,
@@ -439,12 +438,11 @@ export class McpService {
 
 	#wireListChanged(entry: McpConnectionEntry): void {
 		const sink = { logger: { error: (message: string, data?: unknown) => entry.logger.error(message, data) } };
-		const coalescer = createMcpListChangeCoalescer({
-			onRefresh: () => this.#handleServerToolsChanged(entry),
-			scope: `mcp.list_changed.${entry.name}`,
+		entry.disposeListChanged = subscribeMcpToolsChanged(
+			entry,
+			(connectOnly) => this.#handleServerToolsChanged(entry, connectOnly),
 			sink,
-		});
-		const unsubscribe = entry.connection.onToolsChanged(() => coalescer.notify());
+		);
 		const unsubscribeState = entry.connection.onStateChange(() => {
 			const ctx = this.#sessionContext;
 			if (ctx?.mode !== "rpc") return;
@@ -452,18 +450,14 @@ export class McpService {
 				entry.logger.error("Failed to refresh MCP control inventory", error);
 			});
 		});
-		entry.disposeListChanged = () => {
-			unsubscribe();
-			coalescer.dispose();
-		};
 		entry.disposeWireStatus = unsubscribeState;
 	}
 
-	async #handleServerToolsChanged(entry: McpConnectionEntry): Promise<void> {
+	async #handleServerToolsChanged(entry: McpConnectionEntry, connectOnly: boolean): Promise<void> {
 		const pi = this.#pi;
 		const config = this.#config;
 		if (pi === undefined || config === null) return;
-		await refreshMcpToolsOnListChanged(entry, pi, config, (target) => this.#registerDirectTools(target));
+		await refreshMcpToolsOnListChanged(entry, pi, config, (target) => this.#registerDirectTools(target), connectOnly);
 	}
 
 	async #registerDirectTools(

@@ -163,8 +163,8 @@ export interface McpConnectionEntry {
 	cachedCatalog?: McpCachedServerCatalog;
 	cacheRefreshedAfterConnect: boolean;
 	startupCatalogClaim?: McpStartupCatalogClaim;
-	/** `mcpToolListingIdentity` of the listing the session last registered for this server. */
-	registeredToolListing?: string;
+	/** `mcpRegistrationIdentity` of what the session last registered for this server. */
+	registeredIdentity?: string;
 	/** Full mcp tool names last registered for this server (list_changed diffing). */
 	knownToolNames?: string[];
 	/** Latest `/mcp status` list_changed delta line, e.g. "2 added (inactive), 1 removed". */

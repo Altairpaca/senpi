@@ -86,9 +86,12 @@ describe("MCP startup race single registration (#2177)", () => {
 
 		vi.advanceTimersByTime(1_000);
 		await lineCountReaches(`${gate}.requests`, 2, 15_000);
-		// The relist's tools/list reply precedes this ping's on the ordered stdio
-		// stream, so the relist has finished once the ping resolves.
-		await getMcpService().getConnection("fx")?.client.ping();
+		// The relist's tools/list reply precedes both pings on the ordered stdio
+		// stream, and its registration does no I/O, so a second full round trip
+		// cannot complete before the relist has finished.
+		const client = getMcpService().getConnection("fx")?.client;
+		await client?.ping();
+		await client?.ping();
 		vi.useRealTimers();
 
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
@@ -98,18 +101,23 @@ describe("MCP startup race single registration (#2177)", () => {
 function lineCountReaches(path: string, lines: number, timeoutMs: number): Promise<void> {
 	const reached = (): boolean => existsSync(path) && readFileSync(path, "utf8").trim().split("\n").length >= lines;
 	return new Promise((resolve, reject) => {
-		const watcher = watch(dirname(path), () => {
-			if (reached()) finish();
-		});
+		// A directory watch reports the file appearing; appends to an existing file
+		// are only reliably reported by a watch on the file itself.
+		const watchers = [watch(dirname(path), check)];
 		const timeout = realSetTimeout(() => {
-			watcher.close();
+			close();
 			reject(new Error(`timed out waiting for ${lines} lines in ${path}`));
 		}, timeoutMs);
-		function finish(): void {
+		function close(): void {
 			realClearTimeout(timeout);
-			watcher.close();
+			for (const watcher of watchers) watcher.close();
+		}
+		function check(): void {
+			if (watchers.length === 1 && existsSync(path)) watchers.push(watch(path, check));
+			if (!reached()) return;
+			close();
 			resolve();
 		}
-		if (reached()) finish();
+		check();
 	});
 }

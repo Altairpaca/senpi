@@ -31,8 +31,8 @@ export async function registerMcpServiceDirectTools(
 				artifacts: entry.artifacts,
 				cachedCatalog: startupCatalogPending ? claim?.cachedCatalog : entry.cachedCatalog,
 				startupCatalogPending,
-				onListingRegistered: (identity) => {
-					entry.registeredToolListing = identity;
+				onRegistered: (identity) => {
+					entry.registeredIdentity = identity;
 				},
 				connection: entry.connection,
 				ensureFresh: () => entry.authPlan?.refresh?.ensureFresh().then(() => undefined) ?? Promise.resolve(),

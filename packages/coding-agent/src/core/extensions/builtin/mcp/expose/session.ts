@@ -4,7 +4,7 @@ import {
 	cachedToolsToCatalogEntries,
 	collectToolCatalog,
 	type McpToolCatalogEntry,
-	mcpToolListingIdentity,
+	mcpRegistrationIdentity,
 } from "../catalog.ts";
 import type { McpCachedServerCatalog } from "../catalog-cache.ts";
 import type { ResolvedMcpConfig } from "../config-schema.ts";
@@ -33,7 +33,7 @@ export interface McpDirectRegistrationEntry {
 	readonly ensureCachedToolConnected?: () => Promise<void>;
 	/** A startup connect still owns this server's catalog; its refresh registers it. */
 	readonly startupCatalogPending?: boolean;
-	readonly onListingRegistered?: (identity: string) => void;
+	readonly onRegistered?: (identity: string) => void;
 }
 
 export async function registerDirectMcpTools(
@@ -76,8 +76,8 @@ export async function registerDirectMcpTools(
 							outputGuard: config.settings.outputGuard,
 						},
 					);
-		const identity = mcpToolListingIdentity(catalog);
-		recordRegisteredListings.push(() => entry.onListingRegistered?.(identity));
+		const identity = mcpRegistrationIdentity(catalog, entry.cachedCatalog);
+		recordRegisteredListings.push(() => entry.onRegistered?.(identity));
 		const cachedPrompts = entry.cachedCatalog?.prompts ?? [];
 		if (cachedPrompts.length > 0) {
 			promptServers.push({
