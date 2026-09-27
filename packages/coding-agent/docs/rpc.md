@@ -510,7 +510,10 @@ which prints the bare socket path).
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
   waits and then attaches to the successor, and `gc` reports the endpoint `locked` rather than judging it
   halfway. An `ensure` waits for the lock as long as the longest holder can keep it: a probe plus either a
-  stop-and-restart or a handoff (probe, successor start, 30 s readiness).
+  stop-and-restart or a handoff (probe, successor start, 30 s readiness). A REFUSED handoff leaves the endpoint
+  as it found it: the successor it started is killed and, once it has exited (up to 5 s), its generation record
+  and directory are released, so `status --all` never lists it; the boot `settings.json` it rewrote before
+  spawning is restored byte for byte. A cleanup that fails is reported in the refusal's `detail`.
 
 #### Shard naming contract (`shardKey`, `shardSocketPath`)
 

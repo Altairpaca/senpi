@@ -10,14 +10,19 @@
  * left both sockets alone. The predecessor is asked to drain only AFTER that proof and after the
  * successor is registered - whether it may be asked at all was decided in `host-handoff.ts`, which
  * proved the owner and checked that the running host advertises it can survive the signal.
+ *
+ * A REFUSED handoff leaves the endpoint as it found it: the successor is killed and, once it has
+ * exited, its generation record and directory are released, and the boot `settings.json` it
+ * overwrote before spawning is put back byte for byte - so neither `status --all` nor the running
+ * generation's next restart ever sees the successor that did not happen.
  */
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { open } from "node:fs/promises";
+import { open, rm, writeFile } from "node:fs/promises";
 import { waitForStartTime } from "../app-server/daemon/process.ts";
-import type { HostDaemonPaths } from "./host-daemon-paths.ts";
-import { writeGenerationRecord, writeHostRegistration } from "./host-daemon-registration.ts";
-import { readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
+import { generationPaths, HOST_STATE_FILE_MODE, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import { releaseGeneration, writeGenerationRecord, writeHostRegistration } from "./host-daemon-registration.ts";
+import { readFileOrUndefined, readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
@@ -36,8 +41,11 @@ import {
 /** How long the successor has to answer on the PUBLIC socket before the handoff is abandoned. */
 const DEFAULT_HANDOFF_READINESS_MS = 30_000;
 
-/** The longest `startSuccessor` runs: its start-time read, the readiness window and one last probe. */
-export const SUCCESSOR_START_BUDGET_MS = 10_000 + DEFAULT_HANDOFF_READINESS_MS + 2_000;
+/** How long a refused handoff waits for the successor it killed to exit before releasing its record. */
+const SUCCESSOR_EXIT_WAIT_MS = 5_000;
+
+/** The longest `startSuccessor` runs: its start-time read, the readiness window, one last probe and a refusal's exit wait. */
+export const SUCCESSOR_START_BUDGET_MS = 10_000 + DEFAULT_HANDOFF_READINESS_MS + 2_000 + SUCCESSOR_EXIT_WAIT_MS;
 
 export async function startSuccessor(context: {
 	options: HandoffHostOptions;
@@ -59,6 +67,7 @@ export async function startSuccessor(context: {
 	// A handoff replaces the ENGINE, not the operator's lifecycle policy: the successor inherits
 	// what the running generation was started with unless this caller states its own.
 	const running = await readHostSettings(paths);
+	const bootSettings = await readFileOrUndefined(paths.settingsFile);
 	await writeHostSettings(paths, {
 		socket: options.socket,
 		capabilities: PINNED_HOST_CLIENT_CAPABILITIES,
@@ -113,8 +122,9 @@ export async function startSuccessor(context: {
 		await options._test?.afterSpawn?.(child.pid);
 		const answer = await awaitSuccessor(options, host, exited);
 		if (!answer) {
-			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-			return { action: "refuse", reason: await abortReason(options.socket, replaced), upgradeable: true };
+			const reason = await abortReason(options.socket, replaced);
+			const cleanupFailure = await abandonSuccessor({ child, exited, paths, instanceId, bootSettings });
+			return { action: "refuse", reason, upgradeable: true, ...(cleanupFailure && { detail: cleanupFailure }) };
 		}
 		// The pointer moves to the successor only now: until the rename landed, the generation the
 		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
@@ -133,13 +143,55 @@ export async function startSuccessor(context: {
 			instanceId: answer.instanceId ?? "",
 		};
 	} catch (cause) {
-		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+		const cleanupFailure = await abandonSuccessor({ child, exited, paths, instanceId, bootSettings });
+		const detail = cause instanceof Error ? cause.message : String(cause);
 		return {
 			action: "refuse",
 			reason: "successor_unavailable",
 			upgradeable: true,
-			detail: cause instanceof Error ? cause.message : String(cause),
+			detail: cleanupFailure ? `${detail}; ${cleanupFailure}` : detail,
 		};
+	}
+}
+
+/**
+ * Undoes what a refused handoff left: kills the successor, releases its generation once it has exited
+ * (a successor that never got a pid never ran, so its directory goes at once; one that outlives the wait
+ * keeps its record until pruning finds it dead), and puts the boot settings back as they were. A
+ * cleanup that fails is answered, not thrown: the handoff still refused, and the caller is told why
+ * the endpoint may not be as it was.
+ */
+async function abandonSuccessor(context: {
+	child: ChildProcess;
+	exited: Promise<void>;
+	paths: HostDaemonPaths;
+	instanceId: string;
+	bootSettings: string | undefined;
+}): Promise<string | undefined> {
+	const { child, exited, paths, instanceId, bootSettings } = context;
+	if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+	try {
+		if (bootSettings === undefined) await rm(paths.settingsFile, { force: true });
+		else await writeFile(paths.settingsFile, bootSettings, { mode: HOST_STATE_FILE_MODE });
+		if (child.pid === undefined) await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true });
+		else if (await exitedWithin(exited, SUCCESSOR_EXIT_WAIT_MS)) {
+			await releaseGeneration(paths, { instanceId, pid: child.pid });
+		}
+		return undefined;
+	} catch (cause) {
+		return `successor cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+	}
+}
+
+async function exitedWithin(exited: Promise<void>, ms: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timedOut = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), ms);
+	});
+	try {
+		return await Promise.race([exited.then(() => true), timedOut]);
+	} finally {
+		clearTimeout(timer);
 	}
 }
 

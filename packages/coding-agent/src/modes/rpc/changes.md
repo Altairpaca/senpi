@@ -1,3 +1,22 @@
+## 2026-09-28 - A refused handoff leaves no successor record and restores the boot settings
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor` reads the endpoint's boot `settings.json` (raw bytes, or absent) before `writeHostSettings` overwrites it. Both refusal exits (the successor never answered, and the catch after spawn) call the new `abandonSuccessor`: kill the successor, restore `settings.json` byte for byte (or remove it when there was none), then - once the successor has exited within `SUCCESSOR_EXIT_WAIT_MS` (5 s) - `releaseGeneration(paths, { instanceId, pid })`; a successor that never got a pid has its generation directory removed at once, and one that outlives the wait keeps its record until pruning finds it dead. A cleanup failure is returned in the refusal's `detail` instead of being thrown. `SUCCESSOR_START_BUDGET_MS` includes the exit wait, so the ensure-lock budgets cover it.
+- Tests: `test/rpc-host-handoff-refused.test.ts` - for a successor that never answers and for one whose handoff throws after it was recorded: the refusal is `successor_unavailable`, the successor pid is gone, `status --all` lists no generation with its pid and no dead generation at all, `generations/` holds exactly what it held before, and `settings.json` is byte-identical. Before the fix both cases listed the dead successor (`alive: false`), left its directory, and left `settings.json` naming `generation: 1` and the successor's `instanceId`.
+
+### Why
+
+The successor is recorded at spawn (senpi#2245 m7) and the boot settings are rewritten for it before it starts, but a refusal only killed it: its record stayed under `generations/` until the next registration write or single-socket status pruned it, so `status --all` showed a dead generation, and `settings.json` - what the supervisor reads at its next boot - kept describing a generation that never took over (rpc-host-sharding todo 33 d).
+
+### Why an extension could not handle it
+
+The handoff runs from `senpi host handoff` and `ensureHost`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: the header comment, the imports, `SUCCESSOR_EXIT_WAIT_MS`/`SUCCESSOR_START_BUDGET_MS`, the `bootSettings` read, both refusal exits of `startSuccessor`, and the new `abandonSuccessor`/`exitedWithin`.
+
 ## 2026-09-28 - A forced handoff runs inside the endpoint's ensure lock
 
 ### What changed
