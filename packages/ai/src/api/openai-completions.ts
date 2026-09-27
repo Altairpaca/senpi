@@ -1038,8 +1038,11 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 		: model.id.includes("gpt-6-astra")
 			? "off"
 			: undefined;
+	// An explicitly mapped off value (for example an endpoint-advertised "none", senpi#2196) is how the
+	// model turns reasoning off, so only a map without one keeps the Astra off -> low fallback.
+	const hasMappedOff = typeof thinkingLevelMap?.off === "string";
 	const normalizedReasoning =
-		clampedReasoning === "off" && model.id.includes("gpt-6-astra") ? "low" : clampedReasoning;
+		clampedReasoning === "off" && model.id.includes("gpt-6-astra") && !hasMappedOff ? "low" : clampedReasoning;
 	const reasoningEffort =
 		normalizedReasoning === "off"
 			? undefined
