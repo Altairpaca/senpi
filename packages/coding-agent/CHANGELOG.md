@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- MCP tools are registered once per session. Before, a server whose catalog was still loading when the startup window ended had its catalog listed again and every tool registered twice, and each connect re-registered an unchanged catalog about 300ms later. ([#2177](https://github.com/code-yeongyu/senpi/issues/2177))
+
 ### Removed
 
 ## [2026.9.27-2] - 2026-09-27
@@ -29,8 +31,6 @@
 ### Changed
 
 ### Fixed
-
-- MCP tools are registered once per session. Before, a server whose catalog was still loading when the startup window ended had its catalog listed again and every tool registered twice, and each connect re-registered an unchanged catalog about 300ms later. ([#2177](https://github.com/code-yeongyu/senpi/issues/2177))
 
 - The built-in Fireworks default is `accounts/fireworks/models/kimi-k3`; the previous default `kimi-k2p6` is no longer in the Fireworks catalog. ([#2175](https://github.com/code-yeongyu/senpi/issues/2175))
 
