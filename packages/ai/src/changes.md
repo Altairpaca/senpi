@@ -1,3 +1,22 @@
+## 2026-09-28 - Revert the fallback circuit breaker (#2201) (senpi#2227)
+
+### What changed
+
+- `packages/ai/src/utils/error-body.ts`: restored to its state before #2201 (merge 37b5f23).
+- `packages/ai/src/utils/retry.ts`: restored to its state before #2201 (merge 37b5f23).
+
+### Why
+
+Since #2201 merged, main CI fails the RPC named pipes (Windows) job deterministically: `test/rpc-host-lifecycle.test.ts` "does not exit while a turn is active even with no connections" loses the host (`connect ENOENT` on the pipe). The job passed on the nine main commits before it and fails on the merge and a rerun. The circuit breaker re-lands with the Windows fix separately.
+
+### Why an extension could not handle it
+
+A revert of core retry, session and settings code; nothing an extension owns.
+
+### Expected merge conflict zones
+
+- The same regions #2201 touched, when the circuit breaker re-lands.
+
 ## 2026-09-24 - Forced tool_choice refused under thinking falls back instead of failing (senpi#2121)
 
 ### What changed
