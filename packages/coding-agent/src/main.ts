@@ -380,7 +380,8 @@ export async function promptConfirm(message: string): Promise<boolean> {
 			resolve(result);
 		};
 		rl.question(`${message} [y/N] `, (answer) => {
-			settle(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
+			const normalized = answer.trim().toLowerCase();
+			settle(normalized === "y" || normalized === "yes");
 			rl.close();
 		});
 		rl.once("close", () => settle(false));

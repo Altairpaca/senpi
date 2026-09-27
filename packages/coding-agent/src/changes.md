@@ -2,8 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: prevent the readline `close` fallback from overriding an answer already received by `promptConfirm()`.
-- `packages/coding-agent/test/suite/regressions/issue-2180-interactive-session-confirmation.test.ts`: cover `y`, `yes`, `n`, empty input, and EOF.
+- `packages/coding-agent/src/main.ts`: prevent the readline `close` fallback from overriding an answer already received by `promptConfirm()`, and trim the answer before matching `y`/`yes`.
+- `packages/coding-agent/test/suite/regressions/issue-2180-interactive-session-confirmation.test.ts`: cover `y`, `yes`, padded/uppercase answers, `n`, empty input, and EOF.
 
 ### Why
 

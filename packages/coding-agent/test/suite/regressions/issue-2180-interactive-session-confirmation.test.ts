@@ -26,6 +26,8 @@ describe("interactive session confirmation", () => {
 	test.each([
 		["y", true],
 		["yes", true],
+		[" Y ", true],
+		["YES", true],
 		["n", false],
 		["", false],
 		[undefined, false],
