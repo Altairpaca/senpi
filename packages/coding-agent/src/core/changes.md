@@ -1,3 +1,27 @@
+## 2026-09-27 - Model-declared default thinking level (senpi#2196)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `modelFromJson` carries a models.json model's `defaultThinkingLevel` onto the runtime model (the fork-only `model-config-schema.ts` accepts it as one of the seven levels).
+- `packages/coding-agent/src/core/sdk.ts`: startup resolution uses `model.defaultThinkingLevel` after the session entry and the remembered per-model level and before `settings.defaultThinkingLevel` / `medium`; it stays a default without selection provenance and is clamped like any other level.
+- `packages/coding-agent/src/core/agent-session.ts`: `_getThinkingForModelSwitch` applies the same order when switching models.
+- `packages/coding-agent/src/core/model-config.ts`: `ModelConfig.validationError(content, path)` exposes the load-time parse and schema check so `senpi models discover` refuses to replace models.json with content that would not load.
+
+### Why
+
+- An OpenAI-compatible endpoint can declare a model's default effort (`reasoning_efforts[].default`); `senpi models discover` records it, and must validate what it writes with the same rules models.json is loaded with. The global setting tracks the last level picked on any model, so a model's own default is the better starting point for a model the user has not configured.
+
+### Why an extension could not handle it
+
+- Initial and model-switch thinking resolution happen inside session creation and `AgentSession` before any extension hook can change the level without recording it as a user choice.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: the thinking-level resolution block before `settingsManager.getDefaultThinkingLevel()`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_getThinkingForModelSwitch` before the configured-default branch.
+- `packages/coding-agent/src/core/provider-composer.ts`: the `modelFromJson` object literal after `thinkingLevelMap`.
+- `packages/coding-agent/src/core/model-config.ts`: the static method before `parseAndMigrate`.
+
 ## 2026-09-28 - Revert the fallback circuit breaker (#2201) (senpi#2227)
 
 ### What changed

@@ -6,6 +6,20 @@
 
 ### Added
 
+- `parseEndpointReasoningEfforts()` maps the `reasoning_efforts` an OpenAI-compatible `/models` entry advertises onto senpi's thinking levels, and `Model` has an optional `defaultThinkingLevel`. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed
