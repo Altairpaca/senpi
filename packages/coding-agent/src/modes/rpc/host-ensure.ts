@@ -137,7 +137,7 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 	await createDaemonDirectories(paths);
 	// The public socket is the shared resource; agent directories are not a
 	// sufficient lock scope when two installations target the same endpoint.
-	const lockTarget = join(tmpdir(), "senpi-rpc-host-locks", createSocketLockName(socket));
+	const lockTarget = hostEnsureLockTarget(socket);
 	await mkdir(dirname(lockTarget), { recursive: true });
 	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
 	// Opportunistic GC of other installs' leftovers stays OUTSIDE the endpoint lock.
@@ -626,6 +626,15 @@ async function appendStderr(paths: HostDaemonPaths, message: string): Promise<st
 		if (isNodeErrorCode(error, "ENOENT")) return message;
 		throw error;
 	}
+}
+
+/**
+ * The endpoint lock every ensure of `socket` serializes on, without its `.lock` suffix: keyed by the
+ * socket's transport address rather than by any agent directory, so two installations targeting one
+ * endpoint exclude each other. `host gc` takes the same lock before it may remove anything.
+ */
+export function hostEnsureLockTarget(socket: string): string {
+	return join(tmpdir(), "senpi-rpc-host-locks", createSocketLockName(socket));
 }
 
 function createSocketLockName(socket: string): string {

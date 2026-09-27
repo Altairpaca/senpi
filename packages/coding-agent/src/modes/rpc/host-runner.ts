@@ -28,6 +28,7 @@ import {
 	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
+import { gcHostEndpoints } from "./host-gc.ts";
 import { type HandoffRefusal, handoffHost } from "./host-handoff.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
@@ -65,6 +66,8 @@ export type HostRequest =
 	  }
 	| { readonly action: "stop"; readonly target: HostTarget; readonly drain: boolean; readonly force: boolean }
 	| { readonly action: "handoff"; readonly target: HostTarget; readonly spec: ResolvedHostLaunchSpec }
+	/** Removes endpoint state under `agentDir` only on the four-part evidence (`host-gc.ts`). */
+	| { readonly action: "gc"; readonly agentDir: string }
 	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
 /** One JSON line and the exit code it means. */
@@ -87,6 +90,8 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 			return handoffOutcome(request.target, request.spec);
 		case "shard_path":
 			return shardPathOutcome(request.kind, request.owner, request.root);
+		case "gc":
+			return { exitCode: HOST_EXIT_OK, payload: { ...(await gcHostEndpoints(request.agentDir)) } };
 		default:
 			return assertNever(request);
 	}

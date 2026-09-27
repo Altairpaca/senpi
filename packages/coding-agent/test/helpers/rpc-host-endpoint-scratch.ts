@@ -94,7 +94,7 @@ export function hostArgs(extension?: string): string[] {
 export async function realHost(
 	qa: EndpointScratch,
 	socket: string,
-	options: { idleExitMs?: number; extension?: string } = {},
+	options: { idleExitMs?: number; extension?: string; afterLockAcquired?: () => Promise<void> } = {},
 ): Promise<number> {
 	const host = await ensureHost({
 		socket,
@@ -102,7 +102,11 @@ export async function realHost(
 		policy: { idleExitMs: options.idleExitMs ?? 600_000 },
 		hostArgs: hostArgs(options.extension),
 		env: hostEnv(qa),
-		_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
+		_test: {
+			readinessTimeoutMs: 60_000,
+			launch: supervisorLaunch,
+			...(options.afterLockAcquired && { afterLockAcquired: options.afterLockAcquired }),
+		},
 	});
 	ensured.push({ socket, agentDir: qa.agentDir });
 	supervisors.push(host.pid);

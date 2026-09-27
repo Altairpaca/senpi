@@ -218,6 +218,35 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 	}, 60_000);
 });
 
+describe.skipIf(process.platform === "win32")("senpi host gc", () => {
+	it("keeps a running daemon, and answers an empty --agent-dir with nothing, exit 0 both times", async () => {
+		const qa = await hostCliSandbox("gc");
+		onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+
+		const live = await runHostCli(qa, ["gc", "--json"]);
+		const empty = await runHostCli(qa, ["gc", "--agent-dir", qa.specDir, "--json"]);
+
+		expect(live.exitCode).toBe(0);
+		expect(onlyJsonLine(live)).toEqual({
+			removed: [],
+			kept: [{ socket: qa.socket, dir: expect.any(String), reason: "live_generation" }],
+		});
+		expect(empty.exitCode).toBe(0);
+		expect(onlyJsonLine(empty)).toEqual({ removed: [], kept: [] });
+	}, 120_000);
+
+	it("refuses an unknown option with the usage exit code and no stdout", async () => {
+		const qa = await hostCliSandbox("gc-usage");
+
+		for (const flag of ["--all", "--bogus"]) {
+			const result = await runHostCli(qa, ["gc", flag]);
+
+			expect(result.exitCode).toBe(2);
+			expect(result.stdout).toBe("");
+		}
+	}, 60_000);
+});
+
 describe("senpi host shard-path", () => {
 	it("prints the naming contract's socket, as JSON under --json and bare otherwise", async () => {
 		const qa = await hostCliSandbox("shard");

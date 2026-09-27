@@ -1,0 +1,126 @@
+/**
+ * The evidence `host gc` needs before it may remove an endpoint: whether anything still runs behind
+ * it, and whether anything still answers on it. Each answer errs toward "alive" - a record that
+ * cannot be proven dead, a probe that neither connects nor is refused, a claim whose owner cannot be
+ * read - because the cost of keeping a dead directory is disk, and the cost of removing a live one
+ * is every session its host holds.
+ *
+ * Reading only: nothing here writes, unlinks or signals.
+ */
+import { readdir } from "node:fs/promises";
+import { createConnection } from "node:net";
+import { basename, dirname, join } from "node:path";
+import {
+	type DaemonPidFile,
+	ProcessIdentityUnreadableError,
+	parseDaemonPidFile,
+	processMatchesPidFile,
+} from "../app-server/daemon/process.ts";
+import { generationPaths, type HostDaemonDirectory } from "./host-daemon-paths.ts";
+import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
+import { readSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
+
+export type EndpointInUse = "live_generation" | "live_claim" | "reachable";
+
+export type SocketSilence = "socket_refused" | "socket_absent";
+
+/** A connect that neither succeeds nor fails within this budget counts as an answer. */
+const SOCKET_PROBE_TIMEOUT_MS = 2_000;
+
+/**
+ * The four-part test, in the order its answers are reported: (a) no generation pidfile names a live
+ * process, (d) neither does the pointer, (b) no session-path claim has a live owner, (c) the public
+ * socket - and every `.next-*` successor bind beside it - refuses the connection or does not exist.
+ */
+export async function endpointInUse(
+	paths: HostDaemonDirectory,
+	socket: string,
+): Promise<{ readonly inUse: EndpointInUse } | { readonly inUse: undefined; readonly silence: SocketSilence }> {
+	if (await anyGenerationLive(paths)) return { inUse: "live_generation" };
+	if (await pointerNamesLiveGeneration(paths)) return { inUse: "live_generation" };
+	for (const claim of await readSessionPathClaims(paths.reservationsDir)) {
+		if (await claimOwnerIsLive(claim.owner)) return { inUse: "live_claim" };
+	}
+	const silence = await socketSilence(socket);
+	if (silence === undefined) return { inUse: "reachable" };
+	// A successor mid-handoff listens on `<socket>.next-<gen>` before it registers anywhere.
+	const successors = (await socketSiblings(socket)).filter((name) => name.startsWith(`${basename(socket)}.next-`));
+	for (const successor of successors) {
+		if ((await socketSilence(join(dirname(socket), successor))) === undefined) return { inUse: "reachable" };
+	}
+	return { inUse: undefined, silence };
+}
+
+/** Every entry beside `socket` that belongs to it: `<name>.next-*` successor binds and `<name>.shield-*`. */
+export async function socketSiblings(socket: string): Promise<readonly string[]> {
+	const name = basename(socket);
+	const entries = await readdir(dirname(socket)).catch(() => [] as string[]);
+	return entries.filter((entry) => entry.startsWith(`${name}.next-`) || entry.startsWith(`${name}.shield-`));
+}
+
+/** EVERY generation, not only the pointer's: a predecessor draining after a handoff is still serving. */
+async function anyGenerationLive(paths: HostDaemonDirectory): Promise<boolean> {
+	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
+		const record = generationRecord(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
+		if (record !== undefined && (await recordIsLive(record))) return true;
+	}
+	return false;
+}
+
+async function pointerNamesLiveGeneration(paths: HostDaemonDirectory): Promise<boolean> {
+	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
+	if (typeof pointer?.instance_id !== "string") return false;
+	const record = generationRecord(await readFileOrUndefined(generationPaths(paths, pointer.instance_id).pidFile));
+	return record !== undefined && (await recordIsLive(record));
+}
+
+/**
+ * A pidfile's process, or nothing when it names none. A record whose identity guard does not parse
+ * still names a pid, and is read as unguarded rather than as absent: its process may be running.
+ */
+function generationRecord(text: string | undefined): DaemonPidFile | undefined {
+	if (text === undefined) return undefined;
+	const record = parseDaemonPidFile(text);
+	if (record !== undefined) return record;
+	const pid = parseJson(text)?.pid;
+	return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? { pid, processStartTime: null } : undefined;
+}
+
+/** Live and still the recorded process; a live pid whose identity cannot be read counts as live. */
+async function recordIsLive(record: DaemonPidFile): Promise<boolean> {
+	try {
+		return await processMatchesPidFile(record);
+	} catch (error: unknown) {
+		if (error instanceof ProcessIdentityUnreadableError) return true;
+		throw error;
+	}
+}
+
+/**
+ * How the socket proved silent, or `undefined` when it did not: only ECONNREFUSED and ENOENT prove
+ * nobody listens. A connect that succeeds, times out or fails any other way is treated as an answer.
+ */
+async function socketSilence(socket: string): Promise<SocketSilence | undefined> {
+	let secret: Buffer | undefined;
+	if (process.platform === "win32") {
+		// The pipe name includes the secret; without one no client can reach the pipe either.
+		secret = await readSocketSecret(socketSecretPath(socket)).catch(() => undefined);
+		if (secret === undefined) return "socket_absent";
+	}
+	return new Promise((resolveProbe) => {
+		const connection = createConnection(resolveSocketTransportAddress(socket, process.platform, secret));
+		const finish = (value: SocketSilence | undefined): void => {
+			clearTimeout(timeout);
+			connection.destroy();
+			resolveProbe(value);
+		};
+		const timeout = setTimeout(() => finish(undefined), SOCKET_PROBE_TIMEOUT_MS);
+		connection.once("connect", () => finish(undefined));
+		connection.once("error", (error: NodeJS.ErrnoException) => {
+			if (error.code === "ECONNREFUSED") finish("socket_refused");
+			else if (error.code === "ENOENT") finish("socket_absent");
+			else finish(undefined);
+		});
+	});
+}

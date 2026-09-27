@@ -1,5 +1,6 @@
 /**
- * `senpi host ensure|status|stop|handoff|shard-path` - the one command every client calls to get a daemon.
+ * `senpi host ensure|status|stop|handoff|shard-path|gc` - the one command every client calls to get a daemon.
+ * (`gc` removes the state of endpoints whose host is provably gone, never signalling anything.)
  * (`shard-path` alone contacts no host: it answers the shard naming contract, as a JSON line under
  * `--json` and as the bare socket path otherwise.)
  *
@@ -39,18 +40,19 @@ import {
 	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
 
-const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path"] as const;
+const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path", "gc"] as const;
 type HostSubcommand = (typeof SUBCOMMANDS)[number];
 
 const POLICIES = ["upgrade", "fallback", "never"] as const;
 
-const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path> [options]
+const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [options]
 
   ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
   stop        [--drain] [--force] [--socket <path>]
   handoff     [--launch-spec <file>] [--socket <path>]
   shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
+  gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
 
   --json   the answer is one JSON line on stdout (always, except shard-path's bare path)`;
 
@@ -67,6 +69,7 @@ interface ParsedHostArgs {
 	readonly kind?: ShardKind;
 	readonly owner?: string;
 	readonly root?: string;
+	readonly agentDir?: string;
 }
 
 /**
@@ -113,6 +116,8 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 				owner: parsed.owner ?? "",
 				root: resolve(parsed.root ?? join(agentDir, "rpc", "shards")),
 			};
+		case "gc":
+			return { action: "gc", agentDir: resolve(parsed.agentDir ?? agentDir) };
 		default:
 			return assertNever(parsed.subcommand);
 	}
@@ -144,6 +149,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let kind: ShardKind | undefined;
 	let owner: string | undefined;
 	let root: string | undefined;
+	let agentDir: string | undefined;
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
 		const value = rest[index + 1];
@@ -161,6 +167,9 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 			index++;
 		} else if (flag === "--root" && subcommand === "shard-path" && value !== undefined) {
 			root = value;
+			index++;
+		} else if (flag === "--agent-dir" && subcommand === "gc" && value !== undefined) {
+			agentDir = value;
 			index++;
 		} else if (flag === "--drain") {
 			drain = true;
@@ -195,6 +204,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		...(kind !== undefined && { kind }),
 		...(owner !== undefined && { owner }),
 		...(root !== undefined && { root }),
+		...(agentDir !== undefined && { agentDir }),
 	};
 }
 

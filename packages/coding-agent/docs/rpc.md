@@ -341,7 +341,8 @@ written `0600` when the directory is created and re-asserted under the ensure lo
 never rewritten, so `created_at` is the endpoint's first ensure. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
 `settings.json` and its generation directory, and without `endpoint.json` such an endpoint could not even be
-enumerated. `stderr.log` and `crashes.jsonl` stay too.
+enumerated. `stderr.log` and `crashes.jsonl` stay too. The only thing that ever removes an endpoint directory
+(`endpoint.json` included) is the explicit `senpi host gc` below, and only on proof that nothing runs behind it.
 
 The directory is PRUNED of what is no longer running on every registration write and on every single-socket
 `host status` (never by `host status --all`):
@@ -384,6 +385,7 @@ senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
 senpi host stop       [--json] [--drain] [--force] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
+senpi host gc         [--json] [--agent-dir <dir>]
 ```
 
 The contract is machine-first: EXACTLY ONE JSON line on stdout and nothing else, diagnostics on stderr,
@@ -452,11 +454,28 @@ which prints the bare socket path).
   shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
   the single-socket form, `--all` REMOVES NOTHING: a dead generation is a row with `alive: false`, an endpoint
   whose host exited stays listed through its `endpoint.json` with `reachable: false` and `generations: []`,
-  and reclaiming what ended is left to an explicit, evidence-gated command. Endpoints are read four at a
+  and reclaiming what ended is left to the explicit, evidence-gated `gc`. Endpoints are read four at a
   time. Exit `0` while at least one endpoint answers, `3` when none does or none exists.
 - `shard-path` computes a shard socket without contacting any host, so a client that does not link senpi
   can check its own copy of the naming contract against the engine: `{ kind, key, socket }` under `--json`,
   the socket path otherwise. `--root` defaults to `<agentDir>/rpc/shards`.
+- `gc` removes the state of endpoints whose host is PROVABLY gone, in the agent directory (`--agent-dir`, else
+  the current one; `--socket` is ignored), and answers `{ removed: [{ socket, dir, reason }], kept: [{ socket,
+  dir, reason }] }` with exit `0` whatever it found (`2` for a bad flag). It never signals a process and never
+  runs implicitly - not inside `ensure`, not inside `status`. For each endpoint whose socket is known it takes
+  that socket's ENSURE lock (`<tmp>/senpi-rpc-host-locks/<sha256(transport address)[:32]>.lock`, the one
+  `ensureHost` serializes on - not `daemon.lock`) for at most 2 s, and inside it requires all four: (a) no
+  `generations/*/host.pid` names a live process (pid live and start time matching; a live pid whose identity
+  cannot be read counts as live), (b) no claim in `reservations/` has a live owner, (c) connecting to the socket
+  fails with `ECONNREFUSED` or `ENOENT` - and so does every `<socket>.next-*` successor bind beside it - and (d)
+  the pointer names no live generation. Only then does it remove the endpoint directory and unlink the socket
+  and its `<socket>.next-*` / `<socket>.shield-*` siblings, still under the lock; `reason` is `socket_refused`
+  or `socket_absent`. Everything else is kept with its reason: `live_generation`, `live_claim`, `reachable`,
+  `locked` (an ensure held the lock for 2 s), `legacy_layout` (a flat directory without `layout.json` - a
+  legacy host's, never touched), or `unknown_identity` (nothing names the socket, so its lock cannot be taken).
+  An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
+  its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
+  An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
   overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no

@@ -67,6 +67,31 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-28 - `senpi host gc`: evidence-gated removal of dead endpoint state under the ensure lock
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc.ts` (new): `gcHostEndpoints(agentDir, { _test? })` -> `{ removed: { socket, dir, reason }[], kept: { socket, dir, reason }[] }`. For every endpoint `listHostEndpoints` names a socket for, it takes that socket's ensure lock (`hostEnsureLockTarget(socket)` + `.lock`, 2 s budget, else `kept: locked`) and, inside it, removes the endpoint directory, the socket and its `<socket>.next-*`/`<socket>.shield-*` siblings only when `endpointInUse` finds nothing. Kept reasons: `live_generation`, `live_claim`, `reachable`, `locked`, `legacy_layout` (flat directory without the layout-2 marker), `unknown_identity`; removed reasons: `socket_refused`, `socket_absent`.
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts` (new): `endpointInUse(paths, socket)` - (a) any `generations/*/host.pid` names a live process (`processMatchesPidFile`; an unreadable identity on a live pid, or an unguarded record, counts as live), (d) the pointer's generation is live, (b) any `reservations/` claim has a live owner (`claimOwnerIsLive`), (c) connecting to the socket and to every `<socket>.next-*` bind fails with anything but `ECONNREFUSED`/`ENOENT` (2 s budget). `socketSiblings(socket)`. Reads only.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: new export `hostEnsureLockTarget(socket)`; `ensureHost` computes its lock target through it (same path as before).
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `HostRequest` gains `{ action: "gc", agentDir }`, answered with the gc result and exit 0.
+- `packages/coding-agent/src/cli/host-command.ts`: `gc [--agent-dir <dir>] [--json]` (ignores `--socket`; bad flags exit 2).
+- Tests: `test/rpc-host-gc.test.ts` (new, real supervised hosts), `test/rpc-host-gc-evidence.test.ts` (new, disk and socket evidence), `test/helpers/rpc-host-gc-fixtures.ts` (new); `test/helpers/rpc-host-endpoint-scratch.ts` `realHost` forwards `afterLockAcquired`; `test/suite/host-cli.test.ts` pins the `gc` command line.
+
+### Why
+
+Endpoint state is durable by design (`endpoint.json` outlives every generation so `status --all` can name an endpoint whose host exited), and with one endpoint per parent session or thread it accumulates without bound. Removal has to be exact: a draining predecessor after a handoff, a generation whose socket was renamed away, a claim a live writer still holds, or an ensure mid-start all look "dead" to a weaker test, and removing their state would strand live sessions. Taking the same lock `ensureHost` takes makes gc and a concurrent ensure strictly ordered.
+
+### Why an extension could not handle it
+
+The daemon directory, the ensure lock and the `senpi host` CLI are engine surfaces that run before and outside any extension; an extension cannot take the ensure lock or add a `host` subcommand.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the `lockTarget` line in `ensureHost` and the helper above `createSocketLockName`.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `HostRequest` union and the `runHostRequest` switch.
+- `packages/coding-agent/src/cli/host-command.ts`: `SUBCOMMANDS`, `USAGE`, `hostRequest`, `parseHostArgs`.
+
 ## 2026-09-27 - Durable endpoint identity, `senpi host status --all`, shard naming, host identity in session context
 
 ### What changed
