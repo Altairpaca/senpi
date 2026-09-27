@@ -20,9 +20,17 @@ const model: Model<"openai-completions"> = {
 
 const context: Context = { messages: [{ role: "user", content: "hello", timestamp: 1 }] };
 
-function httpError(status: number, error: Record<string, unknown>): FetchFunction {
+function httpError(
+	status: number,
+	error: Record<string, unknown>,
+	extraHeaders: Record<string, string> = {},
+): FetchFunction {
 	return vi.fn<FetchFunction>(
-		async () => new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json" } }),
+		async () =>
+			new Response(JSON.stringify({ error }), {
+				status,
+				headers: { "content-type": "application/json", ...extraHeaders },
+			}),
 	);
 }
 
@@ -42,8 +50,11 @@ function sse(frames: string[]): FetchFunction {
 	);
 }
 
-async function run(fetch: FetchFunction): Promise<AssistantMessage> {
-	return streamOpenAICompletions(model, context, { apiKey: "test-key", fetch, maxRetries: 0 }).result();
+async function run(
+	fetch: FetchFunction,
+	retry: { maxRetries: number; maxRetryDelayMs?: number } = { maxRetries: 0 },
+): Promise<AssistantMessage> {
+	return streamOpenAICompletions(model, context, { apiKey: "test-key", fetch, ...retry }).result();
 }
 
 describe("openai-completions providerDiagnostic", () => {
@@ -89,6 +100,20 @@ describe("openai-completions providerDiagnostic", () => {
 		expect(result.stopReason).toBe("error");
 		expect(result.providerDiagnostic).toEqual({
 			category: "rate_limit",
+			code: "rate_limit_exceeded",
+			evidence: "structured_code",
+		});
+	});
+
+	it("keeps the diagnostic when the retry policy declines the provider's requested delay", async () => {
+		const result = await run(
+			httpError(429, { message: "slow down", code: "rate_limit_exceeded" }, { "retry-after-ms": "1000" }),
+			{ maxRetries: 1, maxRetryDelayMs: 10 },
+		);
+		expect(result.errorMessage).toContain("Server requested 1s retry delay");
+		expect(result.providerDiagnostic).toEqual({
+			category: "rate_limit",
+			httpStatus: 429,
 			code: "rate_limit_exceeded",
 			evidence: "structured_code",
 		});

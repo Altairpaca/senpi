@@ -29,10 +29,15 @@ function errorBody(type: string | undefined, message = "provider says no"): stri
 	return JSON.stringify({ type: "error", error: { ...(type === undefined ? {} : { type }), message } });
 }
 
-function stubHttp(status: number, body: string, contentType = "application/json"): void {
+function stubHttp(
+	status: number,
+	body: string,
+	contentType = "application/json",
+	extraHeaders: Record<string, string> = {},
+): void {
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(async () => new Response(body, { status, headers: { "content-type": contentType } })),
+		vi.fn(async () => new Response(body, { status, headers: { "content-type": contentType, ...extraHeaders } })),
 	);
 }
 
@@ -109,6 +114,18 @@ describe("anthropic providerDiagnostic from HTTP errors", () => {
 		const result = await run();
 		expect(result.providerDiagnostic?.category).toBe("unknown");
 		expect(result.providerDiagnostic?.code).toBeUndefined();
+	});
+
+	it("keeps the diagnostic when the retry policy declines the provider's requested delay", async () => {
+		stubHttp(429, errorBody("rate_limit_error"), "application/json", { "retry-after-ms": "1000" });
+		const result = await run({ maxRetries: 1, maxRetryDelayMs: 10 });
+		expect(result.errorMessage).toContain("Server requested 1s retry delay");
+		expect(result.providerDiagnostic).toEqual({
+			category: "rate_limit",
+			httpStatus: 429,
+			code: "rate_limit_error",
+			evidence: "structured_code",
+		});
 	});
 
 	it("leaves errorMessage and the provider_retry_failure diagnostic in place", async () => {
