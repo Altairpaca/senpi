@@ -1,9 +1,10 @@
-import { access, chmod, mkdir, unlink } from "node:fs/promises";
+import { access, chmod, mkdir, realpath, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
 import { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
+import type { SessionContext } from "../../core/extensions/types.ts";
 import {
 	flushRawStdout,
 	takeOverStdout,
@@ -127,6 +128,7 @@ export function createHostCore(
 	writer: SessionEventWriter,
 	capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
 	idle: HostIdleOverrides = {},
+	hostContext?: SessionContext,
 ) {
 	const policy = resolveHostIdlePolicy(process.env, idle);
 	const router = new SessionCommandRouter(
@@ -152,7 +154,7 @@ export function createHostCore(
 					}),
 				}),
 		writer,
-		options,
+		hostContext ? { ...options, hostContext } : options,
 		options.createBinding,
 		{ capabilities },
 		{
@@ -228,6 +230,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const connections = new Map<string, Connection>();
 	let draining = false;
 	let handoffAnnounced = false;
+	const hostContext = await hostSessionContext(socketPath);
 	const { router, handle } = createHostCore(
 		options,
 		writer,
@@ -258,6 +261,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				);
 			},
 		},
+		hostContext,
 	);
 	const observers = startHostObservers(router, writer, {
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
@@ -491,6 +495,22 @@ function oversizedLineError(): string {
 
 function errorMessage(cause: unknown): string {
 	return cause instanceof Error ? cause.message : String(cause);
+}
+
+/**
+ * The identity every session on this socket host carries in its context: `host_socket`, the PUBLIC
+ * endpoint clients address (the supervisor's path for a supervised host, whose own listener is a
+ * private hop; the bound path for a bare one), realpath-canonicalized so it compares equal however
+ * the path was spelled; and `host_instance`, this generation. The endpoint is stable across handoffs,
+ * the instance is not. `host_socket` is omitted where no public path exists (abstract sockets, a
+ * supervised win32 host, whose supervisor publishes none).
+ */
+async function hostSessionContext(socketPath: string): Promise<SessionContext> {
+	const supervised = readHostWatchdogConfigFromBrandEnv();
+	const endpoint = supervised === undefined ? socketPath : supervised.publicSocket;
+	if (endpoint === undefined || endpoint.startsWith("\0")) return { host_instance: hostInstanceId() };
+	const directory = await realpath(dirname(endpoint)).catch(() => dirname(endpoint));
+	return { host_socket: join(directory, basename(endpoint)), host_instance: hostInstanceId() };
 }
 
 /** The endpoint this host listens on, or nothing when it speaks stdio and shares no socket. */

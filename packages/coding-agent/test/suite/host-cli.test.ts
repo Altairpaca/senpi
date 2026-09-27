@@ -17,6 +17,9 @@ import {
 
 const STATUS_FIELDS = [
 	"capabilities",
+	"claims",
+	"claims_live",
+	"crashes",
 	"engineVersion",
 	"env_keys",
 	"generation",
@@ -28,7 +31,9 @@ const STATUS_FIELDS = [
 	"pid",
 	"reachable",
 	"rss_mb",
+	"session_rows",
 	"sessions",
+	"shard",
 	"socket",
 	"zombies",
 ];
@@ -180,5 +185,62 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		const status = onlyJsonLine(result);
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
 		expect(status).toMatchObject({ reachable: false, socket: qa.socket, pid: null, generations: [] });
+	}, 60_000);
+
+	it("lists every endpoint of the agent directory under --all, ignoring --socket", async () => {
+		const qa = await hostCliSandbox("all");
+		const ensured = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+
+		const result = await runHostCli(qa, ["status", "--all", "--json"]);
+
+		expect(result.exitCode).toBe(0);
+		const { endpoints } = onlyJsonLine(result) as { endpoints: Record<string, unknown>[] };
+		expect(endpoints).toHaveLength(1);
+		expect(endpoints[0]).toMatchObject({
+			socket: qa.socket,
+			reachable: true,
+			pid: ensured.pid,
+			identity: "endpoint",
+			shard: null,
+			crashes: 0,
+			session_rows: [],
+			claims_live: 0,
+		});
+	}, 120_000);
+
+	it("answers --all on an agent directory with no endpoints with an empty list and a refusal", async () => {
+		const qa = await hostCliSandbox("all-empty");
+
+		const result = await runHostCli(qa, ["status", "--all", "--json"]);
+
+		expect(result.exitCode).toBe(3);
+		expect(onlyJsonLine(result)).toEqual({ endpoints: [] });
+	}, 60_000);
+});
+
+describe("senpi host shard-path", () => {
+	it("prints the naming contract's socket, as JSON under --json and bare otherwise", async () => {
+		const qa = await hostCliSandbox("shard");
+		const owner = ["--kind", "p", "--owner", "01a0e28d-40e4-7402-bac7-8de6e76ad84c", "--root", "/r"];
+
+		const json = await runHostCli(qa, ["shard-path", ...owner, "--json"]);
+		const bare = await runHostCli(qa, ["shard-path", ...owner]);
+
+		expect(json.exitCode).toBe(0);
+		expect(onlyJsonLine(json)).toEqual({
+			kind: "p",
+			key: "6d410ba846ba1550",
+			socket: "/r/p-6d410ba846ba1550.sock",
+		});
+		expect(bare).toMatchObject({ exitCode: 0, stdout: "/r/p-6d410ba846ba1550.sock\n" });
+	}, 60_000);
+
+	it("refuses a command line without --kind and --owner", async () => {
+		const qa = await hostCliSandbox("shard-usage");
+
+		const result = await runHostCli(qa, ["shard-path", "--kind", "i"]);
+
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toBe("");
 	}, 60_000);
 });

@@ -10,12 +10,14 @@
  * A socket nobody serves is not an error here: `reachable: false` with the same field set is the
  * answer, so a caller parses one shape either way and branches on one boolean.
  */
+import { readHostCrashRecords } from "./host-crash-record.ts";
 import { readDaemonEnvKeys } from "./host-daemon-env.ts";
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { createHostDaemonPaths, parseShardSocket, type ShardKind } from "./host-daemon-paths.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
 import { probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
+import { type HostPathClaimRow, type HostSessionRow, parseSessionRows, readClaimRows } from "./host-status-rows.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
 const STATUS_PROBE_TIMEOUT_MS = 10_000;
@@ -36,6 +38,7 @@ export interface HostSessionCounts {
 }
 
 export type { HostGenerationRow } from "./host-generations.ts";
+export type { HostPathClaimRow, HostSessionRow } from "./host-status-rows.ts";
 
 export interface HostStatusReport {
 	readonly reachable: boolean;
@@ -54,6 +57,16 @@ export interface HostStatusReport {
 	/** Environment NAMES the daemon was granted, never values. */
 	readonly env_keys: readonly string[];
 	readonly generations: readonly HostGenerationRow[];
+	/** Records in this endpoint's `crashes.jsonl`: supervised host children that DIED, not stopped. */
+	readonly crashes: number;
+	/** The owner-keyed shard the socket names (`<kind>-<16hex>.sock`), `null` for any other endpoint. */
+	readonly shard: { readonly kind: ShardKind; readonly key: string } | null;
+	/** Every listed session, only when workers were asked for; `[]` otherwise. */
+	readonly session_rows: readonly HostSessionRow[];
+	/** Session-path claims in `reservations/` whose owner process is still running. */
+	readonly claims_live: number;
+	/** Every claim in `reservations/`, whichever generation wrote it, only when workers were asked for. */
+	readonly claims: readonly HostPathClaimRow[];
 }
 
 export interface HostStatusOptions {
@@ -63,18 +76,34 @@ export interface HostStatusOptions {
 	readonly includeWorkers?: boolean;
 }
 
-export async function readHostStatus(options: HostStatusOptions): Promise<HostStatusReport> {
+/**
+ * How a status read treats the daemon directory. `prune` (the default, and the single-socket
+ * `status`) removes what ended before reporting; `prune: false` (`status --all`) reports dead
+ * generations as `alive: false` rows and removes nothing.
+ */
+export interface HostStatusReadOptions {
+	readonly prune?: boolean;
+}
+
+export async function readHostStatus(
+	options: HostStatusOptions,
+	read: HostStatusReadOptions = {},
+): Promise<HostStatusReport> {
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
+	const prune = read.prune !== false;
+	const includeWorkers = options.includeWorkers === true;
 	const host = await probeProtocolInfo(options.socket, STATUS_PROBE_TIMEOUT_MS);
 	// Reading the directory is also when it is cleaned: an operator asking what runs here must not
 	// be shown generations that ended, and the next reader must get the same answer.
-	await pruneDeadGenerations(paths);
-	const generations = await readGenerationRows(paths);
-	const current = generations.find((row) => row.current);
+	if (prune) await pruneDeadGenerations(paths);
+	const generations = await readGenerationRows(paths, { includeDead: !prune });
+	const current = generations.find((row) => row.current && row.alive);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
+	const listing = await readSessionListing(options.socket, includeWorkers);
+	const claims = await readClaimRows(paths, generations);
 	return {
 		reachable: host !== undefined,
 		socket: options.socket,
@@ -84,13 +113,18 @@ export async function readHostStatus(options: HostStatusOptions): Promise<HostSt
 		engineVersion: host?.engineVersion ?? current?.engineVersion ?? null,
 		capabilities: host?.capabilities ?? [],
 		launchProfile: host?.launch_profile ?? null,
-		sessions: await readSessionCounts(options.socket, options.includeWorkers === true),
+		sessions: countSessions(listing),
 		zombies: metrics.zombies,
 		rss_mb: metrics.rss_mb,
 		host_rss_mb: metrics.host_rss_mb,
 		open_fds: metrics.open_fds,
 		env_keys: await readDaemonEnvKeys(paths),
 		generations,
+		crashes: readHostCrashRecords(paths.dir).length,
+		shard: parseShardSocket(options.socket),
+		session_rows: includeWorkers ? listing : [],
+		claims_live: claims.filter((claim) => claim.live).length,
+		claims: includeWorkers ? claims : [],
 	};
 }
 
@@ -99,12 +133,19 @@ export async function readHostStatus(options: HostStatusOptions): Promise<HostSt
  * see, and an empty count is what lets a stop proceed against a socket nobody serves.
  */
 export async function readSessionCounts(socket: string, includeWorkers: boolean): Promise<HostSessionCounts> {
+	return countSessions(await readSessionListing(socket, includeWorkers));
+}
+
+async function readSessionListing(socket: string, includeWorkers: boolean): Promise<readonly HostSessionRow[]> {
 	const reply = await requestOnSocket(
 		socket,
 		{ type: "list_sessions", ...(includeWorkers ? { include_workers: true } : {}) },
 		STATUS_PROBE_TIMEOUT_MS,
 	);
-	const rows = sessionRows(reply);
+	return parseSessionRows(reply);
+}
+
+function countSessions(rows: readonly HostSessionRow[]): HostSessionCounts {
 	const attached = rows.filter((row) => row.attachments > 0).length;
 	const retained = rows.length - attached;
 	return {
@@ -132,25 +173,3 @@ export function hostSummary(host: HostProtocolInfo | undefined): Record<string, 
 }
 
 const UNOBSERVED_METRICS: HostProcessMetrics = { rss_mb: null, host_rss_mb: null, open_fds: null, zombies: null };
-
-interface SessionRow {
-	readonly kind: string;
-	readonly attachments: number;
-}
-
-function sessionRows(reply: unknown): readonly SessionRow[] {
-	if (!isRecord(reply) || !Array.isArray(reply.sessions)) return [];
-	return reply.sessions.flatMap((entry: unknown) => {
-		if (!isRecord(entry)) return [];
-		return [
-			{
-				kind: typeof entry.kind === "string" ? entry.kind : "interactive",
-				attachments: typeof entry.attachments === "number" ? entry.attachments : 0,
-			},
-		];
-	});
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}

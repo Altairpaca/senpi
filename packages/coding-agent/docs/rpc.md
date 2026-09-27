@@ -306,6 +306,7 @@ directory can never read each other's state:
 <agentDir>/rpc-host-daemon/                    flat directory (shared; also a legacy host's own state)
   layout.json                                  { "layout": 2, "dir": "<sha256(canonical socket)[:16]>" }
   <sha256(canonical socket)[:16]>/             0700
+    endpoint.json                              { layout: 2, socket, created_at } - durable identity
     host.pid                                   POINTER: { layout, instance_id, generation_dir, writer }
     settings.json                              what the supervisor reads at boot
     daemon.lock  stderr.log
@@ -335,7 +336,15 @@ names is alive an ensure refuses (`legacy_host`) rather than starting a second h
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.
 
-The directory is PRUNED of what is no longer running on every registration write and on every `host status`:
+`endpoint.json` names the socket the directory serves (the exact string its name was hashed from). It is
+written `0600` when the directory is created and re-asserted under the ensure lock, only when absent, and
+never rewritten, so `created_at` is the endpoint's first ensure. It is the one file a generation's release
+leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
+`settings.json` and its generation directory, and without `endpoint.json` such an endpoint could not even be
+enumerated. `stderr.log` and `crashes.jsonl` stay too.
+
+The directory is PRUNED of what is no longer running on every registration write and on every single-socket
+`host status` (never by `host status --all`):
 a `generations/<instanceId>/` whose record names a pid nobody is running is removed, the pointer goes with it
 while it still names one, and claims in `reservations/` whose owner is gone are removed too. A record that
 cannot be parsed is left alone - an ensure writing one right now must not be mistaken for a generation that
@@ -370,10 +379,11 @@ Everything above is reachable from one command, so a terminal, a desktop and a t
 daemon the same way instead of each re-implementing the decision:
 
 ```
-senpi host ensure  [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
-senpi host status  [--json] [--include-workers] [--socket <path>]
-senpi host stop    [--json] [--drain] [--force] [--socket <path>]
-senpi host handoff [--json] [--launch-spec <file>] [--socket <path>]
+senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
+senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
+senpi host stop       [--json] [--drain] [--force] [--socket <path>]
+senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
+senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 ```
 
 The contract is machine-first: EXACTLY ONE JSON line on stdout and nothing else, diagnostics on stderr,
@@ -388,7 +398,8 @@ and an exit code that classifies the outcome without parsing the line.
 | `4` | fallback: `{ action: "fallback", reason, host }` - under `--policy fallback`, no host is better than this one |
 
 The socket is `--socket`, else `SENPI_RPC_SOCKET`, else `<agentDir>/rpc/rpc.sock`. `--json` is accepted for
-symmetry with other commands; the answer is always JSON.
+symmetry with other commands; the answer is always JSON (the one exception is `shard-path` without `--json`,
+which prints the bare socket path).
 
 - `ensure` prints `{ action, socket, pid, instanceId, generation, engineVersion, engineOrdinal,
   capabilities, launchProfileId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
@@ -400,7 +411,8 @@ symmetry with other commands; the answer is always JSON.
   `senpi host handoff` command.
 - `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, open_fds, env_keys, generations }` and exits 3 when nothing answers - with the same
+  zombies, rss_mb, host_rss_mb, open_fds, env_keys, generations, crashes, shard, session_rows, claims_live,
+  claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. `sessions` is what `list_sessions`
   reports under the same flag, so `worker` stays `0` without `--include-workers`; `foreign_*` is the same
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
@@ -413,12 +425,64 @@ symmetry with other commands; the answer is always JSON.
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
+
+  The last five fields are additive (a client that does not know them ignores them):
+  - `crashes`: records in the endpoint's `crashes.jsonl` - supervised host children that died rather than
+    stopped; `0` when the file is absent.
+  - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
+    contract below), else `null`.
+  - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions
+    { include_workers: true }` reply as `{ id, kind, session_path, attachments, context }`. `session_path` is
+    the host's canonical path, the key a client matches a session by; `context` is the published labels
+    including the host's own `host_socket`/`host_instance`, `null` where none were published.
+  - `claims_live`: session-path claims in `reservations/` whose owner process is still running, `0` when the
+    directory is absent.
+  - `claims`: under `--include-workers` only (else `[]`), every claim in `reservations/` whichever generation
+    wrote it, as `{ session_path, owner_pid, instance_id, generation, attached, live }` - so a path a
+    draining predecessor still holds is visible although the answering generation no longer lists it.
+    `generation` is the owner's ordinal while its generation record exists, else `null`; `attached` is `null`
+    for a claim written before that flag existed.
+- `status --all` reports every endpoint the agent directory holds state for and ignores `--socket`:
+  `{ endpoints: [<status row>, ...] }`, each row the single-socket report above plus `dir` (the endpoint's
+  daemon directory) and `identity` (what named its socket: `endpoint` = `endpoint.json`, `settings` = the
+  boot `settings.json`, `generation-settings` = a generation's own `settings.json`; each accepted only when
+  that socket hashes to the directory it was found in). A directory none of them names is still listed with
+  `socket: null` and `identity: "unknown"`, built from the directory alone - the ensure lock is keyed by a
+  longer hash of the socket's transport address and cannot be rebuilt from the 16-hex name, so it can be
+  shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
+  the single-socket form, `--all` REMOVES NOTHING: a dead generation is a row with `alive: false`, an endpoint
+  whose host exited stays listed through its `endpoint.json` with `reachable: false` and `generations: []`,
+  and reclaiming what ended is left to an explicit, evidence-gated command. Endpoints are read four at a
+  time. Exit `0` while at least one endpoint answers, `3` when none does or none exists.
+- `shard-path` computes a shard socket without contacting any host, so a client that does not link senpi
+  can check its own copy of the naming contract against the engine: `{ kind, key, socket }` under `--json`,
+  the socket path otherwise. `--root` defaults to `<agentDir>/rpc/shards`.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
   overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no
   work.
 - `handoff` forces a generation handoff from THIS binary. A host that cannot drain and a platform that
   cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`.
+
+#### Shard naming contract (`shardKey`, `shardSocketPath`)
+
+A client may run many endpoints under one agent directory - omo one per parent session (`p`), the Desktop
+one per thread (`i`), under `<agentDir>/rpc/shards/`. Every client derives the socket identically:
+
+```
+key    = sha256("<kind>:<ownerId>") in hex, first 16 characters
+socket = <root>/<kind>-<key>.sock
+```
+
+`packages/coding-agent/src/modes/rpc/host-daemon-paths.ts` exports `shardKey(kind, ownerId)`,
+`shardSocketPathForKey(root, kind, key)` (no hashing) and `shardSocketPath(root, kind, ownerId)`. Fixed
+vectors every implementation must reproduce:
+
+| kind | owner | key | socket under `/r` |
+|---|---|---|---|
+| `p` | `01a0e28d-40e4-7402-bac7-8de6e76ad84c` | `6d410ba846ba1550` | `/r/p-6d410ba846ba1550.sock` |
+| `i` | `thread-0001` | `da99f196e11b1cf9` | `/r/i-da99f196e11b1cf9.sock` |
+| `p` | (empty) | `3ba7290d74188485` | `/r/p-3ba7290d74188485.sock` |
 
 #### Launch spec (`--launch-spec <file>`)
 
@@ -546,6 +610,14 @@ auth, model, extension or resource resolution, and they are never merged into th
   `list_sessions { include_workers: true }`. Caps, enforced at the boundary: at most 32 keys, every key matching
   `^[a-z][a-z0-9_]*$`, every value at most 16 KiB, and at most 32 KiB of JSON in total. Anything else is refused with
   `invalid_session_context: <detail>`, where the detail names the cap that was broken.
+
+A socket host also stamps its own identity into every session's context, overwriting any client-supplied
+value for the same keys, because the host is the authority: `host_socket` is the PUBLIC endpoint clients
+address (the supervisor's path for a supervised host, the bound path for a bare one), realpath-canonicalized,
+and stays the same across a generation handoff; `host_instance` is the answering generation's `instanceId`
+(`get_protocol_info`) and changes with every handoff. So an extension can tell which endpoint and generation
+it runs behind without an environment variable. `host_socket` is omitted where no public path exists (an
+abstract socket, a supervised win32 host); a stdio host adds neither key.
 
 One shared host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
 (`pi.sessionKind`, `pi.sessionContext` - see

@@ -7,6 +7,7 @@
  *     <agentDir>/rpc-host-daemon/                 the flat directory - shared, and left legacy-empty
  *       layout.json                               { layout: 2, dir } - the only file this build writes here
  *       <sha256(socket)[:16]>/                    0700, one per endpoint
+ *         endpoint.json                           { layout, socket, created_at } - WHICH socket this is
  *         host.pid                                POINTER: { layout, instance_id, generation_dir, writer }
  *         settings.json                           what the supervisor reads at boot
  *         daemon.lock  stderr.log
@@ -21,6 +22,11 @@
  * it both fail CLOSED: they see no host of their own, refuse, and leave the daemon alone. Nothing here
  * ever writes a legacy-shaped file, and nothing here ever removes one: a flat `host.pid` that DOES
  * exist belongs to a legacy host that may still be running, and is read-only to this build.
+ *
+ * `endpoint.json` is the endpoint's durable identity: written once, never rewritten, and the one file
+ * a generation's release leaves behind - so an endpoint whose host exited (cleanly or not) can still
+ * be enumerated and named. The pointer, `settings.json` and the generation directories all describe
+ * a LIVE host and go with it.
  *
  * What those files CONTAIN is `host-daemon-state.ts` (settings, and the primitives every state file
  * is written through) and `host-daemon-registration.ts` (the pointer and the generation records).
@@ -40,6 +46,8 @@ const DIRECTORY_MODE = 0o700;
 export const HOST_STATE_FILE_MODE = 0o600;
 
 export interface HostDaemonPaths {
+	/** The endpoint these paths belong to, exactly as its directory name was derived from. */
+	readonly socket: string;
 	/** `<agentDir>/rpc-host-daemon`: shared by every endpoint, and by any legacy host's own state. */
 	readonly flatDir: string;
 	/** The only file this build writes into the flat directory: `{ layout, dir }`. */
@@ -48,6 +56,8 @@ export interface HostDaemonPaths {
 	readonly legacyPidFile: string;
 	/** This endpoint's state directory, `<flatDir>/<sha256(socket)[:16]>`. */
 	readonly dir: string;
+	/** Durable identity `{ layout, socket, created_at }`: survives every generation's release. */
+	readonly endpointFile: string;
 	/** The pointer at the current generation. Deliberately unparseable as a legacy pidfile. */
 	readonly pointerFile: string;
 	/** Cross-version ensure lock for this endpoint (the endpoint lock itself lives in the temp dir). */
@@ -57,6 +67,9 @@ export interface HostDaemonPaths {
 	readonly generationsDir: string;
 	readonly reservationsDir: string;
 }
+
+/** The files inside one endpoint's directory, for a reader that has the directory but not its socket. */
+export type HostDaemonDirectory = Omit<HostDaemonPaths, "socket" | "flatDir" | "layoutMarker" | "legacyPidFile">;
 
 export interface HostGenerationPaths {
 	readonly dir: string;
@@ -80,6 +93,37 @@ export function daemonDirectoryName(socket: string, platform: NodeJS.Platform = 
 }
 
 /**
+ * The owner-keyed shard naming contract every client computes identically - senpi, omo (library
+ * import) and the Desktop (a local mirror checked against `senpi host shard-path`): `p` shards belong
+ * to a parent session, `i` shards to an interactive thread. The key is `sha256("<kind>:<owner>")` in
+ * hex, first 16 characters; the socket is `<root>/<kind>-<key>.sock`.
+ */
+export type ShardKind = "p" | "i";
+
+export function shardKey(kind: ShardKind, ownerId: string): string {
+	return createHash("sha256").update(`${kind}:${ownerId}`, "utf8").digest("hex").slice(0, 16);
+}
+
+/** The socket of a shard whose key is already known. No hashing: the key IS the name. */
+export function shardSocketPathForKey(root: string, kind: ShardKind, key: string): string {
+	return join(root, `${kind}-${key}.sock`);
+}
+
+export function shardSocketPath(root: string, kind: ShardKind, ownerId: string): string {
+	return shardSocketPathForKey(root, kind, shardKey(kind, ownerId));
+}
+
+const SHARD_SOCKET_NAME = /^(p|i)-([0-9a-f]{16})\.sock$/;
+
+/** Which shard a socket names, from its basename alone; `null` for any other endpoint. */
+export function parseShardSocket(socket: string): { readonly kind: ShardKind; readonly key: string } | null {
+	const match = SHARD_SOCKET_NAME.exec(basename(socket));
+	const key = match?.[2];
+	if (key === undefined) return null;
+	return { kind: match?.[1] === "i" ? "i" : "p", key };
+}
+
+/**
  * The daemon directory of ONE endpoint. Both fields are named rather than positional on purpose:
  * two strings in a row is exactly the call a refactor silently swaps, and swapping these two would
  * point a client at another socket's state.
@@ -90,6 +134,7 @@ export function createHostDaemonPaths(target: {
 }): HostDaemonPaths {
 	const flatDir = join(target.agentDir ?? getAgentDir(), "rpc-host-daemon");
 	return {
+		socket: target.socket,
 		flatDir,
 		layoutMarker: join(flatDir, "layout.json"),
 		legacyPidFile: join(flatDir, "host.pid"),
@@ -103,11 +148,10 @@ export function createHostDaemonPaths(target: {
  * The names live here alone, so the directory a client recomputes and the one a host is handed
  * can never drift apart.
  */
-export function hostDaemonDirectoryPaths(
-	dir: string,
-): Omit<HostDaemonPaths, "flatDir" | "layoutMarker" | "legacyPidFile"> {
+export function hostDaemonDirectoryPaths(dir: string): HostDaemonDirectory {
 	return {
 		dir,
+		endpointFile: join(dir, "endpoint.json"),
 		pointerFile: join(dir, "host.pid"),
 		lockFile: join(dir, "daemon.lock"),
 		settingsFile: join(dir, "settings.json"),
@@ -117,7 +161,7 @@ export function hostDaemonDirectoryPaths(
 	};
 }
 
-export function generationPaths(paths: HostDaemonPaths, instanceId: string): HostGenerationPaths {
+export function generationPaths(paths: HostDaemonDirectory, instanceId: string): HostGenerationPaths {
 	const dir = join(paths.generationsDir, instanceId);
 	return {
 		dir,
@@ -162,6 +206,26 @@ export async function createDaemonDirectories(paths: HostDaemonPaths): Promise<v
 		);
 	} catch (cause) {
 		throw new HostDaemonStateError(paths.dir, cause);
+	}
+	await ensureEndpointIdentity(paths, paths.socket);
+}
+
+/**
+ * Writes `endpoint.json` when it is absent and never rewrites it: the first writer's `created_at`
+ * is the endpoint's birth, and a second writer racing it loses on the exclusive create rather than
+ * replacing it. Idempotent, so an ensure re-asserts it under its lock at no cost.
+ */
+export async function ensureEndpointIdentity(paths: HostDaemonPaths, socket: string): Promise<void> {
+	try {
+		await mkdir(paths.dir, { recursive: true, mode: DIRECTORY_MODE });
+		await writeFile(
+			paths.endpointFile,
+			`${JSON.stringify({ layout: HOST_DAEMON_LAYOUT, socket, created_at: new Date().toISOString() })}\n`,
+			{ mode: HOST_STATE_FILE_MODE, flag: "wx" },
+		);
+	} catch (cause) {
+		if (cause instanceof Error && "code" in cause && cause.code === "EEXIST") return;
+		throw new HostDaemonStateError(paths.endpointFile, cause);
 	}
 }
 

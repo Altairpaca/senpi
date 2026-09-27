@@ -13,7 +13,12 @@ import {
 	readProcessStartTime,
 	waitForStartTime,
 } from "../app-server/daemon/process.ts";
-import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import {
+	createDaemonDirectories,
+	createHostDaemonPaths,
+	ensureEndpointIdentity,
+	type HostDaemonPaths,
+} from "./host-daemon-paths.ts";
 import {
 	clearHostRegistration,
 	legacyHostIsLive,
@@ -155,6 +160,7 @@ async function ensureHostLocked(
 	socket: string,
 	options: EnsureHostOptions,
 ): Promise<EnsuredHost> {
+	await ensureEndpointIdentity(paths, socket);
 	const testOptions = options._test;
 	const registered = await readHostRegistration(paths);
 	// A record naming ANOTHER endpoint is not about this ensure's host. The per-socket directory

@@ -67,6 +67,41 @@ The gap sits between two steps of `ensureHost()` and the caller's connect; no ex
 - `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
 - `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
 
+## 2026-09-27 - Durable endpoint identity, `senpi host status --all`, shard naming, host identity in session context
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `HostDaemonPaths` gains `socket` and `endpointFile`; `createDaemonDirectories` writes `<endpointDir>/endpoint.json` `{ layout: 2, socket, created_at }` (0600) through the new `ensureEndpointIdentity(paths, socket)`, which creates it only when absent (exclusive create) and never rewrites it. New exports: `shardKey(kind, ownerId)` (`sha256("<kind>:<owner>")` hex, 16 chars), `shardSocketPathForKey(root, kind, key)`, `shardSocketPath(root, kind, ownerId)`, `parseShardSocket(socket)`, and the `HostDaemonDirectory` type (`generationPaths` now accepts it).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the first statement of `ensureHostLocked` re-asserts `ensureEndpointIdentity(paths, socket)` under the ensure lock (call + import only).
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts` (new): `listHostEndpoints(agentDir)` enumerates endpoint directories from disk alone - `endpoint.json`, else `settings.json`, else a generation's `settings.json`, each accepted only when its socket hashes to the directory; otherwise `{ socket: null, identity: "unknown" }`. Reads only.
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `readGenerationRows(paths, { includeDead })` reports dead records as `alive: false` rows (memory `null`) instead of dropping them; the default is unchanged.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `readHostStatus(options, { prune })` - `prune` defaults to `true` (unchanged single-socket behavior, still pruning); `prune: false` removes nothing. `HostStatusReport` gains `crashes`, `shard`, `session_rows` (under `includeWorkers` only), `claims_live`, and `claims` (under `includeWorkers` only). `readSessionCounts` keeps its signature.
+- `packages/coding-agent/src/modes/rpc/host-status-rows.ts` (new): typed parsing of listed session rows and `reservations/` claim rows.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts` (new): `readAllHostStatus({ agentDir, includeWorkers })` - one `prune: false` report per enumerated endpoint (four at a time) plus `dir`/`identity`; an unaddressable directory gets a report built from the directory alone.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `status` request takes `all?: boolean` (payload `{ endpoints }`, exit 0 when any endpoint answers, else 3), and a new `shard_path` request answers `{ kind, key, socket }` without contacting a host.
+- `packages/coding-agent/src/cli/host-command.ts`: `status --all` (ignores `--socket`) and `shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]` (bare path without `--json`).
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `RpcHostSessionDefaults` adds an optional `hostContext`, merged over the client's `open_session.context`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a socket host computes `{ host_socket, host_instance }` once (`host_socket` = the supervisor's public path or the bound path, realpath-canonicalized; omitted for abstract sockets and supervised win32 hosts) and passes it to `createHostCore` as the router's `hostContext`. Stdio hosts add nothing.
+- Tests: `test/rpc-host-status-all.test.ts` (new) and `test/helpers/rpc-host-endpoints.ts` (new, `killEndpointUnclean`, `daemonTreeDigest`); `test/suite/host-cli.test.ts` pins the new status fields, `status --all` and `shard-path`; `test/rpc-host-daemon-dir.test.ts` pins `endpoint.json` and its survival across a stop.
+
+### Why
+
+Clients now run many hosts under one agent directory (omo one per parent session, the Desktop one per thread, under `rpc/shards/`), but every surface addressed one socket and a normally exited endpoint lost its pointer, settings and generation directory, so it could not even be enumerated, and nothing named an endpoint's owner or crash history. `--all` gives one read-only view of every endpoint, the naming helpers are the single contract all three clients compute, and the session context tells an extension which endpoint and generation it runs behind without an environment variable.
+
+### Why an extension could not handle it
+
+The daemon directory, the `senpi host` CLI and the host's `open_session` handling run in the engine before and outside any extension; an extension cannot write the endpoint identity, enumerate other endpoints' state, or know the public socket its host was supervised behind.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: the `HostDaemonPaths` interface, `createHostDaemonPaths`, `hostDaemonDirectoryPaths`, and the tail of `createDaemonDirectories`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the `host-daemon-paths.ts` import and the first line of `ensureHostLocked`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReport`, `readHostStatus`, `readSessionCounts`.
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `readGenerationRows`.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `HostRequest` union and `runHostRequest` switch.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the constructor `defaults` type and the `sessionContext` line in `open()`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore`'s signature and router construction, the start of `runSocketHost`.
+
 ## 2026-09-27 - open_session waits for the host that acknowledged it instead of a fixed 30 s (#2209)
 
 ### What changed

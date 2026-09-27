@@ -33,8 +33,10 @@ host-handoff.ts, host-successor.ts, host-stop.ts, host-probe.ts, host-launch.ts
 host-daemon-paths.ts, host-daemon-state.ts, host-daemon-registration.ts
                           Per-socket daemon directory, pointer pidfile, generations (I3)
 host-launch-spec.ts       `--launch-spec` parse + trust proof; host-daemon-env.ts = env allowlist
-host-runner.ts            The four `senpi host` requests -> { payload, exitCode }
+host-runner.ts            The `senpi host` requests -> { payload, exitCode }
 host-status.ts, host-process-metrics.ts   status report: identity, sessions, generations, tree
+host-status-rows.ts       status detail: listed session rows, reservations/ claim rows
+host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dirs, report without pruning
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit
 rpc-client.ts, rpc-types.ts, custom-capability.ts, event-output-buffer.ts
 changes.md                Fork-specific RPC behavior record
@@ -57,7 +59,7 @@ changes.md                Fork-specific RPC behavior record
 
 ### Shared-daemon invariants (I1-I4)
 
-One machine-wide host holds every client's sessions, so these hold for every surface that touches it - CLI, desktop, task runner:
+One host per endpoint; a client may run many endpoints under one agent dir (omo runs one per parent session, the Desktop one per thread, under `rpc/shards/`); every invariant below holds per endpoint, for every surface that touches it - CLI, desktop, task runner:
 
 - **I1** — never terminate, signal or replace a host this process did not start. A mismatch ends in `refuse`, never in a second host bound over somebody else's endpoint. The only carve-outs are `stopHost` against a validated own-writer pidfile with zero foreign attached/retained sessions (or explicit `force`), and a drain, which ends no work.
 - **I2** — compatibility is `protocolVersion` + capabilities, never a version-string comparison. An uncomparable `engineOrdinal` is EQUAL, and a handoff needs STRICTLY greater, so an unknown-age build attaches instead of upgrading.
