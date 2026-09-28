@@ -11,6 +11,7 @@
 ### Fixed
 
 - GitHub Copilot OAuth login and refresh now keep the account's `GET /models` prompt, context, and output limits and apply them to available models instead of retaining larger native models.dev limits; the exact `model_max_prompt_tokens_exceeded` rejection is also classified as context overflow so the existing compact-and-retry recovery runs. ([#2299](https://github.com/code-yeongyu/senpi/issues/2299))
+- A GitHub Copilot 403 or 402 now says what happened instead of `403 status code (no body)`: quota exhaustion (402, or 429 `quota_exceeded`) is named as such, a refusal says the body was empty, and both carry the GitHub request id. GitHub Copilot declares 401/403 as token-refusal statuses so a runtime can re-exchange a revoked Copilot token, and `openai-responses` failures now record their HTTP status in `providerDiagnostic`. Request ids no longer influence retry classification. ([#2297](https://github.com/code-yeongyu/senpi/issues/2297))
 
 ### Removed
 

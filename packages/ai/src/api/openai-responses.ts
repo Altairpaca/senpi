@@ -12,6 +12,7 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -31,11 +32,13 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { openAICompatibleProviderDiagnosticFromError } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -421,7 +424,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatOpenAIResponsesError(error);
+			const providerDiagnostic =
+				output.stopReason === "error"
+					? (readProviderDiagnostic(error) ?? openAICompatibleProviderDiagnosticFromError(error))
+					: undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
+			output.errorMessage = withGitHubCopilotFailureNote(formatOpenAIResponsesError(error), model.provider, error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
