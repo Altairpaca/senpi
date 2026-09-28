@@ -52,9 +52,9 @@ describe.skipIf(!bunWebViewAvailable)("a misbehaving Chrome behind the main-thre
 
 	afterEach(async () => {
 		await Promise.allSettled(kernels.splice(0).map((kernel) => kernel.close()));
-		await vi.waitFor(async () => expect(await bunChromeChildren()).toEqual([]), { timeout: 10_000, interval: 100 });
+		await vi.waitFor(async () => expect(await bunChromeChildren()).toEqual([]), { timeout: 30_000, interval: 100 });
 		expect(mainThreadWebViewService()?.viewCount ?? 0).toBe(0);
-	});
+	}, 60_000);
 
 	afterAll(async () => {
 		await page?.stop();

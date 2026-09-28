@@ -48,7 +48,7 @@ function openViewCell(): string {
 }
 
 async function expectNoBunChrome(): Promise<void> {
-	await vi.waitFor(async () => expect(await bunChromeChildren()).toEqual([]), { timeout: 10_000, interval: 100 });
+	await vi.waitFor(async () => expect(await bunChromeChildren()).toEqual([]), { timeout: 30_000, interval: 100 });
 	expect(mainThreadWebViewService()?.viewCount ?? 0).toBe(0);
 }
 
@@ -82,7 +82,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView lifecycle across eval kernels
 	afterEach(async () => {
 		await Promise.allSettled(kernels.splice(0).map((kernel) => kernel.close()));
 		await expectNoBunChrome();
-	});
+	}, 60_000);
 
 	afterAll(async () => {
 		await page?.stop();

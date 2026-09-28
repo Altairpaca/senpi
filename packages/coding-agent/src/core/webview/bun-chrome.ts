@@ -20,12 +20,6 @@ function positivePids(texts: readonly string[]): number[] {
 }
 
 async function bunChromePids(): Promise<number[]> {
-	if (process.platform === "win32") {
-		const filter = `ParentProcessId=${process.pid}`;
-		const script = `Get-CimInstance Win32_Process -Filter "${filter}" | Where-Object { $_.CommandLine -like '*${BUN_CHROME_FLAGS}*' } | ForEach-Object { $_.ProcessId }`;
-		const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
-		return positivePids(stdout.split(/\r?\n/u).map((line) => line.trim()));
-	}
 	const pids: string[] = [];
 	for (const line of (await run("ps", ["-axo", "pid=,ppid=,command="])).split("\n")) {
 		const [pidText = "", ppidText, ...command] = line.trim().split(/\s+/u);
@@ -82,6 +76,12 @@ export async function settleDeadBunChrome(): Promise<void> {
  * Resolves once those processes are gone (bounded), so a released kernel leaves no Chrome behind.
  */
 export async function retireBunChrome(webViewClass: NativeWebViewClass): Promise<void> {
+	// Windows has no WebKit backend, so `closeAll()` can only end Chrome, and it terminates the process
+	// before returning; listing processes there costs seconds (PowerShell), so it is skipped.
+	if (process.platform === "win32") {
+		webViewClass.closeAll();
+		return;
+	}
 	const pids = await bunChromePids();
 	if (process.platform === "darwin") {
 		for (const pid of pids) {

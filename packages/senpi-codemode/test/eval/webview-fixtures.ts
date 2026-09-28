@@ -43,7 +43,7 @@ function run(file: string, args: readonly string[]): Promise<string> {
 /** Bun-spawned Chrome = a direct child launched with `--remote-debugging-pipe`; one left after teardown is a leak. */
 export async function bunChromeChildren(): Promise<number[]> {
 	if (process.platform === "win32") {
-		const script = `Get-CimInstance Win32_Process -Filter "ParentProcessId=${process.pid}" | Where-Object { $_.CommandLine -like '*--remote-debugging-pipe*' } | ForEach-Object { $_.ProcessId }`;
+		const script = `Get-CimInstance Win32_Process -Filter "ParentProcessId=${process.pid}" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*--remote-debugging-pipe*' } | ForEach-Object { $_.ProcessId }`;
 		const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
 		return stdout
 			.split(/\r?\n/u)
