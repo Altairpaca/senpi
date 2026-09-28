@@ -1,3 +1,22 @@
+## 2026-09-28 - No runtime error output on the TUI screen (#2284)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `registerSignalHandlers` prepends an `unhandledRejection` listener (removed with the other signal cleanups) that routes to the new private `unhandledRejection`: a dead-terminal reason takes the silent `emergencyTerminalExit`, a recoverable Inspector VM import keeps its warning, and everything else is appended to the debug log (`appendUnhandledRejectionLog`, redacted) and never printed; the session keeps running. `init` awaits `prepareInteractiveStderrCapture()` before the first `takeOverInteractiveStderr()`. `uncaughtCrash` prints `exiting due to uncaughtException: <name>: <message>` on one line plus `Details: <debug log path>` after the terminal is restored; the whole error is printed only when the debug-log write failed.
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts` and the new `stderr-fd-redirect.ts` (fork-only): on Bun (darwin/linux) the takeover also points fd 2 at the debug log with `dup`/`dup2` through `bun:ffi`, and `restoreInteractiveStderr` puts the original descriptor back first, so every existing restore path (quit, crash, SIGTERM/SIGHUP shutdown, ctrl+z suspend, external editor) returns the terminal's fd 2. Node and Windows keep the JS-level guard only.
+
+### Why
+
+- Under Bun an unhandled rejection never reaches `uncaughtException`: Bun printed its native source-preview dump onto the terminal the TUI was drawing on (the reported `Timeout waiting for response to prompt` spray, repeated, inside the input box) and nothing reached the debug log. Worker-thread `console.*` and children spawned with `stderr: "inherit"` wrote fd 2 directly and bypassed the JS guard the same way.
+
+### Why an extension could not handle it
+
+- Process-level error routing and terminal ownership belong to `InteractiveMode`; an extension cannot own fd 2 or register the TUI's crash policy, and the output being hidden often comes from extensions themselves.
+
+### Expected merge conflict zones
+
+- LOW: the `uncaughtException` listener block in `registerSignalHandlers`, the tail of `uncaughtCrash`, and the `takeOverInteractiveStderr()` try block in `init`.
+
 ## 2026-09-28 - /sessions alias and thinking/resume guidance (#1437)
 
 ### What changed
