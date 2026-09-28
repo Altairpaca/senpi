@@ -64,7 +64,15 @@ export class WebViewService {
 		await this.#retiring;
 		await settleDeadBunChrome();
 		this.#chromeInUse = true;
-		return new this.#webViewClass(onConsole ? { ...options, console: onConsole } : options);
+		const viewOptions = onConsole ? { ...options, console: onConsole } : options;
+		for (let attempt = 1; ; attempt++) {
+			try {
+				return new this.#webViewClass(viewOptions);
+			} catch (error) {
+				if (!isChromeRelaunchWindow(error) || attempt >= RELAUNCH_ATTEMPTS) throw error;
+				await new Promise((resolve) => setTimeout(resolve, RELAUNCH_RETRY_MS));
+			}
+		}
 	}
 
 	async #drop(client: WebViewServiceClient): Promise<void> {
@@ -78,6 +86,16 @@ export class WebViewService {
 		);
 		await this.#retiring;
 	}
+}
+
+// Right after Chrome dies, Windows refuses to relaunch it for about a second (Bun reports
+// ERR_DLOPEN_FAILED "Failed to spawn Chrome"); a missing Chrome fails the same way, so the
+// retry is bounded and the last error is surfaced.
+const RELAUNCH_ATTEMPTS = 8;
+const RELAUNCH_RETRY_MS = 250;
+
+function isChromeRelaunchWindow(error: unknown): boolean {
+	return error instanceof Error && Reflect.get(error, "code") === "ERR_DLOPEN_FAILED";
 }
 
 const SERVICE_KEY = Symbol.for("senpi.webview.service");
