@@ -32,6 +32,24 @@ async function windowsBunChromeTree(): Promise<number[]> {
 	return positivePids(stdout.split(/\r?\n/u).map((line) => line.trim()));
 }
 
+async function windowsListedPids(): Promise<Set<number>> {
+	const stdout = await run("tasklist", ["/FO", "CSV", "/NH"]);
+	return new Set(positivePids(stdout.split(/\r?\n/u).map((line) => line.split('","')[1] ?? "")));
+}
+
+/**
+ * Windows reports a terminated process as gone to `process.kill(pid, 0)` while the process object
+ * still exists (Bun holds its child's handle until it reaps it), so the wait is on the process list.
+ */
+async function waitForWindowsRemoval(pids: readonly number[]): Promise<void> {
+	const deadline = Date.now() + EXIT_DEADLINE_MS;
+	for (;;) {
+		const listed = await windowsListedPids();
+		if (!pids.some((pid) => listed.has(pid)) || Date.now() >= deadline) return;
+		await new Promise((resolve) => setTimeout(resolve, EXIT_POLL_MS));
+	}
+}
+
 async function bunChromePids(): Promise<number[]> {
 	const pids: string[] = [];
 	for (const line of (await run("ps", ["-axo", "pid=,ppid=,command="])).split("\n")) {
@@ -98,7 +116,7 @@ export async function retireBunChrome(webViewClass: NativeWebViewClass): Promise
 		webViewClass.closeAll();
 		const running = tree.filter(alive);
 		if (running.length > 0) await run("taskkill", ["/F", ...running.flatMap((pid) => ["/PID", String(pid)])]);
-		await waitForExit(tree);
+		await waitForWindowsRemoval(tree);
 		return;
 	}
 	const pids = await bunChromePids();
