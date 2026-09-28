@@ -24,7 +24,11 @@ import {
 	rearmRecurringJob,
 	restorePending,
 } from "../../src/core/extensions/builtin/schedule/occurrences.ts";
-import { acquireSessionDeliveryLock } from "../../src/core/extensions/builtin/schedule/runner-lease.ts";
+import {
+	acquireSessionDeliveryLock,
+	removeRunnerLease,
+	writeRunnerLease,
+} from "../../src/core/extensions/builtin/schedule/runner-lease.ts";
 import {
 	createScheduledJob,
 	listScheduledJobs,
@@ -737,5 +741,18 @@ describe("schedule runner", () => {
 		expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ version: 1, id: job.id });
 		expect((await stat(path)).mode & 0o777).toBe(0o600);
 		expect((await stat(join(dir, "pending"))).mode & 0o777).toBe(0o700);
+
+		// The runner lease records the --exec command; the session lock is owner-only too.
+		await writeRunnerLease(dir, { startedAt: T0, watch: true, exec: "deliver --token x" }, T0);
+		const lock = await acquireSessionDeliveryLock(dir, "session-a");
+		if (!lock.acquired) throw new Error("expected the lock");
+		await lock.attachDelivery(process.pid);
+		try {
+			expect((await stat(join(dir, "runners", `${process.pid}.json`))).mode & 0o777).toBe(0o600);
+			expect((await stat(join(dir, "sessions", "session-a.lock"))).mode & 0o777).toBe(0o600);
+		} finally {
+			await lock.release();
+			await removeRunnerLease(dir);
+		}
 	});
 });

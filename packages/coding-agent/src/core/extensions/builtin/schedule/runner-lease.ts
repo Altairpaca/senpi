@@ -27,6 +27,9 @@ export const RUNNER_HEARTBEAT_INTERVAL_MS = 30_000;
 /** Assumed delivery time limit when a lock does not state one (the CLI default). */
 export const DEFAULT_MAX_DELIVERY_MS = 900_000;
 
+/** Leases carry the `--exec` command and locks the session id: owner-only, like the job files. */
+const PRIVATE = { mode: 0o600 } as const;
+
 export function ownRunnerIdentity(): RunnerIdentity {
 	return { pid: process.pid, processStartedAtMs: ownProcessStartedAtMs() };
 }
@@ -45,6 +48,7 @@ export async function writeRunnerLease(
 	await publishReplace(
 		leasePath(dir, identity.pid),
 		JSON.stringify({ ...identity, bootAtMs: processBootAtMs(), beatAt: now, ...lease }),
+		PRIVATE,
 	);
 }
 
@@ -208,7 +212,7 @@ export async function acquireSessionDeliveryLock(
 	let mine = JSON.stringify(identity);
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
-			await publishExclusive(path, mine);
+			await publishExclusive(path, mine, PRIVATE);
 			let tail: Promise<unknown> = Promise.resolve();
 			const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
 				const run = tail.then(operation);
@@ -223,7 +227,7 @@ export async function acquireSessionDeliveryLock(
 						const startedAt = Math.floor(Date.now() / 1000) * 1000;
 						if ((await readLeaseText(path)) !== mine) throw new Error("session delivery lock was lost");
 						const next = JSON.stringify({ ...identity, deliveryPid: pid, deliveryStartedAtMs: startedAt });
-						await publishReplace(path, next);
+						await publishReplace(path, next, PRIVATE);
 						mine = next;
 					}),
 				release: () =>
