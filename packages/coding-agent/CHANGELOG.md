@@ -6,6 +6,8 @@
 
 ### Added
 
+- `senpi app-server` and `senpi app-server daemon start|restart` accept `--extension <path>` (repeatable) and load those extensions into every thread, so a launcher that ships its plugin beside the engine gets the plugin's tools and `extension_event`s in app-server sessions. The daemon records the list and `restart` keeps it. ([code-yeongyu/oh-my-openagent#9117](https://github.com/code-yeongyu/oh-my-openagent/issues/9117))
+
 ### Changed
 
 ### Fixed
