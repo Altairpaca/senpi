@@ -1,9 +1,10 @@
 import { access, chmod, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
 import { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
+import type { SessionContext } from "../../core/extensions/types.ts";
 import {
 	flushRawStdout,
 	takeOverStdout,
@@ -15,10 +16,11 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
+import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
-import { HostMemorySampler } from "./host-memory-sampler.ts";
+import { type HostMemoryReading, HostMemorySampler } from "./host-memory-sampler.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
@@ -29,6 +31,7 @@ import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 import { RpcSessionRegistry } from "./session-registry.ts";
 import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
@@ -82,7 +85,7 @@ const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
 function startHostObservers(
 	router: SessionCommandRouter,
 	writer: SessionEventWriter,
-	options: { onIdlePressure?: (rssMb: number) => void } = {},
+	options: { onIdlePressure?: (reading: HostMemoryReading) => void } = {},
 ): { stop: () => void } {
 	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
 	const memory = new HostMemorySampler({
@@ -127,6 +130,7 @@ export function createHostCore(
 	writer: SessionEventWriter,
 	capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
 	idle: HostIdleOverrides = {},
+	hostContext?: SessionContext,
 ) {
 	const policy = resolveHostIdlePolicy(process.env, idle);
 	const router = new SessionCommandRouter(
@@ -152,7 +156,7 @@ export function createHostCore(
 					}),
 				}),
 		writer,
-		options,
+		hostContext ? { ...options, hostContext } : options,
 		options.createBinding,
 		{ capabilities },
 		{
@@ -226,8 +230,12 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	await prepareSocketPath(socketPath);
 	const writer = new SessionEventWriter(() => {});
 	const connections = new Map<string, Connection>();
+	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
+	// connection that has only sent observing reads (`status`) is not occupancy.
+	const occupancy = new ClientOccupancy(() => {});
 	let draining = false;
 	let handoffAnnounced = false;
+	const hostContext = hostSessionContext(socketPath);
 	const { router, handle } = createHostCore(
 		options,
 		writer,
@@ -243,12 +251,13 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		// Supervised hosts idle-exit via the supervisor, but a socket host that
 		// outlives its supervisor (or is started bare) still self-exits when empty.
 		// A connected client counts as occupancy even with no session open: exiting
-		// under it would drop its socket and read as a crash to the supervisor.
+		// under it would drop its socket and read as a crash to the supervisor. Only an
+		// OBSERVER does not - one whose every request so far was an `observe: true` read.
 		// While DRAINING the opposite is true: the successor generation owns the socket, so a
 		// sessionless connection must not hold this host open.
 		{
 			onEmptyExit: () => void shutdown(0),
-			canExitWhenEmpty: () => draining || connections.size === 0,
+			canExitWhenEmpty: () => draining || (occupancy.attachedCount === 0 && occupancy.unclassifiedCount === 0),
 			onHandoffParked: async (ids) => {
 				await Promise.all(
 					ids.map(async (id) => {
@@ -258,12 +267,13 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				);
 			},
 		},
+		hostContext,
 	);
 	const observers = startHostObservers(router, writer, {
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
 		// this generation no longer owns the endpoint, leave - nobody can reach it to ask.
-		onIdlePressure: (rssMb) => {
-			hostLog(`memory pressure with no sessions: rssMb=${rssMb}`);
+		onIdlePressure: ({ footprintMb, measure, rssMb }) => {
+			hostLog(`memory pressure with no sessions: footprintMb=${footprintMb} (${measure}) rssMb=${rssMb}`);
 			void endpointSuperseded().then((superseded) => {
 				if (superseded) drainForHandoff();
 			}, noop);
@@ -304,6 +314,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			const id = `socket-${++nextConnection}`;
 			const sink = socketSink(socket);
 			writer.registerConnection(id, sink);
+			occupancy.admit(socket);
 			const detachReader = attachJsonlLineReader(
 				socket,
 				(line) => {
@@ -333,6 +344,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				detachReader();
 				writer.unregisterConnection(id);
 				connections.delete(id);
+				occupancy.release(socket);
 				// A socket that dies without close_session still owns its sessions' attachments
 				// and path reservations. Release them on the command chain so this runs after any
 				// in-flight command for this connection settles, otherwise the path stays pinned
@@ -491,6 +503,24 @@ function oversizedLineError(): string {
 
 function errorMessage(cause: unknown): string {
 	return cause instanceof Error ? cause.message : String(cause);
+}
+
+/**
+ * The identity every session on this socket host carries in its context: `host_socket`, the PUBLIC
+ * endpoint clients address (the supervisor's path for a supervised host, whose own listener is a
+ * private hop; the bound path for a bare one), realpath-canonicalized so it compares equal however
+ * the path was spelled; and `host_instance`, this generation. The endpoint is stable across handoffs,
+ * the instance is not. The FIRST generation runs this before its supervisor has created the socket's
+ * directory, a successor after, so the directory is canonicalized through its deepest existing
+ * ancestor: both then stamp the same spelling. `host_socket` is omitted where no public path exists
+ * (abstract sockets, a supervised win32 host, whose supervisor publishes none).
+ */
+function hostSessionContext(socketPath: string): SessionContext {
+	const supervised = readHostWatchdogConfigFromBrandEnv();
+	const endpoint = supervised === undefined ? socketPath : supervised.publicSocket;
+	if (endpoint === undefined || endpoint.startsWith("\0")) return { host_instance: hostInstanceId() };
+	const directory = canonicalSessionPath(dirname(endpoint));
+	return { host_socket: join(directory, basename(endpoint)), host_instance: hostInstanceId() };
 }
 
 /** The endpoint this host listens on, or nothing when it speaks stdio and shares no socket. */

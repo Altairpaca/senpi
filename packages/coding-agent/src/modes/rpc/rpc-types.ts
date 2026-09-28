@@ -15,6 +15,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionKind } from "../../core/extensions/types.ts";
+import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
@@ -276,7 +277,12 @@ export type RpcErrorCode =
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
 	| (RpcSessionCommand & { sessionId?: string })
-	| { id?: string; type: "get_protocol_info" }
+	| {
+			id?: string;
+			type: "get_protocol_info";
+			/** An observing read: this connection never counts as host activity (docs/rpc.md, idle exit). */
+			observe?: boolean;
+	  }
 	| {
 			id?: string;
 			type: "open_session";
@@ -340,6 +346,8 @@ export type RpcCommand =
 			 * default listing publishes interactive sessions only and carries no `context`.
 			 */
 			include_workers?: boolean;
+			/** An observing read, as on `get_protocol_info`. */
+			observe?: boolean;
 	  };
 
 // ============================================================================
@@ -523,6 +531,11 @@ export interface RpcProtocolInfo extends RpcProtocolIdentity {
 	readonly serverVersion: string;
 	readonly capabilities: string[];
 	readonly mode: "classic" | "multi";
+	/**
+	 * Multi-session hosts only: whether this host's memory sampler currently reads its memory footprint above
+	 * `SENPI_RPC_HOST_RSS_WARN_MB` (the state `host_memory_pressure` records announce). Observability only.
+	 */
+	readonly memory_pressure?: boolean;
 }
 
 // Success responses with data
@@ -1169,17 +1182,31 @@ export interface RpcHostStalledEvent {
 	sessionId?: string;
 	/** Tool that session was executing, when the stall happened inside one. */
 	tool?: string;
+	/**
+	 * Process CPU time spent during the stalled window, in milliseconds. Near `driftMs`: the host
+	 * was busy (JS work or a collection). Near zero: the process did not run (starved or waiting).
+	 */
+	processCpuMs?: number;
+	/** JS heap change across the stalled window, in megabytes; a large drop means a collection ran. */
+	heapDeltaMb?: number;
 }
 
 /**
- * Emitted while the host process is above its RSS warning threshold. Capacity is memory,
+ * Emitted while the host process's memory footprint is above its warning threshold. Capacity is memory,
  * never a refusal: the host reports the pressure and parks idle sessions sooner, and
  * never declines or kills a session because of it.
  */
 export interface RpcHostMemoryPressureEvent {
 	type: "host_memory_pressure";
-	/** Resident set size of the host process, in megabytes. */
+	/** Resident set size of the host process, in megabytes (what `ps` shows; it stays high after memory is returned). */
 	rssMb: number;
+	/**
+	 * Memory footprint of the host process, in megabytes: the number compared with the threshold (senpi#2261).
+	 * Hosts released before it omit this and `measure`.
+	 */
+	footprintMb?: number;
+	/** Kernel counter behind `footprintMb`; `"rss"` when the platform exposes no footprint counter. */
+	measure?: ProcessFootprintMeasure;
 	/** Live sessions the host is holding, including ones opening or closing. */
 	sessions: number;
 }

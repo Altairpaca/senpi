@@ -36,6 +36,16 @@ const DRAIN_SWEEP_MS = 50;
 export type RpcBindingFactory = typeof createRpcSessionBinding;
 
 /**
+ * What the host supplies to every `open_session`. `hostContext` is the host's own identity
+ * (`host_socket`, `host_instance`); it is merged OVER the client's context, because the host is the
+ * authority on which endpoint and generation a session runs behind.
+ */
+export type RpcHostSessionDefaults = Pick<
+	RpcSessionLaunchProfile,
+	"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
+> & { readonly hostContext?: RpcSessionLaunchProfile["sessionContext"] };
+
+/**
  * Occupancy policy for the shared multi-session host. All fields are opt-in:
  * a router constructed without a policy keeps today's behavior (sessions live
  * until close_session; the host never self-exits).
@@ -98,10 +108,7 @@ export class SessionCommandRouter {
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
 	>;
 	private readonly writer: SessionEventWriter;
-	private readonly defaults: Pick<
-		RpcSessionLaunchProfile,
-		"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
-	>;
+	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 	private readonly widths = new Map<string, Map<string, number>>();
@@ -130,7 +137,7 @@ export class SessionCommandRouter {
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
 		>,
 		writer: SessionEventWriter,
-		defaults: Pick<RpcSessionLaunchProfile, "cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel">,
+		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
 		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 		idle?: RpcSessionIdlePolicy,
@@ -269,6 +276,7 @@ export class SessionCommandRouter {
 					capabilities: [...capabilities],
 					mode: "multi",
 					...protocolIdentity(),
+					memory_pressure: this.memoryPressure,
 				},
 			};
 		}
@@ -490,7 +498,9 @@ export class SessionCommandRouter {
 							: this.defaults.creationModel,
 					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
 					sessionKind: command.kind,
-					sessionContext: command.context,
+					sessionContext: this.defaults.hostContext
+						? { ...command.context, ...this.defaults.hostContext }
+						: command.context,
 					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 				},

@@ -1,21 +1,61 @@
-## 2026-09-28 - Revert the fallback circuit breaker (#2201) (senpi#2227)
+## 2026-09-28 - /sessions alias and thinking/resume guidance (#1437)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/modes/interactive/session-failure-info.ts`: restored to its state before #2201 (merge 37b5f23).
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setupEditorSubmitHandler` opens the session selector for `/sessions` exactly as for `/resume`.
+- `packages/coding-agent/src/modes/interactive/help-content.ts`: the `/help` getting-started primer names `/thinking <level>` with the live `app.thinking.cycle` key, and `/resume` (or `/sessions`).
+- `packages/coding-agent/src/modes/interactive/tips/catalog/model-tips.ts`: the `thinking-level` tip names `/thinking <level>` and `/thinking` beside the cycle key; a new `efforts-command` tip, gated by `requiresCommand: "efforts"`, names `/efforts <level>`.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/session-tips.ts`: the `continue-session` tip names `/resume` and `/sessions` in the TUI beside `-r` and `-c` from the shell.
 
 ### Why
 
-Since #2201 merged, main CI fails the RPC named pipes (Windows) job deterministically: `test/rpc-host-lifecycle.test.ts` "does not exit while a turn is active even with no connections" loses the host (`connect ENOENT` on the pipe). The job passed on the nine main commits before it and fails on the merge and a rerun. The circuit breaker re-lands with the Windows fix separately.
+- A new user could not find how to change the thinking level (`/thinking` was broken, #1437) or how to reopen a session: they looked for `/sessions`, the OpenCode name, and `/help` and the tips never mentioned either path.
 
 ### Why an extension could not handle it
 
-A revert of core retry, session and settings code; nothing an extension owns.
+- `/sessions` has to open the interactive session selector, which only `InteractiveMode` owns, and builtin names are matched in the submit handler before extension commands; the `/help` primer and the tip catalog are host-owned with no extension registration API.
 
 ### Expected merge conflict zones
 
-- The same regions #2201 touched, when the circuit breaker re-lands.
+- LOW: the `/resume` branch in `setupEditorSubmitHandler`, `buildGettingStarted` in `help-content.ts`, and the two tip catalog files.
+
+## 2026-09-28 - Restore the /thinking interactive dispatch (#1437)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setupEditorSubmitHandler` dispatches `/thinking` and `/thinking <level>` to `handleThinkingCommand` (next to the `/model` branch); `createBaseAutocompleteProvider` gives the `thinking` builtin argument completions from `session.getAvailableThinkingLevels()`; `handleThinkingCommand`, `selectThinkingLevel`, and `showThinkingSelector` are restored from upstream 496185f6 with the `ThinkingSelectorComponent` import.
+- Upstream's single `session.setThinkingLevel(level, { persist })` is mapped onto the fork's split setters: `/thinking <level>` and Enter in the selector call `setSessionThinkingLevel` (session scope), Ctrl+S in the selector calls `setThinkingLevel`, which records the per-model level and refreshes `defaultThinkingLevel`, the same persistence as Shift+Tab and `/efforts <level>`.
+- `getAvailableThinkingLevels()` is awaited at every new call site because `InteractiveSession` widens it for the shared-host proxy; `getArgumentCompletions` is async for the same reason.
+
+### Why
+
+- The sync merge 463279038 (#1119) kept upstream's `thinking` entry in `BUILTIN_SLASH_COMMANDS` but resolved `interactive-mode.ts` without the handler, so autocomplete and `/help` advertised a command that fell through to `session.prompt()` and reached the model as a user message (#1437).
+
+### Why an extension could not handle it
+
+- Builtin slash commands are matched by literal text inside the interactive submit handler before extension commands are consulted; an extension cannot register `thinking` because the name is reserved by `BUILTIN_SLASH_COMMANDS` (`reasoning-commands.test.ts` pins that no alias is registered).
+
+### Expected merge conflict zones
+
+- MEDIUM: the `/model`..`/export` run of `if (text === ...)` branches in `setupEditorSubmitHandler`, the `loginCommand`/`thinkingCommand` completion blocks in `createBaseAutocompleteProvider`, and the three methods above `handleModelCommand`. Upstream carries the same methods with a `{ persist }` setter option; keep the fork's split-setter mapping on merge.
+
+## 2026-09-27 - /session shows what failed provider requests cost (senpi#2198)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleSessionCommand` appends `formatSessionFailureInfo(stats.failures)` (`session-failure-info.ts`, new) after the Cost block: failed requests with their errored/aborted split and share, time in failed requests, and retries after a failure (same user turn) that had no cache hit, with their uncached input tokens. Nothing is shown for a session without a failed request or a host that predates the report.
+
+### Why
+
+- Provider failures had no visible cost in the session stats surface (senpi#2198).
+
+### Why an extension could not handle it
+
+- `/session` is a builtin interactive command rendered inside `InteractiveMode`.
+
+### Expected merge conflict zones
+
+- LOW: the end of the Cost block in `handleSessionCommand` and one import in `interactive-mode.ts`.
 
 ## 2026-09-27 - Tips for the /computer command (senpi#2204)
 
@@ -1669,3 +1709,23 @@ The interactive component controls the common render-state boundary for every to
 The result field of createRenderState; exploration-container hooks belong to the sibling lane.
 
 - Covered production paths: `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`.
+
+## 2026-09-28 - A bare /skill namespace never reaches the model (senpi#2249)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the Enter submit handler and the Alt+Enter follow-up path treat a submitted `/skill` or `/skill:` as the skill namespace: the editor is reset to `/skill:` and `openAutocomplete()` lists the skills, or a warning explains that no skill is loaded or skill commands are disabled. Nothing is sent to `session.prompt`.
+
+### Why
+
+Users told to "type /skill: and pick a skill" submitted `/skill:` itself, and it reached the model as a user message.
+
+### Why an extension could not handle it
+
+An extension `input` handler runs inside `AgentSession.prompt`, after the TUI has already cleared the editor; only the submit handler can keep the user in the picker.
+
+### Expected merge conflict zones
+
+- LOW: the `isBareSkillNamespace` checks just before the `isExtensionCommand` branch of `setupEditorSubmitHandler` and at the top of `handleFollowUp`, and the new `openSkillPickerForBareNamespace` method beside `isExtensionCommand` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+- Covered production paths: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.

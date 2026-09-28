@@ -75,6 +75,7 @@ describe.skipIf(process.platform === "win32")("issue #2208 host generation ensur
 			}),
 		);
 
-		expect(result).toEqual({ pid, socket: qa.socket, reused: true });
+		expect(result).toEqual({ pid, socket: qa.socket, reused: true, release: expect.any(Function) });
+		result.release();
 	});
 });

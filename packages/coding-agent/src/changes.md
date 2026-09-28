@@ -1,3 +1,61 @@
+## 2026-09-28 - The process footprint reader is exported (senpi#2261)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `readOwnFootprint`, `readProcessFootprint` and the `ProcessFootprint` / `ProcessFootprintMeasure` types from the fork-only `src/core/process-footprint.ts`, which reads a process's memory footprint from the kernel (`phys_footprint` / `RssAnon` / `PrivateUsage`, RSS as the labelled fallback) synchronously, without spawning anything and without throwing.
+
+### Why
+
+- RSS stays high after memory is returned, so it cannot tell whether the host or an eval kernel still holds memory (senpi#2261). The RPC host sampler uses the reader, and exporting it lets `senpi-codemode` measure its kernel processes through `@code-yeongyu/senpi`.
+
+### Why an extension could not handle it
+
+- `src/index.ts` is the package's public surface; extensions cannot add exports to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the export block after `./core/package-manager.ts`.
+
+## 2026-09-28 - A main-thread Bun.WebView service is exported for eval kernels (senpi#2248)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `connectWebViewService` and the `WebViewServiceConnection` type from the fork-only `src/core/webview/webview-broker.ts`.
+- Fork-only `src/core/webview/`: `WebViewService` serves Chrome-backed `Bun.WebView`s on the process main thread to eval kernels in worker threads. Each kernel gets its own client (a private `MessagePort` and the views created through it); only the owner that connected a client can release it, a closed port releases it too, and Bun's Chrome is retired once no proxied view is left (`closeAll()` off macOS, a kill of Bun's own Chrome child on macOS, where `closeAll()` would also kill the shared WebKit host of native worker views).
+
+### Why
+
+- Bun constructs the `"chrome"` WebView backend only on the main thread, so `new Bun.WebView()` failed in every eval cell on Windows and Linux (Chrome is their default backend) and in every macOS cell that asked for `backend: "chrome"`.
+
+### Why an extension could not handle it
+
+- In RPC worker hosts the codemode extension itself runs in a session worker; only the process that owns the main thread can serve the views, and `src/index.ts` is the package's public surface.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the trailing utility export block (after the shell utilities).
+
+## 2026-09-28 - The shard naming helpers are exported from the package entry
+
+### What changed
+
+- `packages/coding-agent/src/modes/index.ts`: re-exports `shardKey`, `shardSocketPath`, `shardSocketPathForKey`, `daemonDirectoryName` and the `ShardKind` type from `modes/rpc/host-daemon-paths.ts`.
+- `packages/coding-agent/src/index.ts`: adds the same names to the run-mode export list, so `import { shardKey } from "@code-yeongyu/senpi"` resolves.
+- Tests: `test/rpc-host-shard-naming.test.ts` checks that the package entry exports the same functions and that they produce the fixed vectors.
+
+### Why
+
+omo imports senpi only through the package root (its `senpi-barrel.ts` resolves host symbols there, and `package.json` `exports` exposes no deeper path), so a helper exported only from `host-daemon-paths.ts` is unreachable to it and its shard naming would have to go through the `senpi host shard-path` CLI (senpi#2245 review M2).
+
+### Why an extension could not handle it
+
+`src/index.ts` is the package's public surface; extensions cannot add exports to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the run-mode export list from `./modes/index.ts`.
+- `packages/coding-agent/src/modes/index.ts`: the export block above the host-decision exports.
+
 ## 2026-09-27 - `senpi models discover <provider>` dispatch (senpi#2196)
 
 ### What changed
