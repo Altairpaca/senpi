@@ -30,7 +30,7 @@
 - `packages/ai/src/auth/helpers.ts`: `lazyOAuth` forwards `rejectedTokenStatuses` so the flag is readable without loading the flow module.
 - `packages/ai/src/auth/resolve.ts`: `AuthResolutionOverrides.rejectedAccess` names a token the provider just refused; `resolveStoredOAuth` treats a stored credential (or slot) still carrying it as stale and runs the normal compare-and-swap refresh, so a token another request already rotated is adopted instead of re-exchanged.
 - `packages/ai/src/auth/oauth/github-copilot.ts`, `packages/ai/src/providers/github-copilot.ts`: GitHub Copilot declares `rejectedTokenStatuses` 401/403 (constant `GITHUB_COPILOT_REJECTED_TOKEN_STATUSES` in `packages/ai/src/api/github-copilot-headers.ts`).
-- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/anthropic-messages.ts`: a `github-copilot` failure message is followed by the note from the new `api/github-copilot-errors.ts` (`withGitHubCopilotFailureNote`): quota exhaustion (402, 429 `quota_exceeded`, VS Code's quota codes) versus refusal (403, empty body called out), plus the `x-github-request-id`. `openai-responses.ts` now also sets `providerDiagnostic` on a failed request (as the other two adapters already did) so the HTTP status reaches the runtime.
+- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/anthropic-messages.ts`: a `github-copilot` failure message is followed by the note from the new `api/github-copilot-errors.ts` (`withGitHubCopilotFailureNote`): quota exhaustion (402, 429 `quota_exceeded`, VS Code's quota codes) versus refusal (403, empty body called out), plus the `x-github-request-id`. `openai-responses.ts` now also sets `providerDiagnostic` on a failed `github-copilot` request (the other two adapters already set it for every provider) so the HTTP status reaches the runtime.
 - `packages/ai/src/utils/retry.ts`: `classifyErrorMessage` and `isQuotaExhaustionMessage` drop request-id segments (new exported `stripProviderRequestIds` / `formatProviderRequestId` in the same file) before matching, because a hex id can contain `429` or `500`.
 
 ### Why
@@ -149,6 +149,29 @@
 
 - `packages/ai/src/index.ts`: the alphabetical `export *` block before `./env-api-keys.ts`.
 - `packages/ai/src/api/openai-completions.ts`: the `normalizedReasoning` computation in `streamSimple`.
+
+## 2026-09-28 - Bound GitHub Copilot requests to 128 tools (senpi#2298)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: after payload hooks and schema normalization, GitHub Copilot requests keep 128 serialized tools, preserving an explicitly forced tool even when it was declared later; they record how many definitions were omitted and replace a generic HTTP 400 `Bad Request` with a tool-limit explanation when that limit was applied.
+- `packages/ai/src/api/openai-responses.ts`: after payload hooks, native-tool sanitizing, and allowed-tool selection, GitHub Copilot streaming requests apply the same forced-tool-preserving bound and diagnostic; prompt-cache prewarm requests apply the bound too. The transport now attaches the same structured HTTP diagnostic as Chat Completions, so a generic 400 can be identified safely.
+- `packages/ai/src/api/anthropic-messages.ts`: after payload hooks and the final Anthropic tool-pair sanitizers, GitHub Copilot requests apply the same forced-tool-preserving bound, diagnostic, and generic-400 explanation.
+- Fork-owned `packages/ai/src/utils/github-copilot-tool-limit.ts` owns the shared 128-tool bound, non-mutating selection, wire-shape-aware forced-tool lookup, diagnostic, and generic-400 explanation. Adapters only replace `params.tools` when the bound actually omitted definitions, preserving the payload object a hook returned for every other request.
+
+### Why
+
+- GitHub Copilot returned HTTP 400 with a plain-text `Bad Request` body when senpi sent 130 function tools to Chat Completions, while the same request without tools succeeded. VS Code Copilot independently enforces a 128-tool hard limit on endpoints without tool search. Current Copilot catalog rows advertise no native deferred-tool capability, so all three senpi adapters previously serialized every available tool. A blind first-128 slice could remove the tool selected by `tool_choice`, so the selected tool is retained in preference to the 128th unforced definition.
+
+### Why an extension could not handle it
+
+- Extensions can add or rewrite provider payloads through `onPayload`, so the bound must run after that hook at each adapter's final wire-shaping boundary. A higher-level extension cannot guarantee that every Copilot API route sends at most 128 tools or attach the provider diagnostic to the resulting assistant message.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-completions.ts`: the post-`normalizeRequestToolSchemas` request setup and the terminal error formatter.
+- `packages/ai/src/api/openai-responses.ts`: the post-sanitizer request setup and prompt-cache prewarm body construction.
+- `packages/ai/src/api/anthropic-messages.ts`: the final request sanitizing block after `extractPayloadRequestMetadata`.
 
 ## 2026-09-24 - Forced tool_choice refused under thinking falls back instead of failing (senpi#2121)
 

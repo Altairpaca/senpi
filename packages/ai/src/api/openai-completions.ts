@@ -46,6 +46,11 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -552,6 +557,11 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				params = nextParams as OpenAICompletionsRequestParams;
 			}
 			params = normalizeRequestToolSchemas(params, compat);
+			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			if (limitedTools.omittedCount > 0) {
+				params = { ...params, tools: limitedTools.tools };
+				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -1002,7 +1012,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = withGitHubCopilotFailureNote(
-				formatProviderError(normalizeProviderError(error)),
+				formatGitHubCopilotToolLimitError(output, formatProviderError(normalizeProviderError(error))),
 				model.provider,
 				error,
 			);
