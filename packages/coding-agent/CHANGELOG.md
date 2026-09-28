@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- With Anthropic native tool search, a deferred tool whose parameters are a root union (`anyOf` with no top-level `type`, such as a desktop `computer` tool) no longer makes every request fail with `tools.N.custom.input_schema.type: Field required`: the injected schema is resolved into one object, as resident tools already were. ([#2252](https://github.com/code-yeongyu/senpi/issues/2252))
 ### Removed
 
 ## [2026.9.28] - 2026-09-28
