@@ -14,16 +14,17 @@ type DriverReport = {
 	readonly pid: number;
 	/** `ps` state of the retired worker's child once the retirement returned: "" means no process-table entry. */
 	readonly stateAfterRetire: string;
+	readonly timedOut: boolean;
 };
 
-// The worker spawns a child it keeps tracking, then blocks in a synchronous call, so an interrupt can only
-// retire it: the worker and every exit watcher it held for the child are gone, and the host kills the child.
+// The same shape that leaves two zombies per retirement on a real session: the cell spawns a child, then blocks in
+// a synchronous call past its timeout, so the kernel retires the worker while the child is still running.
 const RETIRED_WORKER_CELL = [
 	'const child = Bun.spawn(["sleep", "30"]);',
 	'print("MARK=" + child.pid);',
-	"await Bun.sleep(50);",
-	'Bun.spawnSync(["sleep", "8"]);',
-	'return "unblocked"',
+	"await Bun.sleep(20);",
+	'Bun.spawnSync(["sleep", "4"]);',
+	"1",
 ].join(" ");
 
 function driverSource(collect: boolean): string {
@@ -33,25 +34,23 @@ function driverSource(collect: boolean): string {
 		`import { collectOrphanedChildren } from ${JSON.stringify(reaperModulePath)};`,
 		"const [reportPath] = process.argv.slice(2);",
 		`const kernel = new JavaScriptKernel({ sessionId: "orphan-collect", cwd: process.cwd(), parallelPoolWidth: 1${collect ? ", collectOrphanedChildren" : ""} });`,
-		"const marker = Promise.withResolvers();",
-		"const run = kernel.run({",
+		"let pid = 0;",
+		"const result = await kernel.run({",
 		'  cellId: "retire-target",',
 		`  code: ${JSON.stringify(RETIRED_WORKER_CELL)},`,
-		"  timeoutMs: 20_000,",
+		"  timeoutMs: 1_000,",
 		"  onMessage: (message) => {",
 		'    if (message.type !== "text") return;',
 		"    const match = /MARK=(\\d+)/.exec(message.data);",
-		"    if (match) marker.resolve(Number(match[1]));",
+		"    if (match) pid = Number(match[1]);",
 		"  },",
 		"});",
-		"const pid = await marker.promise;",
-		'const handle = await kernel.interrupt("retire");',
-		"await run;",
-		"await handle.stateRetained;",
+		// The next cell runs on the replacement worker, so the retirement, including its child cleanup, is complete.
+		'await kernel.run({ cellId: "after-retire", code: "2", timeoutMs: 20_000 });',
 		'const stateAfterRetire = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)]).stdout.toString().trim();',
 		'try { process.kill(pid, "SIGKILL"); } catch {}',
-		"await kernel.close();",
-		'await writeFile(reportPath, JSON.stringify({ pid, stateAfterRetire }), "utf8");',
+		'await writeFile(reportPath, JSON.stringify({ pid, timedOut: result.ok === false, stateAfterRetire }), "utf8");',
+		"process.exit(0);",
 	].join("\n");
 }
 
@@ -75,12 +74,14 @@ describe.skipIf(!bunAvailable || !supportedPlatform)("JavaScript kernel collects
 		const report = await runDriver(true);
 
 		expect(report.pid).toBeGreaterThan(0);
-		expect(report.stateAfterRetire).toBe("");
+		expect(report.timedOut).toBe(true);
+		expect(report.stateAfterRetire, JSON.stringify(report)).toBe("");
 	});
 
 	it("Given no collector when a worker is retired then its killed child is left as a zombie of the host", async () => {
 		const report = await runDriver(false);
 
-		expect(report.stateAfterRetire.startsWith("Z")).toBe(true);
+		expect(report.timedOut).toBe(true);
+		expect(report.stateAfterRetire, JSON.stringify(report)).toMatch(/^Z/);
 	});
 });
