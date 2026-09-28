@@ -105,7 +105,7 @@ import type {
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
+import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
@@ -226,7 +226,11 @@ import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extensi
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
 import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
 import type { InteractiveSession } from "./interactive-host-runtime.ts";
-import { restoreInteractiveStderr, takeOverInteractiveStderr } from "./interactive-stderr-guard.ts";
+import {
+	prepareInteractiveStderrCapture,
+	restoreInteractiveStderr,
+	takeOverInteractiveStderr,
+} from "./interactive-stderr-guard.ts";
 import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-command.ts";
 import {
 	buildResourceScopeGroups,
@@ -1601,6 +1605,7 @@ export class InteractiveMode {
 		this.ui.setFocus(this.editor);
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
+		await prepareInteractiveStderrCapture();
 		try {
 			takeOverInteractiveStderr();
 			this.ui.start();
@@ -6528,17 +6533,41 @@ export class InteractiveMode {
 		// Record the crash before the terminal handoff: the banner below only reaches
 		// terminal scrollback, which is gone when the terminal is closed or is itself
 		// the thing that failed. A logging failure must never alter the crash path.
+		let logged = false;
 		try {
 			appendUncaughtCrashLog(origin, error);
+			logged = true;
 		} catch {}
 		restoreInteractiveStderr();
 		const storageMessage = storageWriteCrashMessage(error);
 		if (storageMessage !== undefined) {
 			console.error(storageMessage);
 		}
-		console.error(`${APP_NAME} exiting due to uncaughtException:`);
-		console.error(error);
+		// The full stack lives in the debug log; the restored terminal gets one readable line and
+		// where to look. Only a failed log write falls back to printing the whole error.
+		const summary = (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).split("\n")[0];
+		console.error(`${APP_NAME} exiting due to uncaughtException: ${summary}`);
+		if (logged) console.error(`Details: ${getDebugLogPath()}`);
+		else console.error(error);
 		process.exit(1);
+	}
+
+	/**
+	 * An unhandled rejection is a bug, not something the user can act on, and Bun keeps the
+	 * process running after one. It goes to the debug log and never to the terminal the TUI is
+	 * drawing on (#2284).
+	 */
+	private unhandledRejection(reason: unknown): void {
+		if (isDeadTerminalError(reason)) {
+			this.emergencyTerminalExit({ origin: "dead-terminal unhandledRejection", error: reason });
+		}
+		if (isRecoverableInspectorVmImportError(reason, "unhandledRejection")) {
+			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
+			return;
+		}
+		try {
+			appendUnhandledRejectionLog(reason);
+		} catch {}
 	}
 
 	/**
@@ -6610,6 +6639,9 @@ export class InteractiveMode {
 			this.uncaughtCrash(error, origin);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
+		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
+		process.prependListener("unhandledRejection", unhandledRejectionHandler);
+		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
 		// Surface Inspector rejections that the early bootstrap seam recovered before this
 		// handler (and the TUI warning surface) existed.
