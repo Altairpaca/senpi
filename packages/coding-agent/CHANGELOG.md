@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- A session's first work request no longer fails on providers that refuse a forced `tool_choice`, such as Kiro behind an OpenAI-compatible proxy (`400 ... Kiro supports only automatic tool choice or tool_choice:none`). The request is sent once more without the forced `todo` choice, the model is not forced again for the rest of the process, and `compat.supportsForcedToolChoice: false` in `models.json` skips forcing from the start. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
 - A shared RPC host no longer stays in memory pressure after its memory was returned. It judged `SENPI_RPC_HOST_RSS_WARN_MB` by RSS, which keeps counting freed memory (2314 MB RSS against a 143 MB footprint after an eval kernel reset), so it kept halving idle parking and reporting `memory_pressure: true`. It now compares the process footprint, and each `host_memory_pressure` record carries `footprintMb` and `measure` beside `rssMb`. `senpi host status` still shows RSS. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
 
 ### Removed
