@@ -1,3 +1,29 @@
+## 2026-09-28 - The shared host judges memory pressure by its footprint, not RSS (senpi#2261)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the pressure decision compares the host's memory footprint (`readOwnFootprint()` from the fork-only `src/core/process-footprint.ts`: `phys_footprint` on macOS, `RssAnon` on Linux, `PrivateUsage` on Windows, RSS where none is readable) with `SENPI_RPC_HOST_RSS_WARN_MB`, never RSS. The option `readFootprint` injects it (tests); `readRssBytes` stays for the reported RSS. `onIdlePressure` receives `{ footprintMb, measure, rssMb }`, and the stderr line names both numbers.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains the additive `footprintMb?` and `measure?`; `rssMb` stays and is still the true RSS.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `broadcastHostRecord` projects `footprintMb` and `measure` onto the `host_memory_pressure` wire record.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the idle-pressure log line names the footprint, its measure and RSS.
+- `senpi host status` is unchanged: its `rss_mb` / `host_rss_mb` stay `ps`-equivalent RSS.
+- Tests: `test/suite/process-footprint.test.ts` (new; a Bun fixture reads the platform counter for itself and a live child, sees it grow by the 96 MiB it touches, and gets `undefined` for an exited child), `test/suite/rpc-host-memory-pressure.test.ts` (pressure released while RSS stays high; RSS alone above the threshold stays silent), `test/suite/regressions/1893-host-idle-memory-watchdog.test.ts`, `test/suite/regressions/issue-2207-no-memory-admission-refusal.test.ts`.
+
+### Why
+
+- RSS keeps counting memory a Bun process already returned: after an eval kernel reset the host read 2314 MB RSS against a 143 MB footprint (senpi#2261), so an RSS-judged host stayed "pressured", kept halving idle parking and never cleared `memory_pressure`.
+
+### Why an extension could not handle it
+
+- The sampler, its lifecycle record and the wire projection belong to the RPC host process, which runs no extension of its own.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the options interface and `sample()`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` and the import block.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: the `host_memory_pressure` case of `broadcastHostRecord`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `startHostObservers`' options and the `onIdlePressure` callback.
+
 ## 2026-09-28 - Session workers get a route to the main-thread Bun.WebView service (senpi#2248)
 
 ### What changed

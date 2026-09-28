@@ -76,6 +76,7 @@ async function createHost(directories: string[]): Promise<Host> {
 		sessions: () => router.sessionCount,
 		onPressure: (active) => router.setMemoryPressure(active),
 		log: () => {},
+		readFootprint: () => ({ bytes: rssBytes, measure: "phys_footprint" }),
 		readRssBytes: () => rssBytes,
 		env: { SENPI_RPC_HOST_RSS_REFUSE_MB: "1" },
 	});
@@ -126,7 +127,13 @@ describe("issue 2207: memory never refuses an open", () => {
 			// Then: it is admitted, and the pressure record still went out
 			expect(response).toBeUndefined();
 			expect(host.router.sessionCount).toBe(1);
-			expect(host.pressure).toContainEqual({ type: "host_memory_pressure", rssMb, sessions: 0 });
+			expect(host.pressure).toContainEqual({
+				type: "host_memory_pressure",
+				rssMb,
+				footprintMb: rssMb,
+				measure: "phys_footprint",
+				sessions: 0,
+			});
 		} finally {
 			await host.router.dispose();
 		}

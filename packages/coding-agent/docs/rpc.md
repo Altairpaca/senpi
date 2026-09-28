@@ -166,8 +166,8 @@ parsing a version string:
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
   can recompute it and compare two hosts without comparing paths.
-- `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its RSS above
-  `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
+- `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
+  above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
 
 Compatibility is decided from `protocolVersion` + `capabilities`, and "is my build newer?" from `engineOrdinal`.
@@ -433,7 +433,7 @@ which prints the bare socket path).
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
   sessions spawned); `host_rss_mb` is only the supervisor and the host process, the number `ps` shows for those
-  pids and the one the host's memory sampler reads. All are `null` where the platform does not publish them
+  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure"). All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
   this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
   ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
@@ -442,7 +442,7 @@ which prints the bare socket path).
   never lists a dead pid.
 
   The last five fields and `memory_pressure` are additive (a client that does not know them ignores them):
-  - `memory_pressure`: whether the ANSWERING generation's memory sampler currently reads its RSS above
+  - `memory_pressure`: whether the ANSWERING generation's memory sampler currently reads its footprint above
     `SENPI_RPC_HOST_RSS_WARN_MB` (the state its `host_memory_pressure` records announce), read from its
     `get_protocol_info`; `null` when nothing answers or the host predates the field. It lives in the host process
     alone, so a draining predecessor's state is not reported, and it is observability only: a pressured endpoint
@@ -908,10 +908,14 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   still executing when it ended; when neither exists the record and the log line carry no session, because the stall
   belongs to the host itself. Worker-runtime sessions block their own isolate rather than the host loop and
   deliberately have no tool spans.
-- **Memory pressure**: a 30-second sampler reads the host's RSS. Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096) it
-  broadcasts `host_memory_pressure` (`{ type, rssMb, sessions }`) on every sample, writes one stderr line per five
-  minutes, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions return
-  their memory sooner. It is released as soon as RSS falls back under the threshold. Memory never refuses an open: the
+- **Memory pressure**: a 30-second sampler reads the host's memory footprint: `phys_footprint` on macOS, `RssAnon` on
+  Linux, `PrivateUsage` on Windows, and RSS only where none of those can be read (`measure: "rss"`). RSS itself never
+  decides: it keeps counting memory the host already returned (after a collection or an eval kernel reset it stayed
+  at gigabytes while the footprint was back near 150 MB, senpi#2261). Above `SENPI_RPC_HOST_RSS_WARN_MB` (default 4096,
+  compared with the footprint despite its name) it broadcasts `host_memory_pressure`
+  (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
+  both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
+  return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
   shared host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
   before #2207 had a second admission watermark; current hosts have no such admission path.
 - **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
@@ -2338,7 +2342,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `session_dir_removed`, `error` |
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
-| `host_memory_pressure` | Multi-session host: RSS is above `SENPI_RPC_HOST_RSS_WARN_MB`, with the live session count |
+| `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
 | `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
 | `session_parked` | Multi-session host: a retained session's handle was released while the session itself stays on disk (`{ sessionId, sessionPath }`); reopen it with `open_session { sessionPath }` |
@@ -2390,10 +2394,13 @@ the stall cannot be attributed to a session.
 ### host_memory_pressure
 
 ```json
-{ "type": "host_memory_pressure", "rssMb": 4608, "sessions": 12 }
+{ "type": "host_memory_pressure", "rssMb": 4910, "footprintMb": 4608, "measure": "phys_footprint", "sessions": 12 }
 ```
 
 Informational. Capacity is memory, never a refusal: the host reports the pressure and parks idle sessions sooner.
+`footprintMb` is the number compared with the threshold and `measure` names its kernel counter (`phys_footprint`,
+`rss_anon`, `private_usage`, or `rss` where none is readable); `rssMb` is what `ps` shows and can stay high after
+the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sessions` only.
 
 ### model_changed
 

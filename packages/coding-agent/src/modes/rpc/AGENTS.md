@@ -23,7 +23,7 @@ session-event-writer.ts, session-event-fanout.ts,
 session-extension-ui-requests.ts                            Session wiring
 session-attribution.ts    AsyncLocalStorage {sessionId, tool} the stall watchdog blames by
 loop-lag-watchdog.ts      200 ms drift probe -> stderr line + `host_stalled` record
-host-memory-sampler.ts    30 s RSS sampler -> `host_memory_pressure`; halves the idle window
+host-memory-sampler.ts    30 s footprint sampler (core/process-footprint.ts) -> `host_memory_pressure`; halves the idle window
 child-reaper.ts           Reaps exited children no live thread is left to wait on
 host-ensure.ts            ensureHost(): probe, decide, spawn through the lifecycle supervisor
 host-ensure-lock.ts       The per-endpoint ensure lock ensure, handoff and gc all take (canonical socket key)

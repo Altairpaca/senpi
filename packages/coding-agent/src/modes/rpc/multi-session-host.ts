@@ -20,7 +20,7 @@ import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
-import { HostMemorySampler } from "./host-memory-sampler.ts";
+import { type HostMemoryReading, HostMemorySampler } from "./host-memory-sampler.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
@@ -85,7 +85,7 @@ const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
 function startHostObservers(
 	router: SessionCommandRouter,
 	writer: SessionEventWriter,
-	options: { onIdlePressure?: (rssMb: number) => void } = {},
+	options: { onIdlePressure?: (reading: HostMemoryReading) => void } = {},
 ): { stop: () => void } {
 	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
 	const memory = new HostMemorySampler({
@@ -272,8 +272,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const observers = startHostObservers(router, writer, {
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
 		// this generation no longer owns the endpoint, leave - nobody can reach it to ask.
-		onIdlePressure: (rssMb) => {
-			hostLog(`memory pressure with no sessions: rssMb=${rssMb}`);
+		onIdlePressure: ({ footprintMb, measure, rssMb }) => {
+			hostLog(`memory pressure with no sessions: footprintMb=${footprintMb} (${measure}) rssMb=${rssMb}`);
 			void endpointSuperseded().then((superseded) => {
 				if (superseded) drainForHandoff();
 			}, noop);
