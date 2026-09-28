@@ -14,6 +14,8 @@
 
 - Settled eval cells kept for `peek`/`list` no longer pin up to ~800 MB of image data in the session's memory. Their images are written to `<session artifacts>/settled-images/` and read back on `peek`, which still returns the full result. The files are bounded by the new `memory.retainedImagesMb` setting (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), deleted with an evicted cell, and removed when the session ends. The in-memory snapshots are bounded by the new `memory.retainedResultsMb` setting (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) on top of the 32-cell count cap. ([#2259](https://github.com/code-yeongyu/senpi/issues/2259))
 
+- The JavaScript eval kernel no longer compiles a fresh code-cache entry for its loader prelude on every cell: the prelude is evaluated under one stable source URL (`senpi:kernel-prelude`) instead of a per-cell `` `${cellId}:prelude` `` URL, so identical prelude text reuses the engine's eval code cache: per-cell kernel heap growth over a 1,000-cell series drops from ~2.3 KB to ~1.1 KB (the remainder is the cell body's own per-cell source URL, kept for stack attribution and bounded by the engine's code-cache cap). Stack frames from prelude code now attribute to `senpi:kernel-prelude` for every cell. ([#2263](https://github.com/code-yeongyu/senpi/issues/2263))
+
 ### Removed
 
 ## [2026.9.28-3] - 2026-09-28
