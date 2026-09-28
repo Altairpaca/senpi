@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The `/computer` introduction tip now says computer use is experimental. The tip ids, their `/computer` gating and the other tips are unchanged. ([#2315](https://github.com/code-yeongyu/senpi/issues/2315))
+
 ### Fixed
 
 ### Removed
