@@ -1,5 +1,27 @@
 # senpi-codemode fork changes
 
+## 2026-09-28 - Kernel dispatcher no longer pins the first cell
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/session-manager.ts`: the per-kernel message dispatcher passed to kernels is a bound method (`#dispatchTo`) instead of a closure created inside `getKernel`, and the manager exposes `releaseKernelListener(language, onMessage)` which identity-checks and deletes the per-cell listener from the rebind map.
+- `packages/senpi-codemode/src/extension/session-manager-proxy.ts`: the proxy forwards `releaseKernelListener` to the current generation's manager, best-effort like the rest of the proxy surface.
+- `packages/senpi-codemode/src/tool/types.ts`: `EvalKernelManager` gains the optional `releaseKernelListener` contract.
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts`: each cell releases its kernel listener in the settle `finally` after the output flush; interpreter startup stderr still lands in the first cell because `getKernel` still registers the listener before kernel creation.
+- Tests: `test/session-manager-first-cell-pin.test.ts` (spawns Bun — JSC retains the closure environment, V8 does not), `test/session-manager-lifecycle.test.ts` (startup stderr routing, between-cells release, identity-checked stale release), `test/session-manager-proxy.test.ts` (release forwarding).
+
+### Why
+
+- The dispatcher closure captured the `getKernel` frame that created the kernel; under Bun/JSC that pinned the first cell's `onMessage` — its `CellHandler`, output buffers, and display images — for the whole kernel generation, and the rebind map kept the most recent settled cell's listener alive until the next cell or dispose (#2260).
+
+### Why an extension could not handle it
+
+- Kernel dispatch, listener rebinding, and cell settlement live in codemode's session manager and eval cell runtime.
+
+### Expected merge conflict zones
+
+- LOW: `getKernel`/dispose in `session-manager.ts`, the proxy kernel surface, the `EvalKernelManager` interface, and `executeCell`'s finally block in `run-eval-cell.ts` (the other eval-memory lanes touch nearby settlement code).
+
 ## 2026-09-27 - Tool kernel preludes in the eval kernels
 
 ### What changed
