@@ -18,6 +18,50 @@
 
 - LOW: `mergeProvidedPool`, its JSDoc, and the new `hasNewerMaterial` helper directly below it in `auth/pool/slots.ts`.
 
+## 2026-09-28 - A refused forced tool_choice is retried once and remembered per model; compat can declare it (senpi#2218)
+
+### What changed
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: `sendWithForcedToolChoiceFallback` owns the forced-choice retry for every adapter. It drops a forced `tool_choice` up front when the model declares `supportsForcedToolChoice: false` or refused one earlier in the process; otherwise it retries a classified 400 once without `tool_choice` and, when that retry is accepted and the refusal did not blame thinking, remembers the model (`api`, `provider`, `baseUrl`, `id`) in a process-level set read by `hasRefusedForcedToolChoice` and reset by `clearForcedToolChoiceRefusals`. The auto-only wording pattern now also matches Kiro's `Kiro supports only automatic tool choice or tool_choice:none`.
+- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/anthropic-messages.ts`: `createRequest` sends through `sendWithForcedToolChoiceFallback` instead of an inline try/retry. `openai-responses.ts` calls `client.responses.create(...).withResponse()` directly again (the senpi#2224 transport-diagnostic wrapping is not part of this fix) and `getCompat` defaults `supportsForcedToolChoice` to `true`.
+- `packages/ai/src/types.ts` (`OpenAICompletionsCompat`), `packages/ai/src/openai-responses-compat.ts` (`OpenAIResponsesCompat`): optional `supportsForcedToolChoice`.
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: `ResolvedOpenAICompletionsCompat` carries the optional flag and `getOpenAICompletionsCompat` passes the model's value through.
+
+### Why
+
+- The coding-agent first-turn plan opener forces `tool_choice` to `todo`. Kiro behind an OpenAI-compatible proxy refuses any forced choice with a wording the classifier did not match, so the first turn of every session failed (senpi#2218). Even with a matching wording, every new session paid the refused request again, and a provider known to be auto-only had no way to say so.
+- A refusal that names thinking (`Thinking may not be enabled when tool_choice forces tool use.`) depends on the request's thinking setting, so remembering it would stop forcing the same model with thinking off.
+
+### Why an extension could not handle it
+
+- The refusal is only observable inside the adapter's `createRequest`; an extension sees the payload before it is sent (`before_provider_request`) and cannot retry the rejection or learn from it. The coding-agent todotools read the remembered refusal through the `./utils/*` export.
+
+### Expected merge conflict zones
+
+- LOW: the `createRequest` blocks in `api/openai-completions.ts`, `api/openai-responses.ts`, and `api/anthropic-messages.ts` if upstream restructures request sending.
+- LOW: `OpenAICompletionsCompat` / `OpenAIResponsesCompat` field lists and `getOpenAICompletionsCompat` when upstream adds compat flags.
+
+## 2026-09-27 - openai-responses falls back without tool_choice when a provider refuses the forced choice (senpi#2224)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: the SSE request path wraps `client.responses.create` in `createRequest`, which retries once without `tool_choice` when `isForcedToolChoiceUnsupportedError` matches and the sent `tool_choice` was forced (anything but `auto`/`none`), mirroring `openai-completions.ts`. (senpi#2218 moved this retry into the shared `sendWithForcedToolChoiceFallback`.)
+- `packages/ai/src/utils/tool-choice-fallback.ts` `isForcedToolChoiceUnsupportedError`: the wording patterns accept `not currently compatible`/`not currently supported`, and a new pattern matches the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\`` (observed on OmniRoute for `opencode-go/muse-spark-1.3-contributor`, 2026-09-27).
+- `packages/ai/test/openai-responses-tool-choice.test.ts`: retry-without-tool_choice cases for the shared "not supported" wording and the #2224 auto-only wording, plus a no-retry case when `tool_choice` was not forced.
+
+### Why
+
+- The coding-agent first-turn todo forcing sends a named `tool_choice` on the session's first provider request. On `openai-responses` models that only accept `tool_choice: "auto"`, the request failed with a hard 400 and no retry, killing the session's first turn, while `openai-completions` and `anthropic-messages` already degraded to an unforced request for the same class of refusal (senpi#2224).
+
+### Why an extension could not handle it
+
+- The retry decision runs inside the adapter's `createRequest` after the provider rejects the request; an extension only sees the payload before it is sent (`before_provider_request`) and cannot observe or retry the rejection.
+
+### Expected merge conflict zones
+
+- LOW: the `requestOptions`/`retryProviderRequest` block in `api/openai-responses.ts` if upstream restructures the SSE request path or adds its own transport wrapping.
+- LOW: the regex list in `utils/tool-choice-fallback.ts` (same zone as the senpi#2121 entry).
+
 ## 2026-09-27 - Terminal provider errors keep the provider Retry-After; quota exhaustion wording is shared (senpi#2198)
 
 ### What changed
@@ -37,6 +81,27 @@
 
 - LOW: `NormalizedProviderError` and `formatProviderError` in `utils/error-body.ts`.
 - LOW: the head of `NON_RETRYABLE_PROVIDER_ERROR_PATTERN` in `utils/retry.ts`.
+
+## 2026-09-27 - Endpoint-advertised reasoning efforts (senpi#2196)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports the fork-only `endpoint-reasoning-efforts.ts` (`parseEndpointReasoningEfforts`, `EndpointReasoningEfforts`), which maps the `reasoning_efforts` an OpenAI-compatible `/models` entry advertises onto senpi's thinking levels. The fork-only `model.ts` gains an optional `defaultThinkingLevel`.
+- `packages/ai/src/api/openai-completions.ts`: `streamSimple` keeps the `gpt-6-astra` off -> low fallback only when the model's thinking map has no string `off` value; an explicitly mapped off value (such as an endpoint-advertised `none`) is sent when reasoning is off.
+
+### Why
+
+- OpenAI-compatible endpoints advertise which effort values each model accepts and which one is the default; the coding-agent's `senpi models discover` turns that into a model's `thinkingLevelMap` and `defaultThinkingLevel` (prior art: gajae-code #5979).
+- The Astra fallback turned an advertised `none` into `low`, enabling reasoning the endpoint was asked to disable.
+
+### Why an extension could not handle it
+
+- The mapper is a pure function of the package's own `ThinkingLevelMap` contract and belongs beside it so every consumer maps the same way; the barrel is the package's public entry. The off normalization happens inside the adapter while it builds the request, after any extension hook could influence the level.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/index.ts`: the alphabetical `export *` block before `./env-api-keys.ts`.
+- `packages/ai/src/api/openai-completions.ts`: the `normalizedReasoning` computation in `streamSimple`.
 
 ## 2026-09-24 - Forced tool_choice refused under thinking falls back instead of failing (senpi#2121)
 

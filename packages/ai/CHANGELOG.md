@@ -6,6 +6,48 @@
 
 ### Added
 
+- `openai-completions` and `openai-responses` models accept `compat.supportsForcedToolChoice`; `false` drops a forced `tool_choice` before the request is sent. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
+
+### Changed
+
+### Fixed
+
+- `openai-responses` retries once without `tool_choice` when the provider rejects a forced choice with a "not supported"-class 400 (matching `openai-completions`), and the classifier also recognises `not currently supported` and the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\``. ([#2224](https://github.com/code-yeongyu/senpi/issues/2224))
+- A provider that refuses a forced `tool_choice` with only automatic tool choice allowed (Kiro: `Kiro supports only automatic tool choice or tool_choice:none`) gets the request once more without it instead of failing, and a model whose refusal was retried successfully gets no forced `tool_choice` for the rest of the process, on `openai-completions`, `openai-responses`, and `anthropic-messages`. Refusals that blame thinking are retried each time rather than remembered. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- `parseEndpointReasoningEfforts()` maps the `reasoning_efforts` an OpenAI-compatible `/models` entry advertises onto senpi's thinking levels, and `Model` has an optional `defaultThinkingLevel`. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
 - `isQuotaExhaustionMessage()` recognises the same account quota, budget, credit, and billing exhaustion wording the retry classifier treats as terminal. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
 
 ### Changed
@@ -14,6 +56,18 @@
 
 - Re-logging in to an auth-blocked Claude subscription account now actually refreshes it. The login exchanged fresh tokens and reported success, but the credential-pool merge kept the stored slot for any name it already knew, so the revoked token and its `auth_error` block stayed on disk. A same-name slot with strictly newer material now replaces the stored copy; sibling accounts that rotated or were blocked during the browser round trip are still never rewound. ([#2222](https://github.com/code-yeongyu/senpi/issues/2222))
 - A terminal 429 or 503 error from an OpenAI-compatible (or Azure, Google, OpenRouter) provider keeps the provider's `Retry-After` (seconds or HTTP-date) as the `(retry-after-ms: N)` marker, so callers can honour it even when no retry ran. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
 
 ### Removed
 
