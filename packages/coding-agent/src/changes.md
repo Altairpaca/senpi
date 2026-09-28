@@ -1,3 +1,21 @@
+## 2026-09-27 - `senpi schedule` route for durable scheduled prompts
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `dispatchScheduleCommand(args)` runs beside the `host` route, BEFORE `parseArgs`, and exits with the code it returns, so `senpi schedule list|cancel|run` never falls through into argument parsing or a session. The implementation is `src/cli/schedule-command.ts` behind an `await import(...)` in `src/cli/deferred-commands.ts`.
+
+### Why
+
+- A prompt scheduled by the `schedule_prompt` tool (builtin `schedule`) must fire after the scheduling process exits, which a `--print` run always does. The firing half therefore runs as its own long-lived or cron-driven process, and that process is a CLI command.
+
+### Why an extension could not handle it
+
+- Command routing and process exit codes run before any extension is loaded, and an extension only lives as long as the session process that loaded it.
+
+### Expected merge conflict zones
+
+- LOW: one import name and one dispatch branch next to the `host` dispatch in `main.ts`.
+
 ## 2026-09-28 - Single-session modes arm the child reaper; orphaned-child collection is exported (senpi#1962)
 
 ### What changed

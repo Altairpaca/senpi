@@ -6,6 +6,7 @@
 
 ### Added
 
+- Durable scheduled prompts that work from `--print` and other headless runs. The new `schedule_prompt` tool stores a reminder, follow-up, or recurring prompt under `<agent dir>/schedule/`, and `senpi schedule run [--watch]` fires it later, after the scheduling process has exited. By default it resumes the scheduling session with `senpi -p --session`; with `--exec <command>` it hands the job as JSON on stdin to a hook such as a chat bridge. `senpi schedule list` and `senpi schedule cancel` manage jobs. See [docs/schedule.md](docs/schedule.md).
 - `collectOrphanedChildren(pids)` is exported from `@code-yeongyu/senpi`: it collects the exit status of the listed exited children of this process whose owning thread is gone, so they do not stay as zombies. ([#1962](https://github.com/code-yeongyu/senpi/issues/1962))
 - `readOwnFootprint()` and `readProcessFootprint(pid)` are exported from `@code-yeongyu/senpi`: they return how much memory a process really holds (`{ bytes, measure }`, where `measure` is `phys_footprint` on macOS, `rss_anon` on Linux, `private_usage` on Windows, or `rss` when none of those can be read) without spawning a process. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
 

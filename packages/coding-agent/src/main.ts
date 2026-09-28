@@ -37,6 +37,7 @@ import {
 	dispatchConfigCommand,
 	dispatchHostCommand,
 	dispatchPackageCommand,
+	dispatchScheduleCommand,
 } from "./cli/deferred-commands.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { resolveHelpExtensionFlags } from "./cli/help-extension-flags.ts";
@@ -1084,6 +1085,12 @@ export async function main(args: string[], options?: MainOptions) {
 	const hostExitCode = await dispatchHostCommand(args);
 	if (hostExitCode !== undefined) {
 		process.exit(hostExitCode);
+	}
+
+	// Durable scheduled prompts: fired out of process, so a job scheduled by an exited --print run still runs.
+	const scheduleExitCode = await dispatchScheduleCommand(args);
+	if (scheduleExitCode !== undefined) {
+		process.exit(scheduleExitCode);
 	}
 
 	const parsed = parseArgs(args);
