@@ -6,7 +6,6 @@
 - `packages/coding-agent/src/modes/app-server/extension-paths.ts`: local paths resolve against the invoking cwd, the same rule as the global `--extension` flag.
 - `packages/coding-agent/src/modes/app-server/runtime.ts`: `createAppServerRuntime` takes `extensionPaths`; thread create/resume/fork build a `DefaultResourceLoader` with them, and `skills/list` loaders see them too.
 - `packages/coding-agent/src/modes/app-server/daemon.ts`, `daemon/spawn.ts`, `daemon/probe.ts`: the daemon child is launched with the extensions and `settings.json` records them; `restart` reuses the recorded list unless the command names new ones. `spawnDaemon` moved to `daemon/spawn.ts` unchanged apart from the launch intent.
-- `packages/coding-agent/src/cli/args.ts`: the command help lists the flag.
 
 ### Why
 
