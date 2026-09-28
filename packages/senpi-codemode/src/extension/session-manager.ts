@@ -5,6 +5,7 @@ import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { type CodemodeSettings, defaultCodemodeSettings } from "../config/settings.ts";
 import type { InterpreterAvailability } from "../interpreters/detect.ts";
 import { JuliaKernel } from "../kernels/jl/kernel.ts";
@@ -230,6 +231,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				onMessage,
 				hostToolNames: () => this.#options.listTools?.().map((tool) => tool.name) ?? [],
 				foreignLanguageNames: () => this.#foreignKernelToolNames(),
+				memory: resolveKernelMemoryThresholds(this.#options.settings.memory),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),

@@ -1,5 +1,27 @@
 # senpi-codemode fork changes
 
+## 2026-09-28 - JavaScript kernel memory: post-cell and idle collection, large-globals notice, ceiling restart (senpi#2261)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-memory.js`, `worker-heap.js`, `worker-global-sizes.js`, `worker-core.js`: the JS worker measures its own heap after each cell (Bun `bun:jsc` `heapSize()` after an eden collection; Node used heap plus external memory), runs a full collection when the heap grew past the watermark, crossed the notice line, or reached the ceiling, schedules an idle collection about a second after a cell that leaves at least the watermark live (cleared by the next `run`, `interrupt`, or `close`; delayed so collections take at most 1/20 of the time; only on Node and Bun before 1.4.3, whose own idle collections run in Workers since oven-sh/bun#43174 and #43681), and names the largest user globals when live memory reaches the notice line.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`, `protocol.ts`, `reserved.ts`: optional `memory` thresholds on `init`, optional `memory` report on `result`, and the `memory-collected` status op for idle collections.
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory.ts`, `src/kernels/js/context-manager.ts`, `kernel-contract.ts`, `worker-startup.ts`: a per-kernel policy decides the notice (25% growth hysteresis, re-armed below half the threshold) and the ceiling; the JS host restarts an over-ceiling kernel only once its queue is empty and marks the next result `recycled`.
+- `packages/senpi-codemode/src/config/memory-settings.ts`, `settings.ts`, `src/extension/session-manager.ts`: `memory.gcWatermarkMb` / `noticeMb` / `ceilingMb` settings with `SENPI_CODEMODE_MEMORY_*_MB` overrides.
+- `packages/senpi-codemode/src/tool/cell-runtime.ts`, `types.ts`, `detached-cell-notification.ts`, `src/prompt/eval-prompt.ts`: the notice is its own text content part plus `details.memory`; detached notifications say when the kernel restarts or was restarted; one prompt guideline sentence names the notice.
+
+### Why
+
+- A JS kernel's worker collected only under allocation pressure, so memory from dropped globals stayed resident until reset (2 GB footprint 60 s after deleting every global), and nothing told the model which globals held tens of gigabytes.
+
+### Why an extension could not handle it
+
+- The kernel worker, its bridge protocol, and the eval result belong to this package.
+
+### Expected merge conflict zones
+
+- MEDIUM: `worker-core.js` `runCell`/`onMessage`, the `result`/`init` schemas in `protocol.ts`, the result-settle path of `context-manager.ts`, and the `memory` settings object shared with the settled-cell cache budget.
+
 ## 2026-09-28 - Kernel dispatcher no longer pins the first cell
 
 ### What changed

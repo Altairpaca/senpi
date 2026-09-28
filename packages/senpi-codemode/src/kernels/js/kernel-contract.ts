@@ -1,3 +1,4 @@
+import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
@@ -27,6 +28,10 @@ export interface JavaScriptKernelOptions {
 	readonly hostToolNames?: KernelToolNameSource;
 	/** Tool names registered in another kernel language, denied as JS kernel-tool identifiers. */
 	readonly foreignLanguageNames?: KernelToolNameSource;
+	/** Post-cell collection, notice, and ceiling thresholds; absent leaves the worker's memory unmanaged. */
+	readonly memory?: KernelMemoryThresholds;
+	/** Live heap bytes measured by an idle collection the worker ran between cells. */
+	readonly onMemoryCollected?: (liveBytes: number) => void;
 }
 
 export type JavaScriptRunInput = EvalKernelRunInput;
