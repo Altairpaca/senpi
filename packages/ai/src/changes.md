@@ -1,3 +1,21 @@
+## 2026-09-28 - allowed_tools no longer names a tool a payload hook removed (senpi#2234)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `applyAllowedToolsChoice` references a declared, active tool that is missing from `tools` only when `splitDeferredTools` deferred it to a transcript item. A function tool that a `before_provider_request` hook removed (the builtin `openai-web-search` extension swaps the `web_search` function for hosted `web_search_preview`) is no longer added back to `tool_choice: allowed_tools`. The new `resolveDeferredToolsMode` gives `buildParams` and `applyAllowedToolsChoice` the same deferred-mode decision.
+
+### Why
+
+- On a model that accepts `allowed_tools`, any inactive declared tool makes the adapter send `allowed_tools`, and the list named the hook-removed `web_search` function, which is not in `tools`. The Responses API rejects such a request with `400 Tool choice 'web_search' not found in 'tools' parameter.`, so native OpenAI sessions with default settings failed every turn.
+
+### Why an extension could not handle it
+
+- The adapter builds `tool_choice` after `onPayload` returns, so a `before_provider_request` hook never sees the `allowed_tools` list it would have to correct.
+
+### Expected merge conflict zones
+
+- LOW: the reference loop in `applyAllowedToolsChoice` and the deferred-mode lines at the top of `buildParams` in `openai-responses.ts`.
+
 ## 2026-09-27 - Terminal provider errors keep the provider Retry-After; quota exhaustion wording is shared (senpi#2198)
 
 ### What changed
