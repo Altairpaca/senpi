@@ -523,7 +523,9 @@ export class RpcClient {
 		if (!response.success) {
 			const failure = response as Extract<RpcResponse, { success: false }>;
 			const unknownCommand =
-				failure.errorCode === RPC_ERROR_UNKNOWN_COMMAND ? unknownCommandErrorFromWire(failure.errorData) : undefined;
+				failure.errorCode === RPC_ERROR_UNKNOWN_COMMAND
+					? unknownCommandErrorFromWire(failure.errorData)
+					: undefined;
 			throw unknownCommand ?? new Error(failure.error);
 		}
 	}

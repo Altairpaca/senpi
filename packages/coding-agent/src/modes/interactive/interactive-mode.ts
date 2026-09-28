@@ -158,7 +158,6 @@ import {
 	transferCompactionQueue,
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
-import { reportUnknownCommand, submitsCommandAsText } from "./unknown-command-feedback.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { getAskUserAnswerHeaders, parseAskUserAnswerFrame } from "./components/ask-user-answer-chip.ts";
 import { matchesAskUserAnswerKey } from "./components/ask-user-answer-key.ts";
@@ -288,6 +287,7 @@ import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
+import { reportUnknownCommand, submitsCommandAsText } from "./unknown-command-feedback.ts";
 import { formatDisplayVersion } from "./version-label.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,

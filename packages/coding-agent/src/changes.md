@@ -145,7 +145,7 @@ omo imports senpi only through the package root (its `senpi-barrel.ts` resolves 
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/index.ts`: the line after the `./core/source-info.ts` export.
+- `packages/coding-agent/src/index.ts`: the line after the `./core/trust-manager.ts` export.
 
 ## 2026-09-27 - `senpi models discover <provider>` dispatch (senpi#2196)
 

@@ -124,7 +124,10 @@ describe("unknown command feedback in the interactive editor", () => {
 
 		await context.defaultEditor.onSubmit?.("/foo bar", { rawText: " /foo bar" });
 
-		expect(context.session.prompt).toHaveBeenCalledWith("/foo bar", expect.objectContaining({ unknownCommandAsText: true }));
+		expect(context.session.prompt).toHaveBeenCalledWith(
+			"/foo bar",
+			expect.objectContaining({ unknownCommandAsText: true }),
+		);
 	});
 
 	it("carries the leading-space escape through an idle submission into the prompt options", async () => {
@@ -137,7 +140,11 @@ describe("unknown command feedback in the interactive editor", () => {
 		expect(escaped?.unknownCommandAsText).toBe(true);
 		expect(checked?.unknownCommandAsText).toBeUndefined();
 		expect(
-			prototype.buildMainLoopPromptOptions.call(context, { text: "/foo bar", pendingEchoId: undefined, unknownCommandAsText: true }),
+			prototype.buildMainLoopPromptOptions.call(context, {
+				text: "/foo bar",
+				pendingEchoId: undefined,
+				unknownCommandAsText: true,
+			}),
 		).toEqual(expect.objectContaining({ unknownCommandAsText: true }));
 	});
 });

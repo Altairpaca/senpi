@@ -1,9 +1,4 @@
-import type {
-	AutocompleteItem,
-	AutocompleteProvider,
-	AutocompleteSuggestions,
-	MentionRange,
-} from "../autocomplete.ts";
+import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions, MentionRange } from "../autocomplete.ts";
 import type { EditorSubmitDetails } from "../editor-component.ts";
 import {
 	type EditorImageState,

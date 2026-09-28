@@ -1135,7 +1135,13 @@ export function createRpcConnectionHandler(
 						if (preflightSucceeded) return;
 						if (e instanceof UnknownCommandError) {
 							const { command: name, suggestions, reason } = e;
-							output(error(id, "prompt", e.message, RPC_ERROR_UNKNOWN_COMMAND, { command: name, suggestions, reason }));
+							output(
+								error(id, "prompt", e.message, RPC_ERROR_UNKNOWN_COMMAND, {
+									command: name,
+									suggestions,
+									reason,
+								}),
+							);
 							return;
 						}
 						output(error(id, "prompt", e.message));

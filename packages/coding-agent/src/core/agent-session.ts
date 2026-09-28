@@ -229,8 +229,6 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
-import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
-import { findUnknownCommand } from "./unknown-command.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -283,6 +281,7 @@ import {
 	type SkillInvocationToken,
 } from "./skill-invocation.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
+import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
@@ -291,6 +290,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */

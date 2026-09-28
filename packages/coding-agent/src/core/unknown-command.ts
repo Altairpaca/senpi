@@ -40,8 +40,7 @@ function formatUnknownCommandMessage(
 	if (reason === "interactive_only") {
 		return `/${command} is an interactive command and cannot be sent as a prompt.`;
 	}
-	const hint =
-		suggestions.length === 0 ? "" : ` Did you mean ${suggestions.map((name) => `/${name}`).join(", ")}?`;
+	const hint = suggestions.length === 0 ? "" : ` Did you mean ${suggestions.map((name) => `/${name}`).join(", ")}?`;
 	return `Unknown command /${command}.${hint} Start the message with a space to send it as text.`;
 }
 
