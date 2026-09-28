@@ -94,7 +94,7 @@ function errorMessage(errorMessage: string): AssistantMessage {
 		content: [],
 		api: "openai-completions",
 		provider: "github-copilot",
-		model: "kimi-k3",
+		model: "gpt-5.4",
 		usage: {
 			input: 0,
 			output: 0,
@@ -118,10 +118,10 @@ describe("GitHub Copilot account model limits", () => {
 
 	it("uses refreshed prompt and output limits for available models", async () => {
 		stubRefreshCatalog([
-			modelEntry("kimi-k3", {
-				max_context_window_tokens: 262_144,
-				max_prompt_tokens: 200_000,
-				max_output_tokens: 32_768,
+			modelEntry("gpt-5.4", {
+				max_context_window_tokens: 400_000,
+				max_prompt_tokens: 272_000,
+				max_output_tokens: 128_000,
 			}),
 		]);
 
@@ -133,9 +133,9 @@ describe("GitHub Copilot account model limits", () => {
 
 		expect(available).toHaveLength(1);
 		expect(available[0]).toMatchObject({
-			id: "kimi-k3",
-			contextWindow: 200_000,
-			maxTokens: 32_768,
+			id: "gpt-5.4",
+			contextWindow: 272_000,
+			maxTokens: 128_000,
 		});
 	});
 

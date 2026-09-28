@@ -10,7 +10,7 @@
 
 ### Why
 
-- Copilot's authenticated `GET /models` can advertise smaller prompt, context, and output limits than the native models.dev rows senpi generates. The previous parser discarded those fields, so models such as Kimi K3 and Claude Opus kept million-token native windows even when Copilot would reject the account at a smaller prompt cap; pre-flight compaction therefore started too late.
+- Copilot's authenticated `GET /models` can advertise smaller prompt, context, and output limits than the native models.dev rows senpi generates. The previous parser discarded those fields. The public oh-my-pi Copilot discovery fix records `gpt-5.4` with a 272,000-token Copilot prompt cap versus its larger native total window, while senpi's generated Copilot row currently carries 1,000,000; without the credential overlay, pre-flight compaction starts after the account prompt cap. Source: https://github.com/can1357/oh-my-pi/pull/631
 - Microsoft VS Code records the rejection as HTTP 400 with code `model_max_prompt_tokens_exceeded` and message `prompt token count of 13613 exceeds the limit of 12288`. Treating either preserved part of that response as context overflow routes the turn into the existing bounded compact-and-retry recovery.
 
 ### Why an extension could not handle it
@@ -19,7 +19,7 @@
 
 ### Expected merge conflict zones
 
-- MEDIUM: `parseGitHubCopilotModelCatalog` was extracted from `auth/oauth/github-copilot.ts`; the parallel senpi#2297 lane also changes refresh/login code, but this entry only adds the parser import and carries `modelLimits` through the existing return objects.
+- LOW: `parseGitHubCopilotModelCatalog` was extracted from `auth/oauth/github-copilot.ts`; the OAuth orchestration stays unchanged apart from carrying `modelLimits` through the existing login and refresh return objects.
 - LOW: `filterModels` in `providers/github-copilot.ts` and the GitHub Copilot regex row in `utils/overflow.ts`.
 
 ## 2026-09-28 - A same-name re-login refresh survives the provider-pool merge (senpi#2222)
