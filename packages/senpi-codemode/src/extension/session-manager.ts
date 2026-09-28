@@ -7,6 +7,7 @@ import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { type CodemodeSettings, defaultCodemodeSettings } from "../config/settings.ts";
+import { collectOrphanedChildren } from "../host-sdk.ts";
 import type { InterpreterAvailability } from "../interpreters/detect.ts";
 import { JuliaKernel } from "../kernels/jl/kernel.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
@@ -232,6 +233,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				hostToolNames: () => this.#options.listTools?.().map((tool) => tool.name) ?? [],
 				foreignLanguageNames: () => this.#foreignKernelToolNames(),
 				memory: resolveKernelMemoryThresholds(this.#options.settings.memory),
+				collectOrphanedChildren,
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),

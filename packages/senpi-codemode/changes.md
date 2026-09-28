@@ -1,5 +1,23 @@
 # senpi-codemode fork changes
 
+## 2026-09-28 - Retired JS worker children are collected, not left as zombies (senpi#1962)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/context-manager.ts`, `kernel-contract.ts`, `src/extension/session-manager.ts`, `src/host-sdk.ts`: after `#retireWorkerChildren()` kills a retired worker's children it calls the new optional `collectOrphanedChildren` kernel option, which the session manager wires to `collectOrphanedChildren` from `@code-yeongyu/senpi` (exact-pid `waitpid(pid, WNOHANG)`, never `waitpid(-1)`).
+
+### Why
+
+- `worker.terminate()` destroys the exit watchers of every child the worker spawned, and the host only signalled those pids, so each one stayed a zombie for the life of the process (#1962).
+
+### Why an extension could not handle it
+
+- The worker lifecycle and its child tracking belong to this package's kernel.
+
+### Expected merge conflict zones
+
+- LOW: `#retireWorkerChildren` in `context-manager.ts` and the kernel options object in `session-manager.ts`.
+
 ## 2026-09-28 - Python, Ruby, and Julia kernel memory: footprint report, collection, notice, ceiling restart (senpi#2261)
 
 ### What changed

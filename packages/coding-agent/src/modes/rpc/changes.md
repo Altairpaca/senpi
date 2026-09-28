@@ -1,3 +1,21 @@
+## 2026-09-28 - Exact-pid collection for children whose thread is gone (senpi#1962)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/child-reaper.ts`: new `collectOrphanedChildren(pids)` reuses the reaper's syscalls to collect the listed exited children right away (WNOWAIT peek, then `waitpid(pid, WNOHANG)`), for callers that know the owning thread is gone and so need no two-tick window.
+
+### Why
+
+- The eval kernel knows exactly which pids a retired worker left behind; waiting for the reaper's 30 s window would leave them as zombies in the meantime, and single-session modes had no reaper at all (#1962).
+
+### Why an extension could not handle it
+
+- The reaper and its `bun:ffi` bindings live in this package.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `child-reaper.ts`.
+
 ## 2026-09-28 - The shared host judges memory pressure by its footprint, not RSS (senpi#2261)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-09-28 - Single-session modes arm the child reaper; orphaned-child collection is exported (senpi#1962)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: interactive, print, JSON and single-session RPC modes start `startHostChildReaper` (the multi-session host already did) before the mode runs; interactive mode passes a silent log sink because the TUI owns stderr, print mode stops it before returning.
+- `packages/coding-agent/src/index.ts`: exports `collectOrphanedChildren` from `src/modes/rpc/child-reaper.ts`.
+
+### Why
+
+- Every mode hosts the eval kernel, and a terminated worker thread takes its children's exit watchers with it; outside the multi-session host nothing ever collected them, so interactive sessions accumulated zombies for days (#1962).
+
+### Why an extension could not handle it
+
+- Arming a process-wide reaper and exporting the collector belong to the host process entry point and the package's public surface.
+
+### Expected merge conflict zones
+
+- LOW: the mode dispatch at the end of `main()` in `main.ts`; the export list in `index.ts`.
+
 ## 2026-09-28 - The process footprint reader is exported (senpi#2261)
 
 ### What changed
