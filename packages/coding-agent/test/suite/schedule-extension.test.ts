@@ -122,10 +122,16 @@ describe("schedule extension", () => {
 			await callSchedule(harness, { action: "create", prompt: "x", at: "2030-01-01T09:00:00" }),
 			await callSchedule(harness, { action: "create", prompt: "x", at: "2020-01-01T00:00:00Z" }),
 			await callSchedule(harness, { action: "create", prompt: "x", delaySeconds: 60, everySeconds: 5 }),
+			await callSchedule(harness, {
+				action: "create",
+				prompt: "x",
+				delaySeconds: 60,
+				everySeconds: 9_000_000_000_000,
+			}),
 			await callSchedule(harness, { action: "create", prompt: "x".repeat(MAX_PROMPT_BYTES + 1), delaySeconds: 60 }),
 		];
 
-		expect(rejected.map((result) => result.isError)).toEqual([true, true, true, true, true]);
+		expect(rejected.map((result) => result.isError)).toEqual([true, true, true, true, true, true]);
 		expect((await listScheduledJobs(jobsDir(harness))).jobs).toEqual([]);
 	});
 

@@ -98,6 +98,9 @@ export function parseScheduledJob(raw: unknown): ScheduledJob {
 	if (everyMs !== null && everyMs < MIN_EVERY_SECONDS * 1000) {
 		throw new InvalidScheduledJobError(`scheduled job recurrence must be at least ${MIN_EVERY_SECONDS}s`);
 	}
+	if (everyMs !== null && everyMs > MAX_SCHEDULE_AHEAD_MS) {
+		throw new InvalidScheduledJobError("scheduled job recurrence must be at most 366 days");
+	}
 	const prompt = requireString(raw, "prompt");
 	if (Buffer.byteLength(prompt, "utf8") > MAX_PROMPT_BYTES) {
 		throw new InvalidScheduledJobError(`scheduled job prompt exceeds ${MAX_PROMPT_BYTES} bytes`);

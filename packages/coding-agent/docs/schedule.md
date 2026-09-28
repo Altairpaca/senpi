@@ -19,7 +19,7 @@ There are two parts:
 | `prompt` | create | Text delivered to this session when the job fires |
 | `delaySeconds` | create | Fire this many seconds from now |
 | `at` | create | ISO 8601 date-time with `Z` or a UTC offset, e.g. `2026-09-28T09:00:00+09:00`; a time without one is rejected |
-| `everySeconds` | create | Repeat every N seconds (minimum 60) |
+| `everySeconds` | create | Repeat every N seconds (minimum 60, at most 366 days) |
 | `id` | cancel | Job id (`sch_...`) |
 
 `create` needs exactly one of `delaySeconds` and `at`. A due time more than a minute in the past, or more than 366 days ahead, is rejected. A prompt may be at most 16 KiB, a session may hold 50 pending jobs, and the agent directory 1000. The result's `runnerAvailable` detail says whether a `senpi schedule run --watch` runner is currently live.

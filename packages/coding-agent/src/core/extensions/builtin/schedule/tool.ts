@@ -139,6 +139,9 @@ async function create(
 		if (!Number.isSafeInteger(params.everySeconds) || params.everySeconds < MIN_EVERY_SECONDS) {
 			throw new Error(`everySeconds must be an integer of at least ${MIN_EVERY_SECONDS}.`);
 		}
+		if (params.everySeconds * 1000 > MAX_SCHEDULE_AHEAD_MS) {
+			throw new Error(`everySeconds must be at most ${MAX_SCHEDULE_AHEAD_MS / 1000} (366 days).`);
+		}
 		everyMs = params.everySeconds * 1000;
 	}
 	const dir = scheduleDir(ctx.agentDir);
