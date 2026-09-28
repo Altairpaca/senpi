@@ -13,6 +13,7 @@ import { JsonlPeer } from "./helpers/rpc-generation-support.ts";
 import {
 	type EndpointScratch,
 	endpointScratch,
+	heldRealHost,
 	hostArgs,
 	hostEnv,
 	realHost,
@@ -20,7 +21,7 @@ import {
 	sweepEndpointScratches,
 	tracked,
 } from "./helpers/rpc-host-endpoint-scratch.ts";
-import { waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -75,6 +76,36 @@ describe.skipIf(process.platform === "win32")("host status reads and idle exit",
 		expect(exited).toBe(true);
 		expect(reachablePolls).toBeGreaterThanOrEqual(2);
 		expect(Date.now() - ensuredAt).toBeLessThan(IDLE_EXIT_MS + 10_000);
+	}, 120_000);
+
+	// The ensure's attach hold (senpi#2227) is the readiness connection itself, whose request is UNMARKED:
+	// it must count as an attachment although marked status reads around it do not.
+	it("keeps a host held by an unreleased ensure alive under status polling, then idles it out once released", async () => {
+		const qa = endpointScratch("hold");
+		const ensured = await heldRealHost(qa, qa.shard, { idleExitMs: IDLE_EXIT_MS });
+		const heldUntil = Date.now() + 2 * IDLE_EXIT_MS + POLL_INTERVAL_MS;
+		let heldPolls = 0;
+		while (Date.now() < heldUntil) {
+			const { endpoints } = await statusAll(qa);
+			if (endpoints.some((endpoint) => endpoint.reachable)) heldPolls++;
+			await delay(POLL_INTERVAL_MS);
+		}
+		expect(processAlive(ensured.pid)).toBe(true);
+		expect(heldPolls).toBeGreaterThanOrEqual(4);
+
+		ensured.release();
+		const releasedAt = Date.now();
+		let exited: boolean | undefined;
+		const exit = waitForPidGone(ensured.pid, 10 * IDLE_EXIT_MS).then((gone) => {
+			exited = gone;
+		});
+		while (exited === undefined) {
+			await statusAll(qa);
+			await Promise.race([exit, delay(POLL_INTERVAL_MS)]);
+		}
+
+		expect(exited).toBe(true);
+		expect(Date.now() - releasedAt).toBeLessThan(IDLE_EXIT_MS + 10_000);
 	}, 120_000);
 
 	it("lets a bare socket host empty-exit on schedule while one open connection keeps observing it", async () => {

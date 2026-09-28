@@ -29,6 +29,7 @@ async function refusedHandoff(qa: EndpointScratch, afterSpawn: (pid: number) => 
 	await realHost(qa, qa.legacy);
 	const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
 	const settingsBefore = await readFile(paths.settingsFile);
+	const pointerBefore = await readFile(paths.pointerFile);
 	const generationsBefore = (await readdir(paths.generationsDir)).sort();
 	let successorPid = 0;
 	const result = await handoffHost({
@@ -45,7 +46,7 @@ async function refusedHandoff(qa: EndpointScratch, afterSpawn: (pid: number) => 
 			},
 		} satisfies HandoffHostOptions["_test"],
 	});
-	return { paths, settingsBefore, generationsBefore, successorPid, result };
+	return { paths, settingsBefore, pointerBefore, generationsBefore, successorPid, result };
 }
 
 async function expectUntouched(qa: EndpointScratch, refused: Awaited<ReturnType<typeof refusedHandoff>>) {
@@ -58,6 +59,10 @@ async function expectUntouched(qa: EndpointScratch, refused: Awaited<ReturnType<
 	expect
 		.soft((await readFile(refused.paths.settingsFile)).toString("utf8"))
 		.toBe(refused.settingsBefore.toString("utf8"));
+	// The dead successor's teardown removes only its own record: the pointer still names the predecessor.
+	expect
+		.soft((await readFile(refused.paths.pointerFile)).toString("utf8"))
+		.toBe(refused.pointerBefore.toString("utf8"));
 }
 
 describe.skipIf(process.platform === "win32")("a refused handoff leaves the endpoint as it found it", () => {
