@@ -1,9 +1,12 @@
 import type { MessagePort } from "node:worker_threads";
-import { connectWebViewService, type WebViewServiceConnection } from "@code-yeongyu/senpi";
+import type { WebViewServiceConnection } from "@code-yeongyu/senpi";
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { bridgeError } from "./worker-host.ts";
 
 export type WebViewConnector = () => Promise<WebViewServiceConnection>;
+
+// Loaded on the first WebView a cell asks for, so starting a kernel never pays for the host barrel.
+const connectThroughHost: WebViewConnector = async () => (await import("@code-yeongyu/senpi")).connectWebViewService();
 
 /**
  * The WebView clients one worker generation asked for. Chrome-backed `Bun.WebView`s only run on the
@@ -18,7 +21,7 @@ export class KernelWebViewClients {
 
 	constructor(
 		post: (message: HostToKernelMessage, transfer: readonly MessagePort[]) => void,
-		connect: WebViewConnector = connectWebViewService,
+		connect: WebViewConnector = connectThroughHost,
 	) {
 		this.#post = post;
 		this.#connect = connect;
