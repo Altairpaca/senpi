@@ -42,6 +42,7 @@ import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { limitGitHubCopilotTools, recordGitHubCopilotToolLimit } from "../utils/github-copilot-tool-limit.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -1250,6 +1251,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
+				const limitedTools = limitGitHubCopilotTools(model.provider, params.tools);
+				params.tools = limitedTools.tools;
+				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
 				const requestOptions = {
 					...(requestSignal ? { signal: requestSignal } : {}),
 					...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),

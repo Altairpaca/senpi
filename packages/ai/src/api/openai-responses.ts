@@ -29,6 +29,7 @@ import type {
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { limitGitHubCopilotTools, recordGitHubCopilotToolLimit } from "../utils/github-copilot-tool-limit.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
@@ -330,6 +331,9 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 			params = sanitizeUnsupportedNativeTools(params, compat);
 			params = applyAllowedToolsChoice(params, context, compat);
+			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools);
+			params.tools = limitedTools.tools;
+			recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
 			const transport = options?.transport ?? "sse";
 			if (transport !== "sse" && compat.supportsWebSocket) {
 				let websocketStarted = false;
@@ -490,6 +494,7 @@ export async function warmOpenAIResponsesPromptCache(
 	const nextParams = await resolved.onPayload?.(params, model);
 	if (nextParams !== undefined) params = nextParams as MutableResponsesPayload;
 	params = sanitizeUnsupportedNativeTools(params, compat);
+	params.tools = limitGitHubCopilotTools(model.provider, params.tools).tools;
 	const body = {
 		...params,
 		stream: false,
