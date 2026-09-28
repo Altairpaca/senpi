@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, watch } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import {
 	type Delivery,
 	type DeliveryResult,
 	deferWhileSessionOpen,
+	POSIX_GATE,
 	runDeliveryProcess,
 	type ScheduledPromptEvent,
 } from "../../src/cli/schedule-delivery.ts";
@@ -665,27 +666,43 @@ describe("schedule runner", () => {
 		const root = await tempDir();
 		const marker = join(root, "ran");
 
+		// The gate is never released (proven to hold by the gate test below), so the command cannot run.
 		const result = await runDeliveryProcess({ command: "/bin/sh", args: ["-c", `touch '${marker}'`] }, 30_000, {
 			onSpawn: async () => {
-				// An ungated command would create the marker now; wait for that exact event (bounded).
-				await new Promise<void>((resolve) => {
-					const watcher = watch(root, () => {
-						if (existsSync(marker)) finish();
-					});
-					const timer = setTimeout(finish, 2_000);
-					function finish() {
-						clearTimeout(timer);
-						watcher.close();
-						resolve();
-					}
-				});
 				throw new Error("lock lost");
 			},
 		});
 
-		expect(result.ok).toBe(false);
+		expect(result).toEqual({ ok: false, error: "could not register the delivery: lock lost" });
 		expect(existsSync(marker)).toBe(false);
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"the POSIX gate runs the command only after the release line, and nothing when closed without it",
+		async () => {
+			const root = await tempDir();
+			const gated = (marker: string, release: boolean) =>
+				new Promise<number | null>((resolve, reject) => {
+					const child = spawn("/bin/sh", ["-c", POSIX_GATE, "/bin/sh", "-c", `touch '${marker}'`], {
+						stdio: ["ignore", "ignore", "ignore", "pipe"],
+					});
+					child.once("error", reject);
+					child.once("exit", (code) => resolve(code));
+					const gate = child.stdio[3];
+					if (gate === null || gate === undefined || !("end" in gate)) throw new Error("no gate pipe");
+					if (release) gate.end("go\n");
+					else gate.end();
+				});
+
+			const closed = await gated(join(root, "closed"), false);
+			const released = await gated(join(root, "released"), true);
+
+			expect(closed).toBe(75);
+			expect(existsSync(join(root, "closed"))).toBe(false);
+			expect(released).toBe(0);
+			expect(existsSync(join(root, "released"))).toBe(true);
+		},
+	);
 
 	it("cancels only the owning session's job when a session id is given", async () => {
 		const dir = await tempScheduleDir();

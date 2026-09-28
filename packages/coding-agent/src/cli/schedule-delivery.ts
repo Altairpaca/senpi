@@ -61,7 +61,7 @@ const STDERR_TAIL_CHARS = 2000;
  * after the process is attached to the session lock. If the runner dies first, fd 3 closes, `read`
  * fails, and nothing is delivered.
  */
-const POSIX_GATE = 'IFS= read -r _ <&3 || exit 75; exec 3<&-; exec "$0" "$@"';
+export const POSIX_GATE = 'IFS= read -r _ <&3 || exit 75; exec 3<&-; exec "$0" "$@"';
 
 function killTree(pid: number): void {
 	if (process.platform === "win32") {
