@@ -1,3 +1,21 @@
+## 2026-09-28 - Show Copilot tool-limit omissions once per session (senpi#2298)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a successful assistant message carrying the `github_copilot_tool_limit` diagnostic shows its redaction-safe message as a warning once for the current session, independently of the cache-miss-notice setting. Transcript rebuilds re-arm the notice so the rebuilt chat still contains it, while later turns in the same rendered session do not repeat it.
+
+### Why
+
+- The AI adapter diagnostic was persisted in session JSONL and available to RPC consumers, but the interactive TUI ignored it. A request could succeed after omitting excess Copilot tools and the user would have no visible indication that some definitions were unavailable to the model.
+
+### Why an extension could not handle it
+
+- The diagnostic is attached inside the provider adapter after extension payload hooks run, and the completed assistant message is rendered by `InteractiveMode`; no extension hook owns that host diagnostic-to-transcript presentation.
+
+### Expected merge conflict zones
+
+- LOW: the field block beside other session-scoped warning guards, the start of `renderSessionItems`, and `maybeShowAssistantDiagnostics` in `interactive-mode.ts`.
+
 ## 2026-09-28 - No runtime error output on the TUI screen (#2284)
 
 ### What changed

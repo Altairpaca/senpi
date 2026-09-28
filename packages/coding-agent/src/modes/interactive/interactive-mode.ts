@@ -979,6 +979,7 @@ export class InteractiveMode {
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
+	private copilotToolLimitNoticeSessionId: string | undefined = undefined;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
@@ -6140,6 +6141,7 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.providerErrors = undefined;
+		this.copilotToolLimitNoticeSessionId = undefined;
 		this.clearPendingTools();
 		// The rebuilt transcript re-derives continuity notices from persisted
 		// messages, so the tracker's suppression state must not survive the
@@ -6249,6 +6251,16 @@ export class InteractiveMode {
 	}
 
 	private maybeShowAssistantDiagnostics(message: AssistantMessage): void {
+		for (const diagnostic of message.diagnostics ?? []) {
+			if (diagnostic.type !== "github_copilot_tool_limit") continue;
+			const notice = diagnostic.details?.message;
+			const sessionId = this.sessionManager.getSessionId();
+			if (typeof notice !== "string" || this.copilotToolLimitNoticeSessionId === sessionId) continue;
+			this.copilotToolLimitNoticeSessionId = sessionId;
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("warning", notice), 1, 0));
+		}
+
 		if (!this.settingsManager.getShowCacheMissNotices()) return;
 
 		for (const diagnostic of message.diagnostics ?? []) {
