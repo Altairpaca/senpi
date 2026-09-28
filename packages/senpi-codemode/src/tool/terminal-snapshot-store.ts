@@ -1,28 +1,39 @@
 import type { EvalDetachedCellSnapshot } from "./detached-cell-contract.ts";
-import type { EvalLanguage } from "./types.ts";
+import type { RetainedContentPart, SettledContentPart, SettledImageSpill } from "./settled-image-spill.ts";
 
 export const TERMINAL_SNAPSHOT_CAP = 32;
 
 export interface TerminalSnapshotStoreOptions {
 	readonly cap?: number;
-	/** Upper bound on the estimated bytes of all retained snapshots; 0 keeps only the count cap. */
+	/** Upper bound on the estimated in-memory bytes of all retained snapshots; 0 keeps only the count cap. */
 	readonly byteBudget?: number;
+	/** Moves image payloads to disk; without it images stay in memory under the byte budget. */
+	readonly spill?: SettledImageSpill;
+}
+
+interface StoredSnapshot {
+	/** Served by `list()`: every part except spilled images, so listing never reads the disk. */
+	readonly snapshot: EvalDetachedCellSnapshot;
+	readonly parts: readonly RetainedContentPart[];
+	readonly bytes: number;
 }
 
 /**
  * Bounded LRU of settled-cell snapshots; without it every settled cell pins its result and closures for
- * the session lifetime (#1695). Bounded by count and by estimated bytes so image-heavy results cannot
- * pin hundreds of megabytes (#2259); the newest snapshot is always kept so a just-settled cell stays peekable.
+ * the session lifetime (#1695). Bounded by count and by estimated in-memory bytes, with image payloads
+ * spilled to disk and re-read on `get` (#2259); the newest snapshot is always kept.
  */
 export class TerminalSnapshotStore {
-	readonly #snapshots = new Map<string, { readonly snapshot: EvalDetachedCellSnapshot; readonly bytes: number }>();
+	readonly #snapshots = new Map<string, StoredSnapshot>();
 	readonly #cap: number;
 	readonly #byteBudget: number;
+	readonly #spill: SettledImageSpill | undefined;
 	#bytes = 0;
 
 	constructor(options: TerminalSnapshotStoreOptions = {}) {
 		this.#cap = options.cap ?? TERMINAL_SNAPSHOT_CAP;
 		this.#byteBudget = options.byteBudget ?? 0;
+		this.#spill = options.spill;
 	}
 
 	get bytes(): number {
@@ -31,8 +42,12 @@ export class TerminalSnapshotStore {
 
 	remember(snapshot: EvalDetachedCellSnapshot): void {
 		this.delete(snapshot.cellId);
-		const bytes = estimateSnapshotBytes(snapshot);
-		this.#snapshots.set(snapshot.cellId, { snapshot, bytes });
+		const content = snapshot.result.content;
+		const parts = this.#spill?.spill(snapshot.cellId, content) ?? content;
+		const inMemory = parts.filter((part): part is SettledContentPart => part.type !== "spilled-image");
+		const stored = inMemory.length === content.length ? snapshot : withContent(snapshot, inMemory);
+		const bytes = estimateSnapshotBytes(stored);
+		this.#snapshots.set(snapshot.cellId, { snapshot: stored, parts, bytes });
 		this.#bytes += bytes;
 		while (this.#snapshots.size > 1 && (this.#snapshots.size > this.#cap || this.#overBudget())) {
 			const oldest = this.#snapshots.keys().next();
@@ -42,7 +57,14 @@ export class TerminalSnapshotStore {
 	}
 
 	get(cellId: string): EvalDetachedCellSnapshot | undefined {
-		return this.#snapshots.get(cellId)?.snapshot;
+		const entry = this.#snapshots.get(cellId);
+		if (
+			entry === undefined ||
+			this.#spill === undefined ||
+			entry.parts.length === entry.snapshot.result.content.length
+		)
+			return entry?.snapshot;
+		return withContent(entry.snapshot, this.#spill.hydrate(entry.parts));
 	}
 
 	delete(cellId: string): void {
@@ -50,12 +72,7 @@ export class TerminalSnapshotStore {
 		if (entry === undefined) return;
 		this.#snapshots.delete(cellId);
 		this.#bytes -= entry.bytes;
-	}
-
-	forgetLanguage(language: EvalLanguage): void {
-		for (const [cellId, entry] of this.#snapshots) {
-			if (entry.snapshot.language === language) this.delete(cellId);
-		}
+		this.#spill?.release(entry.parts);
 	}
 
 	list(): readonly EvalDetachedCellSnapshot[] {
@@ -65,11 +82,19 @@ export class TerminalSnapshotStore {
 	clear(): void {
 		this.#snapshots.clear();
 		this.#bytes = 0;
+		this.#spill?.clear();
 	}
 
 	#overBudget(): boolean {
 		return this.#byteBudget > 0 && this.#bytes > this.#byteBudget;
 	}
+}
+
+function withContent(
+	snapshot: EvalDetachedCellSnapshot,
+	content: readonly SettledContentPart[],
+): EvalDetachedCellSnapshot {
+	return { ...snapshot, result: { ...snapshot.result, content: [...content] } };
 }
 
 export function estimateSnapshotBytes(snapshot: EvalDetachedCellSnapshot): number {

@@ -1,13 +1,35 @@
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentToolResult } from "@code-yeongyu/senpi";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { EvalDetachedCellSnapshot } from "../src/tool/detached-cell-contract.ts";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
+import { createDetachedControlResult } from "../src/tool/detached-eval-result.ts";
 import { TerminalSnapshotStore } from "../src/tool/terminal-snapshot-store.ts";
 import type { EvalToolDetails } from "../src/tool/types.ts";
 import { FakeKernel } from "./eval/fakes.ts";
 
 const MIB = 1024 * 1024;
 const TWO_MIB_IMAGE = "A".repeat(2 * MIB);
+const SMALL_IMAGE = "B".repeat(64 * 1024);
+
+const roots: string[] = [];
+afterEach(async () => {
+	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
+async function artifactsDir(): Promise<string> {
+	const root = await mkdtemp(join(tmpdir(), "senpi-settled-spill-"));
+	roots.push(root);
+	return root;
+}
+
+function spillFiles(root: string): string[] {
+	const dir = join(root, "settled-images");
+	return existsSync(dir) ? readdirSync(dir).sort() : [];
+}
 
 function imageResult(index: number, image: string, jsonOutputs?: readonly unknown[]): AgentToolResult<EvalToolDetails> {
 	return {
@@ -52,51 +74,91 @@ function settleDetached(manager: EvalDetachedCellManager, id: string, result: Ag
 	manager.complete(cell, result);
 }
 
-function imageParts(snapshot: EvalDetachedCellSnapshot) {
-	return snapshot.result.content.filter((part) => part.type === "image");
+function imageData(snapshot: EvalDetachedCellSnapshot): string[] {
+	return snapshot.result.content.flatMap((part) => (part.type === "image" ? [part.data] : []));
 }
 
-// senpi#2259: settled-cell snapshots must not pin already-delivered images or grow past a byte budget.
-describe("settled-cell snapshot retention (#2259)", () => {
-	it("keeps no image part of 40 settled foreground cells while text and JSON outputs stay peekable", async () => {
-		const manager = new EvalDetachedCellManager();
-		try {
-			for (let i = 0; i < 40; i++) settleForeground(manager, `fg-${i}`, imageResult(i, TWO_MIB_IMAGE, [{ i }]));
-			const recent = manager.list().recent;
-			expect(recent).toHaveLength(32);
-			expect(recent.flatMap(imageParts)).toEqual([]);
-			const newest = manager.peek("fg-39");
-			expect(newest.result.content).toEqual([{ type: "text", text: "output-39" }]);
-			expect(newest.result.details.jsonOutputs).toEqual([{ i: 39 }]);
-		} finally {
-			await manager.dispose();
-		}
+// senpi#2259: settled-cell images live on disk, not the session heap, and are rebuilt on peek.
+describe("settled-cell image spill (#2259)", () => {
+	it("returns a settled foreground cell's full result, images included, while memory holds none", async () => {
+		const root = await artifactsDir();
+		const manager = new EvalDetachedCellManager({ artifactsDir: root });
+		settleForeground(manager, "fg", imageResult(1, TWO_MIB_IMAGE, [{ answer: 42 }]));
+
+		expect(imageData(manager.peek("fg"))).toEqual([TWO_MIB_IMAGE]);
+		expect(manager.peek("fg").result.details.jsonOutputs).toEqual([{ answer: 42 }]);
+		expect(
+			createDetachedControlResult(manager.peek("fg")).content.filter((part) => part.type === "image"),
+		).toHaveLength(1);
+		expect(manager.list().recent.flatMap(imageData)).toEqual([]);
+		expect(spillFiles(root)).toHaveLength(1);
+		await manager.dispose();
 	});
 
-	it("keeps a detached cell's images for peek after it settles", async () => {
-		const manager = new EvalDetachedCellManager();
-		try {
-			settleDetached(manager, "bg", imageResult(1, TWO_MIB_IMAGE));
-			expect(imageParts(manager.peek("bg"))).toEqual([
-				{ type: "image", mimeType: "image/png", data: TWO_MIB_IMAGE },
-			]);
-		} finally {
-			await manager.dispose();
-		}
+	it("returns a settled detached cell's images from the spill", async () => {
+		const root = await artifactsDir();
+		const manager = new EvalDetachedCellManager({ artifactsDir: root });
+		settleDetached(manager, "bg", imageResult(1, TWO_MIB_IMAGE));
+
+		expect(imageData(manager.peek("bg"))).toEqual([TWO_MIB_IMAGE]);
+		await manager.dispose();
 	});
 
-	it("evicts the oldest detached image snapshots beyond the byte budget and keeps the newest", async () => {
+	it("deletes an evicted snapshot's spill files and removes the directory on dispose", async () => {
+		const root = await artifactsDir();
+		const manager = new EvalDetachedCellManager({ artifactsDir: root });
+		for (let i = 0; i < 40; i++) settleForeground(manager, `fg-${i}`, imageResult(i, SMALL_IMAGE));
+
+		expect(manager.list().recent).toHaveLength(32);
+		expect(spillFiles(root)).toHaveLength(32);
+		expect(spillFiles(root).some((name) => name.startsWith("fg-7-"))).toBe(false);
+		expect(imageData(manager.peek("fg-39"))).toEqual([SMALL_IMAGE]);
+
+		await manager.dispose();
+		expect(existsSync(join(root, "settled-images"))).toBe(false);
+	});
+
+	it("deletes the oldest spill files beyond the disk budget and notes the lost image on peek", async () => {
+		const root = await artifactsDir();
+		const manager = new EvalDetachedCellManager({ artifactsDir: root, retainedImagesBytes: 5 * MIB });
+		for (let i = 0; i < 4; i++) settleForeground(manager, `fg-${i}`, imageResult(i, TWO_MIB_IMAGE));
+
+		expect(spillFiles(root).map((name) => name.replace(/-\d+\.b64$/u, ""))).toEqual(["fg-2", "fg-3"]);
+		const oldest = manager.peek("fg-0");
+		expect(imageData(oldest)).toEqual([]);
+		expect(oldest.result.content).toEqual([
+			{ type: "text", text: "output-0" },
+			{
+				type: "text",
+				text: expect.stringMatching(/^\[image\/png image \(2097152 base64 bytes\) .* \(ENOENT\)\]$/u),
+			},
+		]);
+		expect(imageData(manager.peek("fg-3"))).toEqual([TWO_MIB_IMAGE]);
+		await manager.dispose();
+	});
+
+	it("answers peek with the text and a one-line note when a spill file disappeared", async () => {
+		const root = await artifactsDir();
+		const manager = new EvalDetachedCellManager({ artifactsDir: root });
+		settleForeground(manager, "fg", imageResult(1, SMALL_IMAGE));
+		for (const name of spillFiles(root)) rmSync(join(root, "settled-images", name));
+
+		const text = createDetachedControlResult(manager.peek("fg")).content;
+		expect(text).toHaveLength(1);
+		expect(text[0]).toMatchObject({ type: "text", text: expect.stringContaining("output-1\n[image/png image") });
+		await manager.dispose();
+	});
+
+	it("keeps images in memory under the byte budget when no artifacts dir is configured", async () => {
 		const manager = new EvalDetachedCellManager({ retainedResultsBytes: 5 * MIB });
-		try {
-			for (let i = 0; i < 4; i++) settleDetached(manager, `bg-${i}`, imageResult(i, TWO_MIB_IMAGE));
-			expect(manager.list().recent.map((snapshot) => snapshot.cellId)).toEqual(["bg-2", "bg-3"]);
-			expect(() => manager.peek("bg-1")).toThrow(/Unknown detached eval cell/);
-		} finally {
-			await manager.dispose();
-		}
+		for (let i = 0; i < 4; i++) settleForeground(manager, `fg-${i}`, imageResult(i, TWO_MIB_IMAGE));
+
+		expect(manager.list().recent.map((snapshot) => snapshot.cellId)).toEqual(["fg-2", "fg-3"]);
+		expect(imageData(manager.peek("fg-3"))).toEqual([TWO_MIB_IMAGE]);
+		await manager.dispose();
 	});
 
-	it("never exceeds the byte budget except for a single newest snapshot, and 0 keeps only the count cap", () => {
+	it("never exceeds the in-memory byte budget except for a single newest snapshot, and 0 keeps only the count cap", () => {
 		const snapshot = (cellId: string, image: string): EvalDetachedCellSnapshot => ({
 			cellId,
 			language: "js",
@@ -113,8 +175,6 @@ describe("settled-cell snapshot retention (#2259)", () => {
 		}
 		budgeted.remember(snapshot("huge", `${TWO_MIB_IMAGE}${TWO_MIB_IMAGE}`));
 		expect(budgeted.list().map((entry) => entry.cellId)).toEqual(["huge"]);
-		budgeted.forgetLanguage("js");
-		expect(budgeted.bytes).toBe(0);
 
 		const countOnly = new TerminalSnapshotStore({ cap: 3, byteBudget: 0 });
 		for (let i = 0; i < 5; i++) countOnly.remember(snapshot(`c-${i}`, TWO_MIB_IMAGE));

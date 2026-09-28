@@ -23,27 +23,27 @@
 - LOW: `getKernel`/dispose in `session-manager.ts`, the proxy kernel surface, the `EvalKernelManager` interface, and `executeCell`'s finally block in `run-eval-cell.ts` (the other eval-memory lanes touch nearby settlement code).
 
 ## 2026-09-28 - Settled-cell snapshots are byte-bounded and drop delivered images
+## 2026-09-28 - Settled-cell snapshot images spill to disk under a byte budget
 
 ### What changed
 
-- `packages/senpi-codemode/src/tool/terminal-snapshot-store.ts`: the settled-cell LRU tracks an estimated byte size per snapshot (text and code/output as UTF-16, image base64 length, serialized `jsonOutputs`), evicts the oldest beyond a byte budget as well as the 32-entry count cap (always keeping the newest), and can forget one language.
-- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`: a never-detached cell's settled snapshot is stored without image parts; a detached cell's snapshot keeps them for `peek`; `forgetSettled(language)` drops a language's settled snapshots; the budget comes from the new `retainedResultsBytes` option.
-- `packages/senpi-codemode/src/tool/detached-cell-contract.ts`: `retainedResultsBytes` manager option.
-- `packages/senpi-codemode/src/tool/run-eval-cell.ts`: after a successful kernel reset the language's settled snapshots are forgotten.
-- `packages/senpi-codemode/src/config/settings.ts`, `packages/senpi-codemode/src/index.ts`: `memory.retainedResultsMb` (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`, 0 = count cap only) wired into both detached-cell managers.
-- Tests: `test/eval-settled-snapshot-budget.test.ts`, `test/eval-list-and-reset.test.ts`, `test/config.test.ts`.
+- `packages/senpi-codemode/src/tool/settled-image-spill.ts` (new): writes each settled-cell image as a raw base64 file under `<artifactsDir>/settled-images/`, keeps only a reference (path, mimeType, length) in memory, re-reads it on demand (a missing file becomes a one-line text note), deletes the oldest files beyond a disk byte budget (never the newest cell's), and removes the directory on clear.
+- `packages/senpi-codemode/src/tool/terminal-snapshot-store.ts`: the settled-cell LRU spills image payloads through the spill, rebuilds them on `get`, deletes a snapshot's files when it is evicted or replaced, tracks an estimated in-memory byte size (text and code/output as UTF-16, inline image base64, serialized `jsonOutputs`), and evicts beyond an in-memory byte budget as well as the 32-entry count cap (always keeping the newest). `list()` serves the in-memory snapshots without reading the disk.
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`, `packages/senpi-codemode/src/tool/detached-cell-contract.ts`: `retainedResultsBytes` / `retainedImagesBytes` options; the spill is enabled when the manager has an `artifactsDir`.
+- `packages/senpi-codemode/src/config/memory-settings.ts` (new), `packages/senpi-codemode/src/config/settings.ts`, `packages/senpi-codemode/src/index.ts`: `memory.retainedResultsMb` (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) and `memory.retainedImagesMb` (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), 0 = count cap only, wired into the detached-cell managers.
+- Tests: `test/eval-settled-snapshot-budget.test.ts`, `test/eval-list-and-reset.test.ts`, `test/config.test.ts`. QA: `scripts/qa-settled-snapshot-retention.ts`.
 
 ### Why
 
-- #2259: 32 settled results kept their base64 images (measured +83 MB host heap after 40 image cells, up to ~768 MB at the per-cell image cap) for the session lifetime, and a reset left the stale snapshots behind.
+- #2259: the 32 settled results kept their base64 images in the session heap for the session lifetime (measured +83 MB host heap after 40 image cells, up to ~768 MB at the per-cell image cap). `peek` must keep returning the full result, so the payload moves to disk instead of being dropped.
 
 ### Why an extension could not handle it
 
-- The settled-cell store and the eval reset path belong to this package.
+- The settled-cell store and the eval peek path belong to this package.
 
 ### Expected merge conflict zones
 
-- LOW: the fork-only detached-cell manager, snapshot store, settings memory block, and eval reset path.
+- LOW: the fork-only detached-cell manager, snapshot store, new spill module, and the settings memory block.
 
 ## 2026-09-27 - Tool kernel preludes in the eval kernels
 

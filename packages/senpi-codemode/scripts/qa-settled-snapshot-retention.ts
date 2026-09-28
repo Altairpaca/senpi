@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,10 @@ function images(result: AgentToolResult<unknown>): number {
 	return result.content.filter((part) => part.type === "image").length;
 }
 
+function imageData(result: AgentToolResult<unknown>): string[] {
+	return result.content.flatMap((part) => (part.type === "image" ? [part.data] : []));
+}
+
 function expectEqual(actual: unknown, expected: unknown, label: string): void {
 	const shown = JSON.stringify(actual);
 	if (shown !== JSON.stringify(expected)) throw new QaScenarioError(`${label}: ${shown} !== ${JSON.stringify(expected)}`);
@@ -54,6 +59,8 @@ async function main(): Promise<void> {
 		},
 		cellManager: manager,
 	});
+	const spillDir = join(root, "settled-images");
+	const spillFiles = () => (existsSync(spillDir) ? readdirSync(spillDir) : []);
 	const show = `display(await Bun.file(${JSON.stringify(pngPath)}).arrayBuffer());`;
 	const peek = (cellId: string) =>
 		tool.execute(`peek-${cellId}`, { action: "peek", cell_id: cellId }, undefined, undefined, context(root, "tui"));
@@ -67,8 +74,9 @@ async function main(): Promise<void> {
 		);
 		expectEqual(images(foreground), 1, "FOREGROUND_RESULT_IMAGES");
 		const foregroundPeek = await peek("fg-image");
-		expectEqual(images(foregroundPeek), 0, "FOREGROUND_PEEK_IMAGES");
-		expectEqual(foregroundPeek.details.cells?.[0]?.output, foreground.details.cells?.[0]?.output, "FOREGROUND_PEEK_OUTPUT");
+		expectEqual(images(foregroundPeek), 1, "FOREGROUND_PEEK_IMAGES");
+		expectEqual(imageData(foregroundPeek), imageData(foreground), "FOREGROUND_PEEK_IMAGE_IDENTICAL");
+		expectEqual(manager.list().recent.flatMap((snapshot) => imageData(snapshot.result)).length, 0, "IN_MEMORY_IMAGE_PARTS");
 
 		const steering = new AbortController();
 		const execution = tool.execute(
@@ -92,6 +100,8 @@ async function main(): Promise<void> {
 		await terminal;
 		expectEqual(images(await peek("bg-image")), 1, "DETACHED_PEEK_IMAGES");
 
+		expectEqual(spillFiles().length, 2, "SPILL_FILES_ON_DISK");
+
 		await tool.execute(
 			"reset-js",
 			{ language: "js", code: "1", summary: "reset", reset: true },
@@ -101,16 +111,20 @@ async function main(): Promise<void> {
 		);
 		expectEqual(
 			manager.list().recent.map((snapshot) => snapshot.cellId),
-			["reset-js"],
+			["fg-image", "bg-image", "reset-js"],
 			"RECENT_AFTER_RESET",
 		);
-		for (const cellId of ["fg-image", "bg-image"]) {
-			const outcome = await peek(cellId).then(
-				() => "known",
-				(error: unknown) => (error instanceof Error ? error.message : String(error)),
-			);
-			expectEqual(outcome, `Unknown detached eval cell "${cellId}"`, `PEEK_AFTER_RESET_${cellId}`);
-		}
+		expectEqual(images(await peek("fg-image")), 1, "FOREGROUND_PEEK_IMAGES_AFTER_RESET");
+
+		for (const name of spillFiles()) await rm(join(spillDir, name));
+		const lost = await peek("fg-image");
+		expectEqual(images(lost), 0, "PEEK_IMAGES_AFTER_SPILL_FILE_REMOVED");
+		const note = lost.content.flatMap((part) => (part.type === "text" ? part.text.split("\n") : [])).at(-1) ?? "";
+		console.log(`PEEK_NOTE_AFTER_SPILL_FILE_REMOVED: ${note.replace(root, "<artifacts>")}`);
+		if (!note.startsWith("[image/png image")) throw new QaScenarioError("missing spilled-image note");
+
+		await manager.dispose();
+		expectEqual(existsSync(spillDir), false, "SPILL_DIR_AFTER_DISPOSE");
 		console.log("QA_SETTLED_RETENTION_PASS: true");
 	} finally {
 		releaseGate.resolve();
