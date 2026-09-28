@@ -11,7 +11,7 @@ There are two parts:
 
 ## The `schedule_prompt` tool
 
-`schedule_prompt` is a search-exposed tool: `tool_search` finds it for requests such as "remind me", "later", "schedule", "cron" or "recurring", and a call by name activates it.
+`schedule_prompt` is a search-exposed (deferred) tool: it is not in a session's tool list until it is needed, so a session that never schedules anything pays no prompt tokens for it. `tool_search` finds it for requests such as "remind me", "later", "schedule", "cron" or "recurring", and a call by name activates it.
 
 | Parameter | Used by | Meaning |
 |---|---|---|
@@ -69,7 +69,7 @@ The message is the prompt with a one-line header, `[Scheduled prompt <id>: creat
 
 Deliveries into one session never overlap. Every runner takes the session's delivery lock (`<agent dir>/schedule/sessions/<session>.lock`) before it claims a job and holds it until the delivery has finished, so two runner processes cannot write the same session at once. The lock records the delivery process as well, and the delivery does not start its work until it is recorded (on POSIX it waits on a pipe from the runner, so a runner that dies before recording it runs nothing). If the runner dies while a delivery is still running, the lock is only reclaimed once that delivery has exited: on POSIX the delivery leads its own process group and the lock stays held while any process of that group is alive.
 
-On Windows there are no process groups and no gate: the delivery starts before it can be recorded, so the lock marks the delivery as ungated and a dead runner's lock is held until the runner's delivery time limit (`--timeout-seconds`) has passed. A timeout kills the delivery's process tree with `taskkill /T`; a background process that a hook detaches from its tree is not tracked. Keep `--exec` hooks on Windows in the foreground. A job deferred for any of these reasons is retried 15 seconds later. The default delivery also waits while another senpi process has that session open (an interactive session, for example): the job is deferred and fires once the session is closed. That check runs right before the resume starts; a session opened in the moment between the check and the resume is not detected, the same as two senpi processes opening one session by hand.
+On Windows there are no process groups and no gate: the delivery starts before it can be recorded. Once it is recorded, a dead runner's lock is held while that delivery process is alive; if the runner dies in the moment between the start and the record, the lock marks the delivery as ungated and is held until the runner's delivery time limit (`--timeout-seconds`) has passed. A timeout kills the delivery's process tree with `taskkill /T`; a background process that a hook detaches from its tree is not tracked. Keep `--exec` hooks on Windows in the foreground. A job deferred for any of these reasons is retried 15 seconds later. The default delivery also waits while another senpi process has that session open (an interactive session, for example): the job is deferred and fires once the session is closed. That check runs right before the resume starts; a session opened in the moment between the check and the resume is not detected, the same as two senpi processes opening one session by hand.
 
 ### Hook delivery: `--exec`
 
