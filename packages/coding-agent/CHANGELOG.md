@@ -8,6 +8,8 @@
 
 ### Changed
 
+- GPT-6 Astra, Sol, and Luna stay on the stated goal: an unrelated error or bug they run into is reported in the final message instead of being investigated or fixed (unless it blocks the goal), and a quick check such as a short test run is run directly instead of through a monitor. Bug fixes still go to the root cause. ([#2256](https://github.com/code-yeongyu/senpi/issues/2256))
+
 ### Fixed
 
 - With Anthropic native tool search, a deferred tool whose parameters are a root union (`anyOf` with no top-level `type`, as the desktop `computer` tool has) no longer makes every request fail with `tools.N.custom.input_schema.type: Field required`: the injected schema is resolved into one object, as resident tools already were. ([#2252](https://github.com/code-yeongyu/senpi/issues/2252))
