@@ -1,3 +1,21 @@
+## 2026-09-28 - models.json accepts supportsForcedToolChoice on OpenAI compat (senpi#2218)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`: `OpenAICompletionsCompatSchema` and `OpenAIResponsesCompatSchema` accept an optional boolean `supportsForcedToolChoice`, matching the new `OpenAICompletionsCompat` / `OpenAIResponsesCompat` field in `packages/ai`.
+
+### Why
+
+- A provider known to accept only automatic tool choice (Kiro behind an OpenAI-compatible proxy, senpi#2218) needs a way to say so in `models.json`, so no request ever forces a tool on it.
+
+### Why an extension could not handle it
+
+- `models.json` is validated against this schema before any extension runs; an unknown compat key is rejected here.
+
+### Expected merge conflict zones
+
+- LOW: the two OpenAI compat schema objects when upstream adds compat keys.
+
 ## 2026-09-28 - /sessions alias of /resume (#1437)
 
 ### What changed

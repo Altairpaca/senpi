@@ -33,6 +33,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -84,6 +85,11 @@ type MutableResponsesPayload = ResponseCreateParamsStreaming & {
 
 const websocketSessionCache = new Map<string, CachedWebSocketConnection>();
 
+/** True when tool_choice forces a specific tool or mode (anything but "auto"/"none"). */
+function isForcedOpenAIResponsesToolChoice(toolChoice: MutableResponsesPayload["tool_choice"] | undefined): boolean {
+	return toolChoice !== undefined && toolChoice !== "auto" && toolChoice !== "none";
+}
+
 function detectSessionAffinityFormat(model: Pick<Model<"openai-responses">, "provider" | "baseUrl">) {
 	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
 }
@@ -119,6 +125,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
+		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
 		supportsAllowedTools: model.compat?.supportsAllowedTools ?? false,
 	};
 }
@@ -368,14 +375,22 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await retryProviderRequest(
-				() => client.responses.create(params, requestOptions).withResponse(),
-				{
-					maxRetries: options?.maxRetries,
-					maxRetryDelayMs: options?.maxRetryDelayMs,
-					signal: options?.signal,
-				},
-			);
+			const createRequest = async () => {
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
+					isForced: isForcedOpenAIResponsesToolChoice,
+					send: (body: MutableResponsesPayload) => client.responses.create(body, requestOptions).withResponse(),
+				});
+				params = sent.params;
+				return sent.result;
+			};
+			const { data: openaiStream, response } = await retryProviderRequest(() => createRequest(), {
+				maxRetries: options?.maxRetries,
+				maxRetryDelayMs: options?.maxRetryDelayMs,
+				signal: options?.signal,
+			});
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
