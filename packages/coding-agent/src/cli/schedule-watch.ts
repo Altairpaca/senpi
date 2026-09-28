@@ -53,23 +53,47 @@ function resolveDelivery(options: RunOptions): DeliveryPlan {
 	};
 }
 
-/** Reports a pass; a job deferred for the same reason is reported once per runner, not every pass. */
+/**
+ * Reports a pass; a job deferred for the same reason, or a job file invalid for the same reason, is
+ * reported once per runner, not every pass.
+ */
 function reporter(): (result: RunDueResult) => boolean {
 	const deferred = new Map<string, string>();
+	const invalid = new Map<string, string>();
 	return (result) => {
 		let ok = true;
+		const stillInvalid = new Set<string>();
 		for (const event of result.events) {
 			if (event.event === "deferred") {
 				if (deferred.get(event.id) === event.reason) continue;
 				deferred.set(event.id, event.reason);
+			} else if (event.event === "invalid") {
+				stillInvalid.add(event.file);
+				if (invalid.get(event.file) === event.error) continue;
+				invalid.set(event.file, event.error);
 			} else if (event.event === "fired") {
 				deferred.delete(event.id);
 				if (event.outcome === "failed") ok = false;
+			} else if (event.event === "error") {
+				ok = false;
 			}
 			writeLine(event);
 		}
+		for (const file of invalid.keys()) if (!stillInvalid.has(file)) invalid.delete(file);
 		return ok;
 	};
+}
+
+/** A pass that fails as a whole (for example an unreadable schedule directory) is reported, not thrown. */
+async function guardedPass(pass: () => Promise<RunDueResult>): Promise<RunDueResult> {
+	try {
+		return await pass();
+	} catch (error) {
+		return {
+			events: [{ event: "error", error: error instanceof Error ? error.message : String(error) }],
+			nextDueAt: undefined,
+		};
+	}
 }
 
 export async function runPasses(dir: string, options: RunOptions): Promise<number> {
@@ -114,7 +138,7 @@ export async function runPasses(dir: string, options: RunOptions): Promise<numbe
 		wake?.();
 	};
 	try {
-		if (!options.watch) return report(await pass()) ? 0 : 1;
+		if (!options.watch) return report(await guardedPass(pass)) ? 0 : 1;
 
 		process.on("SIGTERM", stop);
 		process.on("SIGINT", stop);
@@ -131,7 +155,8 @@ export async function runPasses(dir: string, options: RunOptions): Promise<numbe
 					resolve();
 				};
 			});
-			const result = await pass();
+			// A failed pass is reported and retried at the next poll; it never stops the runner.
+			const result = await guardedPass(pass);
 			report(result);
 			if (stopping) break;
 			if (rescan) continue; // something changed during the pass

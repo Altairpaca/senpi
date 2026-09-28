@@ -367,6 +367,36 @@ describe("schedule runner", () => {
 		expect(restored?.job.fireCount).toBe(1);
 	});
 
+	it("reports an error in one session and still delivers the others", async () => {
+		const dir = await tempScheduleDir();
+		const broken = await createScheduledJob(dir, jobInput({ sessionId: "session-a", dueAt: T0 }), T0);
+		const later = await createScheduledJob(dir, jobInput({ sessionId: "session-a", dueAt: T0 + 1 }), T0);
+		const healthy = await createScheduledJob(dir, jobInput({ sessionId: "session-b", dueAt: T0 }), T0);
+		const { events, deliver } = recordingDelivery();
+
+		const result = await pass(dir, {
+			deliver,
+			shouldDefer: async (job) => {
+				if (job.sessionId === "session-a") throw new Error("EACCES: permission denied");
+				return undefined;
+			},
+		});
+
+		expect(result.events).toEqual(
+			expect.arrayContaining([
+				{ event: "error", id: broken.id, sessionId: "session-a", error: "EACCES: permission denied" },
+				expect.objectContaining({ event: "fired", id: healthy.id, outcome: "delivered" }),
+			]),
+		);
+		expect(result.events).toHaveLength(2);
+		expect(events.map((event) => event.id)).toEqual([healthy.id]);
+		expect(result.nextDueAt).toBe(T0 + 61_000 + DEFERRED_RETRY_MS);
+		expect((await states(dir)).filter((record) => record.state === "pending").map((record) => record.id)).toEqual([
+			broken.id,
+			later.id,
+		]);
+	});
+
 	it("does not restore an abandoned recurring job that was cancelled", async () => {
 		const dir = await tempScheduleDir();
 		const job = await createScheduledJob(dir, jobInput({ dueAt: T0, everyMs: 60_000 }), T0);

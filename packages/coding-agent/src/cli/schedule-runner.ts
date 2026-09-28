@@ -57,7 +57,14 @@ export type RunnerEvent =
 			readonly occurrence: number;
 			readonly error: string;
 	  }
-	| ({ readonly event: "invalid" } & InvalidJobFile);
+	| ({ readonly event: "invalid" } & InvalidJobFile)
+	| {
+			readonly event: "error";
+			/** The job being handled, when the error belongs to one; absent for a failed pass. */
+			readonly id?: string;
+			readonly sessionId?: string;
+			readonly error: string;
+	  };
 
 export interface RunDueResult {
 	readonly events: readonly RunnerEvent[];
@@ -254,7 +261,16 @@ export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> 
 			while (next < queues.length) {
 				const queue = queues[next++] ?? [];
 				for (const job of queue) {
-					const event = await fireOne(options, job);
+					let event: RunnerEvent | undefined;
+					try {
+						event = await fireOne(options, job);
+					} catch (error) {
+						// One session's failure must not end the pass: other sessions' deliveries keep running.
+						const message = error instanceof Error ? error.message : String(error);
+						events.push({ event: "error", id: job.id, sessionId: job.sessionId, error: message });
+						noteNext(options.now() + DEFERRED_RETRY_MS);
+						break; // keep this session's later jobs behind the failed one
+					}
 					if (event === undefined) continue;
 					events.push(event);
 					if (event.event === "fired" && event.nextDueAt !== undefined) noteNext(event.nextDueAt);
