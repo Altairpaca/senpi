@@ -1,3 +1,23 @@
+## 2026-09-28 - Session workers get a route to the main-thread Bun.WebView service (senpi#2248)
+
+### What changed
+
+- `session-worker-client.ts`: every session worker is started with a WebView broker port (`workerData.webviewBroker`, in the transfer list) from `core/webview/webview-broker.ts`; the broker is disposed when the worker exits, which closes every view the worker's eval kernels created and retires Bun's Chrome when none is left.
+- `session-worker.ts`: registers that port so the eval kernel host in the worker can connect its kernels to the main-thread service.
+
+### Why
+
+- Chrome-backed `Bun.WebView`s exist only on the process main thread; the eval kernel host of a worker session runs off it, so its cells had no way to reach one, and a killed session worker must not leave its views or Chrome behind.
+
+### Why an extension could not handle it
+
+- The broker has to be created on the main thread when the session worker is spawned and passed through `workerData`, both owned by the RPC worker runtime.
+
+### Expected merge conflict zones
+
+- `session-worker-client.ts`: the `worker` field initializer and the `exit` handler.
+- `session-worker.ts`: the import block and the line after `takeOverStdout()`.
+
 ## 2026-09-28 - canonicalEndpointPath honours its platform parameter
 
 ### What changed

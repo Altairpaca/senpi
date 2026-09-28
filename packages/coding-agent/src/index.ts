@@ -383,6 +383,8 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
+// Main-thread Bun.WebView service for eval kernels running in worker threads
+export { connectWebViewService, type WebViewServiceConnection } from "./core/webview/webview-broker.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage

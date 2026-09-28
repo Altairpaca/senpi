@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `new Bun.WebView()` works in eval cells on Windows and Linux, and with `backend: "chrome"` on macOS. Bun builds Chrome-backed views only on the process main thread, so they are now served there for the eval kernel (also when the session runs in an RPC worker host), each kernel through its own private port: a cell cannot reach another session's views, and a kernel reset, a closed session, or a crashed or killed worker closes that kernel's views and ends Bun's Chrome once no view needs it. ([#2248](https://github.com/code-yeongyu/senpi/issues/2248))
+
 ### Removed
 
 ## [2026.9.28-2] - 2026-09-28
