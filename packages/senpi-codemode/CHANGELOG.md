@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A persistent eval kernel no longer pins its first cell's handler for the whole kernel generation. The kernel dispatcher is now a bound method of the session manager instead of a closure over the `getKernel` call that created the kernel (under Bun/JSC that closure retained the creating cell's `onMessage` — its output buffers and display images — until the kernel was reset), and every cell releases its kernel listener once it settles, so nothing keeps a settled cell's state alive. Interpreter startup stderr still reaches the cell that created the kernel; a message arriving between cells reaches no settled handler. ([#2260](https://github.com/code-yeongyu/senpi/issues/2260))
+
 ### Removed
 
 ## [2026.9.28-3] - 2026-09-28
