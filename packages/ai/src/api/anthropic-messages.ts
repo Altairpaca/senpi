@@ -76,6 +76,7 @@ import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import {
 	ANTHROPIC_RESERVED_BODY_KEYS,
@@ -1629,7 +1630,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			});
 			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
-			output.errorMessage = formatGitHubCopilotToolLimitError(output, errorMessage);
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, errorMessage),
+				model.provider,
+				error,
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

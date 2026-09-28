@@ -22,6 +22,29 @@
 - LOW: `parseGitHubCopilotModelCatalog` was extracted from `auth/oauth/github-copilot.ts`; the OAuth orchestration stays unchanged apart from carrying `modelLimits` through the existing login and refresh return objects.
 - LOW: `filterModels` in `providers/github-copilot.ts` and the GitHub Copilot regex row in `utils/overflow.ts`.
 
+## 2026-09-28 - A Copilot token GitHub refuses is re-exchanged once; Copilot refusals are explained (senpi#2297)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `OAuthAuth` gains optional `rejectedTokenStatuses`, the HTTP statuses with which a provider refuses a stored access token before its own expiry says so.
+- `packages/ai/src/auth/helpers.ts`: `lazyOAuth` forwards `rejectedTokenStatuses` so the flag is readable without loading the flow module.
+- `packages/ai/src/auth/resolve.ts`: `AuthResolutionOverrides.rejectedAccess` names a token the provider just refused; `resolveStoredOAuth` treats a stored credential (or slot) still carrying it as stale and runs the normal compare-and-swap refresh, so a token another request already rotated is adopted instead of re-exchanged.
+- `packages/ai/src/auth/oauth/github-copilot.ts`, `packages/ai/src/providers/github-copilot.ts`: GitHub Copilot declares `rejectedTokenStatuses` 401/403 (constant `GITHUB_COPILOT_REJECTED_TOKEN_STATUSES` in `packages/ai/src/api/github-copilot-headers.ts`).
+- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/anthropic-messages.ts`: a `github-copilot` failure message is followed by the note from the new `api/github-copilot-errors.ts` (`withGitHubCopilotFailureNote`): quota exhaustion (402, 429 `quota_exceeded`, VS Code's quota codes) versus refusal (403, empty body called out), plus the `x-github-request-id`. `openai-responses.ts` now also sets `providerDiagnostic` on a failed `github-copilot` request (the other two adapters already set it for every provider) so the HTTP status reaches the runtime.
+- `packages/ai/src/utils/retry.ts`: `classifyErrorMessage` and `isQuotaExhaustionMessage` drop request-id segments (new exported `stripProviderRequestIds` / `formatProviderRequestId` in the same file) before matching, because a hex id can contain `429` or `500`.
+
+### Why
+
+- GitHub revoked short-lived Copilot tokens server-side on 2026-09-28 while they still claimed ~22h of validity (Copilot tokens now live 24h). Every request on such a token got HTTP 403 with an empty body on every model; a fresh exchange for the same account succeeded. Refresh was expiry-only, so a session kept the dead token for up to a day, and `/login` appended a new slot while the session stayed on the old one. VS Code Copilot Chat drops its Copilot token on 401/403 and fetches a new one. The bare `403 status code (no body)` gave the user nothing to act on.
+
+### Why an extension could not handle it
+
+- Token staleness is decided inside `resolveStoredOAuth` under the credential-store compare-and-swap, and the refusal status only exists inside the adapters' catch blocks; an extension sees neither.
+
+### Expected merge conflict zones
+
+- LOW: `AuthResolutionOverrides` and the `resolveStoredOAuth` signature/staleness lines in `auth/resolve.ts`; the `OAuthAuth` interface in `auth/types.ts`; `lazyOAuth` in `auth/helpers.ts`; the error-assembly line in each adapter's catch block; `classifyErrorMessage` in `utils/retry.ts`.
+
 ## 2026-09-28 - A same-name re-login refresh survives the provider-pool merge (senpi#2222)
 
 ### What changed

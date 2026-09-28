@@ -46,6 +46,7 @@ import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -444,10 +445,14 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			const providerDiagnostic =
 				model.provider === "github-copilot" && output.stopReason === "error"
-					? readProviderDiagnostic(error)
+					? (readProviderDiagnostic(error) ?? openAICompatibleProviderDiagnosticFromError(error))
 					: undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
-			output.errorMessage = formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error));
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error)),
+				model.provider,
+				error,
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

@@ -2,6 +2,7 @@
  * GitHub Copilot OAuth flow
  */
 
+import { GITHUB_COPILOT_REJECTED_TOKEN_STATUSES } from "../../api/github-copilot-headers.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
@@ -454,6 +455,7 @@ function copilotEnterpriseDomain(credential: OAuthCredential): string | undefine
 export const githubCopilotOAuth: OAuthAuth = {
 	name: "GitHub Copilot",
 	isSubscription: true,
+	rejectedTokenStatuses: GITHUB_COPILOT_REJECTED_TOKEN_STATUSES,
 	login: loginGitHubCopilot,
 	refresh: (credential, signal) =>
 		refreshGitHubCopilotToken(credential.refresh, copilotEnterpriseDomain(credential), signal),
