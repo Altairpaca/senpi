@@ -1,3 +1,23 @@
+## 2026-09-28 - refresh-lock contention and token-endpoint hiccups are never an authentication verdict (senpi#2281)
+
+### What changed
+
+- `auth-lane.ts`: when `refreshSlot` cannot take the auth.json lock (`CredentialStoreBusyError`), `prepareSlot` re-reads the store and adopts the slot a sibling rotated meanwhile, or keeps the stored token while it is still inside its lifetime (`now < expires`; the refresh window opens five minutes earlier). Only an expired token with the lock still held fails, with the unprefixed busy error, which is not retryable and writes no block. A refresh aborted by the turn's signal rethrows the abort.
+- `auth-lane.ts`: refresh failures map through `refreshFailure`. A throttled or overloaded token endpoint (`429`, `529`) keeps its text and therefore a timed rate-limit block; a `5xx` status, a `TimeoutError` or a network error becomes `server_error:`. Everything else (a rejected grant, an unreadable response) is still `authentication_failed:`.
+
+### Why
+
+- `refreshSlot` redeems the refresh token inside `store.modify`, holding the auth.json lock for the whole exchange. Serialising redemption across processes is deliberate (a single-use refresh token must never be redeemed twice), but a session that reached the refresh window while a sibling held the lock past the 5.5 s wait budget got `CredentialStoreBusyError`, which the old catch relabelled `authentication_failed`. Failover then took the auth-block path for a valid account. With eight concurrent sessions and a 7 s exchange, seven failed that way on `main`.
+- The same catch turned token-endpoint throttling, server errors and timeouts into a non-expiring `auth_error` block that only `/login` cleared.
+
+### Why an extension could not handle it
+
+- Slot preparation and its error mapping are internal to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the catch block of `prepareSlot` and the helpers above it in `auth-lane.ts`.
+
 ## 2026-09-27 - another turn's events never fail the pending turn before its replay (senpi#2192)
 
 ### What changed
