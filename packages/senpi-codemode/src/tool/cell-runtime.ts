@@ -1,8 +1,9 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
+import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
-import type { EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type { EvalMemoryDetails, EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 type KernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 type DisplayMessage = Extract<KernelToHostMessage, { type: "display" }>;
@@ -40,6 +41,7 @@ export interface CellResultBuilderOptions {
 export class CellResultBuilder {
 	readonly #output: EvalOutputCollector;
 	readonly #state: CellState;
+	#memory: KernelMemoryReport | undefined;
 
 	constructor(options: CellResultBuilderOptions) {
 		this.#state = options.state;
@@ -73,6 +75,7 @@ export class CellResultBuilder {
 
 	async finalize(result: KernelResult): Promise<AgentToolResult<EvalToolDetails>> {
 		this.#state.durationMs = result.durationMs;
+		this.#memory = result.memory;
 		if (result.ok) {
 			if (result.valueRepr) this.#output.push(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
@@ -120,7 +123,9 @@ export class CellResultBuilder {
 			(output.images.length > 0
 				? `(displayed ${output.images.length} image${output.images.length === 1 ? "" : "s"}; no text output)`
 				: "(no output)");
-		return { content: [{ type: "text", text }, ...output.images], details };
+		const notice = this.#memory?.notice;
+		const noticePart = notice === undefined ? [] : [{ type: "text" as const, text: notice }];
+		return { content: [{ type: "text", text }, ...noticePart, ...output.images], details };
 	}
 
 	#details(output: EvalOutputResult | undefined, isError: boolean): EvalToolDetails {
@@ -159,6 +164,7 @@ export class CellResultBuilder {
 			...(output === undefined || output.jsonOutputs.length === 0 ? {} : { jsonOutputs: output.jsonOutputs }),
 			...(output?.notice === undefined ? {} : { notice: output.notice }),
 			...(output?.meta === undefined ? {} : { meta: output.meta }),
+			...(output === undefined || this.#memory === undefined ? {} : { memory: memoryDetails(this.#memory) }),
 		};
 	}
 
@@ -174,4 +180,9 @@ export class CellResultBuilder {
 		const output = `${outputLines.slice(-8).join("\n")}${hasTrailingNewline ? "\n" : ""}`;
 		return `1/1 cells ${this.#state.status}\n[1] ${this.#state.input.language}${summary} ${this.#state.status}${output.length === 0 ? "" : `\n${output}`}`;
 	}
+}
+
+function memoryDetails(report: KernelMemoryReport): EvalMemoryDetails {
+	const { notice: _notice, ...details } = report;
+	return details;
 }

@@ -6,11 +6,14 @@
 
 ### Added
 
+- JavaScript eval kernels report their memory: a result whose kernel holds at least `memory.noticeMb` (default 1 GiB) live after a collection carries one bracketed notice naming the largest globals and how to drop them, plus `details.memory` (`liveBytes`, `gcRan`, `globals`). A kernel whose live memory reaches `memory.ceilingMb` (default a quarter of physical memory, 2-8 GiB) says so in that result and restarts once no cell is running or queued on it; the next result reports `details.memory.recycled`. Settings `memory.gcWatermarkMb`, `memory.noticeMb`, `memory.ceilingMb` and their `SENPI_CODEMODE_MEMORY_*_MB` overrides; `0` disables each. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+
 ### Changed
 
 ### Fixed
 
 - A persistent eval kernel no longer pins its first cell's handler for the whole kernel generation. The kernel dispatcher is now a bound method of the session manager instead of a closure over the `getKernel` call that created the kernel (under Bun/JSC that closure retained the creating cell's `onMessage` — its output buffers and display images — until the kernel was reset), and every cell releases its kernel listener once it settles, so nothing keeps a settled cell's state alive. Interpreter startup stderr still reaches the cell that created the kernel; a message arriving between cells reaches no settled handler. ([#2260](https://github.com/code-yeongyu/senpi/issues/2260))
+- Memory a JavaScript eval cell no longer references returns to the machine without a reset: a finished cell whose heap grew past `memory.gcWatermarkMb` (default 256 MiB) runs a full collection, and on Node and on Bun before 1.4.3 a kernel still holding that much runs an idle collection about a second after its last cell, so `delete globalThis.rows` no longer leaves gigabytes resident until the kernel is reset (Bun 1.4.3 collects idle threads itself). ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
 
 - Settled eval cells kept for `peek`/`list` no longer pin up to ~800 MB of image data in the session's memory. Their images are written to `<session artifacts>/settled-images/` and read back on `peek`, which still returns the full result. The files are bounded by the new `memory.retainedImagesMb` setting (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), deleted with an evicted cell, and removed when the session ends. The in-memory snapshots are bounded by the new `memory.retainedResultsMb` setting (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) on top of the 32-cell count cap. ([#2259](https://github.com/code-yeongyu/senpi/issues/2259))
 
