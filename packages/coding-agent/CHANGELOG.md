@@ -12,6 +12,7 @@
 
 - The built-in OpenCode Go default model is now `kimi-k3`. The previous default, `kimi-k2.6`, is no longer in the OpenCode Go catalog, so OpenCode Go without an explicit model had no default that resolved. ([#2295](https://github.com/code-yeongyu/senpi/issues/2295))
 - A goal no longer retries a provider that keeps rejecting the request with HTTP 401 or 403 until `continuation cap reached`. When a 401/403 still ends the turn after the provider's own retry and credential failover, the goal stops on that first rejection and says what to do, for example `Run /login github-copilot to refresh the account, or check that kimi-k3 is enabled for your Copilot plan`. After you fix the login or the key, your next message resumes the goal. Rate limits, 5xx errors, and network failures still get one automatic recovery. ([#2293](https://github.com/code-yeongyu/senpi/issues/2293))
+- GitHub Copilot turns no longer fail with an unexplained HTTP 400 when the session exposes more than 128 tools. Senpi bounds every Copilot wire route to 128 serialized tools, preserves tool order, and records how many excess definitions were omitted. ([#2298](https://github.com/code-yeongyu/senpi/issues/2298))
 
 ### Removed
 

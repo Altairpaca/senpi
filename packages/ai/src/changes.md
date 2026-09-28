@@ -103,6 +103,29 @@
 - `packages/ai/src/index.ts`: the alphabetical `export *` block before `./env-api-keys.ts`.
 - `packages/ai/src/api/openai-completions.ts`: the `normalizedReasoning` computation in `streamSimple`.
 
+## 2026-09-28 - Bound GitHub Copilot requests to 128 tools (senpi#2298)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: after payload hooks and schema normalization, GitHub Copilot requests keep the first 128 serialized tools, record how many definitions were omitted, and replace a generic HTTP 400 `Bad Request` with a tool-limit explanation when that limit was applied.
+- `packages/ai/src/api/openai-responses.ts`: after payload hooks, native-tool sanitizing, and allowed-tool selection, GitHub Copilot streaming requests keep the first 128 serialized tools and record the omitted count; prompt-cache prewarm requests apply the same bound.
+- `packages/ai/src/api/anthropic-messages.ts`: after payload hooks and the final Anthropic tool-pair sanitizers, GitHub Copilot requests keep the first 128 serialized tools and record the omitted count.
+- Fork-owned `packages/ai/src/utils/github-copilot-tool-limit.ts` owns the shared 128-tool bound, non-mutating slice, diagnostic, and generic-400 explanation.
+
+### Why
+
+- GitHub Copilot returned HTTP 400 with a plain-text `Bad Request` body when senpi sent 130 function tools to Chat Completions, while the same request without tools succeeded. VS Code Copilot independently enforces a 128-tool hard limit on endpoints without tool search. Current Copilot catalog rows advertise no native deferred-tool capability, so all three senpi adapters previously serialized every available tool.
+
+### Why an extension could not handle it
+
+- Extensions can add or rewrite provider payloads through `onPayload`, so the bound must run after that hook at each adapter's final wire-shaping boundary. A higher-level extension cannot guarantee that every Copilot API route sends at most 128 tools or attach the provider diagnostic to the resulting assistant message.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-completions.ts`: the post-`normalizeRequestToolSchemas` request setup and the terminal error formatter.
+- `packages/ai/src/api/openai-responses.ts`: the post-sanitizer request setup and prompt-cache prewarm body construction.
+- `packages/ai/src/api/anthropic-messages.ts`: the final request sanitizing block after `extractPayloadRequestMetadata`.
+
 ## 2026-09-24 - Forced tool_choice refused under thinking falls back instead of failing (senpi#2121)
 
 ### What changed
