@@ -83,7 +83,10 @@ describe.skipIf(process.platform === "win32")("daemon directory of a socket with
 
 		const attached = await ensureHost({ agentDir: qa.agentDir, socket: other, _test: { launch: refuseToSpawn } });
 
-		expect(attached).toEqual({ pid: started.pid, socket: other, reused: true });
+		started.release();
+		attached.release();
+
+		expect(attached).toEqual({ pid: started.pid, socket: other, reused: true, release: expect.any(Function) });
 		expect(await readdir(qa.flatDir, { withFileTypes: true }).then(directoryNames)).toEqual([qa.daemonDirName]);
 		expect(await stopHost({ socket: other, agentDir: qa.agentDir, force: true })).toEqual({
 			action: "stopped",

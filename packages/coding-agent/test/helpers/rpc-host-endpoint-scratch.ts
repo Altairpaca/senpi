@@ -10,7 +10,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { shardSocketPath } from "../../src/modes/rpc/host-daemon-paths.ts";
-import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { type EnsuredHost, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { runHostRequest } from "../../src/modes/rpc/host-runner.ts";
 import type { HostEndpointStatus } from "../../src/modes/rpc/host-status-all.ts";
 import { signalGeneration, stopHost } from "../../src/modes/rpc/host-stop.ts";
@@ -41,6 +41,7 @@ const scratches: EndpointScratch[] = [];
 const aliasTargets: string[] = [];
 const ensured: { socket: string; agentDir: string }[] = [];
 const supervisors: number[] = [];
+const held: EnsuredHost[] = [];
 export const tracked = { peers: [] as JsonlPeer[], models: [] as HeldAnthropicModel[], internalDirs: [] as string[] };
 
 /**
@@ -69,6 +70,7 @@ export function endpointScratch(
 }
 
 export async function sweepEndpointScratches(): Promise<void> {
+	for (const host of held.splice(0)) host.release();
 	for (const peer of tracked.peers.splice(0)) peer.destroy();
 	const models = tracked.models.splice(0);
 	for (const model of models) model.release();
@@ -112,11 +114,21 @@ export function hostArgs(extension?: string): string[] {
 	return [...GENERATION_HOST_ARGS, ...(extension ? ["--extension", extension] : [])];
 }
 
-export async function realHost(
+type RealHostOptions = { idleExitMs?: number; extension?: string; afterLockAcquired?: () => Promise<void> };
+
+/** A real supervised host, released at once: the suite's own connections are what attach to it. */
+export async function realHost(qa: EndpointScratch, socket: string, options: RealHostOptions = {}): Promise<number> {
+	const host = await heldRealHost(qa, socket, options);
+	host.release();
+	return host.pid;
+}
+
+/** `realHost` that keeps the ensure's attach hold (senpi#2227): the caller releases it. */
+export async function heldRealHost(
 	qa: EndpointScratch,
 	socket: string,
-	options: { idleExitMs?: number; extension?: string; afterLockAcquired?: () => Promise<void> } = {},
-): Promise<number> {
+	options: RealHostOptions = {},
+): Promise<EnsuredHost> {
 	const host = await ensureHost({
 		socket,
 		agentDir: qa.agentDir,
@@ -131,7 +143,8 @@ export async function realHost(
 	});
 	ensured.push({ socket, agentDir: qa.agentDir });
 	supervisors.push(host.pid);
-	return host.pid;
+	held.push(host);
+	return host;
 }
 
 export function trackSupervisor(pid: number): void {

@@ -75,11 +75,12 @@ describe.skipIf(process.platform === "win32")("handoff under the endpoint's ensu
 		if (result.action !== "handoff") throw new Error(`handoff refused: ${JSON.stringify(result)}`);
 		trackSupervisor(result.pid);
 		const attached = await racingEnsure;
+		attached?.release();
 
 		expect(lockHeldInHandoff).toBe(true);
 		expect(instanceSeenByEnsure).toBe(result.instanceId);
 		expect(instanceSeenByEnsure).not.toBe(predecessor?.instanceId);
-		expect(attached).toEqual({ pid: result.pid, socket: qa.legacy, reused: true });
+		expect(attached).toEqual({ pid: result.pid, socket: qa.legacy, reused: true, release: expect.any(Function) });
 		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
 		expect(JSON.parse(await readFile(paths.pointerFile, "utf8"))).toMatchObject({ instance_id: result.instanceId });
 	}, 240_000);
