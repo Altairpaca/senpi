@@ -1,3 +1,29 @@
+## 2026-09-28 - `warm`: load a host's prompt path without opening a session (senpi#2314)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-warm.ts` (new): `HostWarmer` coalesces concurrent warms of one profile (cwd, kind, context) and answers a repeat `already_warm` without loading again (at most 64 profiles remembered; a failed load is not remembered). `createRegistryWarm` builds the profile's services through the runtime factory's `prepare` inside a provider scope of their own and closes it. `answerWarm` validates `kind`/`context` with the `open_session` checks, refuses a relative `cwd` with `invalid_path` and a draining host with `host_draining`, stamps the host's context over the client's like an open, and answers `unsupported` when the registry cannot warm.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `RpcSessionRegistryOptions.createRuntime` is a `PreparableRuntimeFactory`; when it has `prepare`, the registry exposes `warm`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `handle` answers `warm` before its request accounting, so a warm holds no drain and touches no session; `get_protocol_info` advertises `warm` only when the registry has `warm`. `dispatch` takes every command except `warm`.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: a `warm` line is an observing request, marked or not, so the supervisor and the socket host never count a warming connection as an attachment.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `WARM_CAPABILITY`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `warm` command, its response (`state: "warmed" | "already_warm" | "unsupported"`) and `RPC_ERROR_WARM_FAILED`.
+- `test/suite/rpc-host-warm.test.ts` (new).
+
+### Why
+
+A fresh host pays a one-time cost on its first session (extension graph compile, task runtime load): about 0.95 s on the compiled omo binary against 0.15 s afterwards. With one host per session (omo #9110) every session paid it, and omo worked around it by opening and closing a throwaway `child` session, which cost an open/close round trip, a temp state directory and a telemetry exclusion. `warm` does the loading without any session.
+
+### Why an extension could not handle it
+
+The cost is the host loading extensions; it happens before any extension of the next session exists, and only the host can build a session's services without the session.
+
+### Expected merge conflict zones
+
+- `SessionCommandRouter.handle` (the early `warm` return) and the capability list in `dispatch`'s `get_protocol_info` branch.
+- `RpcSessionRegistry`'s constructor and options interface.
+- The end of the `RpcCommand` and `RpcResponse` unions in `rpc-types.ts`.
+
 ## 2026-09-28 - The lifecycle supervisor no longer loads the CLI parser and provider catalog
 
 ### What changed
