@@ -1,3 +1,24 @@
+## 2026-09-28 - Copilot requests use the account's own API host (senpi#2309)
+
+### What changed
+
+- `packages/ai/src/api/github-copilot-endpoint.ts` (new): `resolveGitHubCopilotBaseUrl` picks the host from the token response's `endpoints.api` stored for that exact token (`copilotApiEndpoint: { tid, url }`, matched by the token's `tid`), then the token's `proxy-ep`, then the GHE domain, then `GITHUB_COPILOT_INDIVIDUAL_BASE_URL`. `parseGitHubCopilotApiEndpoint` accepts only https URLs without credentials.
+- `packages/ai/src/auth/oauth/github-copilot.ts`: the token exchange stores `copilotApiEndpoint`; `/models`, model-policy updates and `toAuth` resolve through the new helper; the Individual picker fallback compares against the shared constant.
+- `packages/ai/src/providers/github-copilot.ts`: the api-key lane (`COPILOT_GITHUB_TOKEN`, explicit keys) returns the token's `proxy-ep` host as `auth.baseUrl`.
+- `packages/ai/src/api/github-copilot-errors.ts`: a Copilot 421 gets a note naming the wrong-host cause, the fix, and the GitHub request id.
+
+### Why
+
+- Business and Enterprise accounts are served from their own host; a request on the individual host is refused with `421 Misdirected Request` (omo#8662). The token response's `endpoints.api` was discarded, a token without `proxy-ep` fell back to the individual host even at refresh, and a token passed as a key never derived a host at all.
+
+### Why an extension could not handle it
+
+- The host is decided inside the bundled OAuth flow and the provider's auth resolution before any extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: `refreshGitHubCopilotAccessToken`'s return, the `getGitHubCopilotBaseUrl` call sites and `toAuth` in `auth/oauth/github-copilot.ts`; the `apiKey` line in `providers/github-copilot.ts`; the 421 branch in `api/github-copilot-errors.ts`.
+
 ## 2026-09-28 - Copilot account model limits drive compaction and output budgets (senpi#2299)
 
 ### What changed
