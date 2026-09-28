@@ -1,4 +1,5 @@
 import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
+import { GITHUB_COPILOT_REJECTED_TOKEN_STATUSES } from "../api/github-copilot-headers.ts";
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
@@ -14,7 +15,12 @@ export function githubCopilotProvider(): Provider<"anthropic-messages" | "openai
 		baseUrl: "https://api.individual.githubcopilot.com",
 		auth: {
 			apiKey: envApiKeyAuth("GitHub Copilot token", ["COPILOT_GITHUB_TOKEN"]),
-			oauth: lazyOAuth({ name: "GitHub Copilot", isSubscription: true, load: loadGitHubCopilotOAuth }),
+			oauth: lazyOAuth({
+				name: "GitHub Copilot",
+				isSubscription: true,
+				rejectedTokenStatuses: GITHUB_COPILOT_REJECTED_TOKEN_STATUSES,
+				load: loadGitHubCopilotOAuth,
+			}),
 		},
 		models: Object.values(GITHUB_COPILOT_MODELS),
 		filterModels: (models, credential) => {
