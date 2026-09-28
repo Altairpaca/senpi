@@ -4,7 +4,8 @@
  * tombstone AFTER its write and undoes the write when a cancel won, so cancellation is final.
  */
 
-import { link, readdir, rename, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	ensureDir,
@@ -19,7 +20,7 @@ import {
 	tombstonePath,
 	writeAtomic,
 } from "./store.ts";
-import type { ScheduledJob } from "./types.ts";
+import { nextRecurringDueAt, type ScheduledJob } from "./types.ts";
 
 const TOMBSTONE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
@@ -118,6 +119,73 @@ export async function rearmRecurringJob(dir: string, next: ScheduledJob): Promis
 	const path = join(dir, "pending", `${next.id}.json`);
 	await writeAtomic(path, serialize(next));
 	if (await isCancelled(dir, next.id)) await rm(path, { force: true });
+}
+
+/** Occurrence numbers of the job's records in `state` (`firing/<id>@<n>~...`, `failed/<id>@<n>.json`). */
+async function occurrenceNumbers(dir: string, state: "firing" | "failed", id: string): Promise<number[]> {
+	let names: string[];
+	try {
+		names = await readdir(join(dir, state));
+	} catch (error) {
+		if (isFileSystemError(error, "ENOENT")) return [];
+		throw error;
+	}
+	const prefix = `${id}@`;
+	return names
+		.filter((name) => name.startsWith(prefix))
+		.map((name) => Number.parseInt(name.slice(prefix.length), 10))
+		.filter((occurrence) => Number.isSafeInteger(occurrence));
+}
+
+/**
+ * Re-arms a recurring job whose runner died after claiming occurrence `occurrence` but before its
+ * re-arm, so a crash in that window loses the occurrence, never the schedule. Nothing happens when
+ * the job was cancelled, is pending again, or has a later occurrence on record (the re-arm ran);
+ * the exclusive `link` never overwrites a pending file another runner restored first. Returns the
+ * restored job.
+ */
+export async function restoreAbandonedSchedule(
+	dir: string,
+	job: ScheduledJob,
+	occurrence: number,
+	now: number,
+): Promise<ScheduledJob | undefined> {
+	if (job.everyMs === null || (await isCancelled(dir, job.id))) return undefined;
+	const pending = join(dir, "pending", `${job.id}.json`);
+	if (
+		await stat(pending).then(
+			() => true,
+			() => false,
+		)
+	)
+		return undefined;
+	const later = [
+		...(await occurrenceNumbers(dir, "firing", job.id)),
+		...(await occurrenceNumbers(dir, "failed", job.id)),
+	];
+	if (later.some((n) => n > occurrence)) return undefined;
+	const next: ScheduledJob = {
+		...job,
+		fireCount: occurrence,
+		dueAt: nextRecurringDueAt(job.dueAt, job.everyMs, now),
+		lastError: null,
+	};
+	await ensureDir(join(dir, "pending"));
+	const temp = join(dir, "pending", `.schedule-${randomUUID()}.tmp`);
+	try {
+		await writeFile(temp, serialize(next), { encoding: "utf8", mode: 0o600 });
+		await link(temp, pending);
+	} catch (error) {
+		if (!isFileSystemError(error, "EEXIST")) throw error;
+		return undefined;
+	} finally {
+		await rm(temp, { force: true });
+	}
+	if (await isCancelled(dir, job.id)) {
+		await rm(pending, { force: true });
+		return undefined;
+	}
+	return next;
 }
 
 /**

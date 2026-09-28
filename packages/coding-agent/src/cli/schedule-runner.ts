@@ -12,6 +12,8 @@ import {
 	claimOccurrence,
 	pruneTombstones,
 	rearmRecurringJob,
+	restoreAbandonedSchedule,
+	restorePending,
 	settleOccurrence,
 } from "../core/extensions/builtin/schedule/occurrences.ts";
 import {
@@ -82,16 +84,26 @@ export interface RunDueOptions {
 	readonly runners?: () => Promise<readonly LiveRunner[]>;
 }
 
-async function recoverAbandoned(options: RunDueOptions, records: readonly JobRecord[]): Promise<RunnerEvent[]> {
+interface Recovery {
+	readonly events: RunnerEvent[];
+	/** Due times of recurring jobs re-armed because their runner died before re-arming them. */
+	readonly restoredDueAt: number[];
+}
+
+async function recoverAbandoned(options: RunDueOptions, records: readonly JobRecord[]): Promise<Recovery> {
 	const firing = records.filter((record) => record.state === "firing");
-	if (firing.length === 0) return [];
+	if (firing.length === 0) return { events: [], restoredDueAt: [] };
 	const runners = await (options.runners ?? (() => liveRunners(options.dir)))();
 	const events: RunnerEvent[] = [];
+	const restoredDueAt: number[] = [];
 	for (const record of firing) {
 		if (record.owner === undefined || record.occurrence === undefined) continue;
 		const mine =
 			record.owner.pid === options.owner.pid && record.owner.processStartedAtMs === options.owner.processStartedAtMs;
 		if (mine || isOwnerAmong(record.owner, runners)) continue;
+		// Before the record goes: a runner that died before its re-arm must not take the schedule with it.
+		const restored = await restoreAbandonedSchedule(options.dir, record.job, record.occurrence, options.now());
+		if (restored !== undefined) restoredDueAt.push(restored.dueAt);
 		await settleOccurrence(options.dir, record.file, record.job, record.occurrence, {
 			ok: false,
 			error: ABANDONED_OCCURRENCE_ERROR,
@@ -104,7 +116,7 @@ async function recoverAbandoned(options: RunDueOptions, records: readonly JobRec
 			error: ABANDONED_OCCURRENCE_ERROR,
 		});
 	}
-	return events;
+	return { events, restoredDueAt };
 }
 
 /** Re-reads a pending job under the session lock; undefined when it is gone, cancelled, or not due. */
@@ -155,7 +167,18 @@ async function deliverClaimed(
 	if (job.everyMs !== null) {
 		nextDueAt = nextRecurringDueAt(job.dueAt, job.everyMs, firedAt);
 		// Re-arm BEFORE delivering: a crash from here on loses at most this one occurrence.
-		await rearmRecurringJob(options.dir, { ...job, fireCount: occurrence, lastFiredAt: firedAt, dueAt: nextDueAt });
+		try {
+			await rearmRecurringJob(options.dir, {
+				...job,
+				fireCount: occurrence,
+				lastFiredAt: firedAt,
+				dueAt: nextDueAt,
+			});
+		} catch (error) {
+			// Nothing was delivered: put the claimed generation back so the schedule survives the error.
+			await restorePending(options.dir, record, job.id);
+			throw error;
+		}
 	}
 	let result: DeliveryResult;
 	try {
@@ -201,13 +224,15 @@ async function deliverClaimed(
 export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> {
 	const listing = await listScheduledJobs(options.dir);
 	const events: RunnerEvent[] = listing.invalid.map((invalid) => ({ event: "invalid", ...invalid }));
-	events.push(...(await recoverAbandoned(options, listing.jobs)));
+	const recovery = await recoverAbandoned(options, listing.jobs);
+	events.push(...recovery.events);
 	await pruneTombstones(options.dir, listing, options.now());
 
 	let nextDueAt: number | undefined;
 	const noteNext = (dueAt: number) => {
 		nextDueAt = nextDueAt === undefined ? dueAt : Math.min(nextDueAt, dueAt);
 	};
+	for (const dueAt of recovery.restoredDueAt) noteNext(dueAt);
 	const bySession = new Map<string, ScheduledJob[]>();
 	for (const { state, job } of listing.jobs) {
 		if (state !== "pending") continue;

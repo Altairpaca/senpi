@@ -345,6 +345,39 @@ describe("schedule runner", () => {
 		]);
 	});
 
+	it("restores a recurring schedule whose runner died between the claim and the re-arm", async () => {
+		const dir = await tempScheduleDir();
+		const job = await createScheduledJob(dir, jobInput({ dueAt: T0, everyMs: 60_000 }), T0);
+		// Runner A claims occurrence 1 and dies before it can re-arm the job.
+		expect(await claimOccurrence(dir, job, RUNNER_A)).toBeDefined();
+		const { events, deliver } = recordingDelivery();
+
+		const result = await pass(dir, { deliver, owner: RUNNER_B, now: () => T0 + 61_000 });
+
+		expect(result.events).toEqual([
+			expect.objectContaining({ event: "abandoned", id: job.id, occurrence: 1, error: ABANDONED_OCCURRENCE_ERROR }),
+		]);
+		expect(events).toEqual([]);
+		expect(result.nextDueAt).toBe(T0 + 120_000);
+		expect(await states(dir)).toEqual([
+			{ state: "failed", id: job.id, occurrence: 1, dueAt: T0 },
+			{ state: "pending", id: job.id, occurrence: undefined, dueAt: T0 + 120_000 },
+		]);
+		const restored = (await listScheduledJobs(dir)).jobs.find((record) => record.state === "pending");
+		expect(restored?.job.fireCount).toBe(1);
+	});
+
+	it("does not restore an abandoned recurring job that was cancelled", async () => {
+		const dir = await tempScheduleDir();
+		const job = await createScheduledJob(dir, jobInput({ dueAt: T0, everyMs: 60_000 }), T0);
+		expect(await claimOccurrence(dir, job, RUNNER_A)).toBeDefined();
+		await cancelScheduledJob(dir, job.id);
+
+		await pass(dir, { deliver: recordingDelivery().deliver, owner: RUNNER_B, now: () => T0 + 61_000 });
+
+		expect(await states(dir)).toEqual([]);
+	});
+
 	it("leaves an occurrence alone while the runner that claimed it is alive", async () => {
 		const dir = await tempScheduleDir();
 		const job = await createScheduledJob(dir, jobInput(), T0);
