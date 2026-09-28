@@ -1,3 +1,21 @@
+## 2026-09-29 - The model-fallback notice says which model or account hit its usage limit (omo#8296)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `retry_fallback_applied` notice body uses `usageLimitCause` when the event carries `limit`: "<from> hit its usage limit; the turn continues on <to>." or "the <provider> account hit its usage limit, so its other models were skipped; the turn continues on <to>." Other switches keep "Retry switched models (<reason>)".
+
+### Why
+
+- A user whose model ran out of its usage limit saw a generic "(transient)" switch and could not tell a limit from a network blip (omo#8296).
+
+### Why an extension could not handle it
+
+- The notice is rendered by the interactive mode's own event switch.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_applied` case in `interactive-mode.ts`.
+
 ## 2026-09-28 - Show Copilot tool-limit omissions once per session (senpi#2298)
 
 ### What changed

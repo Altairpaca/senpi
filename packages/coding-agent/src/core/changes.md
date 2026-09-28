@@ -1,3 +1,24 @@
+## 2026-09-29 - A usage limit skips the rest of a spent account and names itself in the fallback notice (omo#8296)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts` (new): `usageLimitScope(errorMessage)` reads a failure as a usage limit (quota exhaustion, billing, or subscription limit prose such as "You've hit your session limit") and scopes it: `model` when the message names a model, a model family, or premium models; `account` otherwise. `usageLimitCause(from, limit)` renders the notice clause.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: `CandidateFilters.spentProvider` moves that provider's entries to the end of the scan: `firstUsableCandidate` first looks for a usable entry on any other provider (skip reason `account-limit`), and only then rescans with the spent provider included.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` scopes `failure.errorMessage`; an account-wide limit passes the failed model's provider as `spentProvider`, so the chain reaches another provider before spending a request on a sibling model of the spent account. A chain with no other usable provider still hops to the sibling rather than stopping. `retry_fallback_applied` and the `fallback_applied` log line carry `limit` when a usage limit caused the switch.
+- `packages/coding-agent/src/core/retry-fallback/controller-types.ts`, `packages/coding-agent/src/core/agent-session.ts`: the `retry_fallback_applied` event type gains optional `limit?: "model" | "account"`.
+
+### Why
+
+- A Claude session or weekly limit, a Codex usage limit, or an empty balance binds the whole account: the next model on the same provider fails the same way, so the chain burned a request on it before reaching another provider. A model-scoped limit (a Fable-only weekly cap, Copilot premium models) still moves to the next model on the same provider. The notice said `(transient)` or `(hard-error)` and never that a limit caused the switch (omo#8296).
+
+### Why an extension could not handle it
+
+- Candidate selection and the `retry_fallback_applied` event live inside `RetryFallbackController`, which no extension hook reaches.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_applied` member of the `AgentSessionEvent` union in `agent-session.ts`.
+
 ## 2026-09-28 - A stored OAuth token the provider refuses is re-exchanged once before failing (senpi#2297)
 
 ### What changed

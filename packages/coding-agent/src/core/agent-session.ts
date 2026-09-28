@@ -467,6 +467,8 @@ export type AgentSessionEvent =
 			to: string;
 			chainKey: string;
 			reason: "transient" | "refusal" | "hard-error" | "billing";
+			/** Set when a usage limit caused the switch: `model` binds one model, `account` the whole provider. */
+			limit?: "model" | "account";
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
 	| { type: "retry_fallback_reverted"; from: string; to: string }
