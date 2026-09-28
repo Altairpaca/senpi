@@ -1,3 +1,57 @@
+## 2026-09-28 - `host shard-path|gc` in the help text (senpi#2245)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `host` line in the Commands section lists `<ensure|status|stop|handoff|shard-path|gc>`, matching the subcommands `senpi host` accepts.
+
+### Why
+
+- `shard-path` and `gc` are commands clients are told to call, so `--help` has to name them like the `host` usage text does.
+
+### Why an extension could not handle it
+
+- The help text is built by the CLI before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the `host` line of the Commands help block, beside `app-server daemon`.
+
+## 2026-09-27 - `models discover` in the help text (senpi#2196)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the Commands section lists `senpi models discover <provider>` after `config`.
+
+### Why
+
+- The new subcommand has to be discoverable from `--help`.
+
+### Why an extension could not handle it
+
+- The help text is built by the CLI before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the Commands help block after the `config` line.
+
+## 2026-09-27 - --rebind <path|id> (senpi#2181)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--rebind <path|id>` into `Args.rebind` and lists it in the help text beside `--fork`.
+
+### Why
+
+- Scripts need a non-interactive way to move a session of a moved or re-cloned repository into the current directory; the interactive prompt alone cannot serve them.
+
+### Why an extension could not handle it
+
+- CLI argument parsing and session resolution run before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: `Args` (after `fork`), the `--fork` parse branch, and the `--fork` help line.
+
 ## 2026-09-22 - --provider rejects a typed legacy provider id (senpi#1989)
 
 ### What changed
