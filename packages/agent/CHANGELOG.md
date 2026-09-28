@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- Published Node bundles now load their embedded JavaScript tree-sitter grammar for structural reads instead of silently falling back to the heuristic folder. ([#2032](https://github.com/code-yeongyu/senpi/issues/2032))
-
 ### Removed
 
 ## [2026.9.28-3] - 2026-09-28
