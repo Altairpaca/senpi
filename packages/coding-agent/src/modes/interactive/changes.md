@@ -1709,3 +1709,23 @@ The interactive component controls the common render-state boundary for every to
 The result field of createRenderState; exploration-container hooks belong to the sibling lane.
 
 - Covered production paths: `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`.
+
+## 2026-09-28 - A bare /skill namespace never reaches the model (senpi#2249)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the Enter submit handler and the Alt+Enter follow-up path treat a submitted `/skill` or `/skill:` as the skill namespace: the editor is reset to `/skill:` and `openAutocomplete()` lists the skills, or a warning explains that no skill is loaded or skill commands are disabled. Nothing is sent to `session.prompt`.
+
+### Why
+
+Users told to "type /skill: and pick a skill" submitted `/skill:` itself, and it reached the model as a user message.
+
+### Why an extension could not handle it
+
+An extension `input` handler runs inside `AgentSession.prompt`, after the TUI has already cleared the editor; only the submit handler can keep the user in the picker.
+
+### Expected merge conflict zones
+
+- LOW: the `isBareSkillNamespace` checks just before the `isExtensionCommand` branch of `setupEditorSubmitHandler` and at the top of `handleFollowUp`, and the new `openSkillPickerForBareNamespace` method beside `isExtensionCommand` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+- Covered production paths: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
