@@ -1,5 +1,27 @@
 # senpi-codemode fork changes
 
+## 2026-09-28 - Python, Ruby, and Julia kernel memory: footprint report, collection, notice, ceiling restart (senpi#2261)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: `init` carries the memory thresholds; after each cell `run_cell` reads the process footprint in-process (darwin `proc_pid_rusage` `ri_phys_footprint`, Linux `/proc/self/status` `RssAnon`, win32 `K32GetProcessMemoryInfo` `PrivateUsage`, otherwise peak `ru_maxrss` flagged `approximate`), runs `gc.collect()` and glibc `malloc_trim(0)` under the same growth/notice/ceiling triggers as the JS worker (plus a rate-floored collection while the watermark stays live, the synchronous analog of the JS idle collection), names the five largest user globals when live memory reaches the notice or ceiling, and attaches `memory` to the result frame.
+- `packages/senpi-codemode/src/kernels/py/kernel.ts`, `kernel-contract.ts`, `transport.ts`: thresholds reach the prelude on `init`; results pass through the shared policy; an over-ceiling kernel is reset only once no cell is running or queued, and its next result is marked `recycled`.
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory-host.ts` (new), `kernel-memory.ts`, `subprocess-kernel.ts`, `subprocess-contract.ts`, `src/kernels/rb/kernel.ts`, `src/kernels/jl/kernel.ts`: the host half of the ceiling protocol for process-backed kernels; Ruby and Julia results carry the interpreter footprint read by the host (`readProcessFootprint`) and restart over the ceiling; the notice advice per language (`del`, `= nil`, `= nothing`) comes from the policy.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`: optional `approximate` on the memory report.
+- `packages/senpi-codemode/src/extension/session-manager.ts`: py/rb/jl kernels receive the resolved thresholds (and the footprint reader for rb/jl).
+
+### Why
+
+- #2261: only the JS kernel collected, reported, and capped its memory; a Python kernel holding gigabytes stayed silent until the machine ran out, and no kernel other than JS had a ceiling.
+
+### Why an extension could not handle it
+
+- The Python prelude, the kernel hosts, and the result frame belong to this package.
+
+### Expected merge conflict zones
+
+- MEDIUM: `run_cell` and the `init` handler in `prelude.py`, `#onResult`/`#spawn` in `py/kernel.ts`, `handleMessage`/`spawnProcess` in `subprocess-kernel.ts`, and `#createKernel` in `session-manager.ts`.
+
 ## 2026-09-28 - JavaScript kernel memory: post-cell and idle collection, large-globals notice, ceiling restart (senpi#2261)
 
 ### What changed

@@ -7,6 +7,7 @@
 ### Added
 
 - JavaScript eval kernels report their memory: a result whose kernel holds at least `memory.noticeMb` (default 1 GiB) live after a collection carries one bracketed notice naming the largest globals and how to drop them, plus `details.memory` (`liveBytes`, `gcRan`, `globals`). A kernel whose live memory reaches `memory.ceilingMb` (default a quarter of physical memory, 2-8 GiB) says so in that result and restarts once no cell is running or queued on it; the next result reports `details.memory.recycled`. Settings `memory.gcWatermarkMb`, `memory.noticeMb`, `memory.ceilingMb` and their `SENPI_CODEMODE_MEMORY_*_MB` overrides; `0` disables each. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+- Python eval kernels follow the same memory contract: after each cell the kernel reads its process footprint (macOS `phys_footprint`, Linux `RssAnon`, Windows `PrivateUsage`), runs `gc.collect()` plus glibc `malloc_trim(0)` when it grew past `memory.gcWatermarkMb`, and a result at `memory.noticeMb` names the largest globals (numpy `nbytes`, pandas `memory_usage(deep=True)`, sampled containers) with `del <name>` advice; at `memory.ceilingMb` the Python kernel restarts once its queue is empty and the next result reports `details.memory.recycled`. Ruby and Julia kernels get the ceiling restart from the interpreter footprint the host reads after each result (no globals list). ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
 
 ### Changed
 
