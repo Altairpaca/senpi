@@ -105,7 +105,10 @@ Configuration is loaded in this order:
     "headBytes": 20480,
     "maxColumns": 768
   },
-  "statusEvents": true
+  "statusEvents": true,
+  "memory": {
+    "retainedResultsMb": 32
+  }
 }
 ```
 
@@ -123,6 +126,7 @@ Configuration is loaded in this order:
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
 | `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
 | `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
+| `memory.retainedResultsMb` | `32` | Byte budget (MiB) for the settled cells kept for `peek`/`list`, on top of the 32-cell count cap; the oldest go first and the newest is always kept. A settled foreground cell keeps no image parts (they were returned inline); a detached cell keeps its images for `peek`. A successful `reset: true` drops that language's settled cells. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_RESULTS_MB` (a non-negative integer). |
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`

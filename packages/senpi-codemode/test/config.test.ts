@@ -8,6 +8,7 @@ import {
 	resolveEnabledLanguages,
 	resolveForegroundWindowSeconds,
 	resolveHardLimitSeconds,
+	resolveRetainedResultsBytes,
 	resolveRunBudgetSeconds,
 } from "../src/config/settings.ts";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
@@ -134,6 +135,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				memory: { retainedResultsMb: 32 },
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -166,6 +168,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				memory: { retainedResultsMb: 32 },
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -404,6 +407,31 @@ describe("codemode settings", () => {
 
 		for (const value of ["0", "-5", "abc", ""]) {
 			expect(resolveForegroundWindowSeconds(settings, { SENPI_CODEMODE_FOREGROUND_SECONDS: value })).toBe(15);
+		}
+	});
+
+	it("resolves the settled-result byte budget from defaults, the settings file, and the environment", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const projectDir = join(root, "project");
+			await mkdir(join(projectDir, ".senpi"), { recursive: true });
+			await writeFile(
+				join(projectDir, ".senpi", "codemode.json"),
+				JSON.stringify({ memory: { retainedResultsMb: 8 } }),
+			);
+			const loaded = await loadCodemodeSettings({ cwd: projectDir, homeDir: join(root, "home") });
+
+			expect(loaded.warnings).toEqual([]);
+			expect(resolveRetainedResultsBytes(defaultCodemodeSettings, {})).toBe(32 * 1024 * 1024);
+			expect(resolveRetainedResultsBytes(loaded.settings, {})).toBe(8 * 1024 * 1024);
+			const env = (value: string) => ({ SENPI_CODEMODE_RETAINED_RESULTS_MB: value });
+			expect(resolveRetainedResultsBytes(loaded.settings, env("4"))).toBe(4 * 1024 * 1024);
+			expect(resolveRetainedResultsBytes(loaded.settings, env("0"))).toBe(0);
+			for (const value of ["-1", "abc", "", "1.5"]) {
+				expect(resolveRetainedResultsBytes(loaded.settings, env(value))).toBe(8 * 1024 * 1024);
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
 		}
 	});
 });

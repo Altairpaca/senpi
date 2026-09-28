@@ -25,6 +25,7 @@
 ### Fixed
 
 - `new Bun.WebView()` in a JavaScript eval cell no longer fails with `Bun.WebView with backend "chrome" is only available on the main thread` (every call on Windows and Linux, `backend: "chrome"` on macOS). Cells see a `Bun` whose `WebView` (also through `import { WebView } from "bun"`) hands Chrome-backed views to the process main thread with the same API: navigation, input, `evaluate`, screenshots, `cdp()` and its events, `console` capture, `url`/`title`/`loading`, `close()` and `await using`. The macOS default (WebKit) stays a native view in the kernel worker. `Bun.WebView.closeAll()` in a cell closes only that kernel's views. ([#2248](https://github.com/code-yeongyu/senpi/issues/2248))
+- Settled eval cells kept for `peek`/`list` no longer pin up to ~800 MB of image data for the whole session. A settled foreground cell's snapshot drops its image parts (they were already returned inline), a detached cell keeps its images for `peek`, the store is bounded by the new `memory.retainedResultsMb` setting (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`, 0 keeps only the 32-cell count cap) on top of the count cap, and a successful `reset: true` drops that language's settled snapshots. ([#2259](https://github.com/code-yeongyu/senpi/issues/2259))
 
 ### Removed
 

@@ -2,6 +2,7 @@ import type { AgentToolResult } from "@code-yeongyu/senpi";
 import {
 	DEFAULT_HARD_LIMIT_SECONDS,
 	DEFAULT_MAX_DETACHED_CELLS,
+	DEFAULT_RETAINED_RESULTS_MB,
 	DEFAULT_RUN_BUDGET_SECONDS,
 } from "../config/settings.ts";
 import type { WakeSourceState } from "../extension/wake-source-state.ts";
@@ -38,7 +39,7 @@ export class EvalDetachedCellManager {
 	readonly #onWakeSourceState: ((state: WakeSourceState) => void) | undefined;
 	readonly #cells = new Map<string, ManagedCell>();
 	readonly #detached = new Map<string, ManagedCell>();
-	readonly #terminalSnapshots = new TerminalSnapshotStore();
+	readonly #terminalSnapshots: TerminalSnapshotStore;
 	readonly #notificationQueue: DetachedNotificationQueue;
 	readonly #now: () => number;
 	readonly #hardLimitSeconds: number;
@@ -54,6 +55,9 @@ export class EvalDetachedCellManager {
 		this.#hardLimitSeconds = options.hardLimitSeconds ?? DEFAULT_HARD_LIMIT_SECONDS;
 		this.#runBudgetSeconds = options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS;
 		this.#maxDetachedCells = options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS;
+		this.#terminalSnapshots = new TerminalSnapshotStore({
+			byteBudget: options.retainedResultsBytes ?? DEFAULT_RETAINED_RESULTS_MB * 1024 * 1024,
+		});
 	}
 
 	get maxDetachedCells(): number {
@@ -172,6 +176,11 @@ export class EvalDetachedCellManager {
 		return { live: this.liveCells(), recent: this.#terminalSnapshots.list() };
 	}
 
+	/** Drops the settled snapshots of one language; called once that language's kernel reset succeeded. */
+	forgetSettled(language: EvalLanguage): void {
+		this.#terminalSnapshots.forgetLanguage(language);
+	}
+
 	async waitForTerminal(cellId: string): Promise<EvalDetachedCellSnapshot> {
 		const live = this.#cells.get(cellId);
 		return live === undefined ? this.#terminal(cellId) : await live.terminal.promise;
@@ -274,7 +283,11 @@ export class EvalDetachedCellManager {
 	}
 
 	#refreshTerminalSnapshot(cell: ManagedCell): void {
-		if (!this.#cells.has(cell.cellId)) this.#terminalSnapshots.remember(this.#snapshot(cell));
+		if (this.#cells.has(cell.cellId)) return;
+		const snapshot = this.#snapshot(cell);
+		// A foreground cell's images were already delivered inline; only a detached cell's images are
+		// reachable solely through peek (notifications carry text), so only those are retained (#2259).
+		this.#terminalSnapshots.remember(cell.wasDetached ? snapshot : withoutImages(snapshot));
 	}
 
 	#emitStatus(): void {
@@ -296,4 +309,12 @@ export class EvalDetachedCellManager {
 		if (snapshot === undefined) throw new Error(`Unknown detached eval cell "${cellId}"`);
 		return snapshot;
 	}
+}
+
+function withoutImages(snapshot: EvalDetachedCellSnapshot): EvalDetachedCellSnapshot {
+	if (!snapshot.result.content.some((part) => part.type === "image")) return snapshot;
+	return {
+		...snapshot,
+		result: { ...snapshot.result, content: snapshot.result.content.filter((part) => part.type !== "image") },
+	};
 }

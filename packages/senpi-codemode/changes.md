@@ -22,6 +22,29 @@
 
 - LOW: `getKernel`/dispose in `session-manager.ts`, the proxy kernel surface, the `EvalKernelManager` interface, and `executeCell`'s finally block in `run-eval-cell.ts` (the other eval-memory lanes touch nearby settlement code).
 
+## 2026-09-28 - Settled-cell snapshots are byte-bounded and drop delivered images
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/terminal-snapshot-store.ts`: the settled-cell LRU tracks an estimated byte size per snapshot (text and code/output as UTF-16, image base64 length, serialized `jsonOutputs`), evicts the oldest beyond a byte budget as well as the 32-entry count cap (always keeping the newest), and can forget one language.
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`: a never-detached cell's settled snapshot is stored without image parts; a detached cell's snapshot keeps them for `peek`; `forgetSettled(language)` drops a language's settled snapshots; the budget comes from the new `retainedResultsBytes` option.
+- `packages/senpi-codemode/src/tool/detached-cell-contract.ts`: `retainedResultsBytes` manager option.
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts`: after a successful kernel reset the language's settled snapshots are forgotten.
+- `packages/senpi-codemode/src/config/settings.ts`, `packages/senpi-codemode/src/index.ts`: `memory.retainedResultsMb` (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`, 0 = count cap only) wired into both detached-cell managers.
+- Tests: `test/eval-settled-snapshot-budget.test.ts`, `test/eval-list-and-reset.test.ts`, `test/config.test.ts`.
+
+### Why
+
+- #2259: 32 settled results kept their base64 images (measured +83 MB host heap after 40 image cells, up to ~768 MB at the per-cell image cap) for the session lifetime, and a reset left the stale snapshots behind.
+
+### Why an extension could not handle it
+
+- The settled-cell store and the eval reset path belong to this package.
+
+### Expected merge conflict zones
+
+- LOW: the fork-only detached-cell manager, snapshot store, settings memory block, and eval reset path.
+
 ## 2026-09-27 - Tool kernel preludes in the eval kernels
 
 ### What changed

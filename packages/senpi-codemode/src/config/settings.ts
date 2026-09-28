@@ -43,6 +43,14 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		statusEvents: Type.Optional(Type.Boolean()),
+		memory: Type.Optional(
+			Type.Object(
+				{
+					retainedResultsMb: Type.Optional(Type.Number({ minimum: 0 })),
+				},
+				{ additionalProperties: false },
+			),
+		),
 	},
 	{ additionalProperties: false },
 );
@@ -57,6 +65,11 @@ export interface CodemodeTaskTools {
 export interface CodemodeOutputSink {
 	readonly headBytes: number;
 	readonly maxColumns: number;
+}
+
+export interface CodemodeMemorySettings {
+	/** Byte budget (MiB) for settled-cell snapshots kept for `peek`/`list`; 0 keeps only the count cap. */
+	readonly retainedResultsMb: number;
 }
 
 export interface CodemodeSettings {
@@ -87,6 +100,7 @@ export interface CodemodeSettings {
 	readonly taskTools?: CodemodeTaskTools;
 	readonly outputSink?: CodemodeOutputSink;
 	readonly statusEvents?: boolean;
+	readonly memory?: CodemodeMemorySettings;
 }
 
 export type ResolvedCodemodeSettings = CodemodeSettings & {
@@ -94,6 +108,7 @@ export type ResolvedCodemodeSettings = CodemodeSettings & {
 	readonly taskTools: CodemodeTaskTools;
 	readonly outputSink: CodemodeOutputSink;
 	readonly statusEvents: boolean;
+	readonly memory: CodemodeMemorySettings;
 };
 
 export interface LoadCodemodeSettingsOptions {
@@ -135,7 +150,10 @@ export const DEFAULT_RUN_BUDGET_SECONDS = 300;
 
 export const DEFAULT_MAX_DETACHED_CELLS = 15;
 
+export const DEFAULT_RETAINED_RESULTS_MB = 32;
+
 export const RUN_BUDGET_ENVIRONMENT_FLAG = "SENPI_CODEMODE_RUN_BUDGET_SECONDS";
+export const RETAINED_RESULTS_ENVIRONMENT_FLAG = "SENPI_CODEMODE_RETAINED_RESULTS_MB";
 export const MAX_DETACHED_CELLS_ENVIRONMENT_FLAG = "SENPI_CODEMODE_MAX_DETACHED_CELLS";
 
 // OMP settings-schema.ts:3211-3299 has language/path settings only; eval.ts:427
@@ -162,6 +180,9 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		maxColumns: 768,
 	},
 	statusEvents: true,
+	memory: {
+		retainedResultsMb: DEFAULT_RETAINED_RESULTS_MB,
+	},
 };
 
 const languageEnvironmentFlags = {
@@ -224,6 +245,20 @@ export function resolveMaxDetachedCells(settings: CodemodeSettings, env: Environ
 	);
 }
 
+/** Settled-cell snapshot byte budget; the environment override accepts 0 (count cap only). */
+export function resolveRetainedResultsBytes(settings: CodemodeSettings, env: Environment = process.env): number {
+	const megabytes =
+		nonNegativeIntegerOverride(env[RETAINED_RESULTS_ENVIRONMENT_FLAG]) ??
+		settings.memory?.retainedResultsMb ??
+		DEFAULT_RETAINED_RESULTS_MB;
+	return megabytes * 1024 * 1024;
+}
+
+function nonNegativeIntegerOverride(value: string | undefined): number | undefined {
+	if (value === undefined || !/^\s*\d+\s*$/u.test(value)) return undefined;
+	return Number.parseInt(value, 10);
+}
+
 function positiveSecondsOverride(value: string | undefined): number | undefined {
 	if (value === undefined) return undefined;
 	const parsed = Number.parseInt(value, 10);
@@ -278,6 +313,9 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			maxColumns: input.outputSink?.maxColumns ?? defaultCodemodeSettings.outputSink.maxColumns,
 		},
 		statusEvents: input.statusEvents ?? defaultCodemodeSettings.statusEvents,
+		memory: {
+			retainedResultsMb: input.memory?.retainedResultsMb ?? defaultCodemodeSettings.memory.retainedResultsMb,
+		},
 	};
 }
 

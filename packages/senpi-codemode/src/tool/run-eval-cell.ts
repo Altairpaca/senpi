@@ -245,7 +245,10 @@ async function executeCell(
 			if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
 				options.kernelManager.setContext(bridgeContext);
 			}
-			if (invocation.input.reset) await execution.wait(kernel.reset());
+			if (invocation.input.reset) {
+				await execution.wait(kernel.reset());
+				cellManager.forgetSettled(invocation.input.language);
+			}
 			execution.setKernel(kernel);
 			const result = await execution.wait(
 				kernel.run({
