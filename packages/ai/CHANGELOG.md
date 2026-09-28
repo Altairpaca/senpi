@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- Fixed Bedrock Converse requests rejecting tool schemas with root `anyOf`, `oneOf`, `allOf`, or a missing object type, while preserving parameter alternatives and strict sampling ([#1947](https://github.com/code-yeongyu/senpi/issues/1947)).
-
 ### Removed
 
 ## [2026.9.23-2] - 2026-09-23
