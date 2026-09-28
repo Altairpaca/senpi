@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Claude subscription accounts no longer end up "blocked until re-login" after a token refresh. A live Claude session now resumes on the refreshed token instead of sending the next turn with the revoked one, and an authentication failure on a token that another session already replaced retries on the stored token instead of blocking a valid account, including when several sessions share one process. ([oh-my-openagent#8762](https://github.com/code-yeongyu/oh-my-openagent/issues/8762))
 - Claude subscription sessions no longer fail with "authentication failed" or end up blocked until re-login while another session is refreshing the account's token. A session that finds the credential store busy keeps its still-valid token or picks up the one the other session just refreshed, and a throttled, failing or timed-out token refresh no longer blocks the account permanently; only a rejected login does. ([#2281](https://github.com/code-yeongyu/senpi/issues/2281))
 - Interactive, print, JSON and single-session RPC modes now collect child processes left behind by a terminated worker thread, as the multi-session host already did, instead of keeping them as zombies until the process exits. ([#1962](https://github.com/code-yeongyu/senpi/issues/1962))
 - A session's first work request no longer fails on providers that refuse a forced `tool_choice`, such as Kiro behind an OpenAI-compatible proxy (`400 ... Kiro supports only automatic tool choice or tool_choice:none`). The request is sent once more without the forced `todo` choice, the model is not forced again for the rest of the process, and `compat.supportsForcedToolChoice: false` in `models.json` skips forcing from the start. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
@@ -98,7 +99,6 @@
 
 ### Fixed
 
-- Claude subscription accounts no longer end up "blocked until re-login" after a token refresh. A live Claude session now resumes on the refreshed token instead of sending the next turn with the revoked one, and an authentication failure on a token that another session already replaced retries on the stored token instead of blocking a valid account. ([oh-my-openagent#8762](https://github.com/code-yeongyu/oh-my-openagent/issues/8762))
 - RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
 
 ### Removed
