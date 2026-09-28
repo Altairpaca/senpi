@@ -11,7 +11,7 @@ export interface NativeModelInfo {
 }
 
 export type NativeAuthResult =
-	| { ok: true; apiKey?: string; headers?: Record<string, string | null> }
+	| { ok: true; apiKey?: string; headers?: Record<string, string | null>; baseUrl?: string }
 	| { ok: false; error: string };
 
 export interface NativeModelRegistry {
@@ -169,12 +169,18 @@ async function buildNativeEntryForModel(
 		}
 	}
 	if (!auth.ok || !auth.apiKey) return null;
+	// A credential-specific host (a Copilot Business or Enterprise account's own API host) replaces
+	// the catalog host, exactly as it does for the account's chat requests.
+	const requestBaseUrl = auth.baseUrl
+		? buildEndpointUrl(auth.baseUrl, mapping.resource, mapping.endpointPath)
+		: baseUrl;
+	if (!isAllowedProviderBaseUrl(requestBaseUrl)) return null;
 
 	return {
 		id: entryId,
 		provider: mapping.provider,
 		apiKey: auth.apiKey,
-		baseUrl,
+		baseUrl: requestBaseUrl,
 		model: model.id,
 		priority: -1,
 	};

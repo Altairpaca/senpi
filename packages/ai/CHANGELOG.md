@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- GitHub Copilot Business and Enterprise accounts no longer have requests sent to the individual host (`421 Misdirected Request`): the API host now comes from the token exchange's own `endpoints.api` (bound to that token), then the token's `proxy-ep`, then the GitHub Enterprise domain, with the individual host only as a last resort. This covers login and refresh (`/models`, model policies), inference, and a Copilot token passed as a key (`COPILOT_GITHUB_TOKEN` or an explicit `apiKey`). A 421 now says the request reached another plan's host and includes the GitHub request id. ([#2309](https://github.com/code-yeongyu/senpi/issues/2309))
+
 - The bundled Devin model seed lists exactly the SWE-2 lanes Devin serves: `swe-2-high`, `swe-2-medium` and `swe-2-max`. `swe-2-low` and `swe-2-high-lite`, which appear only inside the Devin CLI binary and are refused with `permission_denied`, are removed, so a config naming them no longer resolves silently. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
 ### Removed
 

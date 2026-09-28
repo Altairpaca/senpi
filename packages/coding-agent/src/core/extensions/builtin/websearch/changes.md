@@ -1,3 +1,21 @@
+## 2026-09-28 - Native web search uses the credential's own API host (senpi#2309)
+
+### What changed
+
+- `websearch/native.ts`: `NativeAuthResult` accepts `baseUrl`; when the credential names one, the native entry's endpoint is built from it instead of the catalog `model.baseUrl`, and it passes the same `isAllowedProviderBaseUrl` check.
+
+### Why
+
+- A GitHub Copilot Business or Enterprise account is served from its own API host; the individual catalog host refuses its requests with `421 Misdirected Request` (omo#8662). The session's chat requests already honoured the credential's host, this path did not.
+
+### Why an extension could not handle it
+
+- The fix is inside this builtin's own request construction.
+
+### Expected merge conflict zones
+
+- LOW: the end of `buildNativeEntryForModel` in `websearch/native.ts`.
+
 # changes.md — websearch (vendored)
 
 ## 2026-09-24 - Sync with pi-websearch 0.4.0: Kagi and SERPdive providers (senpi#2079)
