@@ -2,7 +2,13 @@ import type { EvalStatusEvent, HostToKernelMessage, KernelToHostMessage } from "
 import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP, MEMORY_COLLECTED_OP } from "../../bridge/reserved.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
 import { KernelMemoryPolicy } from "../shared/kernel-memory.ts";
-import { abandonedWorkerNote, awaitCooperativeSettlement, type WorkerRetirement } from "./interrupt-bounds.ts";
+import {
+	abandonedWorkerNote,
+	awaitCooperativeSettlement,
+	DEFAULT_INTERRUPT_BOUNDS,
+	type JavaScriptInterruptBounds,
+	type WorkerRetirement,
+} from "./interrupt-bounds.ts";
 import {
 	assertJavaScriptKernelOpen,
 	type JavaScriptKernelMode,
@@ -55,9 +61,11 @@ export class JavaScriptKernel {
 	/** Live cell children the worker reported; retired by the host when the worker itself is lost. */
 	readonly #childPids = new Set<number>();
 	readonly #memory: KernelMemoryPolicy | null;
+	readonly #interruptBounds: JavaScriptInterruptBounds;
 
 	constructor(options: JavaScriptKernelOptions) {
 		this.#options = options;
+		this.#interruptBounds = options.interruptBounds ?? DEFAULT_INTERRUPT_BOUNDS;
 		this.#memory = options.memory === undefined ? null : new KernelMemoryPolicy("js", options.memory);
 		this.#moduleLoader = new LocalModuleLoader(options);
 		this.#slot = new WorkerSlot(options, {
@@ -229,12 +237,16 @@ export class JavaScriptKernel {
 			run.interruptResult = { type: "result", cellId: run.input.cellId, ok: false, error: { message }, durationMs };
 			run.interruptAck ??= Promise.withResolvers<void>();
 			this.#slot.postMessage({ type: "interrupt", reason });
-			if ((await awaitCooperativeSettlement(run)) === "settled") return { retained: run.settledByWorker };
+			if ((await awaitCooperativeSettlement(run, this.#interruptBounds)) === "settled") {
+				return { retained: run.settledByWorker };
+			}
 			if (!this.#runs.releaseActive(run)) return { retained: run.settledByWorker };
 			const retirement = await this.#terminate();
 			this.#runs.settle(run, run.interruptResult ?? stoppedResult(run.input.cellId, message));
 			void this.#recover(() => Promise.resolve());
-			return retirement === "abandoned" ? { retained: false, note: abandonedWorkerNote() } : { retained: false };
+			return retirement === "abandoned"
+				? { retained: false, note: abandonedWorkerNote(this.#interruptBounds.terminateDeadlineMs) }
+				: { retained: false };
 		} finally {
 			this.#clearToolCalls();
 		}
@@ -372,5 +384,7 @@ export class JavaScriptKernel {
 		const pids = [...this.#childPids];
 		this.#childPids.clear();
 		await terminateProcessTrees(pids, { graceMs: WORKER_LOSS_CHILD_GRACE_MS, ownerPid: process.pid });
+		// The worker that owned these children and their exit watchers is gone, so nothing else will wait on them.
+		await this.#options.collectOrphanedChildren?.(pids);
 	}
 }

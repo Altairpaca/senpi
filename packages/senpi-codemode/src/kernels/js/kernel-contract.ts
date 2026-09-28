@@ -2,6 +2,7 @@ import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
+import type { JavaScriptInterruptBounds } from "./interrupt-bounds.ts";
 
 export type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
 export type ToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
@@ -19,6 +20,11 @@ export function resolveKernelToolNameSource(names?: KernelToolNameSource): strin
 export interface JavaScriptKernelOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
+	/**
+	 * Collects the exit status of a retired worker's children once they are killed (#1962): no thread is left to
+	 * wait on them. Absent, they stay zombies until the host's child reaper or process exit collects them.
+	 */
+	readonly collectOrphanedChildren?: (pids: readonly number[]) => Promise<unknown>;
 	readonly parallelPoolWidth: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly workerEntryUrl?: URL;
@@ -32,6 +38,8 @@ export interface JavaScriptKernelOptions {
 	readonly memory?: KernelMemoryThresholds;
 	/** Live heap bytes measured by an idle collection the worker ran between cells. */
 	readonly onMemoryCollected?: (liveBytes: number) => void;
+	/** Interrupt acknowledgement, settle grace, and worker-termination deadlines; absent uses `DEFAULT_INTERRUPT_BOUNDS`. */
+	readonly interruptBounds?: JavaScriptInterruptBounds;
 }
 
 export type JavaScriptRunInput = EvalKernelRunInput;

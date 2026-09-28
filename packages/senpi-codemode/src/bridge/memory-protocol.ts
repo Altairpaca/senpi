@@ -20,6 +20,8 @@ const kernelMemoryGlobalSchema = Type.Object({
 export const kernelMemoryReportSchema = Type.Object({
 	liveBytes: Type.Integer({ minimum: 0 }),
 	measure: Type.Union([Type.Literal("heap"), Type.Literal("footprint")]),
+	/** `liveBytes` is a peak-RSS fallback (no footprint counter on this platform), not the current size. */
+	approximate: Type.Optional(Type.Boolean()),
 	/** `liveBytes` was measured right after a full collection in this cell. */
 	gcRan: Type.Optional(Type.Boolean()),
 	/** Largest user globals, measured only when live memory after collection reached the notice threshold. */
