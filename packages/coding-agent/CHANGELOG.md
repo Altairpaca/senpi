@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `/btw` and native web search on a GitHub Copilot Business or Enterprise account now use the account's own API host, like the session's chat requests, instead of the individual host that answers `421 Misdirected Request`. ([#2309](https://github.com/code-yeongyu/senpi/issues/2309))
+
 - The Devin SWE-2 prompt preset now matches exactly the lanes Devin serves, `swe-2-medium`, `swe-2-high` and `swe-2-max`. `devin/swe-2-medium` previously got no SWE-2 preset, while the unserved `swe-2-low` and `swe-2-high-lite` ids did. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
 ### Removed
 
