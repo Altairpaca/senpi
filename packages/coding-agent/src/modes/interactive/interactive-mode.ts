@@ -336,6 +336,10 @@ function embedStatusIndicatorInEditor(
 	return true;
 }
 
+function isBareSkillNamespace(text: string): boolean {
+	return text === "/skill" || text === "/skill:";
+}
+
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
@@ -4943,6 +4947,10 @@ export class InteractiveMode {
 					await this.shutdown();
 					return;
 				}
+				if (isBareSkillNamespace(text)) {
+					this.openSkillPickerForBareNamespace();
+					return;
+				}
 				if (this.isExtensionCommand(text)) {
 					// No optimistic echo: the command runs inside AgentSession.prompt() and
 					// never becomes a canonical user message, so the bubble would only sit
@@ -6662,6 +6670,10 @@ export class InteractiveMode {
 		this.setComposerReply();
 		const text = this.getExpandedEditorText().trim();
 		if (!text) return;
+		if (isBareSkillNamespace(text)) {
+			this.openSkillPickerForBareNamespace();
+			return;
+		}
 
 		// Queue non-command input during compaction; dispatch extension commands.
 		// This is the Alt+Enter path (bound directly to app.message.followUp), which
@@ -7159,6 +7171,25 @@ export class InteractiveMode {
 
 	private hasRegisteredCommand(command: string): boolean {
 		return !!this.session.extensionRunner.getCommand(command);
+	}
+
+	/**
+	 * `/skill` and `/skill:` name the skill namespace, not a skill, so they never reach the model:
+	 * the editor is reset to `/skill:` with the skill list open, or a warning explains why it is empty.
+	 */
+	private openSkillPickerForBareNamespace(): void {
+		if (!this.settingsManager.getEnableSkillCommands()) {
+			this.showWarning("Skill commands are disabled (enableSkillCommands setting).");
+			this.editor.setText("");
+			return;
+		}
+		if (this.session.resourceLoader.getSkills().skills.length === 0) {
+			this.showWarning("No skills are loaded.");
+			this.editor.setText("");
+			return;
+		}
+		this.editor.setText("/skill:");
+		this.editor.openAutocomplete?.();
 	}
 
 	private isExtensionCommand(text: string): boolean {
