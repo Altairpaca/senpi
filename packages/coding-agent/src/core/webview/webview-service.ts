@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { MessageChannel, type MessagePort } from "node:worker_threads";
-import { retireBunChrome } from "./bun-chrome.ts";
+import { retireBunChrome, settleDeadBunChrome } from "./bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebView, type NativeWebViewClass } from "./native-webview.ts";
 import { WebViewServiceClient } from "./webview-client.ts";
 
@@ -62,6 +62,7 @@ export class WebViewService {
 		onConsole: ((...args: unknown[]) => void) | undefined,
 	): Promise<NativeWebView> {
 		await this.#retiring;
+		await settleDeadBunChrome();
 		this.#chromeInUse = true;
 		return new this.#webViewClass(onConsole ? { ...options, console: onConsole } : options);
 	}

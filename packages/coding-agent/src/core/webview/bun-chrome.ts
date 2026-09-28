@@ -52,6 +52,29 @@ async function waitForExit(pids: readonly number[]): Promise<void> {
 	}
 }
 
+// A zombie keeps no command line, so a dead browser child is recognized by its name alone.
+const BROWSER_NAME = /chrom|msedge|brave/iu;
+
+async function deadBrowserChildren(): Promise<number[]> {
+	if (process.platform === "win32") return [];
+	const pids: string[] = [];
+	for (const line of (await run("ps", ["-axo", "pid=,ppid=,stat=,comm="])).split("\n")) {
+		const [pidText = "", ppidText, stat = "", ...command] = line.trim().split(/\s+/u);
+		if (Number(ppidText) === process.pid && stat.startsWith("Z") && BROWSER_NAME.test(command.join(" ")))
+			pids.push(pidText);
+	}
+	return positivePids(pids);
+}
+
+/**
+ * Resolves once no killed-but-unreaped Chrome child is left (bounded). A Chrome that died (crash,
+ * kill) stays a zombie until Bun reaps it, and Chrome's profile lock still names that pid, so a
+ * Chrome Bun launches in that window exits at once ("Chrome process closed the pipe").
+ */
+export async function settleDeadBunChrome(): Promise<void> {
+	await waitForExit(await deadBrowserChildren());
+}
+
 /**
  * Ends the Chrome Bun spawned once no proxied view needs it; the next Chrome-backed view respawns it.
  * `WebView.closeAll()` would do this, but on macOS it also kills the shared WebKit host that native
