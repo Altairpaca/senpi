@@ -91,14 +91,28 @@ async function storedSlot(store: CredentialStore): Promise<AccountSlot | undefin
 	return ((await store.read(PROVIDER)) as AnthropicSubscriptionCredential).accounts?.[0];
 }
 
-async function configure(store: CredentialStore, seed: CredentialStore, expires: number, refresher?: () => Promise<never>) {
+async function configure(
+	store: CredentialStore,
+	seed: CredentialStore,
+	expires: number,
+	refresher?: () => Promise<never>,
+) {
 	await seed.modify(PROVIDER, async () =>
-		addAccount(emptyCredential(), { name: "default", access: "access-1", refresh: "refresh-1", expires, source: "login" }),
+		addAccount(emptyCredential(), {
+			name: "default",
+			access: "access-1",
+			refresh: "refresh-1",
+			expires,
+			source: "login",
+		}),
 	);
 	const agentDir = mkdtempSync(join(tmpdir(), "senpi-2281-"));
 	directories.push(agentDir);
 	process.env.SENPI_CODING_AGENT_DIR = agentDir;
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ claudeSdkOauthProvider: { tokenInjection: "oauth-slots" } }));
+	writeFileSync(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ claudeSdkOauthProvider: { tokenInjection: "oauth-slots" } }),
+	);
 	const refreshes: string[] = [];
 	overrideAuthLaneBoundary({
 		createStore: () => store,
