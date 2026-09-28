@@ -397,10 +397,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
 					isForced: isForcedOpenAIResponsesToolChoice,
 					send: (body: MutableResponsesPayload) =>
-						awaitProviderTransport(
-							() => client.responses.create(body, requestOptions).withResponse(),
-							openAICompatibleProviderDiagnosticFromError,
-						),
+						model.provider === "github-copilot"
+							? awaitProviderTransport(
+									() => client.responses.create(body, requestOptions).withResponse(),
+									openAICompatibleProviderDiagnosticFromError,
+								)
+							: client.responses.create(body, requestOptions).withResponse(),
 				});
 				params = sent.params;
 				return sent.result;
@@ -440,7 +442,10 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			const providerDiagnostic =
+				model.provider === "github-copilot" && output.stopReason === "error"
+					? readProviderDiagnostic(error)
+					: undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });

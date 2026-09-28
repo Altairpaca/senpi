@@ -219,4 +219,19 @@ describe("GitHub Copilot tool limit", () => {
 		expect(payload.tools).toHaveLength(COPILOT_TOOL_LIMIT + 2);
 		expect(result.diagnostics?.some((diagnostic) => diagnostic.type === "github_copilot_tool_limit")).not.toBe(true);
 	});
+
+	it("does not add structured diagnostics to non-Copilot Responses errors", async () => {
+		const context = makeContext();
+		const nonCopilotModel = { ...makeModel("openai-responses"), provider: "test-provider" };
+		const { payload, result } = await captureRequest((fetch) =>
+			streamOpenAIResponses(nonCopilotModel, context, {
+				apiKey: "test-key",
+				fetch,
+				maxRetries: 0,
+			}).result(),
+		);
+
+		expect(payload.tools).toHaveLength(COPILOT_TOOL_LIMIT + 2);
+		expect(result.providerDiagnostic).toBeUndefined();
+	});
 });
