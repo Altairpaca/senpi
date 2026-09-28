@@ -386,7 +386,7 @@ jobs:
 
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
-        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
+        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
         working-directory: packages/senpi-codemode
 
       - name: Require the WebView suites to have executed
