@@ -11,7 +11,7 @@
 ### Fixed
 
 - GitHub Copilot requests now keep at most 128 serialized tools on Chat Completions, Responses, and Anthropic Messages routes while retaining any explicitly forced tool. Excess definitions are omitted deterministically with a diagnostic instead of reaching Copilot as an opaque HTTP 400, and a generic `400 Bad Request` after limiting now explains the likely tool-cap mismatch on all three routes. ([#2298](https://github.com/code-yeongyu/senpi/issues/2298))
-
+- GitHub Copilot OAuth login and refresh now keep the account's `GET /models` prompt, context, and output limits and apply them to available models instead of retaining larger native models.dev limits; the exact `model_max_prompt_tokens_exceeded` rejection is also classified as context overflow so the existing compact-and-retry recovery runs. ([#2299](https://github.com/code-yeongyu/senpi/issues/2299))
 ### Removed
 
 ## [2026.9.28-4] - 2026-09-28
