@@ -89,7 +89,7 @@
 
 ### What changed
 
-- `packages/senpi-codemode/src/output/streaming-output-buffer.ts`: `TailBuffer.append` skips the encode/truncate round trip while the retained window is below its byte budget and, over the budget, drops whole code points from the front without re-encoding the window (same result as `truncateTailBytes`); a new `TailLineRing` keeps the last lines of a trailing byte window over a chunk stream in time proportional to the chunk.
+- `packages/senpi-codemode/src/output/streaming-output-buffer.ts`: `TailBuffer` queues chunks and drops whole chunks that fall out of its window on append, trimming to the exact code-point boundary only when the window is read (same result as truncating after every append), so an append costs time and memory proportional to the chunk; a new `TailLineRing` keeps the last lines of a trailing byte window over a chunk stream in time proportional to the chunk.
 - `packages/senpi-codemode/src/output/streaming-output.ts`: re-exports `TailLineRing`.
 - `packages/senpi-codemode/src/tool/image.ts`: `EvalOutputOptions.onChunk` now receives the chunk itself instead of two whole-tail strings, and `EvalOutputCollector` exposes `cellTailText()` for the running cell state.
 - `packages/senpi-codemode/src/tool/cell-runtime.ts`: the live update text reads an eight-line `TailLineRing` instead of splitting the whole aggregate tail per chunk, and output-driven live updates are coalesced to one per 100 ms (leading update immediately, trailing update with the latest tail; the same cadence as the core bash tool's `BASH_UPDATE_THROTTLE_MS`). `state.output` is refreshed with each emitted update and by `liveResult()` (detached peek), and the final result is unchanged.

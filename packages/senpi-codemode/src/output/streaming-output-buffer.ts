@@ -49,10 +49,21 @@ function dropLeadingBytes(text: string, excess: number): ByteSlice {
 	return { text: kept.isWellFormed() ? kept : kept.toWellFormed(), bytes: totalBytes - dropped };
 }
 
+/**
+ * Trailing byte window over a chunk stream. Appends only queue the chunk and drop whole chunks that fall
+ * out of the window, so a streaming append costs time and memory proportional to the chunk (#2262); the
+ * exact code-point-aligned trim runs when the window is read, with the same result as truncating the whole
+ * stream to `maxBytes` after every append.
+ */
 export class TailBuffer {
 	readonly #maxBytes: number;
-	#text = "";
+	#chunks: string[] = [];
+	#chunkBytes: number[] = [];
+	#head = 0;
+	/** Sum of the queued chunks' UTF-8 sizes; exact after #normalize. */
 	#bytes = 0;
+	/** The stream exceeded the window since the last normalization, so the next read must trim. */
+	#overflowed = false;
 
 	constructor(maxBytes: number) {
 		this.#maxBytes = Math.max(0, Math.floor(maxBytes));
@@ -60,36 +71,59 @@ export class TailBuffer {
 
 	append(text: string): void {
 		if (text.length === 0) return;
-		if (this.#maxBytes === 0) {
-			this.#text = "";
-			this.#bytes = 0;
-			return;
-		}
+		if (this.#maxBytes === 0) return;
 		const incomingBytes = Buffer.byteLength(text, "utf8");
-		if (this.#bytes + incomingBytes <= this.#maxBytes) {
-			// Below the budget the concatenation is already the truncated view, so the
-			// encode/truncate round trip over the whole retained window can be skipped and
-			// a streaming append stays proportional to the chunk (#2262).
-			this.#text += text;
-			this.#bytes += incomingBytes;
+		if (incomingBytes >= this.#maxBytes) {
+			this.#chunks = [text];
+			this.#chunkBytes = [incomingBytes];
+			this.#head = 0;
+			this.#bytes = incomingBytes;
+			this.#overflowed = true;
 			return;
 		}
-		// Over the budget: drop whole code points from the front instead of re-encoding the window, so a
-		// streaming append allocates no native buffer per chunk (#2262). Same result as truncateTailBytes.
-		const next =
-			incomingBytes >= this.#maxBytes
-				? dropLeadingBytes(text, incomingBytes - this.#maxBytes)
-				: dropLeadingBytes(this.#text + text, this.#bytes + incomingBytes - this.#maxBytes);
-		this.#text = next.text;
-		this.#bytes = next.bytes;
+		this.#chunks.push(text);
+		this.#chunkBytes.push(incomingBytes);
+		this.#bytes += incomingBytes;
+		if (this.#bytes > this.#maxBytes) this.#overflowed = true;
+		// Keep a small margin so a surrogate pair split across chunks cannot make the kept window short.
+		while (
+			this.#head < this.#chunks.length - 1 &&
+			this.#bytes - (this.#chunkBytes[this.#head] ?? 0) >= this.#maxBytes + 4
+		) {
+			this.#bytes -= this.#chunkBytes[this.#head] ?? 0;
+			this.#head++;
+		}
+		if (this.#head > 1024 && this.#head * 2 > this.#chunks.length) {
+			this.#chunks = this.#chunks.slice(this.#head);
+			this.#chunkBytes = this.#chunkBytes.slice(this.#head);
+			this.#head = 0;
+		}
 	}
 
 	text(): string {
-		return this.#text;
+		return this.#normalize();
 	}
 
 	bytes(): number {
+		this.#normalize();
 		return this.#bytes;
+	}
+
+	#normalize(): string {
+		if (this.#maxBytes === 0) return "";
+		const pending = this.#chunks.length - this.#head;
+		if (pending === 0) return "";
+		const joined = pending === 1 ? (this.#chunks[this.#head] ?? "") : this.#chunks.slice(this.#head).join("");
+		const total = Buffer.byteLength(joined, "utf8");
+		const kept = this.#overflowed
+			? dropLeadingBytes(joined, Math.max(0, total - this.#maxBytes))
+			: { text: joined, bytes: total };
+		this.#chunks = [kept.text];
+		this.#chunkBytes = [kept.bytes];
+		this.#head = 0;
+		this.#bytes = kept.bytes;
+		this.#overflowed = false;
+		return kept.text;
 	}
 }
 
