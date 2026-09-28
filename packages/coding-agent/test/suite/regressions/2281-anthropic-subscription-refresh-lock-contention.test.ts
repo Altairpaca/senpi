@@ -67,6 +67,10 @@ class ContendedStore implements CredentialStore {
 		return this.inner.read(provider);
 	}
 
+	list() {
+		return this.inner.list();
+	}
+
 	async modify(provider: string, fn: (current: Credential | undefined) => Promise<Credential | undefined>) {
 		if (this.busyWrites === 0) return this.inner.modify(provider, fn);
 		this.busyWrites--;
