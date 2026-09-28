@@ -1,3 +1,21 @@
+## 2026-09-28 - /sessions alias of /resume (#1437)
+
+### What changed
+
+- `packages/coding-agent/src/core/slash-commands.ts`: a `sessions` row in `BUILTIN_SLASH_COMMANDS` after `resume`, described as the `/resume` alias, so autocomplete and `/help` list it.
+
+### Why
+
+- Users arriving from OpenCode type `/sessions` to reopen a session; with no such command the text was sent to the model and they concluded the harness could not resume sessions (#1437 report thread).
+
+### Why an extension could not handle it
+
+- `slash-commands.ts` is the host builtin catalog read by `/help` and autocomplete, and the alias must open the interactive session selector that only `InteractiveMode` owns; an extension command cannot open it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/slash-commands.ts`: the row after `resume` in `BUILTIN_SLASH_COMMANDS`.
+
 ## 2026-09-27 - Fallback-chain entries that fail out of their chain are circuit-broken across sessions; /session reports failure cost (senpi#2198)
 
 ### What changed

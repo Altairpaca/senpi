@@ -4933,7 +4933,7 @@ export class InteractiveMode {
 					this.editor.setText("");
 					return;
 				}
-				if (text === "/resume") {
+				if (text === "/resume" || text === "/sessions") {
 					this.showSessionSelector();
 					this.editor.setText("");
 					return;

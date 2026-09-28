@@ -1,3 +1,24 @@
+## 2026-09-28 - /sessions alias and thinking/resume guidance (#1437)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setupEditorSubmitHandler` opens the session selector for `/sessions` exactly as for `/resume`.
+- `packages/coding-agent/src/modes/interactive/help-content.ts`: the `/help` getting-started primer names `/thinking <level>` with the live `app.thinking.cycle` key, and `/resume` (or `/sessions`).
+- `packages/coding-agent/src/modes/interactive/tips/catalog/model-tips.ts`: the `thinking-level` tip names `/thinking <level>` and `/thinking` beside the cycle key; a new `efforts-command` tip, gated by `requiresCommand: "efforts"`, names `/efforts <level>`.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/session-tips.ts`: the `continue-session` tip names `/resume` and `/sessions` in the TUI beside `-r` and `-c` from the shell.
+
+### Why
+
+- A new user could not find how to change the thinking level (`/thinking` was broken, #1437) or how to reopen a session: they looked for `/sessions`, the OpenCode name, and `/help` and the tips never mentioned either path.
+
+### Why an extension could not handle it
+
+- `/sessions` has to open the interactive session selector, which only `InteractiveMode` owns, and builtin names are matched in the submit handler before extension commands; the `/help` primer and the tip catalog are host-owned with no extension registration API.
+
+### Expected merge conflict zones
+
+- LOW: the `/resume` branch in `setupEditorSubmitHandler`, `buildGettingStarted` in `help-content.ts`, and the two tip catalog files.
+
 ## 2026-09-28 - Restore the /thinking interactive dispatch (#1437)
 
 ### What changed
