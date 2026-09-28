@@ -98,7 +98,8 @@ describe("createAgentSession session manager defaults", () => {
 		});
 
 		expect(session.sessionManager).toBe(sessionManager);
-		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
+		// senpi#2093: cwd travels in the environment-context message, not the prompt.
+		expect(session.systemPrompt).not.toContain("Current working directory:");
 
 		expect(session.getActiveToolNames()).toContain("write");
 		await session.executeTool("write", { path: "cwd-marker.txt", content: "ok" });

@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -131,14 +131,18 @@ export function createBunExtensionImporter(
 	};
 	const moduleId = (filename: string) =>
 		`${extensionNamespace}:${registration.generation}/${encodeURIComponent(filename)}`;
+	// Only source the graph transpiles gets a graph id. Anything else (JSON, TOML, text, native
+	// addons) keeps its real path so Bun's own loader handles it: Bun 1.3.x cannot follow a
+	// plugin's hand-back to the `file` namespace from a runtime import() or require() (#2164).
+	const fileTarget = (resolved: string): { readonly id: string; readonly path?: string } =>
+		/\.[cm]?[jt]sx?$/.test(resolved) ? { id: moduleId(resolved), path: resolved } : { id: resolved };
 	const resolveTarget = (specifier: string, filename: string): { readonly id: string; readonly path?: string } => {
 		assertActive();
 		if (Object.hasOwn(virtualModules, specifier) || isBuiltin(specifier) || specifier.startsWith("bun:"))
 			return { id: specifier };
 		if (specifier.startsWith(`${extensionNamespace}:`)) return { id: specifier };
 		const path = specifier.startsWith("file:") ? fileURLToPath(specifier) : specifier;
-		const resolved = realpathSync(Bun.resolveSync(path, dirname(filename)));
-		return { id: moduleId(resolved), path: resolved };
+		return fileTarget(realpathSync(Bun.resolveSync(path, dirname(filename))));
 	};
 	const graph = {
 		assertActive,
@@ -194,24 +198,29 @@ export function createBunExtensionImporter(
 			const edits: { readonly start: number; readonly end: number; readonly text: string }[] = [];
 			let commonJsImports = 0;
 			for (const edge of imports) {
-				if (edge.d >= 0) {
+				if (edge.type === "dynamic") {
 					// Replace the keyword, not its argument: nested expressions, templates,
 					// import attributes, and unavailable optional dependencies stay lazy.
-					edits.push({ start: edge.ss, end: edge.d, text: `${name}.import` });
-				} else if (edge.n !== undefined) {
-					const target = resolveTarget(edge.n, filename);
+					edits.push({ start: edge.importStart, end: edge.dynamicStart, text: `${name}.import` });
+				} else if (edge.type === "static" || edge.type === "reexport-star") {
+					const target = resolveTarget(edge.specifier, filename);
 					if (target.path !== undefined && isCommonJsFile(target.path)) {
-						const clause = contents.slice(edge.ss + "import".length, edge.s - 1).replace(/\bfrom\s*$/, "");
+						// "import" and "export" are both six characters, so the clause is
+						// whatever sits between the keyword and the specifier in either form.
+						const clause = contents
+							.slice(edge.importStart + "import".length, edge.start - 1)
+							.replace(/\bfrom\s*$/, "");
 						// This branch replaces the whole statement, so the attributes between the
 						// specifier and the end of it have to travel with it: they pick the loader.
-						const attributes = edge.a < 0 ? "" : contents.slice(edge.e + 1, edge.se).replace(/;\s*$/, "");
+						const attributes =
+							edge.attributesStart < 0 ? "" : contents.slice(edge.end + 1, edge.importEnd).replace(/;\s*$/, "");
 						edits.push({
-							start: edge.ss,
-							end: edge.se,
+							start: edge.importStart,
+							end: edge.importEnd,
 							text: rewriteCommonJsImport(clause, target.id, `${name}Cjs${commonJsImports++}`, attributes),
 						});
 					} else {
-						edits.push({ start: edge.s - 1, end: edge.e + 1, text: JSON.stringify(target.id) });
+						edits.push({ start: edge.start - 1, end: edge.end + 1, text: JSON.stringify(target.id) });
 					}
 				}
 			}
@@ -258,7 +267,10 @@ export function createBunExtensionImporter(
 	return {
 		async import(path: string, _options: { readonly default: true }): Promise<unknown> {
 			assertActive();
-			const id = moduleId(realpathSync(resolve(path)));
+			const absolute = realpathSync(resolve(path));
+			// A package directory loads through its main or index file, as a native import does.
+			const entry = statSync(absolute).isDirectory() ? realpathSync(Bun.resolveSync(absolute, absolute)) : absolute;
+			const { id } = fileTarget(entry);
 			const module: { readonly default?: unknown } = await import(id);
 			const factory = module.default;
 			if (typeof factory !== "function") return factory;
@@ -268,6 +280,10 @@ export function createBunExtensionImporter(
 				graph.assertActive();
 				return factory.apply(this, args);
 			};
+		},
+		// The generation's staleness check reads these: every source file it transpiled.
+		compiledFiles(): readonly string[] {
+			return [...sources.keys()];
 		},
 		dispose() {
 			active = false;

@@ -1,5 +1,23 @@
 # core/tools changes
 
+## Read paths wrapped in quotes resolve to the file (2026-09-27)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/path-utils.ts`: `resolveReadPath()` and `resolveReadPathAsync()` fall back to the path without one pair of surrounding `"` or `'` quotes (optionally after `@`) when the literal path does not exist.
+
+### Why
+
+Windows Explorer's "Copy as path" produces `"C:\Users\<user>\Pictures\Screenshots\aaa.png"`. A real `windows-latest` run for [#2170](https://github.com/code-yeongyu/senpi/issues/2170) showed that the read tool resolved it relative to the working directory (`<cwd>\"C:\...`) and failed with ENOENT. A file whose name really contains the quotes still wins, because the fallback only runs when the literal path is missing.
+
+### Why an extension could not handle it
+
+Path resolution happens inside the builtin read tool before any extension hook sees the file.
+
+### Expected merge conflict zones
+
+- LOW: the first fallback in `resolveReadPath()` / `resolveReadPathAsync()`, next to the macOS screenshot variants.
+
 ## Default reads consult the frozen fold engine for their language (2026-09-16)
 
 ### What changed
@@ -687,3 +705,24 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - HIGH: `packages/coding-agent/src/core/tools/bash.ts` execute body; `packages/coding-agent/src/core/tools/renderers/bash.ts` `formatShellCall`/`formatDuration`.
 - MEDIUM: policy blocks in `edit.ts`, `read.ts`, `write.ts`; `renderers/read.ts` classification; `renderers/write.ts` call preview.
 - LOW: import hunks in `find.ts`, `grep.ts`, `ls.ts`; `renderers/edit.ts` diff calls.
+
+
+## 2026-09-23 — Separate built-in notices from visible tool bodies
+
+### What changed
+
+`packages/coding-agent/src/core/tools/model-only-text.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`, `packages/coding-agent/src/core/tools/grep/format.ts`, `packages/coding-agent/src/core/tools/grep/index.ts`, `packages/coding-agent/src/core/tools/render-utils.ts`: Emit continuation, output-location, limit, and grep statistics notices as appended model-only text parts; keep the body first and omit the empty body for an oversized first line. Retain separator bytes for joined model text. Filter marked parts in shared rendering.
+
+### Why
+
+Built-in bookkeeping appeared inside expanded tool cards even though it addresses the model.
+
+### Why an extension could not handle it
+
+An extension cannot change the built-in return contract or reliably distinguish ordinary body text from notices without prohibited text matching.
+
+### Expected merge conflict zones
+
+Built-in tool output assembly, grep formatting, and getTextOutput.
+
+- Covered production paths: `packages/coding-agent/src/core/tools/model-only-text.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`, `packages/coding-agent/src/core/tools/grep/format.ts`, `packages/coding-agent/src/core/tools/grep/index.ts`, `packages/coding-agent/src/core/tools/render-utils.ts`.

@@ -1,9 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ENV_AGENT_DIR, getAgentDir } from "../../config.ts";
+import { getAgentDir } from "../../config.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
@@ -13,12 +13,12 @@ import {
 	readProcessStartTime,
 	waitForStartTime,
 } from "../app-server/daemon/process.ts";
-import { RPC_CLIENT_CAPABILITIES_ENV } from "./custom-capability.ts";
 import {
 	createDaemonDirectories,
 	createHostDaemonPaths,
-	HOST_DAEMON_DIR_ENV,
+	ensureEndpointIdentity,
 	type HostDaemonPaths,
+	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import {
 	clearHostRegistration,
@@ -38,13 +38,18 @@ import {
 	type HostProtocolInfo,
 	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
-import { handoffHost } from "./host-handoff.ts";
+import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS, type HostColdStart, type HostLifecyclePolicyInput } from "./host-lifecycle.ts";
-import { probeProtocolInfo, probeSocketReachable } from "./host-probe.ts";
+import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
+import { isHostGenerationProcess } from "./host-process-role.ts";
+import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
+import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
-import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV, hostLaunchProfile } from "./protocol-identity.ts";
-import { createSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
+import { hostLaunchProfile } from "./protocol-identity.ts";
+import { statSocketIdentity } from "./socket-ownership.ts";
+import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 export {
 	createHostDaemonPaths,
@@ -53,6 +58,7 @@ export {
 	HostDaemonStateError,
 	type HostGenerationPaths,
 } from "./host-daemon-paths.ts";
+export { hostEnsureLockTarget } from "./host-ensure-lock.ts";
 export { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 export { type ProbeHostOptions, probeHost } from "./host-probe.ts";
 export type { HostColdStart, HostLifecyclePolicyInput };
@@ -101,35 +107,40 @@ export interface EnsuredHost {
 	readonly pid: number;
 	readonly socket: string;
 	readonly reused: boolean;
+	/**
+	 * Ends this ensure's attach hold (host-attach-hold.ts). Until then the host counts this client as
+	 * attached, so its idle window cannot close before the client's own connection is up; release it
+	 * once that connection is attached, or when the client no longer needs the host.
+	 */
+	readonly release: () => void;
 }
 
-const SPAWNED_HOST_PROBE_TIMEOUT_MS = 10_000;
 const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
 const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 10_000;
 const SIGKILL_GRACE_MS = 2_000;
 /**
  * A lock waiter must outlast the longest critical section a holder can run:
- * probing an existing host, stopping an incompatible one (SIGTERM wait plus the
- * SIGKILL grace), then spawning the replacement and waiting for it to answer.
+ * probing an existing host, then either stopping an incompatible one (SIGTERM wait
+ * plus the SIGKILL grace) and spawning the replacement and waiting for it to answer,
+ * or handing it off (an upgrade) - which is also as long as a forced handoff holds it.
  * Each SQLite busy wait stays short because it blocks the event loop; this
  * cumulative budget is what covers the whole section, with headroom for a slow
  * runner. A waiter that gives up early surfaces as a raw "database is locked"
  * failure on the second of two concurrent starts.
  */
 const ENSURE_LOCK_WAIT_MS =
-	EXISTING_HOST_PROBE_TIMEOUT_MS + DEFAULT_STOP_TIMEOUT_MS + SIGKILL_GRACE_MS + DEFAULT_READINESS_TIMEOUT_MS + 10_000;
-const LOCK_BUSY_WAIT_MS = 100;
-const lockOptions = {
-	retries: { retries: ENSURE_LOCK_WAIT_MS / LOCK_BUSY_WAIT_MS, minTimeout: 20, maxTimeout: LOCK_BUSY_WAIT_MS },
-} as const;
+	EXISTING_HOST_PROBE_TIMEOUT_MS +
+	Math.max(DEFAULT_STOP_TIMEOUT_MS + SIGKILL_GRACE_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
+	10_000;
+const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
 export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
 	const socket = normalizeSocketPath(options.socket);
 	const paths = createHostDaemonPaths({ socket, ...(options.agentDir ? { agentDir: options.agentDir } : {}) });
 	await createDaemonDirectories(paths);
 	// The public socket is the shared resource; agent directories are not a
 	// sufficient lock scope when two installations target the same endpoint.
-	const lockTarget = join(tmpdir(), "senpi-rpc-host-locks", createSocketLockName(socket));
+	const lockTarget = hostEnsureLockTarget(socket);
 	await mkdir(dirname(lockTarget), { recursive: true });
 	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
 	// Opportunistic GC of other installs' leftovers stays OUTSIDE the endpoint lock.
@@ -152,21 +163,29 @@ async function ensureHostLocked(
 	socket: string,
 	options: EnsureHostOptions,
 ): Promise<EnsuredHost> {
+	// Under the lock, so a torn or foreign `endpoint.json` is repaired rather than left unaddressable.
+	await ensureEndpointIdentity(paths, socket, { repair: true });
 	const testOptions = options._test;
 	const registered = await readHostRegistration(paths);
 	// A record naming ANOTHER endpoint is not about this ensure's host. The per-socket directory
 	// makes that structural, and the field stays as the second guard for a directory that was
 	// somehow reused: a second socket must never read the first socket's daemon as its own.
 	const registeredHere = registersSocket(registered, socket);
-	const protocol = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	// A reusable host is held from the connection that proved it compatible, never re-probed later.
+	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	const protocol = held?.info;
 	const startedByUs = registeredHere && (await writtenByThisProcess(registered?.writer));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
 	const decision = decide(options, startedByUs, protocol);
+	if (decision.action === "reuse" && held) {
+		// A compatible socket is attachable even when another client surface
+		// started it. Only hosts we spawned are eligible for lifecycle management.
+		return { pid: attachedPid, socket, reused: true, release: held.hold.release };
+	}
+	held?.hold.release();
 	switch (decision.action) {
 		case "reuse":
-			// A compatible socket is attachable even when another client surface
-			// started it. Only hosts we spawned are eligible for lifecycle management.
-			return { pid: attachedPid, socket, reused: true };
+			throw new Error(`host at ${socket} was reused without answering its probe`);
 		case "refuse":
 			throw new HostEnsureRefusedError(socket, decision.reason, protocol);
 		case "handoff":
@@ -178,25 +197,62 @@ async function ensureHostLocked(
 	}
 	const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
 	const pidMatches = registeredHere && registered ? await matchesPidFileOrUnknown(registered.record, probe) : false;
+	// The generation this start leaves RUNNING beside the new one, when there is one.
+	let stranded: RegisteredHost | undefined;
 	if (registered && pidMatches) {
-		// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
-		// this record may end it - anyone else refuses rather than signalling somebody else's host.
-		if (!startedByUs) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
-		// ... and silent is not the same as gone. A host serving many sessions can miss a probe
-		// budget while its event loop is busy; its socket still ACCEPTS the connection. Ending it
-		// then would destroy every live session to replace a host that was never broken, so a
-		// reachable socket is refused instead of signalled - the caller retries or falls back.
-		if (await probeSocketReachable(socket, EXISTING_HOST_PROBE_TIMEOUT_MS)) {
-			throw new HostEnsureRefusedError(socket, "host_busy", protocol);
+		if (!startedByUs) {
+			// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
+			// this record may end it - anyone else refuses rather than signalling somebody else's host.
+			if (await publicEndpointAccepts(socket)) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
+			// A foreign record whose public endpoint accepts NOTHING names a generation nobody can reach:
+			// its entry was replaced (so it is already draining, #1893) or removed, or a dead listener
+			// left the entry behind. Refusing here locked every client out until that process happened
+			// to exit (#1936). Binding a fresh generation there signals nothing, so that is what happens -
+			// the stranded one keeps its record.
+			stranded = registered;
+		} else {
+			// Silent is not the same as gone. A host serving many sessions can miss a probe budget
+			// while its event loop is busy; its socket still ACCEPTS the connection. Ending it then
+			// would destroy every live session to replace a host that was never broken, so a
+			// reachable socket is refused instead of signalled - the caller retries or falls back.
+			if (await probeSocketReachable(socket, EXISTING_HOST_PROBE_TIMEOUT_MS)) {
+				throw new HostEnsureRefusedError(socket, "host_busy", protocol);
+			}
+			await stopManagedHost(registered.record, testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS, probe);
 		}
-		await stopManagedHost(registered.record, testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS, probe);
 	}
 	// A host from before this layout registered itself in the FLAT directory. Its files are another
 	// process's state: never read as ours, never signalled, never removed - and while it is alive,
 	// this ensure refuses instead of binding a socket it may still be serving.
 	if (await legacyHostIsLive(paths, probe)) throw new HostEnsureRefusedError(socket, "legacy_host", protocol);
+	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);
+}
+
+/**
+ * Only the connect matters here, never an answer: the kernel completes it from the listen backlog
+ * without the host's event loop, so a live owner under load still accepts within this budget.
+ */
+const FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS = 2_000;
+
+/**
+ * Whether SOMETHING still accepts connections at the public path - the one fact that says a
+ * registered process may still own the endpoint. A missing entry and an entry nobody listens
+ * behind (connection refused) both answer no; an accepted connection, however silent, answers yes.
+ * A named pipe has no entry to lose and an abstract socket has no path, so both read as owned;
+ * so does an entry this process cannot stat, because an owner that cannot be ruled out is one
+ * this ensure must not bind over.
+ */
+async function publicEndpointAccepts(socket: string): Promise<boolean> {
+	if (process.platform === "win32" || socket.startsWith("\0")) return true;
+	const entry = await statSocketIdentity(socket).then(
+		(identity) => (identity === undefined ? "absent" : "present"),
+		() => "unknown",
+	);
+	if (entry === "absent") return false;
+	if (entry === "unknown") return true;
+	return probeSocketReachable(socket, FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS);
 }
 
 /** `fallback` belongs to clients that can live without a host; an ensure must produce one or fail. */
@@ -205,7 +261,7 @@ function decide(
 	startedByUs: boolean,
 	protocol: HostProtocolInfo | undefined,
 ): Exclude<HostDecision, { action: "fallback" }> {
-	if (options.upgrade !== "if-engine-differs") {
+	if (options.upgrade !== "if-engine-differs" || isHostGenerationProcess()) {
 		return decideHostAction(ensureClient(options, startedByUs), protocol, "never");
 	}
 	const decision = decideHostAction(ensureClient(options, startedByUs), protocol, "upgrade");
@@ -222,7 +278,7 @@ async function upgradeGeneration(
 	options: EnsureHostOptions,
 	attachedPid: number,
 ): Promise<EnsuredHost> {
-	const result = await handoffHost({
+	const result = await handoffHostLocked({
 		socket,
 		agentDir: options.agentDir ?? getAgentDir(),
 		hostArgs: options.hostArgs ?? [],
@@ -233,12 +289,20 @@ async function upgradeGeneration(
 			...(options._test?.readinessTimeoutMs ? { readinessTimeoutMs: options._test.readinessTimeoutMs } : {}),
 		},
 	});
-	if (result.action === "handoff") return { pid: result.pid, socket, reused: false };
+	if (result.action === "handoff")
+		return { pid: result.pid, socket, reused: false, release: await holdEnsured(socket) };
 	await appendStderr(
 		paths,
 		`generation handoff refused: ${result.reason}${result.detail ? ` (${result.detail})` : ""}`,
 	);
-	return { pid: attachedPid, socket, reused: true };
+	return { pid: attachedPid, socket, reused: true, release: await holdEnsured(socket) };
+}
+
+/** The attach hold for a host another step already proved ready (a handoff successor, a refused handoff). */
+async function holdEnsured(socket: string): Promise<() => void> {
+	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	if (!held) throw new Error(`RPC socket host at ${socket} stopped answering before this ensure could hold it`);
+	return held.hold.release;
 }
 
 /** This build as a client: which protocol it speaks, what it needs from a host, and which build it is. */
@@ -266,10 +330,19 @@ function hostChildArgv(hostArgs: readonly string[]): string[] {
 /** Whether a registration is about this endpoint. A record written before the field existed is. */
 function registersSocket(registered: RegisteredHost | undefined, socket: string): boolean {
 	if (registered === undefined) return false;
-	return registered.socket === undefined || registered.socket === socket;
+	return registered.socket === undefined || sameEndpoint(registered.socket, socket);
 }
 
-async function startHost(paths: HostDaemonPaths, socket: string, options: EnsureHostOptions): Promise<EnsuredHost> {
+/**
+ * `generation` is 0 for a fresh endpoint; a start that leaves a stranded generation running beside
+ * the new one numbers it after that generation, as a handoff would.
+ */
+async function startHost(
+	paths: HostDaemonPaths,
+	socket: string,
+	options: EnsureHostOptions,
+	generation = 0,
+): Promise<EnsuredHost> {
 	const testOptions = options._test;
 	// The generation this ensure is about to spawn, chosen HERE so its directory exists before the
 	// host boots and the pointer can name it the moment the host is registered.
@@ -282,10 +355,11 @@ async function startHost(paths: HostDaemonPaths, socket: string, options: Ensure
 		capabilities: PINNED_HOST_CLIENT_CAPABILITIES,
 		coldStart: options.policy?.coldStart ?? "transient",
 		idleExitMs: options.policy?.idleExitMs ?? DEFAULT_HOST_IDLE_EXIT_MS,
-		generation: 0,
+		generation,
 		instanceId,
 	});
-	const stderr = await open(paths.stderrLog, "w", 0o600);
+	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over.
+	const stderr = await open(paths.stderrLog, generation === 0 ? "w" : "a", 0o600);
 	let pidFile: DaemonPidFile | undefined;
 	let child: ReturnType<typeof spawn> | undefined;
 	let exitedEarly: ChildExit | undefined;
@@ -296,7 +370,13 @@ async function startHost(paths: HostDaemonPaths, socket: string, options: Ensure
 		child = spawn(launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
-			env: hostEnv(options, { paths, instanceId }),
+			env: initialHostEnvironment({
+				agentDir: options.agentDir,
+				env: options.env,
+				paths,
+				instanceId,
+				generation,
+			}),
 			stdio: ["ignore", "ignore", stderr.fd],
 		});
 		childExit = new Promise((resolveExit) => {
@@ -330,7 +410,7 @@ async function startHost(paths: HostDaemonPaths, socket: string, options: Ensure
 			record: pidFile,
 			socket,
 			instanceId,
-			generation: 0,
+			generation,
 			launchProfileId: hostLaunchProfile(hostChildArgv(options.hostArgs ?? []), process.cwd()).profile_id,
 		});
 		child.unref();
@@ -368,8 +448,8 @@ async function startHost(paths: HostDaemonPaths, socket: string, options: Ensure
 		await stderr.close();
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
-	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
-	if (isCompatible(result.protocol)) return { pid: pidFile.pid, socket, reused: false };
+	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
+	if (result.ready) return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-
 	// wise propagate instead of the readiness message and skip cleanupState below,
@@ -499,76 +579,12 @@ async function waitForGone(
 	return (await resolvePidFileOwnership(pidFile, readStartTime)) === "gone";
 }
 
-type ChildExit = { readonly code: number | null; readonly signal: NodeJS.Signals | null };
-
-type ProtocolPollResult = { readonly protocol?: HostProtocolInfo; readonly exited?: ChildExit };
-
-async function pollProtocolInfo(
-	socket: string,
-	timeoutMs: number,
-	childExit?: Promise<ChildExit>,
-): Promise<ProtocolPollResult> {
-	const deadline = Date.now() + timeoutMs;
-	let lastProtocol: HostProtocolInfo | undefined;
-	while (Date.now() <= deadline) {
-		const probe = probeProtocolInfo(
-			socket,
-			Math.min(SPAWNED_HOST_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
-		);
-		const raced = childExit ? await Promise.race([probe, childExit]) : await probe;
-		if (isChildExit(raced)) {
-			// A supervisor exit can be triggered by the Windows identity watchdog
-			// while a named-pipe client is still composing its protocol reply. Do
-			// not terminate the host based solely on that exit until this probe has
-			// had a chance to deliver an answer. A host that never answers still
-			// resolves through probeProtocolInfo's bounded timeout/close handling.
-			const info = await probe;
-			if (info) {
-				lastProtocol = info;
-				if (isCompatible(info)) return { protocol: info };
-			} else {
-				return { protocol: lastProtocol, exited: raced };
-			}
-		} else if (raced) {
-			lastProtocol = raced;
-			if (isCompatible(raced)) return { protocol: raced };
-		}
-		await delay(50);
-	}
-	return { protocol: lastProtocol };
-}
-
-function isChildExit(value: HostProtocolInfo | ChildExit | undefined): value is ChildExit {
-	return !!value && "code" in value && "signal" in value;
-}
-
 /**
  * Compatibility, for the attach decision and the readiness gate alike: a host is compatible exactly
  * when a client that is forbidden to upgrade would attach to it. Never a version-string comparison (I2).
  */
 function isCompatible(protocol: HostProtocolInfo | undefined): boolean {
 	return decideHostAction(ensureClient({ socket: "" }, false), protocol, "never").action === "reuse";
-}
-
-/** The environment a spawned host inherits: this process's, the caller's overrides, then the fixed wiring. */
-function hostEnv(
-	options: EnsureHostOptions,
-	generation: { readonly paths: HostDaemonPaths; readonly instanceId: string },
-): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env };
-	for (const [key, value] of Object.entries(options.env ?? {})) {
-		if (value === null) delete env[key];
-		else env[key] = value;
-	}
-	env[ENV_AGENT_DIR] = options.agentDir ?? getAgentDir();
-	env[RPC_CLIENT_CAPABILITIES_ENV] = PINNED_HOST_CLIENT_CAPABILITIES.join(",");
-	// Always SET, never inherited: an ensure run from inside a daemon session would otherwise hand
-	// its own host's identity to the one it spawns, and two hosts claiming one instance id make a
-	// handoff - which completes exactly when the instance id changes - impossible to observe.
-	env[HOST_INSTANCE_ID_ENV] = generation.instanceId;
-	env[HOST_GENERATION_ENV] = "0";
-	env[HOST_DAEMON_DIR_ENV] = generation.paths.dir;
-	return env;
 }
 
 async function reapOrphanedInternalHostDirs(): Promise<void> {
@@ -614,13 +630,6 @@ async function appendStderr(paths: HostDaemonPaths, message: string): Promise<st
 		if (isNodeErrorCode(error, "ENOENT")) return message;
 		throw error;
 	}
-}
-
-function createSocketLockName(socket: string): string {
-	return createHash("sha256")
-		.update(resolveSocketTransportAddress(socket, process.platform), "utf8")
-		.digest("hex")
-		.slice(0, 32);
 }
 
 function normalizeSocketPath(value: string): string {

@@ -3,11 +3,13 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import {
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
+	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 } from "./custom-capability.ts";
+import { isHandoffBusy } from "./handoff-activity.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { sessionAutoTitleError, sessionContextError, sessionKindError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
@@ -25,14 +27,23 @@ import { createRpcSessionBinding, type RpcSessionBinding } from "./session-bindi
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
-
-const controls = new Set(["get_protocol_info", "open_session", "close_session", "list_sessions"]);
+import { selectSweepEvictions } from "./session-sweep.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
 
 /** Binding factory seam, injectable so host wiring is testable without a full runtime stack. */
 export type RpcBindingFactory = typeof createRpcSessionBinding;
+
+/**
+ * What the host supplies to every `open_session`. `hostContext` is the host's own identity
+ * (`host_socket`, `host_instance`); it is merged OVER the client's context, because the host is the
+ * authority on which endpoint and generation a session runs behind.
+ */
+export type RpcHostSessionDefaults = Pick<
+	RpcSessionLaunchProfile,
+	"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
+> & { readonly hostContext?: RpcSessionLaunchProfile["sessionContext"] };
 
 /**
  * Occupancy policy for the shared multi-session host. All fields are opt-in:
@@ -48,6 +59,8 @@ export interface RpcSessionIdlePolicy {
 	emptyExitMs?: number;
 	/** Host shutdown hook fired by the empty-exit window; called at most once. */
 	onEmptyExit?: () => void;
+	/** Close connections whose last attached session has finished handoff parking. */
+	onHandoffParked?: (connections: readonly string[]) => Promise<void>;
 	/**
 	 * Consulted every tick before the empty-exit window advances. Returning false
 	 * both blocks the exit and resets the window, so a host with a connected but
@@ -95,10 +108,7 @@ export class SessionCommandRouter {
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
 	>;
 	private readonly writer: SessionEventWriter;
-	private readonly defaults: Pick<
-		RpcSessionLaunchProfile,
-		"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
-	>;
+	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 	private readonly widths = new Map<string, Map<string, number>>();
@@ -112,6 +122,11 @@ export class SessionCommandRouter {
 	private sweepTimer: ReturnType<typeof setInterval> | undefined;
 	private drainTimer: ReturnType<typeof setInterval> | undefined;
 	private draining = false;
+	private handoffParks = 0;
+	private drainExitRequested = false;
+	private readonly handoffClosed = new Set<string>();
+	private readonly activeRequests = new Map<string | undefined, number>();
+	private readonly onHandoffParked?: RpcSessionIdlePolicy["onHandoffParked"];
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	private memoryPressure = false;
@@ -122,7 +137,7 @@ export class SessionCommandRouter {
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size"
 		>,
 		writer: SessionEventWriter,
-		defaults: Pick<RpcSessionLaunchProfile, "cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel">,
+		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
 		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 		idle?: RpcSessionIdlePolicy,
@@ -136,6 +151,7 @@ export class SessionCommandRouter {
 		this.idleEvictionMs = idle?.idleEvictionMs ?? Number.POSITIVE_INFINITY;
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;
 		this.onEmptyExit = idle?.onEmptyExit;
+		this.onHandoffParked = idle?.onHandoffParked;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
@@ -151,16 +167,15 @@ export class SessionCommandRouter {
 	}
 
 	/**
-	 * Hand this host's work to the next generation: park every session the moment it has no client
-	 * attached and nothing running, and leave as soon as none is left. A drain ENDS no work - a
-	 * session mid-turn keeps running, and a session a client is still attached to keeps serving it -
-	 * which is what separates an upgrade from a kill.
+	 * Park attached and detached sessions once turns and requests settle. Durable wake sources
+	 * resume on reopen, unlike active work. Repeated requests (including grace expiry) rescan
+	 * without announcing again or aborting a turn.
 	 */
 	beginDrain(): void {
-		if (this.draining) return;
 		this.draining = true;
+		this.stopSweep();
 		this.sweepDrain();
-		if (this.drainTimer !== undefined) return;
+		if (this.drainTimer !== undefined || this.drainExitRequested) return;
 		// Unref'd: a draining host must never be the reason the event loop stays open.
 		this.drainTimer = setInterval(() => this.sweepDrain(), DRAIN_SWEEP_MS);
 		this.drainTimer.unref?.();
@@ -168,21 +183,36 @@ export class SessionCommandRouter {
 
 	/** One drain pass: park what has settled, and exit once the host holds nothing. */
 	private sweepDrain(): void {
+		// An accepted open can still be constructing a runtime or binding.
+		if (this.activeRequests.has(undefined)) return;
 		for (const { sessionId, status } of this.registry.list()) {
 			if (status !== "open") continue;
 			const entry = this.registry.peek(sessionId);
-			if (!entry || entry.attachments > 0) continue;
-			// Session-owned work outlives its client; the park waits for it exactly as the idle
-			// sweep does, and the next pass picks the session up once it settles.
-			if (entry.worker?.busy || entry.runtime?.session.isSessionBusy) continue;
-			void this.evictIdleSession(sessionId, "handoff_parked");
+			if (!entry || this.activeRequests.has(sessionId)) continue;
+			// Both signals are optional: a runtime that does not publish an activity
+			// snapshot cannot be proven busy, and a park that waits for a signal the
+			// runtime never emits would strand the session on the old generation.
+			const snapshot = entry.runtime?.session.activitySnapshot;
+			if (entry.worker?.handoffBusy === true || (snapshot !== undefined && isHandoffBusy(snapshot))) continue;
+			this.handoffClosed.add(sessionId);
+			this.handoffParks++;
+			void this.evictIdleSession(sessionId, "handoff_parked")
+				.catch((cause: unknown) => {
+					process.stderr.write(`senpi rpc handoff park ${sessionId} failed: ${String(cause)}\n`);
+				})
+				.finally(() => {
+					this.handoffParks--;
+					this.sweepDrain();
+				});
 		}
-		if (this.registry.size > 0) return;
+		if (this.registry.size > 0 || this.handoffParks > 0 || this.finalizations.size > 0) return;
 		if (this.drainTimer !== undefined) {
 			clearInterval(this.drainTimer);
 			this.drainTimer = undefined;
 		}
 		this.stopSweep();
+		if (this.drainExitRequested) return;
+		this.drainExitRequested = true;
 		this.onEmptyExit?.();
 	}
 
@@ -202,7 +232,18 @@ export class SessionCommandRouter {
 	 */
 	handle(command: RpcCommand): Promise<RpcResponse | undefined> {
 		const sessionId = "sessionId" in command ? command.sessionId : undefined;
-		return runWithSessionAttribution({ sessionId }, () => this.dispatch(command));
+		// A parked handle is answered by its terminal record and connection close, never unknown_session.
+		if (this.draining && sessionId !== undefined && this.handoffClosed.has(sessionId))
+			return Promise.resolve(undefined);
+		if (this.draining && command.type === "open_session")
+			return Promise.resolve(error(command.id, command.type, "host_draining"));
+		this.activeRequests.set(sessionId, (this.activeRequests.get(sessionId) ?? 0) + 1);
+		return runWithSessionAttribution({ sessionId }, () => this.dispatch(command)).finally(() => {
+			const remaining = (this.activeRequests.get(sessionId) ?? 1) - 1;
+			if (remaining > 0) this.activeRequests.set(sessionId, remaining);
+			else this.activeRequests.delete(sessionId);
+			if (this.draining) this.sweepDrain();
+		});
 	}
 
 	private async dispatch(command: RpcCommand): Promise<RpcResponse | undefined> {
@@ -219,6 +260,9 @@ export class SessionCommandRouter {
 				SESSION_CONTEXT_CAPABILITY,
 				SESSION_KIND_CAPABILITY,
 				AUTO_TITLE_PER_SESSION_CAPABILITY,
+				// Only a multi-session host can refuse a duplicate durable id, because only it
+				// sees every live session's identity.
+				DURABLE_SESSION_ID_CAPABILITY,
 				...(this.connectionOptions?.capabilities ?? []),
 			]);
 			return {
@@ -232,6 +276,7 @@ export class SessionCommandRouter {
 					capabilities: [...capabilities],
 					mode: "multi",
 					...protocolIdentity(),
+					memory_pressure: this.memoryPressure,
 				},
 			};
 		}
@@ -261,7 +306,6 @@ export class SessionCommandRouter {
 			}
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
-		if (controls.has(command.type)) return undefined;
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 		try {
 			this.registry.getForCommand(command.sessionId, command.type);
@@ -275,7 +319,9 @@ export class SessionCommandRouter {
 	}
 
 	async dispose(): Promise<void> {
+		this.drainExitRequested = true;
 		this.stopSweep();
+		if (this.drainTimer !== undefined) clearInterval(this.drainTimer);
 		await Promise.all(
 			[...this.bindings.entries()].map(async ([sessionId, binding]) => {
 				const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
@@ -296,12 +342,9 @@ export class SessionCommandRouter {
 	}
 
 	/**
-	 * One occupancy sweep. Evicts open sessions idle longer than idleEvictionMs,
-	 * where "idle" is the COMPLETE session-owned activity contract
-	 * (`AgentSession.isSessionBusy`: agent run, bash, background terminal jobs and
-	 * other published wake sources, compaction, barrier-held session work) - busy
-	 * sessions restart their idle clock instead, so work that outlives a turn is
-	 * never killed. While the host reports memory pressure the window is HALVED, so an
+	 * One occupancy sweep. Evicts what `selectSweepEvictions` decides: open sessions idle
+	 * longer than idleEvictionMs, and unattached sessions whose transcript directory is
+	 * gone. While the host reports memory pressure the window is HALVED, so an
 	 * idle session's memory returns to the process sooner. Fires onEmptyExit once the
 	 * registry has STAYED empty for emptyExitMs with the exit permitted; any live session
 	 * or connected client resets that window. Runs on an unref'd interval and is safe to
@@ -310,19 +353,9 @@ export class SessionCommandRouter {
 	sweepIdleSessions(): void {
 		const now = this.idleNow();
 		const idleEvictionMs = this.memoryPressure ? this.idleEvictionMs / 2 : this.idleEvictionMs;
-		if (Number.isFinite(idleEvictionMs)) {
-			for (const { sessionId, status } of this.registry.list()) {
-				if (status !== "open") continue;
-				const entry = this.registry.peek(sessionId);
-				if (!entry) continue;
-				if (entry.worker?.busy || entry.runtime?.session.isSessionBusy) {
-					// Session-owned work defers eviction; the window restarts when it settles.
-					entry.lastCommandAt = now;
-					continue;
-				}
-				if (now - entry.lastCommandAt >= idleEvictionMs) void this.evictIdleSession(sessionId);
-			}
-		}
+		const verdicts = selectSweepEvictions(this.registry, now, idleEvictionMs);
+		for (const sessionId of verdicts.orphaned) void this.evictIdleSession(sessionId, "session_dir_removed");
+		for (const sessionId of verdicts.idle) void this.evictIdleSession(sessionId);
 		if (Number.isFinite(this.emptyExitMs)) {
 			if (this.registry.size === 0 && (this.canExitWhenEmpty?.() ?? true)) {
 				if (this.emptySince === undefined) this.emptySince = now;
@@ -352,13 +385,20 @@ export class SessionCommandRouter {
 		// record without the session's path would not be actionable (so a retained session
 		// with no file to reopen by ends as an ordinary close).
 		const retained = this.registry.peek(sessionId);
-		const parkedPath = retained?.retainOnDisconnect === true ? retained.sessionPath : undefined;
+		const parkedPath =
+			retained?.retainOnDisconnect === true || reason === "handoff_parked" ? retained?.sessionPath : undefined;
+		const owners =
+			reason === "handoff_parked"
+				? [...this.sessionsByConnection]
+						.filter(([, owned]) => owned.has(sessionId))
+						.map(([connection]) => connection)
+				: [];
 		// A failed claim means an explicit close raced us and owns the entry now.
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
 		if (!claim) return;
 		const binding = this.bindings.get(sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();
-		this.forgetSessionOwnership(sessionId);
+		if (reason !== "handoff_parked") this.forgetSessionOwnership(sessionId);
 		if (claim.finalizer) {
 			await this.finalizeClose(sessionId, binding, () =>
 				// A drain names ITS reason on the close record. An idle sweep of a RETAINED
@@ -369,10 +409,15 @@ export class SessionCommandRouter {
 							sessionId,
 							{ type: "response", command: "close_session", success: true, data: {} },
 							reason ?? "idle_evicted",
+							reason === "handoff_parked" ? parkedPath : undefined,
 						),
 			);
 		} else {
 			await this.finalizations.get(sessionId)?.promise;
+		}
+		if (reason === "handoff_parked") {
+			this.forgetSessionOwnership(sessionId);
+			await this.onHandoffParked?.(owners.filter((connection) => !this.sessionsByConnection.has(connection)));
 		}
 		// The runtime is disposed and routing handles are unique per process
 		// epoch, so nothing can emit under this id again: drop the writer's
@@ -453,7 +498,10 @@ export class SessionCommandRouter {
 							: this.defaults.creationModel,
 					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
 					sessionKind: command.kind,
-					sessionContext: command.context,
+					sessionContext: this.defaults.hostContext
+						? { ...command.context, ...this.defaults.hostContext }
+						: command.context,
+					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
@@ -526,6 +574,19 @@ export class SessionCommandRouter {
 					),
 				);
 				if (entry.worker) entry.worker.bindingReady = true;
+				// Wake the drain sweep the moment a session settles, so a handoff parks it
+				// without waiting for the next timer tick. Both hooks are OPTIONAL: an
+				// embedder's runtime and the suite's fakes implement the session surface
+				// they need and nothing more, and an open must never fail because a
+				// settle notification is unavailable - the periodic sweep still parks it.
+				const settled = () => {
+					if (this.draining) queueMicrotask(() => this.sweepDrain());
+				};
+				if (typeof entry.worker?.subscribeSettled === "function") entry.worker.subscribeSettled(settled);
+				else if (typeof entry.runtime?.session.subscribe === "function")
+					entry.runtime.session.subscribe((event) => {
+						if (event.type === "agent_settled" || event.type === "agent_idle") settled();
+					});
 				if (entry.worker)
 					void entry.worker.exited.then(async () => {
 						await this.finalizations.get(openedSession.sessionId)?.promise;
@@ -534,7 +595,7 @@ export class SessionCommandRouter {
 						this.writer.forgetSession(openedSession.sessionId);
 					});
 			}
-			if (owner !== undefined && this.releasedConnections.has(owner)) {
+			if (!this.draining && owner !== undefined && this.releasedConnections.has(owner)) {
 				this.releaseOwnerAttachment(owner, openedSession.sessionId);
 				await this.releaseOwnedSession(openedSession.sessionId);
 			}
@@ -580,6 +641,13 @@ export class SessionCommandRouter {
 		const opens = this.opensByConnection.get(connectionId);
 		const owned = this.sessionsByConnection.get(connectionId);
 		this.sessionsByConnection.delete(connectionId);
+		if (this.draining) {
+			// Drain owns teardown now, even when a client reacts to the announcement early.
+			// Its attachment-draining claim releases these counts once work settles.
+			if (opens) await Promise.all([...opens]);
+			this.releasedConnections.delete(connectionId);
+			return;
+		}
 		if (owned === undefined) {
 			if (opens) await Promise.all([...opens]);
 			this.releasedConnections.delete(connectionId);
@@ -648,11 +716,17 @@ export class SessionCommandRouter {
 	 * attachments keep the shared binding and their event stream.
 	 */
 	private async releaseOwnedSession(sessionId: string): Promise<void> {
+		const live = this.registry.peek(sessionId);
+		const parks = live?.state === "open" && live.retainOnDisconnect === true && live.attachments === 1;
 		// A failed claim means the entry is already closed or owned by another path.
 		// A retained entry answers the detach by staying open: no finalizer, nothing to join.
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: false, detach: true });
 		if (!claim) return;
 		if (!claim.finalizer) {
+			if (parks && live.runtime) {
+				live.lifecycleMutex = live.lifecycleMutex.then(() => live.runtime?.emitAttachmentEvent("session_parked"));
+				await live.lifecycleMutex;
+			}
 			await this.finalizations.get(sessionId)?.promise;
 			return;
 		}

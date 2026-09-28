@@ -73,6 +73,8 @@ export interface TerminalSessionHandle {
 	readonly kill: (signal?: TerminalSessionSignal) => TerminalSessionOperationResult | undefined;
 	readonly waitExit?: () => Promise<unknown>;
 	readonly wait?: () => Promise<unknown>;
+	readonly pid?: number;
+	readonly processGroupId?: number;
 }
 
 export type CreateNativeTerminalSession = (

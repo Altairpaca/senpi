@@ -1,5 +1,235 @@
 # Core Extensions Changes
 
+## 2026-09-27 - `kernelPrelude`, `permissionParser`, and the `tool_activated` event on the extension API
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`:
+  - `KernelPreludeContribution`, and `ToolDefinition.kernelPrelude`.
+  - `ToolPermissionRequest`, and `ToolDefinition.permissionParser(input, cwd)`.
+  - `ToolActivatedEvent`, plus its `pi.on("tool_activated")` overload.
+  - `ToolInfo` now carries `kernelPrelude` and `permissionParser`.
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports `KernelPreludeContribution` and `ToolPermissionRequest`.
+- `packages/coding-agent/src/core/extensions/kernel-prelude.ts` (new): validates a prelude's exports against the built-in kernel helpers.
+
+### Why
+
+- These are generic extension hooks, so a whole capability can ship from an extension package without edits to senpi core.
+
+### Why an extension could not handle it
+
+- They are public extension API types.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `ToolDefinition` field list, the `ExtensionEvent` union, the `on()` overloads, and the `ToolInfo` pick in `types.ts`.
+
+## 2026-09-27 - Directory entries and JSON dependencies load on Bun 1.3.x (senpi#2164)
+
+### What changed
+
+- `bun-extension-importer.ts`: only files the graph transpiles (`.[cm]?[jt]sx?`) get a `senpi-extension:` id. Every other resolved file (JSON, TOML, text, native addons) resolves to its real path, so Bun's own loader imports or requires it, attributes included. `import()` of an extension path that is a directory resolves it through `Bun.resolveSync` (package `main`/`exports`, then `index.*`) before importing; a regular file keeps the direct realpath, because `Bun.resolveSync` reads a literal `?` in a path as a query.
+- `bun-extension-registry.ts`: `onResolve` no longer hands non-JS ids back to Bun's `file` namespace, because the importer no longer mints them. `metadata()` treats an absolute-path id as that file, so `import.meta.resolve` still returns a `file:` URL and `require.resolve` the path for those targets.
+
+### Why
+
+- On Bun 1.3.x a runtime plugin's `onResolve` hand-back to the `file` namespace works only for a statically linked import. A runtime `import()`, a `require()`, or the importer's own top-level import fails with `Cannot find module 'file:/…'` or `ENOENT reading "file:/…"`. This was measured on 1.3.14; 1.4.0 accepts the same hand-back. In practice ajv's `require("./refs/data.json")` broke every `pi-zai-mcp` entry point, and a package extension declared as `"."` (`pi-glm-usage`) never loaded, while native Bun loads both. The existing `preserves import attributes when an extension computes the specifier` regression failed on 1.3.14 for the same reason.
+
+### Why an extension could not handle it
+
+- This is the loader that evaluates extension source; it runs before any extension exists.
+
+### Expected merge conflict zones
+
+- LOW: `resolveTarget`/`fileTarget` and the returned `import()` in `bun-extension-importer.ts`; `metadata().resolvePath` and the `onResolve` body in `bun-extension-registry.ts`.
+
+## 2026-09-25 - before_agent_start says who started the turn (`trigger`) (senpi#2137)
+
+### What changed
+
+- `types.ts` `BeforeAgentStartEvent.trigger: "prompt" | "extension"`. `runner.ts` `emitBeforeAgentStart` takes an optional `trigger` (default `"prompt"`) and puts it on the event. `agent-session.ts` passes `"extension"` from the `sendCustomMessage(..., { triggerTurn: true })` path; the user-prompt path and the preview keep the default. `docs/extensions.md` documents the field.
+
+### Why
+
+- The user-prompt path and the hidden extension-triggered path emitted the same event shape, so a handler could not tell a user request from an extension's bootstrap text. The todotools first-turn plan opener armed on an omo onboarding turn and then skipped the user's real first request (senpi#2137).
+
+### Why an extension could not handle it
+
+- Only the host knows which path started the turn; the event is the one place handlers see it.
+
+### Expected merge conflict zones
+
+- The `BeforeAgentStartEvent` interface, the `emitBeforeAgentStart` options object, and the `triggerTurn` call site in `agent-session.ts`.
+
+## 2026-09-24 - before_agent_start handlers opt in to the preview pass with `previewSafe` (senpi#2115)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `BeforeAgentStartHandlerOptions` (`previewSafe?: boolean`), accepted as the optional third argument of the `before_agent_start` overload of `ExtensionAPI.on`; `Extension` gains optional `previewSafeHandlers?: WeakSet<HandlerFn>`. `ExtensionContext.getPromptCachePrefixRequest?(options?)` and `ExtensionContextActions.getPromptCachePrefixRequest?` take `PromptCachePrefixRequestOptions` (`signal`) and resolve a `PromptCachePrefixResult` (`{ status: "ready", request }` or `{ status: "skipped", reason }`) instead of `PromptCachePrefixRequest | undefined`. The `preview` doc on `BeforeAgentStartEvent` says only preview-safe handlers receive it.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `on(event, handler, options)` records a `before_agent_start` handler registered with `{ previewSafe: true }` in `extension.previewSafeHandlers`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: new `getPreviewUnsafeBeforeAgentStartPaths()` lists extensions with a `before_agent_start` handler that is not preview-safe; `emitBeforeAgentStart`'s fifth argument gains `signal`, a preview invokes only preview-safe handlers, and an aborted signal stops dispatch before the next handler. The bound `getPromptCachePrefixRequest` context action forwards its options and resolves `skipped` when the host binds no builder.
+- Fork-only builtins: every builtin `before_agent_start` handler registers `{ previewSafe: true }`. `anthropic-bash`, `anthropic-web-search`, `openai-web-search`, `bash-timeout`, `terminal`, `todotools`, `prompt-preset`, and `imagegen` only compute a system prompt. `compaction` and `hooks` already returned early on a preview. `prompt-url-widget` now returns early on a preview; `rules` composes the same block on a preview without touching `nativeContextPaths` or the static-injection marks; `openai-image-gen` reads the arbitration on a preview without committing `state` or `setNativeBypass`; `mcp` awaits only the session-start attach on a preview and skips the elicitation UI binding and skill-declared server attach.
+
+### Why
+
+Extensions written against the pre-#2096 contract never check `event.preview`, so running them in a preview executed real-turn side effects for a turn that does not exist (an external memory extension lost its drained notices). Only a handler's author can say whether it is side-effect free, so the preview must be opt-in per handler, and a preview that cannot include every handler would compose the wrong prefix, so it is skipped rather than run partially.
+
+### Why an extension could not handle it
+
+Handler registration and dispatch are owned by the loader and runner; an extension cannot mark another extension's handler or keep the host from invoking it.
+
+### Extension impact
+
+- `pi.on("before_agent_start", handler)` is unchanged for real turns. A handler that is side-effect free when `event.preview` is `true` should register with `{ previewSafe: true }`; while any registered handler lacks it, the session-start prompt-cache prewarm is skipped and records a `prompt-cache-prewarm` entry with phase `skipped` and the reason.
+- Breaking for callers of `ctx.getPromptCachePrefixRequest()` (introduced by #2096 in 2026.9.24-2): read `result.status` and `result.request`.
+
+### Expected merge conflict zones
+
+- LOW: the `getPromptCachePrefixRequest` doc and signature in `ExtensionContext`, the block after `PromptCachePrefixRequest`, the end of `BeforeAgentStartEvent`, the `before_agent_start` overload of `ExtensionAPI.on`, the `handlers` field of `Extension`, and the end of `ExtensionContextActions` in `types.ts`.
+- LOW: the `on` registration method and the `./types.ts` import block in `loader.ts`.
+- LOW: the `getPromptCachePrefixRequest` context entry and the `emitBeforeAgentStart` signature and dispatch loop in `runner.ts`.
+
+## 2026-09-24 - before_agent_start preview pass and the prompt-cache prefix request (senpi#2096)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartEvent` gains optional `preview?: boolean`; new `PromptCachePrefixRequest` (`model`, `context`, `options`); `ExtensionContext.getPromptCachePrefixRequest?()` and `ExtensionContextActions.getPromptCachePrefixRequest?`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` takes an optional fifth `{ preview }` argument and sets `event.preview: true` when it is set; the bound `getPromptCachePrefixRequest` action is exposed on every handler context.
+- Fork-only builtins: `builtin/compaction/index.ts` and `builtin/hooks/index.ts` return early from `before_agent_start` on a preview, so it runs no compaction, reminder, or restoration and does not consume a queued UserPromptSubmit context.
+
+### Why
+
+The session-start OpenAI prompt-cache prewarm must send the first turn's exact prefix, and that turn's system prompt is only known after `before_agent_start`. The preview pass runs the same handlers with an empty prompt so the prewarm gets the same system prompt without a turn.
+
+### Why an extension could not handle it
+
+Only the host can run the `before_agent_start` chain, and only the host knows the tools, loop options, and provider preparation the next turn uses.
+
+### Extension impact
+
+- Additive: `preview` is absent on every real turn. Handlers with one-shot side effects should return early when `event.preview` is `true`; handlers that only compute a system prompt need no change.
+
+### Expected merge conflict zones
+
+- LOW: the end of `BeforeAgentStartEvent`, the `prepareProviderRequest` neighbourhood of `ExtensionContext`, `ProviderRequestPreparation`'s neighbourhood, and the end of `ExtensionContextActions` in `types.ts`.
+- LOW: the `getSystemPromptOptionsFn` field and its `bindCore` assignment, the `prepareProviderRequest` context entry, and the `emitBeforeAgentStart` signature/event literal in `runner.ts`.
+
+## 2026-09-23 - Entry renderers can replace the card directly before them (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `EntryRendererOptions` with an optional `replaces(previous, next)` predicate; `registerEntryRenderer` takes it as an optional third argument, and `Extension` gains an optional `entryRendererOptions` map.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `registerEntryRenderer` stores the options next to the renderer (a re-registration without options clears them).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getEntryRendererOptions(customType)` returns the options of the extension that owns the renderer `getEntryRenderer` resolves.
+- `packages/coding-agent/src/core/extensions/index.ts` and `packages/coding-agent/src/index.ts` export `EntryRendererOptions`.
+
+### Why
+
+- A Goal wait appends a `goal-cache-warmup` entry when it is scheduled and another when it wakes; a reload used to append a third. Every entry became its own transcript card, so one wait rendered as a stack. The goal extension needs to say "this entry updates the card before it" without the host hard-coding a goal rule.
+
+### Why an extension could not handle it
+
+- An entry renderer only sees its own entry; the transcript container that decides whether a card is added or replaced is host-owned.
+
+### Extension impact
+
+- Additive and optional: existing `registerEntryRenderer(type, renderer)` calls behave exactly as before.
+
+### Expected merge conflict zones
+
+- The `EntryRenderer` type block and the `registerEntryRenderer` declaration in `types.ts`; `registerEntryRenderer` in `loader.ts`; `getEntryRenderer` in `runner.ts`; the rendering export lists in both `index.ts` files.
+
+## 2026-09-22 - One extension module generation per source version, not per session (senpi#1948)
+
+### What changed
+
+- New `extension-module-cache.ts` owns the process-wide extension module generation: the live importer, the factories compiled under it, and a fingerprint (`mtimeNs:size`) of every source file that generation compiled. `cachedExtensionFactory()` serves a compiled factory while every recorded file is unchanged, `extensionModuleImporter()` hands out the one live importer, and `rememberExtensionFactory()` records a freshly compiled factory. A changed or deleted source drops the whole generation, so the next load compiles a new one.
+- `loader.ts` loads through that cache on every path: the per-cwd LRU factory cache (`extensionCacheByCwd`, `MAX_EXTENSION_CACHE_CWD_ENTRIES`, `ExtensionCacheToken`) and the `useCache` opt-in are gone, `loadExtensions` and `loadExtensionsCached` behave identically, and `clearExtensionCache` re-exports the cache module's.
+- `bun-extension-importer.ts` exposes `compiledFiles()`, the source files its graph transpiled. An importer without it (the Node jiti path) is never cached, because its graph cannot be checked for staleness.
+- Invalidation stops REUSING a generation and never disposes it: a session loaded under it can still lazily `import()` from its graph after its factory returned, and a disposed graph makes that throw `ExtensionGenerationDisposedError`. Its modules stay registered either way.
+
+### Why
+
+- A module registry has no eviction API, so each importer generation's modules stay resident for the life of the process. Loading extensions per session therefore cost a shared RPC host one permanent copy of the whole extension graph per `open_session`: measured +14 to +17 MB of settled resident memory per session on the compiled runtime with a full extension set, and ~90-150 new `ModuleRecord`s per session in a heap snapshot. A host reached multiple GB in a few hours of ordinary use.
+- After the change the same measurement (source host, same plugin, five open/close cycles, heap read after a full GC) goes from ~+16 MB per session to ~+0.77 MB, and retained objects from ~125,000 per session to ~271.
+
+### Why an extension could not handle it
+
+- The loader is what evaluates extension modules; an extension cannot decide how many times its own source is compiled.
+
+### Extension impact
+
+- An extension's module scope is now evaluated once per process while its source is unchanged, and its factory still runs once per session, so each session keeps its own instance. Module-scope state was never per session (factories must be pure - `AGENTS.md`), so this changes no documented contract. Editing an extension still takes effect on the next load: the edit changes the fingerprint and the graph is recompiled.
+
+### Expected merge conflict zones
+
+- The cache block near the top of `loader.ts` and its `loadExtensionsInternal` signature, whenever upstream touches loader caching.
+
+
+## 2026-09-21 - Read es-module-lexer 3 import records in the Bun extension importer (senpi#1895)
+
+### What changed
+
+- `bun-extension-importer.ts` reads the tagged-union records that `es-module-lexer` 3 returns from the asm.js full build: `type === "dynamic"` replaces `d >= 0`, `importStart`/`importEnd` replace `ss`/`se`, `specifier` replaces `n`, `start`/`end` replace `s`/`e`, `dynamicStart` replaces the dynamic `d` index, and `attributesStart` replaces `a`. Static and `export * from` edges are matched by `type`; `import.meta` records are skipped as before.
+- `bun-extension-commonjs.ts` is unchanged: the full build still returns `hasModuleSyntax` as the fourth tuple element.
+
+### Why
+
+- `es-module-lexer` 3.0.0 replaced the terse v2 record fields with descriptive tagged unions and turned `es-module-lexer/js` into the asm.js full build; the importer's field reads stopped compiling (seven `TS2339` errors) and eleven extension tests failed until the records were read by their new names.
+
+### Why an extension could not handle it
+
+- The importer runs before any extension code is evaluated and rewrites the extension's own import edges; it is engine-owned.
+
+### Extension impact
+
+- None: rewritten output is byte-identical for the covered cases (static, dynamic, attributes, `export * from`).
+
+### Expected merge conflict zones
+
+- The import-edge rewrite loop in `bun-extension-importer.ts`, whenever upstream touches the importer.
+
+## 2026-09-21 - Retained-session parked/resumed events (#1902)
+
+### What changed
+
+- `types.ts` adds `SessionParkedEvent` and `SessionResumedEvent` to the session event union and `ExtensionAPI.on` overloads; `index.ts` exports both.
+- The existing `runner.ts` generic emit union derives from `ExtensionEvent`, so both events use its existing ordered handler dispatch.
+
+### Why
+
+- Optional per-session work needs an explicit attachment lifecycle signal without confusing parking with shutdown or session switching.
+
+### Why an extension could not handle it
+
+- Public event types and host-originated attachment transitions are owned by the engine.
+
+### Expected merge conflict zones
+
+- Session event union, event-subscription overloads and public type exports.
+
+## 2026-09-21 - User-message edits and backward-compatible entry-addressed navigation
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds required `ctx.editUserMessage(entryId, text, options?)` beside assistant edits, with identical options and core typed rejections. `navigateTree` accepts either the shipped positional string plus options or `{ entryId, ...options }`, including `expectedLeafId`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds, resets, and injects the user-edit action with the existing active-context guard. Normalizes object-form navigation once into the positional host action without changing the caller's token.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: an object alongside the string preserves existing extension calls; replacing the positional signature would break them. The options object makes entry addressing explicit without adding another method.
+- `packages/coding-agent/src/core/extensions/runner.ts`: core already implements tree selection and user edits; extensions need those capabilities through their command context. Message entry IDs remain distinct from metadata-advanced leaf tokens.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns the command contract; extensions cannot add required members to their own context.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns host action binding and context construction in all modes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: command context and action declarations beside `navigateTree` and `editAssistantMessage`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: handler types, default fields, command binding/reset, and context injection.
+
 ## 2026-09-20 - Import attributes survive the CommonJS rewrite (#1864)
 
 ### What changed

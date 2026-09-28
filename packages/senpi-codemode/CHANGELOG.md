@@ -10,6 +10,325 @@
 
 ### Fixed
 
+- A persistent eval kernel no longer pins its first cell's handler for the whole kernel generation. The kernel dispatcher is now a bound method of the session manager instead of a closure over the `getKernel` call that created the kernel (under Bun/JSC that closure retained the creating cell's `onMessage` — its output buffers and display images — until the kernel was reset), and every cell releases its kernel listener once it settles, so nothing keeps a settled cell's state alive. Interpreter startup stderr still reaches the cell that created the kernel; a message arriving between cells reaches no settled handler. ([#2260](https://github.com/code-yeongyu/senpi/issues/2260))
+
+- Settled eval cells kept for `peek`/`list` no longer pin up to ~800 MB of image data in the session's memory. Their images are written to `<session artifacts>/settled-images/` and read back on `peek`, which still returns the full result. The files are bounded by the new `memory.retainedImagesMb` setting (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), deleted with an evicted cell, and removed when the session ends. The in-memory snapshots are bounded by the new `memory.retainedResultsMb` setting (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) on top of the 32-cell count cap. ([#2259](https://github.com/code-yeongyu/senpi/issues/2259))
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `new Bun.WebView()` in a JavaScript eval cell no longer fails with `Bun.WebView with backend "chrome" is only available on the main thread` (every call on Windows and Linux, `backend: "chrome"` on macOS). Cells see a `Bun` whose `WebView` (also through `import { WebView } from "bun"`) hands Chrome-backed views to the process main thread with the same API: navigation, input, `evaluate`, screenshots, `cdp()` and its events, `console` capture, `url`/`title`/`loading`, `close()` and `await using`. The macOS default (WebKit) stays a native view in the kernel worker. `Bun.WebView.closeAll()` in a cell closes only that kernel's views. ([#2248](https://github.com/code-yeongyu/senpi/issues/2248))
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- The eval kernels install each active tool's `kernelPrelude`: its JavaScript or Python statements run before a cell whenever one of the prelude's exports is missing, a deactivated tool's exports are removed before the next cell, and each prelude's documentation line joins the eval prompt's helper list. Exports that would shadow a built-in helper are rejected. ([#2178](https://github.com/code-yeongyu/senpi/pull/2178))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.26] - 2026-09-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.25] - 2026-09-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-3] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-2] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Dense JavaScript eval cells are previewed with Bun's built-in printer when the TUI runs on Bun: one statement per line with normal spacing, while every string, number, template, name, and comment keeps its exact text. On Node, JavaScript cells are shown as sent. Dense Python cells are formatted by your own Python (ruff or black when installed, otherwise the standard library for comment-free cells), appearing formatted a moment after the cell is shown. Anything that cannot be shown faithfully is shown as sent, and the code that runs is unchanged. ([#2076](https://github.com/code-yeongyu/senpi/issues/2076))
+
+### Fixed
+
+- The `eval` tool's run contract is no longer a trap: the schema descriptions now mark `language` and `code` as required for run, and a run call missing either fails with an error that names the enabled languages or the missing cell body instead of a bare "eval run requires language".
+- An omitted `eval` `language` now names only the kernels enabled in this session (`js` and `py` by default), instead of advertising gated Ruby and Julia.
+
+### Removed
+
+## [2026.9.24] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Eval code previews no longer show code that means something different from the cell: breaking a long JavaScript array keeps the parentheses around each element, and a Python formatter result that changes string or docstring text (or is not valid Python) is discarded so the cell is shown as sent. ([#2076](https://github.com/code-yeongyu/senpi/issues/2076))
+- Python eval previews give your ruff most of the 5-second formatting budget instead of a fixed 4 seconds, so a slow first ruff start still formats the cell. ([#2076](https://github.com/code-yeongyu/senpi/issues/2076))
+
+### Removed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Eval cards no longer display truncation or full-output artifact footer warnings. Model-facing eval text and grouping are unchanged; content explicitly addressed only to the model is omitted from the text fallback. ([#2041](https://github.com/code-yeongyu/senpi/issues/2041))
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Dense one-line JavaScript eval cells are previewed in the TUI broken at statement, block, and long-array boundaries with indentation, keeping the original tokens and comments. Unparseable, non-JavaScript, and already readable cells are shown as sent, and the code that runs is unchanged. ([#2050](https://github.com/code-yeongyu/senpi/issues/2050))
+- The `eval` `summary` guide asks for a progress update saying what the agent is doing and why, in the language the user writes in, and summaries no longer have a length limit (the 80-character truncation is gone). A collapsed eval block shows the first three summary lines; expanding it shows the rest. ([#2050](https://github.com/code-yeongyu/senpi/issues/2050))
+- Codemode CI tests use at most two fork workers, matching the coding-agent suite's interpreter-heavy test scheduling. Test deadlines, assertions, and local worker defaults are unchanged. ([#2039](https://github.com/code-yeongyu/senpi/issues/2039))
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-2] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-4] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-3] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-2] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `wake_source_state` (live detached eval cells) is now published on the rpc channel as well as the in-process event bus, so out-of-process consumers see live cells the way the TUI footer does (#1943).
+
+### Removed
+
+## [2026.9.22] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+- `eval` runs up to `maxDetachedCells` background cells per session (default 15, `SENPI_CODEMODE_MAX_DETACHED_CELLS`) and queues same-language cells on their kernel instead of rejecting them; `list` observes live and recent cells, and resetting a busy language refuses with `eval_kernel_busy_reset_refused` instead of stopping live work. ([#1908](https://github.com/code-yeongyu/senpi/issues/1908))
+- `agent()` forwards `isolated`, `apply`, and `merge` when the task host advertises isolation. Hosts that do not still drop those options with the existing warning. A foreground call whose isolation did not apply now raises instead of looking successful; with `handle: true` the isolation result arrives on completion. ([#1910](https://github.com/code-yeongyu/senpi/issues/1910))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.21-2] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.21] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the bundled dependencies: typebox 1.3.27 -> 1.3.34. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+- Python eval kernel: a kernel whose host process died mid-cell now exits instead of being orphaned forever. ([#1659](https://github.com/code-yeongyu/senpi/issues/1659))
+
+### Removed
+
+## [2026.9.20] - 2026-09-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 ### Removed
 
 ## [2026.9.19-2] - 2026-09-19

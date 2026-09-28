@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { parentPort } from "node:worker_threads";
+import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
@@ -9,9 +9,11 @@ import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
@@ -30,6 +32,7 @@ if (isBunBinary) {
 }
 
 takeOverStdout();
+registerWebViewBroker(Reflect.get(Object(workerData), "webviewBroker"));
 const port = parentPort;
 if (!port) throw new Error("Session worker requires a parent port");
 const send = (message: SessionWorkerToHost): void => port.postMessage(message);
@@ -56,7 +59,11 @@ class WorkerEventWriter extends SessionEventWriter {
 			failWorker("session_worker_output_limit");
 		const session = entry?.runtime?.session;
 		if (!session) throw new Error("Session output preceded runtime creation");
-		const activity = { busy: session.isSessionBusy, streaming: session.isStreaming };
+		const activity = {
+			busy: session.isSessionBusy,
+			handoffBusy: isHandoffBusy(session.activitySnapshot),
+			streaming: session.isStreaming,
+		};
 		const replacement =
 			"type" in record &&
 			(record.type === "session_replaced" ||
@@ -138,6 +145,7 @@ function snapshot(): WorkerSnapshot {
 		sessionPath,
 		liveSessionPaths: [...live],
 		busy: session.isSessionBusy,
+		handoffBusy: isHandoffBusy(session.activitySnapshot),
 		streaming: session.isStreaming,
 	};
 }

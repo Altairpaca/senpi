@@ -3,15 +3,18 @@ import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
+import { resolveRetainedImagesBytes, resolveRetainedResultsBytes } from "./config/memory-settings.ts";
 import {
 	defaultCodemodeSettings,
 	resolveForegroundWindowSeconds,
 	resolveHardLimitSeconds,
+	resolveMaxDetachedCells,
 	resolveRunBudgetSeconds,
 } from "./config/settings.ts";
 import { EvalNotifier } from "./extension/eval-notifier.ts";
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
+import { activeKernelPreludes, kernelPreludeDocsKey, promptKernelPreludes } from "./extension/kernel-preludes.ts";
 import {
 	createExecuteTool,
 	createRuntime,
@@ -42,7 +45,7 @@ const SESSION_LIFECYCLE_EVENTS = [
 
 type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
 
-type CodemodeEvent = SessionLifecycleEvent | "model_select";
+type CodemodeEvent = SessionLifecycleEvent | "model_select" | "turn_start";
 
 export interface CodemodeExtensionAPI {
 	registerTool(tool: ReturnType<typeof createEvalTool>): void;
@@ -90,6 +93,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	let activeModelId: string | undefined;
 	let activeContext: ExtensionContext | undefined;
 	let activeCells: EvalDetachedCellManager | undefined;
+	let promptPreludeDocs = "";
 	const notifier = new EvalNotifier({
 		sendMessage: (message, notifyOptions) => pi.sendMessage(message, notifyOptions),
 		getContext: () => activeContext,
@@ -113,6 +117,9 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		statusTicker.sync(entries);
 	};
 	const emitWakeSourceState = (state: WakeSourceState): void => {
+		// Same dual publication as the settle payload below: the in-process bus
+		// feeds the TUI footer, the rpc channel feeds out-of-process consumers.
+		pi.rpc?.emit(WAKE_SOURCE_STATE_EVENT, state);
 		pi.events?.emit(WAKE_SOURCE_STATE_EVENT, state);
 	};
 	const registerEvalForRuntime = (
@@ -130,6 +137,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		// reaches this before the runtime is bound). An unreadable registry means "do not teach
 		// a tool we cannot confirm"; session_start / model_select re-register once it is live.
 		const monitor = monitorIsRegistered(pi);
+		const preludes = promptKernelPreludes(pi);
+		promptPreludeDocs = kernelPreludeDocsKey(preludes);
 		pi.registerTool(
 			createEvalTool({
 				enabledLanguages: runtime.enabledLanguages,
@@ -152,6 +161,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				spawnDefaultAgent: runtime.settings.taskTools.task,
 				hostLine: hostLine(),
 				runtimes: runtime.runtimes,
+				kernelPreludes: () => activeKernelPreludes(pi),
+				promptKernelPreludes: preludes,
 				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
 				...(modelId === undefined ? {} : { modelId }),
 			}),
@@ -181,6 +192,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			settings: defaultCodemodeSettings,
 			cellManager: new EvalDetachedCellManager({
 				notifier,
+				maxDetachedCells: resolveMaxDetachedCells(defaultCodemodeSettings),
+				retainedResultsBytes: resolveRetainedResultsBytes(defaultCodemodeSettings),
 				hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
 				runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
 				onStatusChange: showDetachedCells,
@@ -219,6 +232,9 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		const cellManager = new EvalDetachedCellManager({
 			artifactsDir: runtime.artifactsDir,
 			notifier,
+			maxDetachedCells: resolveMaxDetachedCells(runtime.settings),
+			retainedResultsBytes: resolveRetainedResultsBytes(runtime.settings),
+			retainedImagesBytes: resolveRetainedImagesBytes(runtime.settings),
 			hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
 			runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
 			onStatusChange: showDetachedCells,
@@ -245,6 +261,14 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		const cellManager = activeCells;
 		if (cellManager === undefined) return;
 		registerEvalForRuntime(runtime, modelId, cellManager);
+	});
+	// Tool activation has no event of its own; the next turn re-documents a changed contribution set.
+	pi.on("turn_start", async () => {
+		const runtime = activeRuntime;
+		const cellManager = activeCells;
+		if (runtime === undefined || cellManager === undefined) return;
+		if (kernelPreludeDocsKey(promptKernelPreludes(pi)) === promptPreludeDocs) return;
+		registerEvalForRuntime(runtime, activeModelId, cellManager);
 	});
 }
 

@@ -1,3 +1,1169 @@
+## 2026-09-28 - The shared host judges memory pressure by its footprint, not RSS (senpi#2261)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the pressure decision compares the host's memory footprint (`readOwnFootprint()` from the fork-only `src/core/process-footprint.ts`: `phys_footprint` on macOS, `RssAnon` on Linux, `PrivateUsage` on Windows, RSS where none is readable) with `SENPI_RPC_HOST_RSS_WARN_MB`, never RSS. The option `readFootprint` injects it (tests); `readRssBytes` stays for the reported RSS. `onIdlePressure` receives `{ footprintMb, measure, rssMb }`, and the stderr line names both numbers.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains the additive `footprintMb?` and `measure?`; `rssMb` stays and is still the true RSS.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `broadcastHostRecord` projects `footprintMb` and `measure` onto the `host_memory_pressure` wire record.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the idle-pressure log line names the footprint, its measure and RSS.
+- `senpi host status` is unchanged: its `rss_mb` / `host_rss_mb` stay `ps`-equivalent RSS.
+- Tests: `test/suite/process-footprint.test.ts` (new; a Bun fixture reads the platform counter for itself and a live child, sees it grow by the 96 MiB it touches, and gets `undefined` for an exited child), `test/suite/rpc-host-memory-pressure.test.ts` (pressure released while RSS stays high; RSS alone above the threshold stays silent), `test/suite/regressions/1893-host-idle-memory-watchdog.test.ts`, `test/suite/regressions/issue-2207-no-memory-admission-refusal.test.ts`.
+
+### Why
+
+- RSS keeps counting memory a Bun process already returned: after an eval kernel reset the host read 2314 MB RSS against a 143 MB footprint (senpi#2261), so an RSS-judged host stayed "pressured", kept halving idle parking and never cleared `memory_pressure`.
+
+### Why an extension could not handle it
+
+- The sampler, its lifecycle record and the wire projection belong to the RPC host process, which runs no extension of its own.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the options interface and `sample()`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` and the import block.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: the `host_memory_pressure` case of `broadcastHostRecord`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `startHostObservers`' options and the `onIdlePressure` callback.
+
+## 2026-09-28 - Session workers get a route to the main-thread Bun.WebView service (senpi#2248)
+
+### What changed
+
+- `session-worker-client.ts`: every session worker is started with a WebView broker port (`workerData.webviewBroker`, in the transfer list) from `core/webview/webview-broker.ts`; the broker is disposed when the worker exits, which closes every view the worker's eval kernels created and retires Bun's Chrome when none is left.
+- `session-worker.ts`: registers that port so the eval kernel host in the worker can connect its kernels to the main-thread service.
+
+### Why
+
+- Chrome-backed `Bun.WebView`s exist only on the process main thread; the eval kernel host of a worker session runs off it, so its cells had no way to reach one, and a killed session worker must not leave its views or Chrome behind.
+
+### Why an extension could not handle it
+
+- The broker has to be created on the main thread when the session worker is spawned and passed through `workerData`, both owned by the RPC worker runtime.
+
+### Expected merge conflict zones
+
+- `session-worker-client.ts`: the `worker` field initializer and the `exit` handler.
+- `session-worker.ts`: the import block and the line after `takeOverStdout()`.
+
+## 2026-09-28 - canonicalEndpointPath honours its platform parameter
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: the abstract-socket line of `canonicalEndpointPath` read `process.platform` instead of its `platform` parameter, so a caller that stated a POSIX platform while running on win32 got its path back uncanonicalized. The win32 half of that clause is gone: a win32 parameter already returns through the normalized branch above, so nothing on this line needs the running platform - the parameter is the only platform the function answers.
+- Tests: `test/rpc-host-daemon-dir-spelling.test.ts` - with `process.platform` stubbed to win32, `canonicalEndpointPath(socket, "linux")` still resolves the socket's directory through a symlink, and `canonicalEndpointPath(path, "win32")` still normalizes and lower-cases (verify-t33 N6). Before the fix the POSIX call returned the spelling unchanged.
+
+### Why
+
+Every other branch of the function answers the parameter; the daemon directory and the ensure lock are derived from this canonicalization, so a caller on win32 asking for POSIX rules must get them (verify-t33 N6).
+
+### Why an extension could not handle it
+
+The canonicalization runs inside `ensureHost`/`stopHost`/`handoffHost`/`host gc`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `canonicalEndpointPath`'s abstract-socket line.
+
+## 2026-09-28 - A successor that fails before it was spawned also restores the boot settings
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: everything `startSuccessor` does after `writeHostSettings` overwrote the boot `settings.json` - the `beforeSpawn` hook, the launch build, the stderr open, the spawn and the exit promise - now runs inside the guarded section that already covered the successor's life: a throw there is answered as a `successor_unavailable` refusal whose cleanup puts `settings.json` back byte for byte, instead of escaping `startSuccessor` and leaving the endpoint's boot settings naming a successor that never ran. `abandonSuccessor` accepts a successor that was never spawned (nothing to kill or release; only the settings need restoring) and one that was spawned but never got an exit promise.
+- Tests: `test/rpc-host-handoff-refused.test.ts` - a handoff whose `beforeSpawn` hook throws refuses with `successor_unavailable`, leaves `settings.json` byte-identical and `generations/` exactly as it was. Before the fix the throw escaped `handoffHost` and the boot settings kept the successor's generation and instanceId (verify-t33 N5).
+
+### Why
+
+`settings.json` is what the supervisor reads at its next boot; between the overwrite and the old guarded section sat the `beforeSpawn` hook, the stderr open and the spawn itself, none of which restored anything on failure (verify-t33 N5).
+
+### Why an extension could not handle it
+
+The handoff runs from `senpi host handoff` and `ensureHost`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor`'s spawn section (the hoisted `child`/`exited` and the widened guarded region) and `abandonSuccessor`'s signature and kill/release guards.
+
+## 2026-09-28 - A refused handoff leaves no successor record and restores the boot settings
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor` reads the endpoint's boot `settings.json` (raw bytes, or absent) before `writeHostSettings` overwrites it. Both refusal exits (the successor never answered, and the catch after spawn) call the new `abandonSuccessor`: kill the successor, restore `settings.json` byte for byte (or remove it when there was none), then - once the successor has exited within `SUCCESSOR_EXIT_WAIT_MS` (5 s) - `releaseGeneration(paths, { instanceId, pid })`; a successor that never got a pid has its generation directory removed at once, and one that outlives the wait keeps its record until pruning finds it dead. A cleanup failure is returned in the refusal's `detail` instead of being thrown. `SUCCESSOR_START_BUDGET_MS` includes the exit wait, so the ensure-lock budgets cover it.
+- Tests: `test/rpc-host-handoff-refused.test.ts` - for a successor that never answers and for one whose handoff throws after it was recorded: the refusal is `successor_unavailable`, the successor pid is gone, `status --all` lists no generation with its pid and no dead generation at all, `generations/` holds exactly what it held before, and `settings.json` is byte-identical. Before the fix both cases listed the dead successor (`alive: false`), left its directory, and left `settings.json` naming `generation: 1` and the successor's `instanceId`.
+
+### Why
+
+The successor is recorded at spawn (senpi#2245 m7) and the boot settings are rewritten for it before it starts, but a refusal only killed it: its record stayed under `generations/` until the next registration write or single-socket status pruned it, so `status --all` showed a dead generation, and `settings.json` - what the supervisor reads at its next boot - kept describing a generation that never took over (rpc-host-sharding todo 33 d).
+
+### Why an extension could not handle it
+
+The handoff runs from `senpi host handoff` and `ensureHost`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: the header comment, the imports, `SUCCESSOR_EXIT_WAIT_MS`/`SUCCESSOR_START_BUDGET_MS`, the `bootSettings` read, both refusal exits of `startSuccessor`, and the new `abandonSuccessor`/`exitedWithin`.
+
+## 2026-09-28 - A forced handoff runs inside the endpoint's ensure lock
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-lock.ts` (new): the ensure lock of one endpoint, moved out of `host-ensure.ts` - `hostEnsureLockTarget`, the canonical lock address, `hostEnsureLockOptions(waitMs)` and `acquireHostEnsureLock(socket, waitMs)`.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHost` takes that lock (budget `HANDOFF_LOCK_WAIT_MS`: an ensure's probe plus a handoff of its own, plus 10 s) around the handoff; the body is `handoffHostLocked`, for a caller that already holds it. `HANDOFF_LOCK_HOLD_MS` is the longest a handoff holds it.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: exports `SUCCESSOR_START_BUDGET_MS` (start-time read + readiness window + last probe).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the upgrade path calls `handoffHostLocked` (it already holds the lock); `ENSURE_LOCK_WAIT_MS` is the probe plus the longer of stop-and-restart and `HANDOFF_LOCK_HOLD_MS`, plus 10 s; the lock helpers are imported from `host-ensure-lock.ts` and `hostEnsureLockTarget` is re-exported.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: takes the lock through `acquireHostEnsureLock` with the same 2 s budget.
+- Tests: `test/rpc-host-handoff-lock.test.ts` - inside a real handoff's critical section the ensure lock is held, and an ensure started there attaches to the successor (its probe under the lock sees the successor's instance, it returns the successor's pid, and the pointer names the successor). It failed before the fix: the lock was free during the handoff. `test/rpc-host-gc.test.ts` ("handoff successor is still booting"): a gc run inside the handoff now reports `locked`, and the evidence it would read there (`endpointInUse`) still says `live_generation` from the successor's record written at spawn, so that guard (senpi#2245 m7) keeps its teeth.
+
+### Why
+
+`senpi host handoff` called `handoffHost` outside the ensure lock, so an ensure racing it probed the endpoint mid-handoff and attached to the predecessor that was about to drain, and nothing ordered the handoff against `host gc` either (rpc-host-sharding todo 33 c). The lock waiter budget grows because a handoff can hold the lock longer (up to about 52 s) than the stop-and-restart the old budget was sized for, and an ensure's upgrade path already ran one inside its own critical section.
+
+### Why an extension could not handle it
+
+The handoff runs from `senpi host handoff` and `ensureHost`, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: the imports, the constants and `handoffHost`/`handoffHostLocked`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the imports, `ENSURE_LOCK_WAIT_MS`/`lockOptions`, `upgradeGeneration`, and the removed lock helpers at the end of the file.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `acquireEnsureLock`.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `SUCCESSOR_START_BUDGET_MS`.
+
+## 2026-09-28 - Every spelling of one socket shares one daemon directory
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: new `canonicalEndpointPath(socket)` - on POSIX the socket path with its directory resolved through its deepest existing ancestor (`canonicalSessionPath`), unchanged for a path already spelled that way; on win32 the normalized lower-cased path; an abstract socket as given. `daemonDirectoryName` hashes it, so every spelling names one directory and a canonical spelling keeps its previous name. New `sameEndpoint(a, b)` and `socketNamesDirectory(socket, name)` (the canonical name, or the name a build hashing the spelling gave it); `namesThisDirectory` uses the latter.
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `socketNamedBy` accepts a record through `socketNamesDirectory`, so a directory an older build named after a non-canonical spelling stays listed (and `gc`-able).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `registersSocket` compares with `sameEndpoint`; `socketLockAddress` uses `canonicalEndpointPath`, which yields the identical lock address as before.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `provenOwner` compares the record's socket with `sameEndpoint`.
+- Tests: `test/rpc-host-daemon-dir-spelling.test.ts` - a canonical spelling keeps `sha256(path)[:16]`; a path through a symlinked directory (also one whose tail does not exist yet) and, on darwin, `/tmp` vs `/private/tmp` get the canonical name; an ensure through a second spelling attaches with the first spelling's pid, leaves one directory, and `stopHost` through it stops that host; a directory named after a non-canonical spelling is still removed by gc. `test/helpers/rpc-host-daemon-sandbox.ts` derives the expected directory from the realpath of the socket's directory.
+
+### Why
+
+The ensure lock was made per physical socket (senpi#2245 m6), but the daemon directory stayed per spelling, so two spellings of one socket kept two registrations: an ensure through the second attached with pid 0, and a stop through it refused a host it could not see (rpc-host-sharding todo 33 b).
+
+### Why an extension could not handle it
+
+The daemon directory is derived by `ensureHost`/`stopHost`/`handoffHost` before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `daemonDirectoryName` and the helpers beside it, `namesThisDirectory`.
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `socketNamedBy`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `registersSocket`, `socketLockAddress`, the imports.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `provenOwner`.
+
+## 2026-09-28 - `host gc` removes the endpoint directory last and never aborts on one endpoint
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `removeEndpoint` unlinks the `.next-*`/`.shield-*` siblings by their `lstat` type (a directory is left in place and returned as `skipped: [{ path, type: "directory" }]` on the removed entry), then the socket, then the endpoint directory LAST. `gcHostEndpoints` catches a throw from one endpoint (evidence read or removal) and keeps it with the new reason `failed` plus `error`, then goes on to the next endpoint. `HostGcEntry` gains the optional `skipped` and `error`; `HostGcKeptReason` gains `failed`.
+- Tests: `test/rpc-host-gc-removal.test.ts` - a dead endpoint with a directory named `<socket>.shield-7` is removed (directory, socket, the file sibling) and the directory sibling is reported and left intact; with the socket's directory read-only, that endpoint is kept as `failed` (`EACCES`) with its `endpoint.json` and socket intact, and a second dead endpoint is still removed. Both failed before the fix: gc rejected with EISDIR / EACCES after it had already removed the first endpoint's directory.
+
+### Why
+
+The removal ran `rm(dir)` first and then `rm(sibling, { force: true })`, which throws EISDIR on a directory and EACCES where the socket's directory is not writable. The throw aborted the whole gc run after the endpoint directory was gone, so the socket stayed behind with nothing left to name it (no endpoint, no lock identity) and every later endpoint was skipped (rpc-host-sharding todo 33 a).
+
+### Why an extension could not handle it
+
+`host gc` runs outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: the header comment, `HostGcKeptReason`/`HostGcEntry`, the loop in `gcHostEndpoints`, `gcEndpoint`'s removal and the new `removeEndpoint`.
+
+## 2026-09-28 - A host stall reports the CPU and heap of the stalled window (#2211)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`: every tick records the process CPU time (`process.cpuUsage()`) and the JS heap (`process.memoryUsage().heapUsed`), and a stall past the warning threshold reports their change across the stalled window. The stderr line gains `cpu=<ms> heap=<+/-MB>` and the `host_stalled` record gains `processCpuMs` and `heapDeltaMb`. Both probes are injectable like the clock.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostStalledEvent` gains the optional `processCpuMs` and `heapDeltaMb`.
+- `packages/coding-agent/test/suite/rpc-loop-lag-watchdog.test.ts`: a stall with the process busy reports its CPU and heap drop; a stall with the process idle reports zero CPU and no heap movement.
+
+### Why
+
+Multi-second stalls on a shared host (up to 44 s in one generation's log) could not be explained after the fact. A stall line named only the session and tool that ran, and a native sample or profile has to be taken while the stall happens, which kept missing the window. Busy JS work, a garbage collection, and a machine that never scheduled the process look identical in the old line. The CPU and heap of the stalled window tell them apart for every stall, with no external probe.
+
+### Why an extension could not handle it
+
+The watchdog is the host's own timer on the host loop. An extension cannot observe the window between two of its ticks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`: the options interface, the constructor, `start()` and `tick()`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `RpcHostStalledEvent` interface.
+
+## 2026-09-28 - A leaving host removes its registration pointer last (#2241)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-cleanup-paths.ts` (new): `hostCrashCleanupPaths` builds the crash-path cleanup list the supervisor hands its host child, ending with the registration pointer (a successor still gets only the Windows pipe entry).
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the child's `HOST_CLEANUP_PATHS_ENV` comes from `hostCrashCleanupPaths` instead of an inline list that started with the pointer.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: `cleanupWatchdogPaths` (now exported for its test) removes paths one at a time in list order on every platform; POSIX removed them in parallel.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` and `clearHostRegistration` remove `settings.json` and the generation directory before the pointer.
+- `packages/coding-agent/test/rpc-host-teardown-order.test.ts` (new): the list order, sequential watchdog removal, and pointer-last on both registration paths, through recording doubles of the real fs functions.
+
+### Why
+
+Every reader treats the pointer as "a host is registered for this endpoint". Removing it first made "no host" observable while `settings.json` and the generation record still existed; on Windows the crash path removes the rest with `rmSync` retries, so the window reached hundreds of milliseconds and the RPC named pipes (Windows) job failed intermittently on the SIGKILL lifecycle case (3 of 23 runs without #2201).
+
+### Why an extension could not handle it
+
+Daemon registration and the host's crash-path cleanup run in the supervisor and the host child, before and after any session exists.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the child spawn environment in the supervisor.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration` and `releaseGeneration`.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: `cleanupWatchdogPaths`.
+
+## 2026-09-28 - An ensured host stays up until the ensuring client attaches (#2227)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-attach-hold.ts` (new): `holdAttachment` keeps an answered probe connection open as the ensuring client's attach hold (drained, unref'd, idempotent `release()`).
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `holdProtocolInfo` asks `get_protocol_info` and keeps the answering connection as the hold, so "ready" and "held" are the same instant.
+- `packages/coding-agent/src/modes/rpc/host-readiness.ts` (new, moved out of `host-ensure.ts` unchanged first): the spawned-host readiness poll now returns the hold with a compatible answer and releases every other probe.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost` gains `release()`. A reuse is held from the connection that proved it compatible; a start from its readiness answer; a handoff (or a refused handoff) takes one hold on the host it ends with. Every other decision releases its probe connection first.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `senpi host ensure` releases the hold after its final probe.
+- Contract: `EnsuredHost` is a public SDK type, and every `ensureHost()` caller now owns the hold and must call `release()` once its own client is attached (or right away when it attaches later); a live process that never releases keeps a transient host from idle-exiting. `docs/rpc.md` states this. In-repo callers release: the interactive runtime, `senpi host ensure`, the tests, and the live QA scripts `scripts/qa-rpc-socket/{host-lifecycle,ensure-host,interactive-host,generation-handoff}.mjs`. The omo task daemon (`packages/senpi-task/src/runners/rpc-host/daemon.ts` in omo) caches its ensure result and must release right after ensuring when it adopts this.
+
+### Why
+
+The supervisor starts a transient host's idle window when the last client detaches, and `ensureHost()`'s own readiness probe was that client: it detached before `ensureHost()` even returned. Anything slower than the window between that probe and the caller's attach - measured on windows-latest: the ensure lock release alone took up to 1.5 s - found the host gone (`connect ENOENT`, the RPC named pipes (Windows) CI failure).
+
+### Why an extension could not handle it
+
+The gap sits between two steps of `ensureHost()` and the caller's connect; no extension runs in the ensuring client or the supervisor.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `EnsuredHost`, the reuse branch of `ensureHostLocked`, `upgradeGeneration`'s returns and `startHost`'s readiness return.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `connectAndAsk`'s `finish`.
+
+## 2026-09-28 - `status --all` reads at most 64 endpoints at once
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `readAllHostStatus` reads endpoints through an order-preserving pool of `STATUS_ALL_MAX_IN_FLIGHT` (64) concurrent reads instead of starting every read at once; rows still follow the enumeration order, and up to 64 hung endpoints still cost about one budget. `StatusAllOptions._test.readEndpoint` replaces the per-endpoint read for tests.
+- Tests: `test/rpc-host-status-all-concurrency.test.ts` - over 70 endpoints the reads in flight peak at exactly 64 (70 without the pool) and every row comes back in directory order.
+
+### Why
+
+Every read holds a socket and a few state files open until its budget runs out. Starting all of them at once meant a machine with hundreds of hung endpoints under a hard descriptor limit of 256 failed the whole `senpi host status --all` with EMFILE and got no rows at all (senpi#2245 round-2 review, F4 note).
+
+### Why an extension could not handle it
+
+`senpi host status` runs before and outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `STATUS_ALL_MAX_IN_FLIGHT`, `StatusAllOptions` and `readAllHostStatus`.
+
+## 2026-09-28 - `endpoint.json` is written without hard links where the filesystem has none
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity` still writes the record to a temporary file and `link()`s it into place, but a `link()` failure other than `EEXIST` (ENOTSUP, EPERM, ENOSYS, EXDEV...) now falls back to `createExclusively`: the pre-link `writeFile(..., { flag: "wx" })` of the final file, where `EEXIST` means another writer won. `repair` works the same after either path.
+- Tests: `test/rpc-host-endpoint-identity-no-link.test.ts` - with `link()` into `endpoint.json` failing ENOTSUP, the identity is written whole, the first writer's file survives a repairing call, a torn file is rewritten under `repair`, no temporary file remains, and `ensureHost` starts a host whose `endpoint.json` is correct.
+
+### Why
+
+Writing `endpoint.json` atomically (senpi#2245) used `link()` and failed on anything but `EEXIST`, so on a filesystem without hard links - exFAT/FAT volumes, some network and FUSE mounts - every `ensure` and `handoff` failed with "endpoint.json is not usable: ENOTSUP", where the previous exclusive create had worked (senpi#2245 round-2 review B1). Atomicity is only lost on filesystems that cannot provide it, and a torn file there is what the ensure's `repair` rewrites.
+
+### Why an extension could not handle it
+
+The endpoint directory is written by `ensureHost`/`handoffHost` before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity` and the new `createExclusively`/`isErrorCode` after it.
+
+## 2026-09-28 - `host gc` never takes a non-socket file at the socket path for a dead socket
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `socketSilence` counts an `ECONNREFUSED` connect as `socket_refused` only when `lstat` shows the entry is a socket (`refusedBySocket`); an entry of any other type is an answer (the endpoint is kept as `reachable`), and an entry that vanished meanwhile is `socket_absent`. Named pipes and abstract sockets, which have no entry, are unchanged. The same probe covers every `.next-*` successor bind.
+- Tests: `test/rpc-host-gc-evidence.test.ts` - a regular file at the socket path (with a `.shield-*` sibling) keeps the endpoint as `reachable` and leaves the file, the sibling and the directory byte-identical. On Linux it fails without the fix (gc reported `socket_refused` and removed them); darwin never refused a regular file this way.
+
+### Why
+
+On Linux, `connect()` to a path that is a regular file fails with `ECONNREFUSED`, the same error as a dead socket, so a hash-matching `endpoint.json` naming a regular file let `host gc` unlink that file and its `.next-*`/`.shield-*` siblings (senpi#2245 review m8). Only an entry that is a socket can be a dead socket.
+
+### Why an extension could not handle it
+
+`host gc` runs outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `socketSilence` and the new `refusedBySocket`, plus the `node:fs/promises` import.
+
+## 2026-09-28 - Every spelling of one socket shares one ensure lock
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `hostEnsureLockTarget(socket)` hashes `socketLockAddress(socket)`: on POSIX the socket's directory canonicalized through its deepest existing ancestor (`canonicalSessionPath`, the rule `host_socket` already uses) joined with its name; named pipes and abstract sockets keep the transport address as before. `ensureHost` and `host gc` both take their lock through it.
+- Tests: `test/rpc-host-gc-evidence.test.ts` - gc of an endpoint recorded under the realpath spelling reports `locked` while an ensure through a symlinked spelling holds its critical section, and the lock target is the same for both spellings, also when the socket's directory does not exist yet.
+
+### Why
+
+The lock was keyed by the socket path as typed, so `/tmp/x.sock` and `/private/tmp/x.sock` (or a symlinked agent directory) took two different locks for one physical socket. A gc holding one spelling's lock did not exclude an ensure through the other, and in the window between gc's silence probe and its unlink it could remove the socket that ensure had just bound (senpi#2245 review m6).
+
+### Why an extension could not handle it
+
+The ensure lock is taken by `senpi host ensure`/`gc` and by every client that starts a host, before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `hostEnsureLockTarget`, `createSocketLockName` and the new `socketLockAddress`, plus the `node:path` and `session-path-key.ts` imports.
+
+## 2026-09-28 - `host gc` drops its redundant pointer check
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `endpointInUse` no longer runs `pointerNamesLiveGeneration` (removed). The evidence is three parts: no live generation record (the scan of every `generations/*/host.pid`, which includes the one the pointer names), no live claim owner, a silent socket and successor binds.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`, `packages/coding-agent/src/modes/rpc/host-runner.ts`: doc comments say three-part.
+
+### Why
+
+The pointer names a generation by its instance id, and that generation's record is `generations/<instanceId>/host.pid` - a file the preceding scan of every generation directory already read and judged with the same liveness rule. The pointer check could therefore never change the outcome (senpi#2245 review m3); it only suggested a fourth kind of evidence that does not exist. Every `host gc` result is unchanged.
+
+### Why an extension could not handle it
+
+`host gc` runs outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `endpointInUse` and the helpers after it.
+
+## 2026-09-28 - A handoff records its successor the moment it is spawned
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: new `writeGenerationRecord(paths, registration)` writes one generation's `generations/<instanceId>/host.pid` (pid, start time, build, launch profile, socket, writer stamp) without touching the pointer; `writeHostRegistration` now calls it and then moves the pointer as before.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: `startSuccessor` reads the successor's start time and writes its generation record right after the spawn, before awaiting its answer on the public socket; the pointer still moves only after the rename landed (the same `writeHostRegistration` call, with the same record).
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `HandoffHostOptions._test.afterSpawn(pid)`, run after that record is written.
+- Tests: `test/rpc-host-gc.test.ts` - the predecessor is killed uncleanly after the handoff proved it, the successor is frozen right after its spawn, and `gc` keeps the endpoint as `live_generation`; the handoff then completes on the public socket.
+
+### Why
+
+A successor writes no record of its own until its rename lands and binds `.next-<gen>` only after it booted. When the predecessor died in that window, `host gc` found only the predecessor's dead pidfile, no live claim and a refusing socket, removed the endpoint directory and the socket, and the successor then refused its rename (senpi#2245 review m7). The successor is a running process from its spawn, so its own record now says so, and gc's existing check of every generation record keeps the endpoint. A successor that never answers is killed and leaves a record naming a dead pid, which `pruneDeadGenerations` and gc already treat as gone.
+
+### Why an extension could not handle it
+
+Generation handoff and `host gc` run outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `writeHostRegistration` and the new `writeGenerationRecord` after it.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `try` block of `startSuccessor`.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: the `_test` members of `HandoffHostOptions`.
+
+## 2026-09-28 - A socket host's own empty-exit window ignores observing connections
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` classifies each connection with `ClientOccupancy` (`host-client-occupancy.ts`, the supervisor's rule) and its `canExitWhenEmpty` gate holds the host open only for an ATTACHED connection (one that sent any request other than an `observe: true` read) or one that has not sent its first request yet. Before, every open connection held it.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: doc comment only - the host applies the same view to its own connections.
+- Tests: `test/rpc-host-status-observe.test.ts` - a bare `--listen` host with a 3 s empty-exit window exits on schedule while one open connection keeps sending `get_protocol_info` with `observe: true` every second.
+
+### Why
+
+senpi#2245 made status reads observing reads so a poller no longer resets the SUPERVISOR's idle window, but the host child's own empty-exit sweep still counted every open connection, so a panel or doctor that keeps one connection open and observes over it kept a host with no sessions alive forever wherever that sweep is the exit (a host started bare with `--listen`). A supervised host is unaffected, persistent or not: the supervisor's own observer connection never sends a request, so it stays unclassified and keeps holding the child exactly as before, and the supervisor's idle window stays the only exit there.
+
+### Why an extension could not handle it
+
+The socket host's connection accounting runs below every session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` - the connection map, the `canExitWhenEmpty` gate, and `accept`/`detach` in the server callback.
+
+## 2026-09-28 - `status --all` reads every endpoint at once under its own budget
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `readAllHostStatus` reads every endpoint concurrently (the four-at-a-time pool is gone) and takes an optional per-read `timeoutMs`; rows keep the enumeration order.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReadOptions.timeoutMs` (default 10 s) budgets both reads, and `readHostStatus` skips the `list_sessions` read when the identity probe got no answer (the report is `reachable: false` with empty occupancy either way).
+- Tests: `test/rpc-host-status-all-concurrency.test.ts` - eight endpoints that accept and never answer are read in under 2.5 budgets (40 s with the old pool and default budget), in directory order.
+
+### Why
+
+A hung endpoint cost 20 s (the probe, then a listing asked even though the probe went unanswered) and only four were read at a time, so eight accepting-but-silent sockets made `senpi host status --all` take 40 s - on exactly the machine where an operator is asking what is wrong (senpi#2245 review m2).
+
+### Why an extension could not handle it
+
+`senpi host status` runs before and outside any session and extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `readAllHostStatus` and `endpointStatus`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReadOptions`, `readHostStatus` and `readSessionListing`.
+
+## 2026-09-28 - `endpoint.json` is written atomically and an ensure repairs a torn one
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity(paths, socket, { repair? })` writes the record to `endpoint.json.<pid>-<uuid>.tmp` and `link()`s it into place (no clobber, so the first writer still wins), removing the temporary name either way. With `repair: true` an existing file that does not parse to a record whose `socket` hashes to this directory is replaced by `rename()`. `createDaemonDirectories` (outside the lock) never repairs.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `ensureHostLocked` re-asserts the identity with `repair: true`, i.e. only under the socket's ensure lock - the same lock `gc` holds while it decides about the directory.
+- Tests: `test/rpc-host-endpoint-identity.test.ts` - the first writer's identity survives a repairing call, a torn file is kept without `repair` and rewritten with it, and no temporary file remains; against real hosts, a torn `endpoint.json` that `gc` keeps as `unknown_identity` is rewritten by the next ensure, after which `gc` removes the endpoint once its host idled out.
+
+### Why
+
+`endpoint.json` was written in place with an exclusive create, and a later ensure's re-assert returned on `EEXIST`. A write cut short left a truncated file forever: the endpoint was enumerated as `socket: null`, and `gc` - which can only take a lock it can name - kept it as `unknown_identity` on every run, leaking the directory (senpi#2245 review m1).
+
+### Why an extension could not handle it
+
+The daemon directory and `ensureHost` are host lifecycle internals that run before and outside any extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `ensureEndpointIdentity`, the `node:crypto`/`node:fs/promises` imports and the layout comment.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the first statement of `ensureHostLocked`.
+
+## 2026-09-28 - A status read no longer keeps an idle host alive
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts` (new): `OBSERVE_REQUEST_FIELD` and `isObservingRequest(line)` - a request line is an observing read only when it is `get_protocol_info` or `list_sessions` with `observe: true`.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` (new): `ClientOccupancy` classifies each public-socket client by its request lines - unclassified until the first line, an observer while every line is an observing read, attached from the first line that is anything else (or a first line over 64 KiB).
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor admits clients through `ClientOccupancy` instead of counting every accepted connection. Only attached clients are `connections` for the idle decider, the attachment is recorded (and the window reset) when the first non-observing line arrives instead of at accept, and the idle ticker does not exit while a client is still unclassified.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: `observeProtocolInfo(socket, timeoutMs)`, a `get_protocol_info` probe marked `observe: true`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `readHostStatus` (single-socket `status` and every `--all` row) sends both of its reads as observing reads.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `observe?: boolean` on the `get_protocol_info` and `list_sessions` commands.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc rows for both commands.
+- Tests: `test/rpc-host-lifecycle.test.ts` drives the real supervisor on a test clock - observing reads between two ticks leave the window running, while `observe` on `get_commands` attaches and restarts it; `test/rpc-host-status-observe.test.ts` polls a real host with a 3 s window through `status --all` every second and it still exits on schedule.
+
+### Why
+
+Every accepted connection counted as an attachment and reset the idle window, and `status` connects to the host it reports on. A runtime panel or doctor loop polling `senpi host status --all` more often than the idle window therefore kept every per-session shard alive forever, so none of them ever became `gc`-eligible (senpi#2245 review M1). A readiness probe from `ensure` (and the attach hold of senpi#2242) must still count, so the distinction is an explicit marker on the read rather than the command type.
+
+### Why an extension could not handle it
+
+The lifecycle supervisor is a byte proxy in front of the host process; it runs no extensions, and `senpi host status` runs before and outside any session.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the client set in `runHostSupervisor`, the public server's `accept`/`detach`, the idle ticker, `currentActivity`, and the client teardown in `performShutdown`.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts`: the probe exports.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: the two reads in `readHostStatus`/`readSessionListing`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `get_protocol_info` and `list_sessions` members of `RpcCommand`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc comment.
+
+## 2026-09-28 - Host status rows show the memory pressure state
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: a multi-session host's `get_protocol_info` answer adds `memory_pressure` - the boolean its `HostMemorySampler` last raised through `setMemoryPressure`. Read only; the sampler, its cadence and the idle-window halving are unchanged.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProtocolInfo.memory_pressure?: boolean` (classic hosts omit it).
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: `HostProtocolInfo.memory_pressure?` and its tolerant parse (a non-boolean is dropped).
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReport.memory_pressure: boolean | null` - the answering generation's state, `null` when nothing answers or the host predates the field.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: an unaddressable directory's row reports `memory_pressure: null`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc row for `get_protocol_info`.
+- Tests: `test/rpc-host-status-all.test.ts` - a real host under `SENPI_RPC_HOST_RSS_WARN_MB=1` admits three worker opens and, once its `host_memory_pressure` record arrives, its `--all` row shows `memory_pressure: true` while a default-threshold host shows `false`; `test/suite/host-cli.test.ts` pins the field in the status shape.
+
+### Why
+
+The sharding plan requires the `--all` row to show `rss_mb`, `host_rss_mb` and the pressure state. The state lives only inside the host process (the sampler's flag), so a status reader could see memory numbers but not whether the host considered itself pressured. The value is per generation, but only the generation that answers the public socket can be asked, so it is reported at the endpoint level; generation rows keep the RSS pair only.
+
+### Why an extension could not handle it
+
+The memory sampler, `get_protocol_info` and `senpi host status` are host-core surfaces that run before and outside any extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the `get_protocol_info` branch of `dispatch`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProtocolInfo`.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: `HostProtocolInfo` and `parseHostProtocolInfo`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReport` and `readHostStatus`.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `unaddressableStatus`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the command-table doc comment.
+
+## 2026-09-28 - `host_socket` is the canonical endpoint path from the first generation on
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `hostSessionContext` builds `host_socket` from `canonicalSessionPath(dirname(endpoint))` plus the socket's basename (synchronously, once per host start) instead of `realpath(dirname(endpoint))`, which fell back to the as-typed directory whenever that directory did not exist yet.
+- `packages/coding-agent/src/modes/rpc/session-path-key.ts`: the doc comment records the second caller; `canonicalSessionPath` itself is unchanged.
+- `packages/coding-agent/test/rpc-host-session-identity.test.ts`: a real supervised shard host started in a fresh `rpc/shards/` directory under the platform tmpdir stamps the realpath spelling, and its successor after `handoffHost` stamps the identical string.
+
+### Why
+
+`host_socket` (introduced in the same change set as `status --all`) must be one stable string per endpoint. A supervised host child computes its identity before its supervisor binds the public socket, and the supervisor creates `rpc/shards/` only then, so a plain `realpath(dirname(endpoint))` would give the first generation of a new shard under `/var/folders/...` the as-typed `/var/...` spelling and every successor `/private/var/...`. Canonicalizing through the deepest existing ancestor makes every generation produce the same spelling.
+
+### Why an extension could not handle it
+
+`host_socket` is stamped by the host core over the client's `open_session.context` before any extension runs; an extension only reads it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `hostSessionContext` and its call in `runSocketHost`, the `node:fs/promises` import.
+- `packages/coding-agent/src/modes/rpc/session-path-key.ts`: the `canonicalSessionPath` doc comment.
+
+## 2026-09-28 - Per-endpoint memory pressure remains observable without admission refusal
+
+### What changed
+
+- `packages/coding-agent/docs/rpc.md`: documents that sharded endpoints report pressure independently, with `rss_mb` for the endpoint process tree and `host_rss_mb` for the supervisor plus host, and that pressure never gates worker opens.
+- `packages/coding-agent/src/modes/rpc/AGENTS.md`: records the per-endpoint observability invariant and the no-admission-gate rule.
+- `packages/coding-agent/test/rpc-host-status-all.test.ts`: adds a real supervised-host case that lowers the warning threshold, opens three worker sessions while pressured, and verifies both RSS fields in the `status --all` row.
+
+### Why
+
+Sharding spreads memory across independent endpoints. Operators need to attribute pressure to the endpoint that owns it, while the senpi#2213 baseline must remain provably admission-free for every endpoint.
+
+### Why an extension could not handle it
+
+Memory sampling, host process metrics, `status --all`, and worker session admission are RPC engine surfaces that run outside extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/docs/rpc.md`: host self-observation memory-pressure section.
+- `packages/coding-agent/src/modes/rpc/AGENTS.md`: shared-daemon no-sync and capacity invariants.
+- `packages/coding-agent/test/rpc-host-status-all.test.ts`: real-host status scenarios.
+
+## 2026-09-28 - `senpi host gc`: evidence-gated removal of dead endpoint state under the ensure lock
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc.ts` (new): `gcHostEndpoints(agentDir, { _test? })` -> `{ removed: { socket, dir, reason }[], kept: { socket, dir, reason }[] }`. For every endpoint `listHostEndpoints` names a socket for, it takes that socket's ensure lock (`hostEnsureLockTarget(socket)` + `.lock`, 2 s budget, else `kept: locked`) and, inside it, removes the endpoint directory, the socket and its `<socket>.next-*`/`<socket>.shield-*` siblings only when `endpointInUse` finds nothing. Kept reasons: `live_generation`, `live_claim`, `reachable`, `locked`, `legacy_layout` (flat directory without the layout-2 marker), `unknown_identity`; removed reasons: `socket_refused`, `socket_absent`.
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts` (new): `endpointInUse(paths, socket)` - (a) any `generations/*/host.pid` names a live process (`processMatchesPidFile`; an unreadable identity on a live pid, or an unguarded record, counts as live), (d) the pointer's generation is live, (b) any `reservations/` claim has a live owner (`claimOwnerIsLive`), (c) connecting to the socket and to every `<socket>.next-*` bind fails with anything but `ECONNREFUSED`/`ENOENT` (2 s budget). `socketSiblings(socket)`. Reads only.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: new export `hostEnsureLockTarget(socket)`; `ensureHost` computes its lock target through it (same path as before).
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `HostRequest` gains `{ action: "gc", agentDir }`, answered with the gc result and exit 0.
+- `packages/coding-agent/src/cli/host-command.ts`: `gc [--agent-dir <dir>] [--json]` (ignores `--socket`; bad flags exit 2).
+- Tests: `test/rpc-host-gc.test.ts` (new, real supervised hosts), `test/rpc-host-gc-evidence.test.ts` (new, disk and socket evidence), `test/helpers/rpc-host-gc-fixtures.ts` (new); `test/helpers/rpc-host-endpoint-scratch.ts` `realHost` forwards `afterLockAcquired`; `test/suite/host-cli.test.ts` pins the `gc` command line.
+
+### Why
+
+Endpoint state is durable by design (`endpoint.json` outlives every generation so `status --all` can name an endpoint whose host exited), and with one endpoint per parent session or thread it accumulates without bound. Removal has to be exact: a draining predecessor after a handoff, a generation whose socket was renamed away, a claim a live writer still holds, or an ensure mid-start all look "dead" to a weaker test, and removing their state would strand live sessions. Taking the same lock `ensureHost` takes makes gc and a concurrent ensure strictly ordered.
+
+### Why an extension could not handle it
+
+The daemon directory, the ensure lock and the `senpi host` CLI are engine surfaces that run before and outside any extension; an extension cannot take the ensure lock or add a `host` subcommand.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the `lockTarget` line in `ensureHost` and the helper above `createSocketLockName`.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `HostRequest` union and the `runHostRequest` switch.
+- `packages/coding-agent/src/cli/host-command.ts`: `SUBCOMMANDS`, `USAGE`, `hostRequest`, `parseHostArgs`.
+
+## 2026-09-27 - Durable endpoint identity, `senpi host status --all`, shard naming, host identity in session context
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: `HostDaemonPaths` gains `socket` and `endpointFile`; `createDaemonDirectories` writes `<endpointDir>/endpoint.json` `{ layout: 2, socket, created_at }` (0600) through the new `ensureEndpointIdentity(paths, socket)`, which creates it only when absent (exclusive create) and never rewrites it. New exports: `shardKey(kind, ownerId)` (`sha256("<kind>:<owner>")` hex, 16 chars), `shardSocketPathForKey(root, kind, key)`, `shardSocketPath(root, kind, ownerId)`, `parseShardSocket(socket)`, and the `HostDaemonDirectory` type (`generationPaths` now accepts it).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the first statement of `ensureHostLocked` re-asserts `ensureEndpointIdentity(paths, socket)` under the ensure lock (call + import only).
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts` (new): `listHostEndpoints(agentDir)` enumerates endpoint directories from disk alone - `endpoint.json`, else `settings.json`, else a generation's `settings.json`, each accepted only when its socket hashes to the directory; otherwise `{ socket: null, identity: "unknown" }`. Reads only.
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `readGenerationRows(paths, { includeDead })` reports dead records as `alive: false` rows (memory `null`) instead of dropping them; the default is unchanged.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `readHostStatus(options, { prune })` - `prune` defaults to `true` (unchanged single-socket behavior, still pruning); `prune: false` removes nothing. `HostStatusReport` gains `crashes`, `shard`, `session_rows` (under `includeWorkers` only), `claims_live`, and `claims` (under `includeWorkers` only). `readSessionCounts` keeps its signature.
+- `packages/coding-agent/src/modes/rpc/host-status-rows.ts` (new): typed parsing of listed session rows and `reservations/` claim rows.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts` (new): `readAllHostStatus({ agentDir, includeWorkers })` - one `prune: false` report per enumerated endpoint (four at a time) plus `dir`/`identity`; an unaddressable directory gets a report built from the directory alone.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `status` request takes `all?: boolean` (payload `{ endpoints }`, exit 0 when any endpoint answers, else 3), and a new `shard_path` request answers `{ kind, key, socket }` without contacting a host.
+- `packages/coding-agent/src/cli/host-command.ts`: `status --all` (ignores `--socket`) and `shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]` (bare path without `--json`).
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `RpcHostSessionDefaults` adds an optional `hostContext`, merged over the client's `open_session.context`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a socket host computes `{ host_socket, host_instance }` once (`host_socket` = the supervisor's public path or the bound path, realpath-canonicalized; omitted for abstract sockets and supervised win32 hosts) and passes it to `createHostCore` as the router's `hostContext`. Stdio hosts add nothing.
+- Tests: `test/rpc-host-status-all.test.ts` (new) and `test/helpers/rpc-host-endpoints.ts` (new, `killEndpointUnclean`, `daemonTreeDigest`); `test/suite/host-cli.test.ts` pins the new status fields, `status --all` and `shard-path`; `test/rpc-host-daemon-dir.test.ts` pins `endpoint.json` and its survival across a stop.
+
+### Why
+
+Clients now run many hosts under one agent directory (omo one per parent session, the Desktop one per thread, under `rpc/shards/`), but every surface addressed one socket and a normally exited endpoint lost its pointer, settings and generation directory, so it could not even be enumerated, and nothing named an endpoint's owner or crash history. `--all` gives one read-only view of every endpoint, the naming helpers are the single contract all three clients compute, and the session context tells an extension which endpoint and generation it runs behind without an environment variable.
+
+### Why an extension could not handle it
+
+The daemon directory, the `senpi host` CLI and the host's `open_session` handling run in the engine before and outside any extension; an extension cannot write the endpoint identity, enumerate other endpoints' state, or know the public socket its host was supervised behind.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: the `HostDaemonPaths` interface, `createHostDaemonPaths`, `hostDaemonDirectoryPaths`, and the tail of `createDaemonDirectories`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the `host-daemon-paths.ts` import and the first line of `ensureHostLocked`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `HostStatusReport`, `readHostStatus`, `readSessionCounts`.
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `readGenerationRows`.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `HostRequest` union and `runHostRequest` switch.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the constructor `defaults` type and the `sessionContext` line in `open()`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore`'s signature and router construction, the start of `runSocketHost`.
+
+## 2026-09-27 - open_session waits for the host that acknowledged it instead of a fixed 30 s (#2209)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: every request still waits `REQUEST_DEADLINE_MS` (30 s) for its answer. An `open_session` whose `queued` record the host sent (senpi#1844) switches to `OPEN_AFTER_QUEUED_DEADLINE_MS` (10 min), and a timeout after the acknowledgement names the queue position instead of reporting a bare timeout. A lost transport still rejects every pending request at once.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts` (new): the two budgets and the restartable deadline the client arms per request.
+- `packages/coding-agent/test/rpc-client-open-deadline.test.ts` (new): an acknowledged open answered after 57 s resolves; an unacknowledged open still fails at 30 s; an acknowledged open that never answers fails naming its queue position; a transport lost after the acknowledgement rejects at once.
+
+### Why
+
+A loaded in-process host builds a session on its one loop. Measured on a live host, it acknowledged an open after 3.2 s and answered it after 56.8 s. Every client gave up at 30 s, so task children failed at ~40 s (probe + 30 s) exactly when the host was busiest. The host then finished the session for a client that was already gone.
+
+### Why an extension could not handle it
+
+The deadline is armed inside `RpcClient.send`, which every embedder (task runners, desktop, CLI) uses directly; no extension runs in the client process.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `send()`'s pending-request construction and `handleLine()`'s response dispatch.
+
+## 2026-09-27 - A held session whose directory was deleted no longer refuses every open (#2206)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-path-key.ts` (new): `canonicalSessionPath` canonicalizes the deepest ancestor that still exists and keeps the missing tail verbatim, so it never throws for a deleted directory; `sessionDirectoryRemoved` reports a session whose transcript directory is gone.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the open path and `syncRuntimeMetadata` (run by `list()`, every open and every teardown) use `canonicalSessionPath` instead of the local `canonicalPath`, whose `realpathSync(dirname(path))` threw `ENOENT` for every entry once one entry's directory was gone.
+- `packages/coding-agent/src/modes/rpc/session-sweep.ts` (new) and `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the occupancy sweep's decisions move to `selectSweepEvictions`; besides idle sessions it names unattached sessions whose directory is gone, which the router closes with the new `session_closed` reason `session_dir_removed` whatever the idle window.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcSessionClosedReason` gains `session_dir_removed`.
+- `test/suite/regressions/retained-session-dir-removed.test.ts` (new): a retained, detached session whose directory is deleted no longer fails `list()`, an open at another path succeeds, and the next sweep ends the orphan. Before the fix the listing threw and the teardown hung on the same `ENOENT`.
+
+### Why
+
+A task owner deletes a finished child's directory when it expunges the record, and QA runs delete their temp project directories, while the shared host may still retain that child's session. On a live host one such directory produced ~26,700 `senpi rpc connection socket-N failed: ENOENT ... lstat` lines: every new connection failed, so every task child on the machine failed to start within ~3 s.
+
+### Why an extension could not handle it
+
+The throw happens inside the registry's own listing and open path, before any session's extensions exist.
+
+### Expected merge conflict zones
+
+- `session-registry.ts`: `openSession`'s canonical path and `syncRuntimeMetadata`.
+- `session-command-router.ts`: `sweepIdleSessions`.
+
+## 2026-09-27 - Memory never refuses an open; status names the host's own memory (#2207)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-memory-sampler.ts`: the former admission band is gone. Above `SENPI_RPC_HOST_RSS_WARN_MB` the sampler still broadcasts `host_memory_pressure`, writes its stderr line and halves idle parking.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the memory admission hook and worker-open refusal are removed; `RpcSessionRegistryError` no longer carries the pressure refusal code.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_HOST_MEMORY_PRESSURE` stays for clients that still talk to an older generation, documented as sent only by hosts released before #2207.
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`, `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-generations.ts`: `host status` and each generation row carry `host_rss_mb` (the supervisor and its host process) beside `rss_mb` (the whole tree).
+- `test/suite/regressions/issue-2207-no-memory-admission-refusal.test.ts` (was `issue-1905-memory-critical-worker-admission.test.ts`): a worker open is admitted at four times the warning threshold with the retired variable set, and the pressure record is still emitted.
+
+### Why
+
+The shared host has no resource caps by product decision. The refusal declined every task child on a machine once a long-lived host crossed the watermark. Operators also compared `status.rss_mb` (the whole tree, 9302 MB) with `ps` of the host process (1775 MB) and could not tell which number admission used.
+
+### Why an extension could not handle it
+
+Admission and status live in the host's own registry and daemon-control surface, before any session's extensions exist.
+
+### Expected merge conflict zones
+
+- `session-registry.ts` `openSession` and `session-command-router.ts` memory setters.
+- `host-process-metrics.ts` `readHostProcessMetrics` return shape.
+
+## 2026-09-27 - A host generation attaches instead of handing itself off, and daemon spawns drop caller session state (#2208)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts` keeps the broad product/config allowlist but layers an explicit denylist over session identity, prompt-cache wait state, eval-kernel parent identity, and the lifecycle identity/watch/scratch variables of a calling host. `daemonEnvironment` now builds a child environment from the allowed process/system variables plus allowed launch overrides, then applies the new generation's forced identity last.
+- `packages/coding-agent/src/modes/rpc/host-spawn-environment.ts` (new), `packages/coding-agent/src/modes/rpc/host-ensure.ts`, and `packages/coding-agent/src/modes/rpc/host-successor.ts` route both the initial host and a handoff successor through that one final-environment builder. The oversized ensure module's previous inline environment constructor moved into the focused spawn module before the behavior changed.
+- `packages/coding-agent/src/modes/rpc/host-process-role.ts` (new) marks the lifetime of `runMultiSessionHost` in process-local module state. `packages/coding-agent/src/modes/rpc/multi-session-host.ts` enters that scope at startup, and `host-ensure.ts` treats an ensure made inside it as policy `never`: it may attach or start when no host exists, but never launches a successor. The explicit `handoffHost` path remains independent, so a shell child can still run `senpi host handoff`.
+- `packages/coding-agent/src/modes/rpc/host-idle-policy.ts` (new) holds the idle-policy constants, overrides and resolver extracted from `multi-session-host.ts`, keeping the marker-only edit from growing an already oversized source file.
+
+### Why
+
+`ensureHost` and `startSuccessor` rebuilt their child environments from all of `process.env`. The request runner supplied null overrides for ordinary denied names, but the allowlist accepted every `PI_*`/`SENPI_*` name, so a tool shell or eval kernel carried its session id, session file, model choice, goal store and kernel parent into a machine-wide daemon. A caller already running inside a host also carried that generation's watchdog, scratch directory and identity into the next process.
+
+The same in-process caller could request an engine upgrade. A superseded generation running sessions from an older release then compared its current source build to the public generation, decided it was newer, and handed the socket off again. Several generations could remain alive even though one manual handoff should advance the daemon exactly once.
+
+### Why an extension could not handle it
+
+The environment is fixed at the supervisor spawn boundary, before any session or extension exists. Whether the caller is itself the multi-session host is also process-lifetime state needed before `ensureHost` chooses `reuse` or `handoff`; a session extension cannot safely rewrite either lifecycle decision.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: the allowlist and final child-environment construction.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: imports, the upgrade policy choice, and the `startHost` spawn environment.
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`: the successor spawn environment.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the host entry function and the extracted idle-policy declarations.
+
+## 2026-09-22 - Daemon status metrics read the process table through the kernel, never a `ps` child (omo-desktop#594)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-process-table.ts` (new): a zero-spawn whole-table reader. darwin reads `sysctl(KERN_PROC, KERN_PROC_ALL)` - the same table `ps` itself reads, zombies included - plus `proc_pidinfo(PROC_PIDTASKINFO)` for resident memory; linux scans `/proc/<pid>/stat`. `bun:ffi` is imported behind the runtime gate exactly like `child-reaper-syscalls.ts`, so Node resolves the loader to `undefined` instead of becoming unloadable. The pinned `kinfo_proc` offsets are verified on every read by a fail-closed self-check (the row for this process must exist with the kernel's own ppid and a non-zombie state, else `undefined`), and a too-small sysctl buffer grows geometrically - never depending on the kernel updating `oldlenp`.
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`: `readHostProcessMetrics` no longer spawns `ps -A` per read. It walks the kernel table; when the reader is unavailable (Node, unsupported platforms) every field is `null` - "this platform does not publish it here" - rather than falling back to a child process. Tree walking, `open_fds`, and the win32 short-circuit are unchanged.
+- `test/suite/regressions/issue-omo-594-host-status-zero-spawn.test.ts`: the RED/GREEN contract. Thirty status reads through the real metrics path must spawn zero probe processes (the unmodified tree spawns one per read); a bun-run fixture proves the kernel reader keeps the observability `ps` provided - real orphans under the host are counted, and the count returns to 0 once the reaper collects them - and that a 512-byte start buffer (forced first-call overflow) still recovers the table. A pure-parse unit test pins the fail-closed rule: tables laid out at the pinned offsets parse; a shifted ppid offset, a wrong row stride, a zombie self row, or a missing self row all yield `undefined`.
+
+### Why
+
+The omo production RPC host accumulated `<defunct>` children at client-driven cadence (omo-desktop-app#594: ~1.7 zombies/min, 0 live children, monotonic). The class, measured at scale in senpi#1507 (9,386 zombies), is a long-lived process spawning a short-lived probe child per request: on a runtime whose `execFile` does not reap, every probe becomes a permanent zombie. The watchdog lost its `ps` probe for exactly this reason (#1721) and the host got a reaper for terminated-worker orphans (f1d1bdaf8d); the status metrics - `host status` and the generations rows, polled per request, once per live generation - still ran `ps -A` per read on whatever long-lived process embedded them. This closes the last member of that class on the daemon-control surface the same way #1721 closed the watchdog's: by not spawning.
+
+A read-only census of the live production hosts on this machine (three samples one minute apart) shows zero zombies under every `omo --mode rpc --multi-session` pid - consistent with #1721 and the reaper already covering the historical host-side sites; the surviving member of the class was this status path, which is why it moves to the kernel table rather than relying on the reaper.
+
+### Why an extension could not handle it
+
+The read happens inside the package's daemon-control surface (`readHostStatus`, `readGenerationRows`) before any extension loads; an extension cannot stop the package from spawning its own probe.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`, against any change to the metrics fields or their null semantics.
+
+## 2026-09-22 - durable_session_id on the worker registry, and a chosen id that is on disk at once (#2010)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: `openSession` validates `durableSessionId` with `assertValidSessionId` (refusing with `invalid_session_id`) and refuses an id any non-closed entry already holds with `session_id_in_use`, both synchronously before its first await; the requested id is recorded on the entry before that await so a concurrent open sees it, and `snapshot.state.sessionId` still overwrites it after commit. Re-opening the same path stays an attach.
+- `.agents/skills/senpi-qa/scripts/scenarios/durable-session-id-qa.mjs` (new): drives the REAL `senpi --mode rpc --multi-session` process over stdio and asserts the whole contract - capability advertised, create under a chosen id, duplicate live id refused, malformed id refused, resume keeps its header id, reopen of the created path reads the chosen id back from disk, id reusable once its holder closed.
+
+### Why
+
+- #1956 added the collision guard to `RpcSessionRegistry` only. `multi-session-host.ts` instantiates `WorkerSessionRegistry` whenever a worker configuration is present - the real host's normal shape - and that registry forwarded the profile straight to `worker.prepare`, so on the real host two live sessions could share one durable id. The unit suite drove `RpcSessionRegistry` directly and stayed green while the host bypassed the guard; the real-surface scenario is what caught it.
+- The format refusal did fire on the real host, but as `open_failed: invalid_session_id` from the worker's own `SessionManager` after the worker had already died. Validating at the registry boundary gives the caller the stable code before any worker is spawned.
+
+### Why an extension could not handle it
+
+- Both checks need the registry's view of every live session and run before any runtime or extension exists for the new session.
+
+### Expected merge conflict zones
+
+- `worker-session-registry.ts`: the prologue of `openSession` (after the `invalid_path` check) and the entry literal.
+
+## 2026-09-22 - chatgpt-subscription provider id on the RPC surface (senpi#1989)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: provider ids carried over RPC use the new spelling.
+
+### Why
+
+The OpenAI subscription provider id was renamed from `openai-codex` to `chatgpt-subscription` (senpi#1989): the old id named a CLI rather than the thing a user signs in with. These modules resolve or display that provider id at runtime, so they move with it. The wire api id `openai-codex-responses` is deliberately NOT renamed - it names the dialect, not the provider - and neither are file names or module paths.
+
+### Why an extension could not handle it
+
+The provider id is resolved inside the package before any extension loads, and these call sites compare or render it while building requests and UI. An extension cannot rewrite an id the package has already used.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, against any other provider-typed RPC payload change.
+
+## 2026-09-22 - The observer reconnect chain survives failed retries, and unknown activity is bounded (#1979)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/observer-link.ts` (new): the supervisor's observer connection, its reconnect chain, and the rule for how long an unhealthy observer may count as busy. `createObserverLink()` retries on every failure until it reconnects or the supervisor settles, and records when it went unhealthy. `activeTurnsForIdleDecision()` returns the observed count while healthy, `1` while unhealthy inside `unknownGraceMs`, and `0` once that grace has elapsed; an infinite grace never elapses.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: `runHostSupervisor` builds the link with a socket adapter, and `currentActivity()` feeds the decider through `activeTurnsForIdleDecision` with `decider.idleExitMs` as the grace, so a `persistent` host (infinite window) keeps its infinite pin. The inline `connectObserver()` and its two state variables are gone. Net +7 pure LOC on a file already past the ceiling: the extracted unit is 64 LOC, but the socket adapter that stays behind is about as long as the code it replaced.
+- `test/suite/idle-exit-window-contract.test.ts` (characterization, green before the change), `test/suite/regressions/issue-1979-observer-reconnect-chain.test.ts`, `test/suite/regressions/issue-1979-unknown-activity-bound.test.ts`.
+
+### Why
+
+- The retry callback reused the `lost` handler of the connection that had already gone. That handler starts with `if (observer !== next) return`, and by the time a retry fails the supervisor owns no socket, so the guard was always true and nothing re-armed. One failed reconnect ended the chain for the life of the process. Since `currentActivity()` reported `activeTurns: 1` for an unhealthy observer, the idle window could never elapse - a second path to a host that outlives every client, next to the socket-gone case #1961 fixed.
+- The fail-open itself is right: a momentary observer blip must not kill a turn. What was missing was a bound. One idle window is the natural one: after that, unknown has held the host open exactly as long as idleness would have been allowed to, and there is no longer anything it is protecting.
+
+### Why an extension could not handle it
+
+- The supervisor is a separate process that hosts no session; nothing an extension can reach observes its link or its idle decision.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor state declarations near `clientSockets`, `currentActivity()`, the `observerSocket?.destroy()` line in `performShutdown`, the `observerLink` construction beside `publicSocketOwned`, and the removed `connectObserver()` body.
+
+## 2026-09-22 - A worker that fails during open reports the failure, not `session_closing` (#1953)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: `openSession` remembers the reason its worker reported through the `failure` callback. The post-`commit()` guard that sees an entry which left `opening` now throws `open_failed: <reason>` when a worker failure caused it, and keeps `session_closing` only for the case it documents - an entry somebody else is closing. The registry also takes an optional `createWorker` factory, defaulting to the real `SessionWorkerClient`, so the failure path can be driven without a worker thread.
+- `packages/coding-agent/test/suite/regressions/issue-1953-worker-failure-open-error.test.ts`: regression for the code the client receives.
+
+### Why
+
+- The worker's `failure` callback flips the entry to `quarantined` asynchronously, so a worker that dies mid-open leaves the guard looking at a state that is no longer `opening`. It answered `session_closing`, which tells the client the opposite of what happened: nothing was closing, the worker died. The real reason only reached stderr, which is how a red run shows `senpi rpc session rpc-1 quarantined: worker-failed` on one side and `session_closing` on the wire on the other.
+- `open_failed: <detail>` already exists as a stable wire code and `RpcSessionRegistryError` already formats its reason, so this needs no new code on the protocol surface.
+
+### Why an extension could not handle it
+
+- This is the transport-side registry's own open path; extensions run inside a session that this code has not finished creating.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the `openSession` worker construction block and the guard after `worker.commit()`.
+
+## 2026-09-22 - Drain a generation whose public entry is GONE, not only one that was replaced (#1961)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `classifyEndpointOwnership()` answers `held` / `replaced` / `absent` / `unknown` from ONE stat, so the two loss questions can never disagree with each other across separate calls. `socketEntryReplaced()` keeps its exact contract and is now that classifier's `replaced` case.
+- `packages/coding-agent/src/modes/rpc/host-supersession.ts`: the watch reports WHICH loss it saw (`"replaced" | "absent"`). An absent entry counts only after `ABSENT_CONFIRMATIONS` (3) consecutive polls and a stat that cannot answer resets the count instead of adding to it, so a momentary race is never read as a loss. The transition also latches now: clearing the interval cannot unsend the classifications already in flight, so several pending observations of one loss still deliver a single drain request - the once-only contract the module docstring already promised.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor's drain log names the loss it acted on.
+- `packages/coding-agent/test/suite/regressions/issue-1961-public-endpoint-absent.test.ts`: fake-timer regression for the absent case.
+
+### Why
+
+- `socket-ownership.ts` deliberately answered `false` for an absent entry: "a name that is merely missing is somebody's `rm`, not a newer host". That is right for the supersession question and wrong for reachability. An unlinked unix socket name can never accept another connection, so the generation holding it is unreachable by construction - and because `coldStart=persistent` never idle-exits while an unhealthy observer reports activity as unknown (non-idle), the two conditions that prove such a generation useless were also the ones keeping it alive. Measured: a supervisor plus host pair alive 23h45m after its socket directory had been deleted. Reproduced on a pristine build in 60 seconds (`exited_after_seconds: "never"`, both pids alive) and closed by this change in 6 seconds (both pids gone, `processes_left: 0`).
+- Draining rather than killing is what makes absence safe to act on: `session-command-router` refuses to park sessions that still have attachments and exits only at an empty registry, so live work finishes and only an unreachable, empty generation goes away.
+
+### Why an extension could not handle it
+
+- This is the supervisor's own lifecycle policy, decided before and outside any session. Extensions run inside sessions the host serves and can neither observe the endpoint's ownership nor decide whether the generation may keep running.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: the block around `socketEntryReplaced()`.
+- `packages/coding-agent/src/modes/rpc/host-supersession.ts`: the whole `watchForSupersession()` body and the module docstring.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the `watchForSupersession(...)` call site inside the startup try block.
+
+## 2026-09-22 - Caller-chosen durable session id on open_session (#1951)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `open_session` accepts an optional `durableSessionId`. Two new stable error codes, `invalid_session_id` and `session_id_in_use`, join the `RpcErrorCode` union.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: new host capability `durable_session_id`, advertised from `get_protocol_info` by the multi-session router only.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `RpcSessionLaunchProfile.durableSessionId` flows into `SessionManager`. `validateProfile` rejects a malformed id with `invalid_session_id` (reusing `assertValidSessionId`), and `openSession` refuses an id a LIVE session already holds with `session_id_in_use`. That collision scan and the entry's own `durableSessionId` are both taken SYNCHRONOUSLY, before the first await, so two concurrent opens naming one id cannot both pass. Re-opening the SAME path is exempt: that is an attach, and the id is the file's own.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the D1 normative table lists `durableSessionId` among `open_session`'s params, the stable error-code list gains `invalid_session_id` and `session_id_in_use`, and the D6 identity notes explain why the field is not named `sessionId` and why it applies to create only.
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.open` takes `NewSessionOptions`, and the private constructor forwards them into `_setSessionFile`, which applies them at both `_resetToNewSession` call sites - the missing-file branch and the empty-file branch. An existing, non-empty session file never reaches either, which is what makes a supplied id unable to overwrite a header id.
+
+### Why
+
+- A caller with its own stable record id for a conversation (a desktop thread, a job row, a tracker item) had no way to make the session carry that id, because the wire offered only `sessionPath`. Every such embedder kept a SECOND identity plus a translation layer, and every feature crossing the boundary - goal files, subagent and team attribution, resume cursors, adoption provenance - carried the mapping. When the mapping was lost the user-visible result was a dead-ended turn, not a recoverable error.
+- Id injection already existed one layer down (`NewSessionOptions.id`, honored by `_resetToNewSession` behind `assertValidSessionId`) and `SessionManager.create` already took it. Only the wire and `SessionManager.open` were missing, and `open` is the branch that matters: a client that names its own session file always lands there.
+- The duplicate guard is not optional. Two live sessions sharing one durable id would collide every per-session artifact a client keys by that id, so the host refuses rather than letting a caller create the collision.
+
+### Why an extension could not handle it
+
+- The field is part of the `open_session` wire contract, its validation runs inside the session registry before any runtime exists, and the collision guard needs the registry's view of every live session. No extension surface reaches any of those.
+
+### Expected merge conflict zones
+
+- `rpc-types.ts`: the `open_session` union member and the `RpcErrorCode` union both grow by additive lines; upstream edits to either list land in the same place.
+- `session-command-router.ts`: the `get_protocol_info` capability set and the `openSession` profile literal each gain one entry.
+- `session-registry.ts`: the prologue of `openSession` gains the synchronous collision guard directly above the path-reservation block, and `RpcSessionRegistryError`'s code union grows.
+- `session-manager.ts`: `static open`'s signature and the `_setSessionFile` call in the private constructor; any upstream change to either signature conflicts textually.
+
+## 2026-09-21 - Start a generation beside a stranded foreign one (#1936)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: in the `start` branch of `ensureHostLocked`, a record written by another process refuses `foreign_writer` only while something still ACCEPTS connections at the public path (`publicEndpointAccepts`: a missing entry and an entry nobody listens behind both read as free; win32 named pipes, abstract sockets and an entry that cannot be stat'ed always read as owned; an accepted-but-silent socket is owned, exactly as `host_busy` treats it). A live foreign generation whose endpoint accepts nothing is left running and `startHost` binds a new generation numbered after it: `startHost` takes a `generation` argument that flows into the daemon settings, the registration and `SENPI_RPC_HOST_GENERATION`, and appends to the daemon stderr log instead of truncating the file the stranded generation still writes. Own-writer behaviour (`host_busy`, stop-and-restart) is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: a supervisor that sees another entry over its path drains and exits only when its last session settles (#1893). Once that replacement exited and unlinked, every ensure met a silent probe, a live pid and a writer that was the ephemeral `senpi host ensure` child, and refused - one desktop lost its host for 75 minutes while nothing served the path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` is the daemon ensure itself; extensions run inside sessions the host serves and cannot decide whether a host may be bound.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the `start` branch of `ensureHostLocked`, the `startHost` signature and `hostEnv`. Upstream has no shared daemon, so any conflict is structural.
+
+## 2026-09-21 - Announce a supersession and park attached sessions (#1933)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive `RpcHostSupersededEvent` (`host_superseded` with `instanceId`, `generation`, `successor`) in the host lifecycle record union, and an optional `sessionPath` on `session_closed` so a `handoff_parked` record names the file to reopen on the successor. No existing field changed shape.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `drainForHandoff` broadcasts `host_superseded` through the event writer before parking, exactly once per drain (a re-entered drain rescans only), and closes a connection once its last attached session parks.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the drain sweep parks attached sessions too, gated by `handoff-activity.ts`; a parked handle is answered by its terminal record and close rather than `unknown_session`, and `open_session` on a draining connection is refused with the new stable code `host_draining`.
+- `packages/coding-agent/src/modes/rpc/handoff-activity.ts` (new): the handoff parkable predicate - turns and in-flight host requests block parking, durable wake-source holds do not.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: `SENPI_RPC_HANDOFF_GRACE_MS` (default 600000) soft grace that rescans and reports without aborting work; the idle ticker is suppressed while draining; proxied clients drain their final records before the socket closes.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `session-worker-client.ts`, `session-worker-protocol.ts`, `session-worker.ts`: publish the handoff predicate and flush a connection's records before it is closed, for both session runtimes.
+
+### Why
+
+- A superseded generation parked only the sessions nobody was attached to, so an attached idle client pinned the old host forever (the memory #1893's drain was meant to reclaim) and learned nothing about the handoff; its next command on a fresh connection reached the successor's empty registry and answered `unknown_session`.
+
+### Why an extension could not handle it
+
+- Supervisor signals, JSONL ordering on a shared connection, session-path reservations and the registry's parkable state are host transport internals; no extension can observe or drive them.
+
+### Expected merge conflict zones
+
+- `host-lifecycle.ts` drain/shutdown block, `multi-session-host.ts` connection accounting, `session-command-router.ts` sweep. Socket regression tests spawn real supervisors and hold a real model turn.
+
+## 2026-09-21 - Correct the legacy navigation selection comment (#1892 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `targetId` comment now describes the same selection rule as `entryId`: user/custom targets select their parent, root-user selection yields a null leaf, and other targets select themselves. Only the response shape is legacy.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` still promised a verbatim leaf move, contrary to the shipped core behavior and corrected RPC documentation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` owns the client-facing command contract; an extension cannot correct its type comments.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `navigate_tree.targetId` comment only. No type, dispatch, response shape, or selection behavior changes.
+
+## 2026-09-21 - Exact-leaf navigation intent (#1926)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive `navigate_tree.intent: select | resume`, independent of existing addressing and response shapes.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: validate inbound intent and forward it and `expectedLeafId` unchanged through core navigation. Omitted intent preserves the existing options and serialized response.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: typed client options accept the same intent; transport already forwards those options.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: branch resumption must preserve an unanswered user tail without redefining either released address. Real-handler and client regressions cover resumption, serialized retry payloads and stale tokens; shipping RPC/SDK docs describe the distinction.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the wire union, JSON boundary and typed client are RPC-owned; leaf mutations must remain in core rather than an extension or transport workaround.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `navigate_tree` command options/comments.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `navigate_tree` validation and option forwarding only.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `navigateTree` option type only.
+
+## 2026-09-21 - Own one MCP registry per in-process host (#1915)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts` creates one registry for each in-process host.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` wraps the runtime factory once to inject the same registry on opens and session replacements.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts` owns the host lifetime; `packages/coding-agent/src/modes/rpc/session-registry.ts` retains that ownership across session replacement without changing attachment or parked/resumed semantics.
+
+### Why an extension could not handle it
+
+- Host construction in `packages/coding-agent/src/modes/rpc/multi-session-host.ts` and runtime-factory retention in `packages/coding-agent/src/modes/rpc/session-registry.ts` precede extension execution.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` in-process registry options.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: options and constructor. Worker runtime selection and session policies are unchanged.
+
+## 2026-09-21 - Pause periodic work on retained detach (#1902)
+
+### What changed
+
+- `session-command-router.ts` emits the extension park transition on the last retained attachment release.
+- `session-registry.ts` emits resume on the first attachment returning to an open retained runtime. Both transitions join the existing per-entry lifecycle ordering.
+
+### Why
+
+- Retention kept file-watch and cache-warming timers active with no client attached.
+
+### Why an extension could not handle it
+
+- Attachment counts belong to the RPC host; extensions previously had no event for these transitions.
+
+### Expected merge conflict zones
+
+- `releaseOwnedSession` and attach-on-open. Keep eviction, worker runtimes and positive attachment counts unchanged.
+
+## 2026-09-21 - Drop the unreachable control-command guard in the session router (dead-code sweep after #1907)
+
+### What changed
+
+- `session-command-router.ts`: removed the module-level `controls` set and the `if (controls.has(command.type)) return undefined;` line in `dispatch`. Every member of that set (`get_protocol_info`, `list_sessions`, `open_session`, `close_session`) already returns from `dispatch` before that line, so the guard could never match a parsed command.
+
+### Why
+
+- Dead-code sweep over the files #1907 touched: the guard is an unreachable branch (LSP: one reference, itself). No behavior, public API or protocol table changes.
+
+### Why an extension could not handle it
+
+- The router is host-internal; extensions never see this dispatch path.
+
+### Expected merge conflict zones
+
+- LOW: the top-of-file constants and the `dispatch` tail in `session-command-router.ts`.
+
+## 2026-09-21 — a loop stall no longer cuts live peers, teardown cannot leak a scope, and a critical host refuses new workers (#1905)
+
+### What changed
+
+Three changes on the shared in-process host.
+
+- `socket-event-fanout.ts` + `loop-blocked-time.ts` (new) + `loop-lag-watchdog.ts`: the dead-peer
+  budget (`DEFAULT_STALL_MS`, 30 s) counts loop-SERVED time. The watchdog deposits every measured
+  drift into a process-wide ledger; when the stall deadline fires it asks how much blocked time
+  landed inside its window and re-arms for that much (capped at one budget) instead of cutting. Only
+  a window the loop fully served with no drain ends in `SocketEventQueueStallError`.
+- `session-teardown.ts`: `closeScopeOnce` awaits `disposeOnce()` before `scope.close()`, so the
+  grace-deadline path no longer closes the provider scope beside a still-running disposal.
+  `config-reload/session-scoped-callback.ts` (new, used for the watch engine's `onRealChange` /
+  `onError`) makes a callback bound to a session scope a no-op once that scope closed;
+  `@earendil-works/pi-ai/node/provider-scope` gained `activeProviderScope()` for it.
+- `host-memory-sampler.ts` + `session-registry.ts` + `session-command-router.ts` +
+  `multi-session-host.ts` (wiring) + `worker-session-registry.ts` (no-op `setWorkerAdmission`):
+  a second admission watermark, raises a critical callback; the router forwards it to the registry,
+  and an `openSession` that would CREATE a `kind: "worker"` session while it is set throws a
+  memory-pressure refusal.
+- `rpc-types.ts`: `RPC_ERROR_HOST_MEMORY_PRESSURE` joins `RpcErrorCode`. Attaches to a live path,
+  interactive opens and every existing session are untouched. The stderr pressure line names the
+  policy in force.
+
+### Why
+
+One host lost every child of every attached session and then died. Its loop blocked for up
+to 893 s; on unblock the wall-clock stall timer ran before the pending drain I/O and cut every
+connection with queued bytes (`peer did not drain 358520 queued bytes within 30000ms`), so every
+host-session child ended with `transport_gone` while its session kept running. Sessions torn down
+during that window hit the grace deadline; their scope was closed beside the running disposal, the
+binding's dispose refused with `Provider scope is closed`, and each dead session's config-reload
+watch engine - and its watch Worker thread - stayed alive, throwing from its debounce timer on every
+filesystem event (149 unhandled errors). RSS grew unbounded past 9 GB into a Bun SIGSEGV in a JSC
+Worker thread (three crash reports, uptimes 3.6 h / 15.3 h / 16 h).
+
+A future refactor must not break: the stall budget is served time, never wall time - a deadline
+that fires after a long block must re-arm, not cut. `scope.close()` runs after disposal settles on
+EVERY teardown path. `host_memory_pressure` is the only memory-driven refusal on the in-process
+path, it keys on RSS (never a session count), it applies only to CREATING a worker session, and the
+client's answer is to wait and retry - never to start a second host or a per-child process. Pinned by
+`test/suite/regressions/issue-1905-*.test.ts` (stall verdict, teardown order, closed-scope callback,
+worker admission).
+
+### Why an extension could not handle it
+
+All three live under the host's own loop, transport and registry: an extension cannot see the
+socket dead-peer timer, the teardown order of a session it belongs to, or the registry's admission
+decision.
+
+### Expected merge conflict zones
+
+`socket-event-fanout.ts` (`waitForDrainOrStall`), `loop-lag-watchdog.ts` (`tick`),
+`session-teardown.ts` (`closeScopeOnce`), `host-memory-sampler.ts` (constructor and `sample`),
+`session-registry.ts` (`openSession` admission check, `RpcSessionRegistryError.code` union),
+`session-command-router.ts` (registry `Pick`, memory-pressure wiring), `multi-session-host.ts`
+(`startHostObservers`), `rpc-types.ts` (`RpcErrorCode`).
+
+## 2026-09-21 — a superseded generation drains itself, and the daemon directory is pruned (#1893)
+
+**What:** five changes that together end a generation nobody can reach.
+
+- `host-supersession.ts` (new) + `socketEntryReplaced` in `socket-ownership.ts`: a generation polls,
+  once a second on an unref'd timer, whether the public path still holds the entry it bound. The
+  supervisor (`host-lifecycle.ts`) treats the loss as a drain request and runs the SIGUSR1 path it
+  already had: park every retained session with no attachment, release its claims, exit when it holds
+  no attached session.
+- `host-reservations.ts`: a claim carries `attached`, republished through `setAttached` whenever a
+  session gains its first client or loses its last (`session-registry.ts`, `session-teardown.ts`).
+  A claim now STANDS only while its owner is the generation the pointer names or still has a client
+  attached; a superseded, attachment-less claim is reclaimed. The refusal's `owner` carries `current`.
+- `host-generations.ts` (new): `pruneDeadGenerations` drops generation directories naming dead pids,
+  the pointer while it names one, and claims whose owner is gone - on every registration write
+  (`host-daemon-registration.ts`) and on every `host status`. `readGenerationRows` answers one row per
+  ALIVE generation with its own `rss_mb` and the number of session files it claims.
+- `host-memory-sampler.ts`: `onIdlePressure` fires once per pressure episode for a host above the RSS
+  threshold holding NO session; the socket host logs it and drains when it is also superseded.
+
+**Why:** a handoff ASKS the predecessor to drain, and the request can miss - an unprovable owner is
+never signalled, a client that binds its own entry over the path signals nothing, a wedged process
+misses the signal. The superseded generation then held its retained sessions and all 59 of its path
+claims while answering nowhere, so every `open_session` on those paths was refused with
+`session_path_in_use` by a process no client could reach, and the directory described only dead pids
+while three supervisors were alive.
+
+**A future refactor must not break:** supersession is proven by the socket ENTRY, never by a missing
+name - an absent path is somebody's `rm`, and draining on it would end healthy daemons. A claim
+without the `attached` field is honored, which is what keeps a running older build from being
+reclaimed from. A generation record that cannot be parsed is never pruned: an ensure may be writing
+it right now. Pinned by `test/suite/regressions/1893-superseded-generation-drain.test.ts` (real
+supervisor, socket taken over with no signal) and `1893-generation-records-and-claims.test.ts`.
+
+## 2026-09-21 - Extension user-edit binding and client leaf visibility
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: binds the extension user-edit action beside assistant edits and forwards navigation's `expectedLeafId` unchanged.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: declares `navigateTree`'s already-shipped `leafId: string | null`, accepts the concurrency token, and adds the user-edit client method needed by the interactive host proxy.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an RPC-hosted extension must have the same capability and typed core refusals as print and interactive extensions.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a wire leaf that library callers cannot read is an incomplete API. The user-edit response preserves both `entry.id` (message address) and the potentially different metadata-advanced `leafId` (concurrency token).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` owns mode action binding.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts` owns the public client's commands and decoded return types.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: extension `commandContextActions` beside navigation and assistant editing; dispatch is unchanged.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: result imports, navigation signature, and message-edit methods.
+
+## 2026-09-21 - Dispatch user-message edits and entry-addressed tree selection
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` dispatches `edit_user_message`
+  through the same session-owned binding as assistant edits. It projects edited, unchanged,
+  cancelled, and aborted results, maps core errors through their `.code` accessor, and includes
+  the current leaf on successes (`data.leafId`) and refusals (`errorData.leafId`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` replaces the temporary `entryId`
+  refusal with core tree selection and its navigated/cancelled payload. Both addressing spellings
+  forward `expectedLeafId` unchanged; both/neither addressing remain errors. The legacy
+  `targetId` call and response shape remain intact.
+- Core selection chooses the parent of user/custom entries, including a null parent at the root.
+  Contrary to the earlier type entry's description, the shipped `targetId` path also applies that
+  rule; it is not a verbatim leaf move. `docs/rpc.md` corrects that claim and explains selection of
+  the current prompt after the core early-return fix. Tests preserve the real legacy response and
+  prove that both root and non-root prompt retries resubmit without duplicating the prompt.
+
+### Why
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts` must make the already-typed edit and
+selection operations reachable and let a stale client resynchronize without another request.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts` owns protocol dispatch and the routed
+session binding; an extension cannot implement these top-level command and error envelopes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: message-edit cases, tree-navigation
+  dispatch, core error imports, and error response details.
+
+## 2026-09-21 - `edit_user_message`, and `navigate_tree` addressed by `entryId`
+
+### What changed
+
+- `rpc-types.ts` adds the `edit_user_message` command beside `edit_assistant_message`
+  (`{ entryId, text, expectedLeafId?, summarize?, customInstructions? }`) and its response member
+  carrying the new `EditUserMessageResult` - `edited | unchanged | cancelled`, mirroring
+  `EditAssistantMessageResult` field for field, `leafId` nullable on the two non-edited outcomes.
+- `navigate_tree` gains a second way to name its target: the shipped `targetId` moves the leaf to
+  that node verbatim, while the new `entryId` asks the host to apply the `/tree` selection rule of
+  `docs/sessions.md` (a user or custom target selects its PARENT and returns its text as
+  `editorText`; any other kind selects the entry itself; the root user message resets the leaf to
+  an empty conversation, `leafId: null`). The command is ONE union member intersected with
+  `{ entryId } | { targetId }`, so exactly one spelling is legal per record and `case
+  "navigate_tree"` still narrows to a single shape. Both spellings accept `expectedLeafId`.
+- `NavigateTreeResult` (`navigated | cancelled`) is the `entryId` payload; the shipped
+  `{ cancelled, editorText?, aborted?, summaryEntry? }` payload still answers `targetId`, so the
+  response member's `data` is the union of the two. Both now report `leafId: string | null` - the
+  shipped payload gained it additively, and `connection-handler.ts` fills it from
+  `sessionManager.getLeafId()`, so either spelling resynchronizes a client in one round trip.
+- `RPC_ERROR_NOT_USER = "not_user"` joins the ONE shared `RpcErrorCode` union beside
+  `RPC_ERROR_NOT_ASSISTANT`. The failure response stays the single catch-all member with
+  `errorCode?: string` - there is no per-command narrowing in this protocol, and introducing one
+  would be a breaking change to every error path. A command's codes are a documented SUBSET.
+- `connection-handler.ts` gains the two addressing refusals (`not both`, `requires entryId or
+  targetId`) that the command type already forbids but inbound JSON can still carry, plus ONE
+  placeholder branch that refuses an `entryId`-addressed navigation with `navigate_tree entryId
+  addressing is not dispatched yet`. The selection-rule dispatch and the `edit_user_message` case
+  land with the handler work: that branch is replaced there, the two refusals above it stay.
+
+### Why
+
+`AgentSession.editUserMessage` exists, but the only way to reach it over RPC would have been the
+interactive `/tree` selector, which no headless client has. A desktop client also cannot compute
+the parent of a user entry safely - it would have to reimplement the selection rule against a
+tree it only sees through `get_entries` - so the rule belongs on the host, reached by naming the
+entry the user clicked. `expectedLeafId` is on both spellings because a navigation is exactly as
+destructive to a stale window as an edit is: the leaf token the client last observed is the only
+thing that refuses a move made against a view another window has already changed.
+
+### Why an extension could not handle it
+
+The command union and the shared error-code union are the protocol itself. An extension cannot
+add a member to the type a client compiles against, and `extension_request` would hide the new
+operations behind an untyped envelope, which is the opposite of the contract a desktop client
+needs to generate its own types from.
+
+### Expected merge conflict zones
+
+- `rpc-types.ts` - the `RpcSessionCommand` / `RpcResponse` union additions and the `RpcErrorCode`
+  members; upstream edits near `edit_assistant_message` and `navigate_tree` meet this change.
+- `connection-handler.ts` - the `case "navigate_tree"` guard.
+
 ## 2026-09-19 — a pathless session now reserves the file it created (#1850)
 
 **What:** `session-registry.ts` `syncRuntimeMetadata()` reconciles when the canonical
@@ -2842,3 +4008,23 @@ wire shape, multi-session tagging, and payload validation responsibilities.
 
 - LOW: the `stop()` implementation and the spawn bookkeeping in `rpc-client.ts`.
 
+## 2026-09-27 — get_state reports lastProviderDiagnostic (#2197)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcSessionState.lastProviderDiagnostic?: ProviderDiagnostic`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `buildRpcSessionState` projects `sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic)` and omits the field when absent.
+
+### Why
+
+- `get_state` is the status snapshot RPC clients read after a turn settles; without the field a client that missed the `message_end` event had only error text to classify.
+
+### Why an extension could not handle it
+
+- `RpcSessionState` is a fixed wire projection built in core; extensions cannot add fields to `get_state`.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcSessionState` interface near `lastAbortSource`; the `buildRpcSessionState` return literal.
+
+- Covered production paths: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`.

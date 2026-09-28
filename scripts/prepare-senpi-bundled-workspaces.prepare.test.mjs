@@ -70,7 +70,7 @@ function writeCodingAgentManifest(root) {
 
 function bundledWorkspaceFiles(workspace) {
 	if (workspace === "pty") {
-		return ["package.json", "dist/index.js", "native/index.js", nativePrebuildFile(nativePrebuildTarget())];
+		return ["package.json", "dist/index.js", "native/index.js", nativePrebuildFile(nativePrebuildTarget(), "@earendil-works/pi-pty")];
 	}
 	if (workspace === "senpi-codemode") {
 		return ["package.json", "src/index.ts", "src/kernels/py/prelude.py"];
@@ -153,7 +153,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 					"node_modules",
 					"@earendil-works",
 					"pi-pty",
-					nativePrebuildFile(nativePrebuildTarget()),
+					nativePrebuildFile(nativePrebuildTarget(), "@earendil-works/pi-pty"),
 				),
 				"utf8",
 			),
@@ -170,7 +170,7 @@ describe("prepareSenpiBundledWorkspaces", () => {
 			writeBundledWorkspace(tempDir, workspace);
 		}
 		writeBundledWorkspace(tempDir, "pty");
-		rmSync(join(tempDir, "packages", "pty", nativePrebuildFile(nativePrebuildTarget())));
+		rmSync(join(tempDir, "packages", "pty", nativePrebuildFile(nativePrebuildTarget(), "@earendil-works/pi-pty")));
 
 		const warnings = [];
 		const originalWarn = console.warn;

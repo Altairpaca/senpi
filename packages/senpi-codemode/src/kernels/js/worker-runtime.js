@@ -6,6 +6,7 @@ import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
+import { bindKernelBun } from "./worker-webview.js";
 import { createWorkpool } from "./workpool.js";
 import { inKernelToolInvoke } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
@@ -57,7 +58,7 @@ export class JsWorkerRuntime {
 				({ prelude, code: cellCode } = prepared);
 			}
 			if (prelude) indirectEval(prelude, `${cellId}:prelude`);
-			const value = await awaitMaybePromise(indirectEval(wrapUserCode(cellCode), cellId));
+			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), cellId));
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
@@ -305,7 +306,9 @@ export class JsWorkerRuntime {
 				: JSON.parse(String(text))
 			: text;
 		if (!handle) return output;
-		const details = isPlainObject(responseRecord.details) ? responseRecord.details : responseRecord;
+		const details = Object.hasOwn(responseRecord, "id")
+			? responseRecord
+			: isPlainObject(responseRecord.details) ? responseRecord.details : responseRecord;
 		const id = details.id;
 		if (id === undefined || id === null) return { text, output: text, handle: null, id: null, agent: null };
 		const node = {
@@ -317,6 +320,9 @@ export class JsWorkerRuntime {
 			agent: details.agent ?? callArgs.agent ?? null,
 		};
 		if (Object.hasOwn(callArgs, "schema")) node.data = output;
+		if (isPlainObject(responseRecord.details) && Object.hasOwn(responseRecord.details, "isolation")) {
+			node.details = { isolation: responseRecord.details.isolation };
+		}
 		for (const key of ["isolated", "patchPath", "branchName", "nestedPatches", "changesApplied", "isolationSummary"]) {
 			if (details[key] !== undefined) node[key] = details[key];
 		}

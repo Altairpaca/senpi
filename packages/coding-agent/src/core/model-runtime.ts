@@ -30,6 +30,7 @@ import {
 	type ModelsSimpleStreamOptions,
 	type ModelsStore,
 	type MutableModels,
+	normalizeProviderId,
 	type Provider,
 	type ProviderHeaders,
 	type ProviderRequestOptions,
@@ -59,8 +60,10 @@ import {
 	resolveConfiguredModelHeaders,
 	validateExtensionProvider,
 } from "./provider-composer.ts";
+import { createProviderSemaphores } from "./provider-concurrency.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+import type { SettingsManager } from "./settings-manager.ts";
 
 // The product's identity must ride outgoing requests. This lives here because the AI package
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
@@ -75,6 +78,7 @@ interface ModelRuntimeSnapshot {
 }
 
 export interface CreateModelRuntimeOptions {
+	settingsManager?: SettingsManager;
 	/** Credential storage. Defaults to the file at authPath. */
 	credentials?: CredentialStore;
 	authPath?: string;
@@ -176,6 +180,25 @@ function withPayloadRequestMetadata(options: StreamOptions, model: Model<Api>): 
 
 /** Configured pi-ai Models collection used by coding-agent and SDK consumers. */
 export class ModelRuntime implements Models {
+	private settingsManager: SettingsManager | undefined;
+	private unsubscribeProviderSettings: (() => void) | undefined;
+	private readonly providerSemaphores = createProviderSemaphores(
+		(providerId) => this.settingsManager?.getProviderConcurrencyLimit(providerId) ?? Infinity,
+	);
+
+	setSettingsManager(settingsManager: SettingsManager): void {
+		if (this.settingsManager === settingsManager) return;
+		this.unsubscribeProviderSettings?.();
+		this.settingsManager = settingsManager;
+		const resize = () => {
+			for (const provider of this.getProviders()) {
+				this.providerSemaphores.resize(provider.id, settingsManager.getProviderConcurrencyLimit(provider.id));
+			}
+		};
+		this.unsubscribeProviderSettings = settingsManager.subscribeToProviderSettings(resize);
+		resize();
+	}
+
 	private readonly models: MutableModels;
 	private readonly credentials: RuntimeCredentials;
 	private readonly defaultBuiltins: ReadonlyMap<string, Provider>;
@@ -268,6 +291,7 @@ export class ModelRuntime implements Models {
 					: undefined,
 		);
 		runtime.rebuildProviders();
+		if (options.settingsManager) runtime.setSettingsManager(options.settingsManager);
 		const refreshFromNetwork = runtime.modelNetworkEnabled && options.allowModelNetwork === true;
 		const controller =
 			refreshFromNetwork && options.modelRefreshTimeoutMs !== undefined ? new AbortController() : undefined;
@@ -320,6 +344,7 @@ export class ModelRuntime implements Models {
 					: undefined,
 		);
 		runtime.rebuildProviders();
+		if (options.settingsManager) runtime.setSettingsManager(options.settingsManager);
 		return runtime;
 	}
 
@@ -332,7 +357,11 @@ export class ModelRuntime implements Models {
 		]);
 	}
 
-	private recomposeProvider(providerId: string): void {
+	private recomposeProvider(rawProviderId: string): void {
+		// Read boundary (senpi#1989): compose under the canonical id so a legacy id
+		// reaching this path (an extension registration, a stored overlay key) lands
+		// on the same provider instead of composing a second, empty one.
+		const providerId = normalizeProviderId(rawProviderId);
 		if (this.config.isProviderDisabled(providerId)) {
 			this.models.deleteProvider(providerId);
 			this.compositionErrors.delete(providerId);
@@ -523,6 +552,11 @@ export class ModelRuntime implements Models {
 
 	hasAvailabilitySnapshot(): boolean {
 		return this.availabilityInitialized;
+	}
+
+	/** Non-fatal models.json notices (e.g. renamed provider ids), rendered as warnings. */
+	getWarnings(): readonly string[] {
+		return this.config.getWarnings();
 	}
 
 	getError(): string | undefined {
@@ -847,20 +881,27 @@ export class ModelRuntime implements Models {
 									}
 								: { slotName: slot.name },
 						);
-						const attempt = prepared.provider.stream(
-							prepared.model as Model<TApi>,
-							context,
-							withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+						const attempt = await this.providerSemaphores.bracket(
+							prepared.model.provider,
+							prepared.options.signal,
+							() =>
+								prepared.provider.stream(
+									prepared.model as Model<TApi>,
+									context,
+									withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+								),
 						);
 						return wrapStreamWithModelRecovery(attempt, model, context.tools ?? []);
 					},
 				});
 			}
 			const prepared = await this.prepareRequest(model, streamOptions);
-			const inner = prepared.provider.stream(
-				prepared.model as Model<TApi>,
-				context,
-				withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
+				prepared.provider.stream(
+					prepared.model as Model<TApi>,
+					context,
+					withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+				),
 			);
 			return wrapStreamWithModelRecovery(inner, model, context.tools ?? []);
 		});
@@ -890,10 +931,12 @@ export class ModelRuntime implements Models {
 							slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name },
 						);
 						return wrapStreamWithModelRecovery(
-							prepared.provider.streamSimple(
-								prepared.model,
-								context,
-								withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+							await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
+								prepared.provider.streamSimple(
+									prepared.model,
+									context,
+									withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+								),
 							),
 							model,
 							context.tools ?? [],
@@ -902,13 +945,31 @@ export class ModelRuntime implements Models {
 				});
 			}
 			const prepared = await this.prepareRequest(model, options);
-			const inner = prepared.provider.streamSimple(
-				prepared.model,
-				context,
-				withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
+				prepared.provider.streamSimple(
+					prepared.model,
+					context,
+					withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+				),
 			);
 			return wrapStreamWithModelRecovery(inner, model, context.tools ?? []);
 		});
+	}
+	/**
+	 * Resolve auth, headers, `extraBody`, env, and the upstream model id exactly as a
+	 * single-credential `streamSimple` request does, without sending it. The session-start
+	 * prompt-cache prewarm (senpi#2096) builds its request from this so its prefix matches
+	 * the first turn's.
+	 */
+	async prepareSimpleRequest(
+		model: Model<Api>,
+		options?: ModelsSimpleStreamOptions,
+	): Promise<{ model: Model<Api>; options: SimpleStreamOptions }> {
+		const prepared = await this.prepareRequest(model, options);
+		return {
+			model: prepared.model,
+			options: withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+		};
 	}
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage> {
 		return this.streamSimple(model, context, options).result();

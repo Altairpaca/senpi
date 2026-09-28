@@ -18,7 +18,7 @@
 import * as crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { type ImageContent, sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
@@ -31,11 +31,12 @@ import {
 	removeCredentialAccount,
 } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
+import { UserEditError } from "../../core/edited-user-message.ts";
 import {
 	emitProviderAccountsChanged,
 	subscribeProviderAccountEvents,
-} from "../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+} from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../core/extensions/builtin/anthropic-subscription/account-management.ts";
 import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
@@ -199,12 +200,14 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		throw new Error("RPC session invariant violated: agentDir is required");
 	}
 	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
+	const lastProviderDiagnostic = sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic);
 	return {
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		model: session.model,
 		thinkingLevel: session.thinkingLevel,
 		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
 		...(lastAbortSource ? { lastAbortSource } : {}),
+		...(lastProviderDiagnostic ? { lastProviderDiagnostic } : {}),
 		serviceTier: session.effectiveServiceTier,
 		fastMode: session.isFastModeActive(),
 		isStreaming: session.isStreaming,
@@ -452,6 +455,10 @@ export function createRpcConnectionHandler(
 		errorCode?: string,
 		errorData?: unknown,
 	): RpcResponse => {
+		const details =
+			errorData === undefined && (command === "edit_user_message" || command === "navigate_tree")
+				? { leafId: session.sessionManager.getLeafId() }
+				: errorData;
 		return {
 			id,
 			type: "response",
@@ -459,7 +466,7 @@ export function createRpcConnectionHandler(
 			success: false,
 			error: message,
 			...(errorCode ? { errorCode } : {}),
-			...(errorData === undefined ? {} : { errorData }),
+			...(details === undefined ? {} : { errorData: details }),
 		};
 	};
 
@@ -893,11 +900,20 @@ export function createRpcConnectionHandler(
 								customInstructions: options?.customInstructions,
 								replaceInstructions: options?.replaceInstructions,
 								label: options?.label,
+								expectedLeafId: options?.expectedLeafId,
 							});
 							return { cancelled: result.cancelled };
 						},
 						editAssistantMessage: async (entryId, text, options) => {
 							const result = await session.editAssistantMessage(entryId, text, {
+								summarize: options?.summarize,
+								customInstructions: options?.customInstructions,
+								expectedLeafId: options?.expectedLeafId,
+							});
+							return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+						},
+						editUserMessage: async (entryId, text, options) => {
+							const result = await session.editUserMessage(entryId, text, {
 								summarize: options?.summarize,
 								customInstructions: options?.customInstructions,
 								expectedLeafId: options?.expectedLeafId,
@@ -1013,7 +1029,7 @@ export function createRpcConnectionHandler(
 				signal: controller.signal,
 			});
 			session.modelRegistry.refresh();
-			if (provider === CLAUDE_SDK_OAUTH_PROVIDER_ID) emitProviderAccountsChanged(provider);
+			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			outputEvent({ type: "auth_login_end", provider, success: true });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
@@ -1394,13 +1410,56 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "navigate_tree": {
-				const result = await session.navigateTree(command.targetId, {
-					summarize: command.summarize,
-					customInstructions: command.customInstructions,
-					replaceInstructions: command.replaceInstructions,
-					label: command.label,
-				});
-				return success(id, "navigate_tree", result);
+				// Addressing refusals. The command type forbids both spellings at once and neither of
+				// them, so TypeScript narrows these branches to `never` - they exist for the inbound
+				// JSON no type can police, which is why the command name is written out here.
+				if (command.entryId !== undefined && command.targetId !== undefined) {
+					return error(id, "navigate_tree", "navigate_tree takes either entryId or targetId, not both");
+				}
+				if (command.entryId === undefined && command.targetId === undefined) {
+					return error(id, "navigate_tree", "navigate_tree requires entryId or targetId");
+				}
+				const targetId = command.entryId ?? command.targetId;
+				if (typeof targetId !== "string" || targetId.length === 0) {
+					return error(id, command.type, "navigate_tree requires a non-empty entryId or targetId");
+				}
+				if (command.intent !== undefined && command.intent !== "select" && command.intent !== "resume") {
+					return error(id, command.type, "navigate_tree intent must be select or resume");
+				}
+				try {
+					// Core owns selection/resumption, summaries, cancellation, and root reset.
+					// Pass the requested entry itself, not a client- or handler-computed parent.
+					const result = await session.navigateTree(targetId, {
+						...(command.intent !== undefined ? { intent: command.intent } : {}),
+						summarize: command.summarize,
+						customInstructions: command.customInstructions,
+						replaceInstructions: command.replaceInstructions,
+						label: command.label,
+						expectedLeafId: command.expectedLeafId,
+					});
+					const leafId = session.sessionManager.getLeafId();
+					if (command.targetId !== undefined) {
+						return success(id, command.type, { ...result, leafId });
+					}
+					if (result.cancelled) {
+						return success(id, command.type, {
+							outcome: "cancelled",
+							leafId,
+							...(result.aborted ? { aborted: true } : {}),
+						});
+					}
+					return success(id, command.type, {
+						outcome: "navigated",
+						leafId,
+						...(result.editorText !== undefined ? { editorText: result.editorText } : {}),
+						...(result.summaryEntry ? { summaryEntryId: result.summaryEntry.id } : {}),
+					});
+				} catch (err) {
+					if (err instanceof AssistantEditError || err instanceof SessionStreamingError) {
+						return error(id, command.type, err.message, err.code);
+					}
+					throw err;
+				}
 			}
 
 			case "record_bash_result":
@@ -1519,6 +1578,53 @@ export function createRpcConnectionHandler(
 					});
 				} catch (err) {
 					if (err instanceof AssistantEditError || err instanceof SessionStreamingError) {
+						return error(id, command.type, err.message, err.code);
+					}
+					throw err;
+				}
+			}
+
+			case "edit_user_message": {
+				if (
+					typeof command.entryId !== "string" ||
+					command.entryId.length === 0 ||
+					typeof command.text !== "string"
+				) {
+					return error(id, command.type, "edit_user_message requires a non-empty entryId and a text string");
+				}
+				try {
+					const result = await session.editUserMessage(command.entryId, command.text, {
+						summarize: command.summarize,
+						customInstructions: command.customInstructions,
+						expectedLeafId: command.expectedLeafId,
+					});
+					const leafId = session.sessionManager.getLeafId();
+					if (result.unchanged) {
+						return success(id, command.type, { outcome: "unchanged", leafId });
+					}
+					if (result.cancelled) {
+						return success(id, command.type, {
+							outcome: "cancelled",
+							leafId,
+							...(result.aborted ? { aborted: true } : {}),
+						});
+					}
+					const entry = result.entryId ? session.sessionManager.getEntry(result.entryId) : undefined;
+					if (entry?.type !== "message" || leafId === null) {
+						return error(id, command.type, "Edited user entry was not persisted");
+					}
+					return success(id, command.type, {
+						outcome: "edited",
+						entry,
+						leafId,
+						...(result.summaryEntry ? { summaryEntryId: result.summaryEntry.id } : {}),
+					});
+				} catch (err) {
+					if (
+						err instanceof UserEditError ||
+						err instanceof AssistantEditError ||
+						err instanceof SessionStreamingError
+					) {
 						return error(id, command.type, err.message, err.code);
 					}
 					throw err;

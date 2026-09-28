@@ -19,6 +19,7 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -53,6 +54,11 @@ import {
 	getOpenAICompletionsCompat as getCompat,
 	type ResolvedOpenAICompletionsCompat,
 } from "../utils/prompt-cache-ttl.ts";
+import {
+	awaitProviderTransport,
+	iterateProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -411,7 +417,57 @@ function appendOpenAIReasoningDetail(details: OpenAIReasoningDetail[], detail: O
 	details.push({ ...detail });
 }
 
+/**
+ * Build a replayed entry from the provider's INPUT schema instead of echoing the stored
+ * object. A parsed detail is an open record: `isOpenAIReasoningDetail` type-checks the
+ * fields it knows and lets every other key through, so anything a provider streams or an
+ * earlier build persisted would otherwise travel back on the next request. A gateway that
+ * validates its input reasoning schema rejects such a key ("the reasoning_details at
+ * position N entry 0 must not contain streaming index"), and because the key lives in
+ * stored history the conversation is wedged for good. Removing one field by name only ever
+ * fixes the field that was observed; constructing the entry makes every unknown key absent
+ * by construction, which is how `assistantMsg.tool_calls` is already built below.
+ *
+ * The rule this encodes: replay `type`, the optional common fields, and exactly the payload
+ * the type defines. Fields that reassemble a stream (`index`, chunk ordinals) or describe
+ * the response are consumed here and never echoed, while opaque replay tokens (`id`,
+ * `format`, `signature`, `data`) are forwarded verbatim because only the provider knows what
+ * it validates inside them. `null` survives where the schema allows it, since the provider
+ * sent it. The switch is exhaustive over the same union `isOpenAIReasoningDetail` validates,
+ * so a new detail type or payload field fails to compile until both sides agree.
+ */
+function toReplayableReasoningDetail(detail: OpenAIReasoningDetail): OpenAIReasoningDetail {
+	const common: OpenAIReasoningDetailBase = {};
+	if (detail.id !== undefined) common.id = detail.id;
+	if (detail.format !== undefined) common.format = detail.format;
+	switch (detail.type) {
+		case "reasoning.text": {
+			const replayable: OpenAIReasoningTextDetail = { ...common, type: "reasoning.text", text: detail.text };
+			if (detail.signature !== undefined) replayable.signature = detail.signature;
+			return replayable;
+		}
+		case "reasoning.summary":
+			return { ...common, type: "reasoning.summary", summary: detail.summary };
+		case "reasoning.encrypted":
+			return { ...common, type: "reasoning.encrypted", data: detail.data };
+	}
+}
+
+function toReplayableReasoningDetails(details: readonly OpenAIReasoningDetail[]): OpenAIReasoningDetail[] {
+	return details.map(toReplayableReasoningDetail);
+}
+
 type OpenAICompletionsReasoningField = "reasoning" | "reasoning_content" | "reasoning_text";
+
+const OPENAI_COMPLETIONS_REASONING_FIELDS: readonly OpenAICompletionsReasoningField[] = [
+	"reasoning",
+	"reasoning_content",
+	"reasoning_text",
+];
+
+function isOpenAICompletionsReasoningField(value: string): value is OpenAICompletionsReasoningField {
+	return OPENAI_COMPLETIONS_REASONING_FIELDS.some((field) => field === value);
+}
 
 type ChatCompletionAssistantMessageParamWithReasoning = ChatCompletionAssistantMessageParam &
 	Partial<Record<OpenAICompletionsReasoningField, string>> & {
@@ -504,8 +560,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				body: OpenAICompletionsRequestParams,
 				requestConfig: typeof requestOptions,
 			) => { withResponse(): Promise<{ data: AsyncIterable<ChatCompletionChunk>; response: Response }> };
-			const createStream = (body: OpenAICompletionsRequestParams) =>
-				createChatCompletion(body, requestOptions).withResponse();
+			const createStream = async (body: OpenAICompletionsRequestParams) => {
+				const { data, response } = await awaitProviderTransport(
+					() => createChatCompletion(body, requestOptions).withResponse(),
+					openAICompatibleProviderDiagnosticFromError,
+				);
+				return { data: iterateProviderTransport(data, openAICompatibleProviderDiagnosticFromError), response };
+			};
 			const createRequest = async () => {
 				try {
 					return await createStream(params);
@@ -937,6 +998,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				delete (block as { streamIndex?: number }).streamIndex;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
 			// Some providers via OpenRouter give additional information in this field.
 			// normalizeProviderError already stringifies the parsed body (error.error)
@@ -975,8 +1038,11 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 		: model.id.includes("gpt-6-astra")
 			? "off"
 			: undefined;
+	// An explicitly mapped off value (for example an endpoint-advertised "none", senpi#2196) is how the
+	// model turns reasoning off, so only a map without one keeps the Astra off -> low fallback.
+	const hasMappedOff = typeof thinkingLevelMap?.off === "string";
 	const normalizedReasoning =
-		clampedReasoning === "off" && model.id.includes("gpt-6-astra") ? "low" : clampedReasoning;
+		clampedReasoning === "off" && model.id.includes("gpt-6-astra") && !hasMappedOff ? "low" : clampedReasoning;
 	const reasoningEffort =
 		normalizedReasoning === "off"
 			? undefined
@@ -1061,9 +1127,11 @@ function buildParams(
 		messages,
 		stream: true,
 		prompt_cache_key:
-			(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
-			(cacheRetention === "long" && compat.supportsLongCacheRetention) ||
-			(compat.supportsPromptCacheKey && cacheRetention !== "none")
+			cacheRetention !== "none" &&
+			!(model.baseUrl.includes("api.openai.com") && model.cost.cacheWrite > 0) &&
+			(model.baseUrl.includes("api.openai.com") ||
+				(cacheRetention === "long" && compat.supportsLongCacheRetention) ||
+				compat.supportsPromptCacheKey)
 				? clampOpenAIPromptCacheKey(options?.sessionId)
 				: undefined,
 		prompt_cache_retention: cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined,
@@ -1606,12 +1674,17 @@ export function convertMessages(
 						assistantMsg.content = assistantText;
 					}
 
-					// Use the signature from the first thinking block if available (for llama.cpp server + gpt-oss)
+					// Use the signature from the first thinking block if available (for llama.cpp server + gpt-oss).
+					// The slot is overloaded: it holds EITHER the name of the reasoning field to replay
+					// ("reasoning", "reasoning_content", "reasoning_text") OR serialized `reasoning_details`,
+					// which travel through `reasoning_details` below. Only a known field name may name a
+					// property here — otherwise the assistant message grows a key whose NAME is the whole
+					// serialized reasoning array, duplicating the reasoning into every later request.
 					let signature = nonEmptyThinkingBlocks[0].thinkingSignature;
 					if (model.provider === "opencode-go" && signature === "reasoning") {
 						signature = "reasoning_content";
 					}
-					if (signature && signature.length > 0) {
+					if (signature !== undefined && isOpenAICompletionsReasoningField(signature)) {
 						Object.assign(assistantMsg, {
 							[signature]: nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n"),
 						});
@@ -1650,7 +1723,7 @@ export function convertMessages(
 				});
 			}
 			if (preservedReasoningDetails) {
-				assistantMsg.reasoning_details = preservedReasoningDetails;
+				assistantMsg.reasoning_details = toReplayableReasoningDetails(preservedReasoningDetails);
 			}
 			if (
 				compat.requiresReasoningContentOnAssistantMessages &&
@@ -1840,7 +1913,11 @@ function parseChunkUsage(
 		completion_tokens?: number;
 		cached_tokens?: number;
 		prompt_cache_hit_tokens?: number;
-		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		prompt_tokens_details?: {
+			cached_tokens?: number;
+			cache_write_tokens?: number;
+			cache_creation_tokens?: number;
+		};
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
@@ -1848,14 +1925,17 @@ function parseChunkUsage(
 	const promptTokens = rawUsage.prompt_tokens || 0;
 	const cacheReadTokens =
 		rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? rawUsage.cached_tokens ?? 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const cacheWriteTokens =
+		rawUsage.prompt_tokens_details?.cache_write_tokens ?? rawUsage.prompt_tokens_details?.cache_creation_tokens ?? 0;
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
 	// tokens (hits). Providers disagree on placement: OpenAI/OpenRouter use
 	// prompt_tokens_details.cached_tokens, DeepSeek uses prompt_cache_hit_tokens,
 	// and Kimi documents top-level usage.cached_tokens on the final usage chunk.
-	// OpenAI does not document or emit cache_write_tokens, but
-	// OpenRouter-compatible providers can include it as a separate write count.
+	// OpenAI platform reports cache_write_tokens; some compatible gateways report
+	// the same write count as cache_creation_tokens. Prefer cache_write_tokens
+	// when present. OpenRouter-compatible providers can include cache_write_tokens
+	// as a separate write count.
 	// OpenRouter's own provider/tests affirm the separate mapping:
 	// https://github.com/OpenRouterTeam/ai-sdk-provider/pull/409
 	// Do not subtract writes from cached_tokens, otherwise spec-compliant

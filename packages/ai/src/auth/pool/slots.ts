@@ -1,3 +1,5 @@
+import { LEGACY_PROVIDER_IDS } from "../../legacy-provider-ids.ts";
+import type { ProviderEnv } from "../../types.ts";
 import type { Credential } from "../types.ts";
 
 export type { Credential };
@@ -16,6 +18,8 @@ export type CredentialSlot = {
 	access?: string;
 	refresh?: string;
 	expires?: number;
+	/** Provider-scoped values this account carries (a Kimi region, a Cloudflare account id). */
+	env?: ProviderEnv;
 };
 
 export type PooledCredential = Credential & {
@@ -163,17 +167,19 @@ function storedSlots(credential: PooledCredential): CredentialSlot[] {
 	return Array.isArray(credential.accounts) ? credential.accounts : [];
 }
 
-function slotFromFlatCredential(credential: PooledCredential): CredentialSlot {
-	if (credential.type === "oauth") {
-		return {
-			name: DEFAULT_SLOT_NAME,
-			source: "login",
-			access: credential.access,
-			refresh: credential.refresh,
-			expires: credential.expires,
-		};
+function credentialSlotEnv(credential: Credential): { env: ProviderEnv } | Record<string, never> {
+	const value = credential.env;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+	const env: ProviderEnv = {};
+	for (const [name, entry] of Object.entries(value)) {
+		if (typeof entry !== "string") return {};
+		env[name] = entry;
 	}
-	return { name: DEFAULT_SLOT_NAME, source: "login", key: credential.key };
+	return { env };
+}
+
+function slotFromFlatCredential(credential: PooledCredential): CredentialSlot {
+	return slotFromFlatCredentialNamed(credential, DEFAULT_SLOT_NAME);
 }
 
 /**
@@ -219,11 +225,12 @@ function slotMirrorsFlat(credential: PooledCredential, slot: CredentialSlot): bo
 
 /** Rewrites the flat top-level projection to carry the given slot's material. */
 function projectFlatFields(credential: PooledCredential, slot: CredentialSlot): PooledCredential {
+	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (credential.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return credential;
-		return { ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires };
+		return { ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
 	}
-	return { ...credential, key: slot.key };
+	return { ...credential, key: slot.key, ...env };
 }
 
 /**
@@ -266,11 +273,12 @@ export function projectSlot(credential: PooledCredential | undefined, name: stri
 	const slot = findSlot(credential, name);
 	if (!slot) return undefined;
 	const { accounts: _accounts, pinned: _pinned, ...flat } = credential;
+	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (flat.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return undefined;
-		return { ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires };
+		return { ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
 	}
-	return { ...flat, key: slot.key };
+	return { ...flat, key: slot.key, ...env };
 }
 
 function slotFromFlatCredentialNamed(credential: Credential, name: string): CredentialSlot {
@@ -281,9 +289,10 @@ function slotFromFlatCredentialNamed(credential: Credential, name: string): Cred
 			access: credential.access,
 			refresh: credential.refresh,
 			expires: credential.expires,
+			...credentialSlotEnv(credential),
 		};
 	}
-	return { name, source: "login", key: credential.key };
+	return { name, source: "login", key: credential.key, ...credentialSlotEnv(credential) };
 }
 
 function nextLoginSlotName(credential: PooledCredential): string {
@@ -377,6 +386,26 @@ export function managedSentinelMaterial(providerId: string): string {
 	return `${providerId}-managed`;
 }
 
+const LEGACY_SENTINEL_MATERIALS: ReadonlyMap<string, string> = new Map(
+	Object.entries(LEGACY_PROVIDER_IDS).map(([legacyId, canonicalId]) => [
+		canonicalId,
+		managedSentinelMaterial(legacyId),
+	]),
+);
+
+/**
+ * Every sentinel material a stored credential may legitimately carry for this
+ * provider: the canonical `<providerId>-managed` plus the legacy material of
+ * any renamed ancestor id, because credentials written before a rename keep
+ * the old literal verbatim.
+ */
+export function managedSentinelMaterials(providerId: string): string[] {
+	const materials = [managedSentinelMaterial(providerId)];
+	const legacy = LEGACY_SENTINEL_MATERIALS.get(providerId);
+	if (legacy !== undefined && !materials.includes(legacy)) materials.push(legacy);
+	return materials;
+}
+
 /**
  * A POOL SLOT carrying that marker can never authenticate: `projectSlot` hands
  * it to the provider's `check`, which rejects it, and the request dies with
@@ -385,8 +414,8 @@ export function managedSentinelMaterial(providerId: string): string {
  * slot.
  */
 export function isManagedSentinelSlot(providerId: string, slot: CredentialSlot): boolean {
-	const sentinel = managedSentinelMaterial(providerId);
-	return slot.access === sentinel && slot.refresh === sentinel;
+	const materials = managedSentinelMaterials(providerId);
+	return materials.includes(slot.access ?? "") && slot.refresh === slot.access;
 }
 
 /**

@@ -27,7 +27,6 @@ from threading import Lock, Thread
 from typing import Any, Callable, Union
 from urllib.parse import unquote
 
-SESSION_ID = ""
 CONNECTION: dict[str, Any] = {}
 USER_NS: dict[str, Any] = {"__name__": "__main__", "__doc__": None, "__builtins__": __builtins__}
 LOOP = asyncio.new_event_loop()
@@ -530,9 +529,15 @@ def agent(
     schema: dict[str, Any] | None = None,
     isolated: bool | None = None,
     apply: bool | None = None,
-    merge: bool | None = None,
+    merge: bool | str | None = None,
     handle: bool = False,
 ) -> Any:
+    """Delegate work; isolated/apply/merge need a host that supports isolation, otherwise a warning.
+
+    merge accepts "patch"/"branch" or False/True respectively. Unapplied foreground
+    changes raise an error with recovery instructions. A handle returns immediately;
+    await the completion notification or read task_output for the isolation result.
+    """
     args: dict[str, Any] = {"prompt": prompt}
     if agent is not None:
         args["agent"] = agent
@@ -547,7 +552,7 @@ def agent(
     if apply is not None:
         args["apply"] = bool(apply)
     if merge is not None:
-        args["merge"] = bool(merge)
+        args["merge"] = merge
     if handle:
         args["handle"] = True
 
@@ -579,6 +584,9 @@ def agent(
     }
     if schema is not None:
         node["data"] = parsed
+    details = response_record.get("details")
+    if isinstance(details, dict) and "isolation" in details:
+        node["details"] = {"isolation": details["isolation"]}
     for key in (
         "isolated",
         "patch_path",
@@ -1012,7 +1020,19 @@ async def run_code(code: Any, want_value: bool) -> Any:
     return None
 
 
-def run_cell(cell_id: str, code: str) -> None:
+def apply_preludes(preludes: Any) -> None:
+    # Host-computed per cell: globals of tools deactivated since the last cell are dropped,
+    # and an active tool's snippet runs only while one of its exports is missing.
+    if not isinstance(preludes, dict):
+        return
+    for name in preludes.get("remove", []):
+        USER_NS.pop(name, None)
+    for contribution in preludes.get("install", []):
+        if any(name not in USER_NS for name in contribution.get("exports", [])):
+            exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
+
+
+def run_cell(cell_id: str, code: str, preludes: Any = None) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -1021,6 +1041,7 @@ def run_cell(cell_id: str, code: str) -> None:
     signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            apply_preludes(preludes)
             body, expression = compile_cell(code)
             LOOP.run_until_complete(run_code(body, False))
             value = LOOP.run_until_complete(run_code(expression, True))
@@ -1056,10 +1077,9 @@ def elapsed(start: float) -> int:
 
 
 def handle(message: dict[str, Any]) -> bool:
-    global SESSION_ID, CONNECTION
+    global CONNECTION
     message_type = message.get("type")
     if message_type == "init":
-        SESSION_ID = str(message.get("sessionId", ""))
         connection = message.get("connection")
         if not isinstance(connection, dict):
             emit({"type": "init-failed", "error": {"message": "missing bridge connection"}})
@@ -1068,7 +1088,7 @@ def handle(message: dict[str, Any]) -> bool:
         emit({"type": "ready"})
         return True
     if message_type == "run":
-        run_cell(str(message.get("cellId", "")), str(message.get("code", "")))
+        run_cell(str(message.get("cellId", "")), str(message.get("code", "")), message.get("preludes"))
         return True
     if message_type == "close":
         emit({"type": "closed"})
@@ -1097,10 +1117,33 @@ def _watch_parent(initial_ppid: int) -> None:
             return
 
 
+def _watch_named_parent(parent_pid: int) -> None:
+    # The ppid watch above can only observe a change from the ppid captured at boot. A
+    # host that died before the interpreter reached that capture is already replaced in
+    # getppid() by the posthumous value, so no transition ever fires. The host passes its
+    # own pid at spawn (SENPI_PY_KERNEL_PARENT_PID) precisely so this loss is detectable:
+    # poll the named pid instead of the ppid and take the whole group down once it is gone.
+    while True:
+        time.sleep(0.5)
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            _terminate_process_group()
+            return
+
+
 def _start_parent_watch() -> None:
     if os.name != "posix":
         return
     Thread(target=_watch_parent, args=(os.getppid(),), name="senpi-parent-watch", daemon=True).start()
+    named_parent = os.environ.get("SENPI_PY_KERNEL_PARENT_PID")
+    if named_parent and named_parent.isdigit():
+        Thread(
+            target=_watch_named_parent,
+            args=(int(named_parent),),
+            name="senpi-named-parent-watch",
+            daemon=True,
+        ).start()
 
 
 def main() -> None:

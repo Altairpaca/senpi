@@ -1,5 +1,42 @@
 # cursor-cli-oauth extension changes
 
+## 2026-09-25 - The turn prompt keeps the user's request when hidden messages follow it (senpi#2139)
+
+### What changed
+
+- `stream.ts`: `lastUserPrompt` -> exported `turnPrompt`, which joins every user-role message after the last non-user message (the current turn), in order, instead of taking only the last one. With no trailing user message it falls back to the last user message as before.
+- `test/cursor-cli-oauth/stream.test.ts`: a turn of [request, hidden reminder] keeps the request at the head (RED with the old last-message rule); earlier turns are not included.
+
+### Why
+
+- A turn can carry hidden extension messages that reach providers as user messages after the request (the todotools first-turn plan reminder, senpi#2121). The CLI takes one prompt, so sending only the last user message sent the reminder alone: on `cursor-cli-oauth/claude-opus-5` and `gpt-5.6-sol` the model answered that the request was empty and did nothing.
+
+### Why an extension could not handle it
+
+- This is the lane's own prompt assembly.
+
+### Expected merge conflict zones
+
+- `turnPrompt` and its call site in `streamCursorCliOauth`.
+
+## 2026-09-23 - `normalizeEntries` copies derived variant ids into `cursorReasoning` (senpi#2038)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`: `normalizeEntries` copies `entry.variantIds` into `compat.cursorReasoning.variantIds` when `normalizeCursorCatalog` derived a group from ids the static alias table does not list, mirroring `packages/ai/src/providers/cursor.ts` `fetchCursorModels`. Static-table entries keep byte-identical output (the field spreads in only when present); `-fast` variants stay flat. The cache now retains the original CLI listing, rebuilds the models from that listing on every read (the saved `models` projection carries mutable state such as observed context windows, which must not invalidate a fresh cache), and re-probes cache records without a listing instead of trusting their grouped ids; such a pre-listing record is still returned (rebuilt from its `id`/`name` pairs, as before this change) when that re-probe fails or yields nothing, so an offline start keeps the cached catalog rather than dropping to the static fallback. Test: `packages/coding-agent/test/cursor-cli-oauth/cursor-cli-derived-variants.test.ts` exercises probe, cache reload, exact wire selection, listing-based rebuild, pre-listing re-probe and its offline fallback, and cache reuse after a context-limit observation.
+
+### Why
+
+- A live `cursor-agent models` listing now contains level families (grok-4.7-low..-xhigh) the static tables cannot know. Without the copy, this lane grouped them but dropped the level-to-variant-id map, so the core resolver could not map legacy references and every explicit level fell back to the representative variant. Previously cache reload normalized grouped ids as raw ids, erasing the metadata and sending a nonexistent base wire id; a grouped cache row cannot reconstruct its members without the listing.
+
+### Why an extension could not handle it
+
+- `normalizeEntries` is this builtin's private catalog boundary feeding provider registration; the variant-id map must exist on the registered `ProviderModelConfig` before any other extension can observe the models.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`: the `cursorReasoning` object literal inside `normalizeEntries`, `CachedModelCatalog`, `parseCachedCatalog`, and the probe-to-cache write path.
+
 ## 2026-09-15 - Startup `cursor-agent models` probe: lane-gated, account HOME, explicit env (senpi#1722)
 
 ### What changed

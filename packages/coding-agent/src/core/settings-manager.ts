@@ -1,5 +1,12 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Transport } from "@earendil-works/pi-ai";
+import {
+	DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+	LEGACY_PROVIDER_IDS,
+	normalizeModelRef,
+	normalizeProviderId,
+	readByProviderId,
+	type Transport,
+} from "@earendil-works/pi-ai";
 import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import type {
 	RetryPolicyProfile,
@@ -33,6 +40,11 @@ import {
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
+import {
+	type FallbackCircuitSettings,
+	type ResolvedFallbackCircuitSettings,
+	resolveFallbackCircuitSettings,
+} from "./retry-fallback/circuit.ts";
 import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
 import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
@@ -43,6 +55,7 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { withoutOverride } from "./settings-overrides.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
@@ -55,7 +68,10 @@ import {
 	type OpenAISettings,
 	type PromptCacheKeepAliveSettings,
 	type PromptCacheSettings,
+	type ProviderConcurrencySettings,
 	type ThinkingBudgetsSettings,
+	type TodoFirstTurnPlan,
+	type TodoSettings,
 } from "./settings-shapes.ts";
 import {
 	type BranchSummarySettings,
@@ -142,6 +158,7 @@ export interface ExperimentalSettings {
 }
 
 export interface Settings {
+	providers?: Record<string, ProviderConcurrencySettings>;
 	lastChangelogVersion?: string;
 	changelogSeen?: Record<string, string>;
 	defaultProvider?: string;
@@ -157,6 +174,7 @@ export interface Settings {
 	compaction?: CompactionSettings & { model?: string };
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
+	fallback?: FallbackCircuitSettings;
 	hideThinkingBlock?: boolean;
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
@@ -187,6 +205,7 @@ export interface Settings {
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
@@ -613,6 +632,8 @@ export class SettingsManager {
 	private projectSettings: Settings;
 	private settings: Settings;
 	private projectTrusted: boolean;
+	/** CLI/SDK overrides (`applyOverrides`): never persisted, re-applied on every recompute. */
+	private runtimeOverrides: Settings = {};
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
 	private modifiedNestedFields = new Map<keyof Settings, Set<string>>(); // Track global nested field modifications
 	private modifiedProjectFields = new Set<keyof Settings>(); // Track project fields modified during session
@@ -624,6 +645,7 @@ export class SettingsManager {
 	private settingsPaths: SettingsPaths;
 	private selectedSources = new Map<SettingsScope, SettingsSourceSelection>();
 	private sourceListeners: SettingsSourceListener[] = [];
+	private providerSettingsListeners = new Set<() => void>();
 
 	private constructor(
 		storage: SettingsStorage,
@@ -795,7 +817,77 @@ export class SettingsManager {
 			delete retrySettings.maxDelayMs;
 		}
 
+		// Migrate renamed subscription provider ids (senpi#1989) in place, on first
+		// parse: the settings block key, defaultProvider, the provider prefix of
+		// defaultModel, favoriteModels, the `${provider}/${id}` keys of the model
+		// maps, and retry.fallbackChains keys + the providers named inside rungs.
+		// Idempotent (normalize is a no-op on canonical ids) and never hard-errors:
+		// an unrecognised shape is left untouched.
+		SettingsManager.migrateRenamedProviderIds(settings);
+
 		return settings as Settings;
+	}
+
+	/** camelCase provider-settings block key, e.g. `claude-sdk-oauth` -> `claudeSdkOauthProvider`. */
+	private static providerSettingsKey(providerId: string): string {
+		const camel = providerId
+			.split("-")
+			.map((part, i) => (i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+			.join("");
+		return `${camel}Provider`;
+	}
+
+	private static migrateRenamedProviderIds(settings: Record<string, unknown>): void {
+		// settings block key: <legacyCamel>Provider -> <canonicalCamel>Provider
+		for (const [legacyId, canonicalId] of Object.entries(LEGACY_PROVIDER_IDS)) {
+			const legacyKey = SettingsManager.providerSettingsKey(legacyId);
+			const canonicalKey = SettingsManager.providerSettingsKey(canonicalId);
+			if (legacyKey in settings && !(canonicalKey in settings)) {
+				settings[canonicalKey] = settings[legacyKey];
+				delete settings[legacyKey];
+			}
+		}
+
+		if (typeof settings.defaultProvider === "string") {
+			settings.defaultProvider = normalizeProviderId(settings.defaultProvider);
+		}
+		if (typeof settings.defaultModel === "string") {
+			settings.defaultModel = normalizeModelRef(settings.defaultModel);
+		}
+		if (Array.isArray(settings.favoriteModels)) {
+			settings.favoriteModels = settings.favoriteModels.map((entry) =>
+				typeof entry === "string" ? normalizeModelRef(entry) : entry,
+			);
+		}
+
+		for (const field of ["modelThinkingLevels", "modelServiceTiers", "modelLastOnThinkingLevels"]) {
+			const map = settings[field];
+			if (typeof map === "object" && map !== null && !Array.isArray(map)) {
+				settings[field] = SettingsManager.rekeyByModelRef(map as Record<string, unknown>);
+			}
+		}
+
+		if (typeof settings.retry === "object" && settings.retry !== null && !Array.isArray(settings.retry)) {
+			const retry = settings.retry as Record<string, unknown>;
+			const chains = retry.fallbackChains;
+			if (typeof chains === "object" && chains !== null && !Array.isArray(chains)) {
+				const rekeyed: Record<string, unknown> = {};
+				for (const [key, rungs] of Object.entries(chains as Record<string, unknown>)) {
+					const nextRungs = Array.isArray(rungs)
+						? rungs.map((rung) => (typeof rung === "string" ? normalizeModelRef(rung) : rung))
+						: rungs;
+					rekeyed[normalizeModelRef(key)] = nextRungs;
+				}
+				retry.fallbackChains = rekeyed;
+			}
+		}
+	}
+
+	/** Rewrite every `${provider}/${id}` key of a model map through normalizeModelRef. */
+	private static rekeyByModelRef(map: Record<string, unknown>): Record<string, unknown> {
+		const out: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(map)) out[normalizeModelRef(key)] = value;
+		return out;
 	}
 
 	getGlobalSettings(): Settings {
@@ -804,6 +896,29 @@ export class SettingsManager {
 
 	getProjectSettings(): Settings {
 		return structuredClone(this.projectSettings);
+	}
+
+	getProviderSettings(): Record<string, ProviderConcurrencySettings> {
+		return structuredClone(this.settings.providers ?? {});
+	}
+
+	getProviderConcurrencyLimit(providerId: string): number {
+		// Read boundary (senpi#1989): a `providers` block written by an earlier
+		// version is keyed by the legacy provider id, so try the canonical key
+		// first and then the legacy spelling instead of silently detaching the
+		// user's configured limit.
+		const value = readByProviderId(this.settings.providers, providerId)?.maxConcurrency;
+		return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : Infinity;
+	}
+
+	subscribeToProviderSettings(listener: () => void): () => void {
+		this.providerSettingsListeners.add(listener);
+		return () => this.providerSettingsListeners.delete(listener);
+	}
+
+	private updateSettings(settings: Settings): void {
+		this.settings = settings;
+		for (const listener of this.providerSettingsListeners) listener();
 	}
 
 	getPromptCacheGoalBackstopMaxSeconds(): number {
@@ -833,6 +948,16 @@ export class SettingsManager {
 		};
 	}
 
+	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+		const configured = this.settings.todo?.firstTurnPlan;
+		return configured === "remind" || configured === "off" ? configured : "force";
+	}
+
+	getTodoTurnEndBackstop(): boolean {
+		const configured = this.settings.todo?.turnEndBackstop;
+		return typeof configured === "boolean" ? configured : true;
+	}
+
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
 	}
@@ -849,7 +974,7 @@ export class SettingsManager {
 		if (!trusted) {
 			this.projectSettings = {};
 			this.projectSettingsLoadError = null;
-			this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+			this.updateSettings(this.mergedSettings());
 			return;
 		}
 
@@ -860,7 +985,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 	}
 
 	async reload(): Promise<void> {
@@ -890,7 +1015,7 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 	}
 
 	getSelectedSettingsSources(): SettingsSourceSelection[] {
@@ -917,11 +1042,18 @@ export class SettingsManager {
 
 	/** Apply additional overrides on top of current settings */
 	applyOverrides(overrides: Partial<Settings>): void {
-		this.settings = deepMergeSettings(this.settings, overrides);
+		this.runtimeOverrides = deepMergeSettings(this.runtimeOverrides, overrides);
+		this.updateSettings(this.mergedSettings());
+	}
+
+	/** Persisted global+project settings with the session-only override layer on top. */
+	private mergedSettings(): Settings {
+		return deepMergeSettings(deepMergeSettings(this.globalSettings, this.projectSettings), this.runtimeOverrides);
 	}
 
 	/** Mark a global field as modified during this session */
 	private markModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedNestedFields.has(field)) {
@@ -933,6 +1065,7 @@ export class SettingsManager {
 
 	/** Mark a project field as modified during this session */
 	private markProjectModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedProjectFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedProjectNestedFields.has(field)) {
@@ -1016,7 +1149,7 @@ export class SettingsManager {
 	}
 
 	private save(): void {
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 
 		if (this.globalSettingsLoadError) {
 			return;
@@ -1034,7 +1167,7 @@ export class SettingsManager {
 	private saveProjectSettings(settings: Settings): void {
 		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.updateSettings(this.mergedSettings());
 
 		if (this.projectSettingsLoadError) {
 			return;
@@ -1384,6 +1517,10 @@ export class SettingsManager {
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
 		return resolveRetryFallbackSettings(this.settings.retry);
+	}
+
+	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
+		return resolveFallbackCircuitSettings(this.settings.fallback);
 	}
 
 	getHintPolicySettings(): ResolvedHintPolicySettings {

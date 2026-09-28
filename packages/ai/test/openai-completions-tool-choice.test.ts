@@ -230,6 +230,32 @@ describe("openai-completions tool_choice", () => {
 		expect(secondParams.tool_choice).toBeUndefined();
 	});
 
+	it("retries without tool_choice when a gateway's always-thinking model refuses the forced choice", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(
+				400,
+				`400: {"message":"This model always runs with thinking enabled, so tool_choice cannot force tool use. Use tool_choice 'auto' or 'none'.","type":"invalid_request_error","param":"tool_choice"}`,
+			),
+		);
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const tools: Tool[] = [
+			{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) },
+		];
+
+		const response = await stream(
+			model,
+			{ messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }], tools },
+			{ apiKey: "test", toolChoice: { type: "function", function: { name: "todo" } } },
+		).result();
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(2);
+		expect(recordAt(mockState.calls, 0).tool_choice).toEqual({ type: "function", function: { name: "todo" } });
+		expect(recordAt(mockState.calls, 1).tool_choice).toBeUndefined();
+	});
+
 	it("omits strict when compat disables strict mode", async () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
 		const model = {

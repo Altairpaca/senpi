@@ -7,7 +7,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type AuthEvent, type AuthPrompt, contentText, modelsAreEqual } from "@earendil-works/pi-ai";
+import {
+	type AuthEvent,
+	type AuthPrompt,
+	contentText,
+	legacyProviderIdRejection,
+	modelsAreEqual,
+} from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -169,11 +175,12 @@ import { BranchSummaryMessageComponent } from "./components/branch-summary-messa
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { ContinuityNoticeTracker } from "./components/continuity-notice.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
-import { CustomEntryComponent } from "./components/custom-entry.ts";
+import { CustomEntryComponent, replacedEntryCardIndex } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
 import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
+import { ExplorationTranscriptContainer } from "./components/exploration-transcript-container.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
@@ -194,11 +201,7 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
-import {
-	DEFAULT_TAIL_BUDGET,
-	DEFAULT_WARM_CHUNK_SIZE,
-	ProgressiveTranscriptContainer,
-} from "./components/progressive-transcript-container.ts";
+import { DEFAULT_TAIL_BUDGET, DEFAULT_WARM_CHUNK_SIZE } from "./components/progressive-transcript-container.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -212,6 +215,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -239,7 +243,16 @@ import {
 import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
 import { getModelSearchText } from "./model-search.ts";
+import {
+	isNetworkProviderError,
+	isNetworkProviderMessage,
+	ProviderErrorPresentation,
+} from "./provider-error-presentation.ts";
+import { replayAssistantTools } from "./replay-assistant-tools.ts";
+import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
+import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
+import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
 	getAvailableThemes,
@@ -321,6 +334,10 @@ function embedStatusIndicatorInEditor(
 	if (!editor || !isWorkingStatusEditor(editor)) return false;
 	editor.setWorkingStatusIndicator(indicator);
 	return true;
+}
+
+function isBareSkillNamespace(text: string): boolean {
+	return text === "/skill" || text === "/skill:";
 }
 
 function isExpandable(obj: unknown): obj is Expandable {
@@ -1024,6 +1041,7 @@ export class InteractiveMode {
 
 	// Auto-retry state
 	private retryEscapeHandler?: () => void;
+	private providerErrors: ProviderErrorPresentation | undefined;
 	private fallbackAppliedBeforeRetryStart = false;
 	private pendingZeroDelayRetryIndicator: PendingZeroDelayRetryIndicator | undefined = undefined;
 
@@ -1151,7 +1169,7 @@ export class InteractiveMode {
 		// Resuming a long session paints a bounded, fully-styled tail first and warms
 		// the earlier history in background chunks, so /resume is not blocked on
 		// Markdown-rendering every persisted message before the first frame.
-		this.chatContainer = new ProgressiveTranscriptContainer({
+		this.chatContainer = new ExplorationTranscriptContainer({
 			tailBudget: DEFAULT_TAIL_BUDGET,
 			warmChunkSize: DEFAULT_WARM_CHUNK_SIZE,
 			requestRender: () => this.ui.requestRender(),
@@ -1298,6 +1316,20 @@ export class InteractiveMode {
 					label: provider.id,
 					description: formatLoginProviderCompletionDescription(provider),
 				}));
+			};
+		}
+
+		const thinkingCommand = slashCommands.find((command) => command.name === "thinking");
+		if (thinkingCommand) {
+			thinkingCommand.getArgumentCompletions = async (prefix: string): Promise<AutocompleteItem[] | null> => {
+				// Awaited at the boundary: the shared-host proxy answers this over RPC.
+				const levels = await this.session.getAvailableThinkingLevels();
+				return createFuzzyAutocompleteItems(
+					levels,
+					prefix,
+					(level) => level,
+					(level) => ({ value: level, label: level }),
+				);
 			};
 		}
 
@@ -1801,6 +1833,10 @@ export class InteractiveMode {
 			this.showError(`models.json error: ${modelsJsonError}`);
 		}
 
+		for (const warning of this.session.modelRuntime.getWarnings()) {
+			this.showWarning(warning);
+		}
+
 		if (modelFallbackMessage) {
 			this.showWarning(modelFallbackMessage);
 		}
@@ -1811,6 +1847,7 @@ export class InteractiveMode {
 
 		this.showRiskyMainModelWarning(this.session.model);
 		void this.maybeWarnAboutAnthropicSubscriptionAuth();
+		maybeShowRuntimeNotice((spec) => this.showNoticeBox(spec));
 
 		// Process initial messages
 		if (initialMessage) {
@@ -2609,6 +2646,7 @@ export class InteractiveMode {
 						customInstructions: options?.customInstructions,
 						replaceInstructions: options?.replaceInstructions,
 						label: options?.label,
+						expectedLeafId: options?.expectedLeafId,
 					});
 					if (result.cancelled) {
 						return { cancelled: true };
@@ -2635,6 +2673,21 @@ export class InteractiveMode {
 					this.chatContainer.clear();
 					this.renderInitialMessages();
 					this.showStatus("Replaced assistant response");
+					void this.flushCompactionQueue({ willRetry: false });
+					return { cancelled: false, entryId: result.entryId };
+				},
+				editUserMessage: async (entryId, text, options) => {
+					const result = await this.session.editUserMessage(entryId, text, {
+						summarize: options?.summarize,
+						customInstructions: options?.customInstructions,
+						expectedLeafId: options?.expectedLeafId,
+					});
+					if (result.cancelled || result.unchanged) {
+						return { cancelled: result.cancelled, unchanged: result.unchanged };
+					}
+					this.chatContainer.clear();
+					this.renderInitialMessages();
+					this.showStatus("Replaced user prompt");
 					void this.flushCompactionQueue({ willRetry: false });
 					return { cancelled: false, entryId: result.entryId };
 				},
@@ -2711,9 +2764,11 @@ export class InteractiveMode {
 		if (options.renderBeforeBind) {
 			this.renderCurrentSessionState();
 			this.subscribeToAgent();
+			time("render", "switch");
 		}
 
 		await this.bindCurrentSessionExtensions();
+		time("bindExtensions", "switch");
 
 		if (this.session !== session) {
 			return;
@@ -4764,6 +4819,12 @@ export class InteractiveMode {
 					await this.handleModelCommand(searchTerm);
 					return;
 				}
+				if (text === "/thinking" || text.startsWith("/thinking ")) {
+					const searchTerm = text.startsWith("/thinking ") ? text.slice(10).trim() : undefined;
+					this.editor.setText("");
+					await this.handleThinkingCommand(searchTerm);
+					return;
+				}
 				if (text === "/export" || text.startsWith("/export ")) {
 					await this.handleExportCommand(text);
 					this.editor.setText("");
@@ -4876,7 +4937,7 @@ export class InteractiveMode {
 					this.editor.setText("");
 					return;
 				}
-				if (text === "/resume") {
+				if (text === "/resume" || text === "/sessions") {
 					this.showSessionSelector();
 					this.editor.setText("");
 					return;
@@ -4884,6 +4945,10 @@ export class InteractiveMode {
 				if (text === "/quit" || text === "/exit") {
 					this.editor.setText("");
 					await this.shutdown();
+					return;
+				}
+				if (isBareSkillNamespace(text)) {
+					this.openSkillPickerForBareNamespace();
 					return;
 				}
 				if (this.isExtensionCommand(text)) {
@@ -5095,6 +5160,7 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
+					this.providerErrors?.newTurn();
 					if (!this.optimisticUserEchoes.replaceNext(event.message)) this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -5120,6 +5186,10 @@ export class InteractiveMode {
 
 			case "message_update":
 				if (this.streamingComponent && event.message.role === "assistant") {
+					if (event.message.content.some((part) => part.type === "text" && part.text.trim())) {
+						this.providerErrors?.clear();
+						this.clearStatusIndicator("retry");
+					}
 					this.streamingMessage = event.message;
 					this.streamingReveal.setTarget(assistantStreamingHeadMessage(event.message));
 
@@ -5164,6 +5234,12 @@ export class InteractiveMode {
 						this.session.retryAttempt,
 						this.session.currentAbortSource,
 					);
+					if (isNetworkProviderMessage(renderedMessage)) {
+						this.getProviderErrors().record(renderedMessage.errorMessage ?? "", this.toolOutputExpanded);
+					} else if (renderedMessage.stopReason === "stop" || renderedMessage.stopReason === "toolUse") {
+						this.providerErrors?.clear();
+						this.clearStatusIndicator("retry");
+					}
 					let errorMessage = renderedMessage.errorMessage;
 					this.syncTrailingAssistantText(renderedMessage);
 					this.assistantTextSegments.clear();
@@ -5284,6 +5360,7 @@ export class InteractiveMode {
 
 			case "agent_idle":
 				this.agentIdle = true;
+				this.providerErrors?.finish();
 				if (this.pendingUserInputs.length === 0) {
 					this.clearStatusIndicator("working");
 				}
@@ -5292,6 +5369,13 @@ export class InteractiveMode {
 
 			case "continuation_error":
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
+				break;
+
+			case "session_abort":
+				this.providerErrors?.clear();
+				this.clearStatusIndicator("retry");
+				this.pendingZeroDelayRetryIndicator = undefined;
+				this.ui.requestRender();
 				break;
 
 			case "compaction_start": {
@@ -5418,7 +5502,9 @@ export class InteractiveMode {
 					this.footer?.setCompactionDelegated?.(false);
 				} else if (event.errorMessage) {
 					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
-					if (event.reason === "manual") {
+					if (isNetworkProviderError(errorMessage)) {
+						this.getProviderErrors().finish(errorMessage);
+					} else if (event.reason === "manual") {
 						this.showError(errorMessage);
 					} else {
 						this.chatContainer.addChild(new Text(theme.fg("error", errorMessage), 1, 0));
@@ -5531,6 +5617,11 @@ export class InteractiveMode {
 				break;
 
 			case "retry_fallback_exhausted":
+				if (isNetworkProviderError(event.lastError)) {
+					this.getProviderErrors().finish(event.lastError);
+					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
+					break;
+				}
 				this.showNoticeBox({
 					title: `✕ Fallback chain exhausted · ${event.chainKey}`,
 					tone: "error",
@@ -5550,6 +5641,9 @@ export class InteractiveMode {
 				break;
 
 			case "auto_retry_start": {
+				if (isNetworkProviderError(event.errorMessage)) {
+					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
+				}
 				// During retry waits, isStreaming flips false between attempts. The main Esc handler
 				// keys off both isStreaming and retryAttempt so we keep the same close-out path here;
 				// no separate retry-only handler is installed (the prior one only called
@@ -5583,7 +5677,11 @@ export class InteractiveMode {
 				}
 				this.clearStatusIndicator("retry");
 				// Show error only on final failure (success shows normal response)
-				if (!event.success) {
+				if (event.success || event.finalError === "Retry cancelled") {
+					this.providerErrors?.clear();
+				} else if (isNetworkProviderError(event.finalError)) {
+					this.getProviderErrors().finish(event.finalError, event.attempt);
+				} else {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
 				}
 				this.ui.requestRender();
@@ -5591,7 +5689,11 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_scheduled": {
-				this.showError(event.errorMessage);
+				if (isNetworkProviderError(event.errorMessage)) {
+					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
+				} else {
+					this.showError(event.errorMessage);
+				}
 				this.showSummarizationRetryStatusIndicator(event);
 				break;
 			}
@@ -5608,6 +5710,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_finished": {
+				this.providerErrors?.clear();
 				this.clearStatusIndicator("retry");
 				this.ui.requestRender();
 				break;
@@ -5648,7 +5751,12 @@ export class InteractiveMode {
 		this.showRetryStatusIndicatorWithCadence(event);
 	}
 
-	private showRetryStatusIndicatorWithCadence(event: { attempt: number; maxAttempts: number; delayMs: number }): void {
+	private showRetryStatusIndicatorWithCadence(event: {
+		attempt: number;
+		maxAttempts: number;
+		delayMs: number;
+		errorMessage: string;
+	}): void {
 		const refreshIntervalMs = largeSessionWorkingStatusInterval(
 			this.sessionManager.getEntryCount(),
 			DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS,
@@ -5657,7 +5765,14 @@ export class InteractiveMode {
 		const indicator =
 			refreshIntervalMs === DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS ? undefined : { intervalMs: refreshIntervalMs };
 		this.showStatusIndicator(
-			new RetryStatusIndicator(this.ui, event.attempt, event.maxAttempts, event.delayMs, indicator),
+			new RetryStatusIndicator(
+				this.ui,
+				event.attempt,
+				event.maxAttempts,
+				event.delayMs,
+				indicator,
+				isNetworkProviderError(event.errorMessage),
+			),
 		);
 		this.ui.requestRender();
 	}
@@ -5723,12 +5838,24 @@ export class InteractiveMode {
 			return;
 		}
 
-		if (this.streamingComponent) {
-			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
-			if (streamingIndex >= 0) {
-				this.chatContainer.children.splice(streamingIndex, 0, component);
-				return;
-			}
+		const children = this.chatContainer.children;
+		const streamingIndex = this.streamingComponent ? children.indexOf(this.streamingComponent) : -1;
+		const insertIndex = streamingIndex >= 0 ? streamingIndex : children.length;
+		const options = this.session.extensionRunner.getEntryRendererOptions(entry.customType);
+		const replacedIndex = replacedEntryCardIndex(
+			children,
+			insertIndex,
+			entry,
+			options,
+			(child) => child === this.lastStatusText || child === this.lastStatusSpacer,
+		);
+		if (replacedIndex >= 0) {
+			children.splice(replacedIndex, 1, component);
+			return;
+		}
+		if (streamingIndex >= 0) {
+			children.splice(streamingIndex, 0, component);
+			return;
 		}
 
 		this.chatContainer.addChild(component);
@@ -5775,6 +5902,7 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+		if (message.role === "user") this.providerErrors?.newTurn();
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -5862,6 +5990,12 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
+				if (isNetworkProviderMessage(message)) {
+					this.getProviderErrors().record(message.errorMessage ?? "", this.toolOutputExpanded);
+					this.providerErrors?.finish();
+				} else if (message.stopReason === "stop" || message.stopReason === "toolUse") {
+					this.providerErrors?.clear();
+				}
 				const assistantComponent = new AssistantMessageComponent(
 					message,
 					this.hideThinkingBlock,
@@ -5871,6 +6005,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
+				assistantComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
 				this.chatContainer.addChild(assistantComponent);
 				break;
 			}
@@ -5890,6 +6025,7 @@ export class InteractiveMode {
 
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
+		this.streamingComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
 		// streamingReveal owns the streaming component. Overwriting the full head
@@ -5921,6 +6057,7 @@ export class InteractiveMode {
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
+				existing.setProviderErrorOwned(isNetworkProviderMessage(message));
 				existing.updateContent(runMessage, true);
 				continue;
 			}
@@ -5933,6 +6070,7 @@ export class InteractiveMode {
 				this.getMarkdownTransformers(),
 			);
 			segment.setExpanded(this.toolOutputExpanded);
+			segment.setProviderErrorOwned(isNetworkProviderMessage(message));
 			this.assistantTextSegments.set(runStart, segment);
 			const followingToolCall = content.slice(index).find((block) => block.type === "toolCall");
 			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;
@@ -5956,7 +6094,13 @@ export class InteractiveMode {
 		this.assistantTextSegments.clear();
 	}
 
-	private createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
+	private createToolExecutionComponent(
+		requestedName: string,
+		toolCallId: string,
+		args: unknown,
+	): ToolExecutionComponent {
+		// A call the agent resolves to another tool (gateway namespace, recasing) renders as that tool from its first frame.
+		const toolName = this.session.resolveToolCallName(requestedName);
 		if (this.chrome) {
 			return new ToolExecutionComponent(
 				toolName,
@@ -5990,6 +6134,7 @@ export class InteractiveMode {
 		items: readonly RenderSessionItem[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
+		this.providerErrors = undefined;
 		this.clearPendingTools();
 		// The rebuilt transcript re-derives continuity notices from persisted
 		// messages, so the tracker's suppression state must not survive the
@@ -6023,31 +6168,13 @@ export class InteractiveMode {
 			const message = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
-				this.addMessageToChat(message);
-				// Render tool call components
-				for (const content of message.content) {
-					if (content.type === "toolCall") {
-						const component = this.createToolExecutionComponent(content.name, content.id, content.arguments);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
-
-						if (message.stopReason === "aborted" || message.stopReason === "error") {
-							let errorMessage: string;
-							if (message.stopReason === "aborted") {
-								errorMessage =
-									abortedMessageForRendering(message, 0, undefined).errorMessage || "Provider request failed";
-							} else {
-								errorMessage = message.errorMessage || "Error";
-							}
-							component.updateResult({
-								content: [{ type: "text", text: errorMessage }],
-								isError: true,
-							});
-						} else {
-							renderedPendingTools.set(content.id, component);
-						}
-					}
-				}
+				replayAssistantTools(message, {
+					expanded: this.toolOutputExpanded,
+					addMessage: (part) => this.addMessageToChat(part),
+					addChild: (component) => this.chatContainer.addChild(component),
+					createTool: (name, id, args) => this.createToolExecutionComponent(name, id, args),
+					pending: renderedPendingTools,
+				});
 				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
 					this.maybeShowAssistantDiagnostics?.(message);
 					const miss = cacheMisses.get(message);
@@ -6543,6 +6670,10 @@ export class InteractiveMode {
 		this.setComposerReply();
 		const text = this.getExpandedEditorText().trim();
 		if (!text) return;
+		if (isBareSkillNamespace(text)) {
+			this.openSkillPickerForBareNamespace();
+			return;
+		}
 
 		// Queue non-command input during compaction; dispatch extension commands.
 		// This is the Alt+Enter path (bound directly to app.message.followUp), which
@@ -6755,9 +6886,19 @@ export class InteractiveMode {
 	}
 
 	showError(errorMessage: string): void {
+		if (isNetworkProviderError(errorMessage, true)) {
+			this.getProviderErrors().record(errorMessage, this.toolOutputExpanded);
+			this.ui.requestRender();
+			return;
+		}
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${sanitizeTuiErrorMessage(errorMessage)}`), 1, 0));
 		this.ui.requestRender();
+	}
+
+	private getProviderErrors(): ProviderErrorPresentation {
+		this.providerErrors ??= new ProviderErrorPresentation(this.chatContainer);
+		return this.providerErrors;
 	}
 
 	showNoticeBox(spec: NoticeSpec): void {
@@ -7030,6 +7171,25 @@ export class InteractiveMode {
 
 	private hasRegisteredCommand(command: string): boolean {
 		return !!this.session.extensionRunner.getCommand(command);
+	}
+
+	/**
+	 * `/skill` and `/skill:` name the skill namespace, not a skill, so they never reach the model:
+	 * the editor is reset to `/skill:` with the skill list open, or a warning explains why it is empty.
+	 */
+	private openSkillPickerForBareNamespace(): void {
+		if (!this.settingsManager.getEnableSkillCommands()) {
+			this.showWarning("Skill commands are disabled (enableSkillCommands setting).");
+			this.editor.setText("");
+			return;
+		}
+		if (this.session.resourceLoader.getSkills().skills.length === 0) {
+			this.showWarning("No skills are loaded.");
+			this.editor.setText("");
+			return;
+		}
+		this.editor.setText("/skill:");
+		this.editor.openAutocomplete?.();
 	}
 
 	private isExtensionCommand(text: string): boolean {
@@ -7465,6 +7625,63 @@ export class InteractiveMode {
 				},
 			);
 			return { component: selector, focus: selector.getSettingsList() };
+		});
+	}
+
+	private async handleThinkingCommand(searchTerm?: string): Promise<void> {
+		if (!searchTerm) {
+			await this.showThinkingSelector();
+			return;
+		}
+
+		// Awaited at the boundary: the shared-host proxy answers this over RPC.
+		const availableLevels = await this.session.getAvailableThinkingLevels();
+		const normalized = searchTerm.trim().toLowerCase();
+		const level = availableLevels.find((candidate) => candidate.toLowerCase() === normalized);
+		if (!level) {
+			this.showError(`Unknown thinking level "${searchTerm}". Available levels: ${availableLevels.join(", ")}.`);
+			return;
+		}
+
+		this.selectThinkingLevel(level, false);
+	}
+
+	/**
+	 * `persist: false` scopes the level to this session; `persist: true` also
+	 * records it as the model's remembered level (the Ctrl+S path of the selector).
+	 */
+	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
+		try {
+			if (persist) this.session.setThinkingLevel(level);
+			else this.session.setSessionThinkingLevel(level);
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private async showThinkingSelector(): Promise<void> {
+		// Awaited at the boundary: the shared-host proxy answers this over RPC.
+		const availableLevels = await this.session.getAvailableThinkingLevels();
+		this.showSelector((done) => {
+			const selectLevel = (level: ThinkingLevel, persist: boolean) => {
+				this.selectThinkingLevel(level, persist);
+				done();
+			};
+			const selector = new ThinkingSelectorComponent(
+				this.session.thinkingLevel,
+				availableLevels,
+				(level) => selectLevel(level, false),
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+				(level) => selectLevel(level, true),
+				this.settingsManager.getDefaultThinkingLevel(),
+			);
+			return { component: selector, focus: selector };
 		});
 	}
 
@@ -8180,15 +8397,15 @@ export class InteractiveMode {
 	private showSessionSelector(): void {
 		this.showSelector((done) => {
 			const selector = new SessionSelectorComponent(
-				(onProgress) =>
-					SessionManager.list(this.sessionManager.getCwd(), this.sessionManager.getSessionDir(), onProgress),
-				(onProgress) =>
-					this.sessionManager.usesDefaultSessionDir()
-						? SessionManager.listAll(onProgress)
-						: SessionManager.listAll(this.sessionManager.getSessionDir(), onProgress),
+				(onProgress) => currentScopeSessions(this.sessionManager, onProgress),
+				(onProgress) => allScopeSessions(this.sessionManager, onProgress),
 				async (sessionPath) => {
 					done();
-					await this.handleResumeSession(sessionPath);
+					const target = await chooseResumePath(sessionPath, this.sessionManager, {
+						confirm: (title, message) => this.showExtensionConfirm(title, message),
+						showError: (message) => this.showError(message),
+					});
+					if (target !== undefined) await this.handleResumeSession(target);
 				},
 				() => {
 					done();
@@ -8228,7 +8445,10 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return result;
 			}
-			this.showStatus("Resumed session");
+			const switchTimings = formatTimings("switch");
+			this.showStatus(
+				switchTimings === undefined ? "Resumed session" : `Resumed session | switch timings: ${switchTimings}`,
+			);
 			return result;
 		} catch (error: unknown) {
 			if (error instanceof MissingSessionCwdError) {
@@ -8315,6 +8535,17 @@ export class InteractiveMode {
 	private async handleLoginCommand(providerRef?: string): Promise<void> {
 		if (!providerRef) {
 			this.showLoginAuthTypeSelector();
+			return;
+		}
+
+		// A TYPED legacy provider id (or its old display name) is rejected by name
+		// so the user learns the new id (senpi#1989). Without this it falls through
+		// to a filtered selector that matches nothing, which reads as "this provider
+		// vanished" rather than "it was renamed". Ids read from disk are normalized
+		// instead and never reach here.
+		const rejection = legacyProviderIdRejection(providerRef);
+		if (rejection) {
+			this.showError(rejection);
 			return;
 		}
 
@@ -9249,6 +9480,7 @@ export class InteractiveMode {
 						: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
 			}
 		}
+		info += formatSessionFailureInfo(stats.failures);
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));

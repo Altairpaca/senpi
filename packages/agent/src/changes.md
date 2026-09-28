@@ -1,3 +1,125 @@
+## 2026-09-24 - Lenient tool-name matching through one shared matcher (senpi#2111)
+
+### What changed
+
+- `packages/agent/src/tool-name-alias.ts`: `resolveToolNameAlias` delegates to `resolveToolNameMatch` from `@earendil-works/pi-ai/utils/tool-name-match` instead of carrying its own regex and fold. It now also folds the full requested name (`MCP__srv__tool` -> `mcp__srv__Tool`), strips namespaces whose id contains underscores (`mcp__my_server__Memory` -> `memory`), and strips the namespace a registered tool carries (`create_issue` -> `mcp_github_create_issue`). It resolves only on a unique match, as before.
+
+### Why
+
+- The agent copy folded only the namespace-stripped suffix while the Anthropic tool-reference copy folded both the full name and the suffix. That drift is how senpi#2104 happened, and it left several plausible spellings answering `Tool <name> not found`.
+
+### Why an extension could not handle it
+
+- Tool-call name resolution runs inside the agent loop before any hook sees the call.
+
+### Expected merge conflict zones
+
+- LOW: `tool-name-alias.ts` (fork-only).
+
+## 2026-09-24 - Strip a gateway namespace whatever the casing of its prefix (senpi#2104)
+
+### What changed
+
+- `packages/agent/src/tool-name-alias.ts`: `GATEWAY_TOOL_NAMESPACE` matches the `mcp__<id>__` prefix case-insensitively, so `Mcp__686f__Eval` and `MCP__686f__Eval` resolve to `eval` like `mcp__686f__Eval` already did. The unique-match rule is unchanged.
+
+### Why
+
+- A model carried the gateway's mixed-case tool names onto the prefix itself and called `Mcp__686f__Eval`. The lowercase-only strip left the prefix in place, the fold compared `mcp686feval` with `eval`, and the call failed with `Tool Mcp__686f__Eval not found`.
+
+### Why an extension could not handle it
+
+- Tool-call name resolution runs inside the agent loop before any hook sees the call.
+
+### Expected merge conflict zones
+
+- LOW: the `GATEWAY_TOOL_NAMESPACE` line in `tool-name-alias.ts` (fork-only).
+
+## 2026-09-24 - Declared tools stay stable while the callable set changes (senpi#2095)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentContext.declaredTools` and `AgentState.declaredTools`, an optional superset of `tools` to declare to the provider.
+- `packages/agent/src/agent.ts`: the initial state and `createContextSnapshot` carry `declaredTools`; `Agent.buildProviderContext` passes the current model.
+- `packages/agent/src/agent-loop.ts`: `buildProviderContext` takes an optional model. When the context has `declaredTools` and the model passes `supportsAllowedToolChoice`, the provider context gets the declared tools (plus any active tool missing from them) as `tools` and the active names as `activeToolNames`; otherwise it gets the active tools exactly as before. Tool-call resolution still reads `context.tools`, so a call to a declared but inactive tool gets the existing `Tool <name> not found` result.
+
+### Why
+
+Shrinking the active tool set rewrote the provider `tools` list and dropped the whole cached prefix on OpenAI GPT-5.6+.
+
+### Why an extension could not handle it
+
+The provider context is assembled inside the agent loop from its context snapshot; no hook runs between the snapshot and the stream call.
+
+### Expected merge conflict zones
+
+- LOW: `buildProviderContext` in `agent-loop.ts` plus one import; `createMutableAgentState`, `buildProviderContext` and `createContextSnapshot` in `agent.ts`; `AgentState` / `AgentContext` in `types.ts`.
+
+## 2026-09-23 - A resolved tool-call name is invisible outside the model's view (senpi#2064)
+
+### What changed
+
+- `packages/agent/src/tool-name-alias.ts`: owns `resolveCallTool` (exact name, then the host `resolveUnknownToolCall`, then the alias rule) and `withToolNameCorrection`, moved out of `agent-loop.ts`. The `[auto-corrected]` notice is now a model-only text part (`audience: "model"`, senpi#2041): the model still receives the exact text, renderers omit it.
+- `packages/agent/src/agent-loop.ts`: the sequential and parallel executors resolve the tool before emitting `tool_execution_start`, so the start event names the tool that runs, matching `tool_execution_end` and the tool result. `prepareToolCall` takes the resolved tool.
+
+### Why
+
+- After senpi#2025 the call ran as the resolved tool, but the user still saw the correction: the start event and the transcript carried the requested `mcp__<id>__Edit` name, and the notice was plain visible text.
+
+### Why an extension could not handle it
+
+- Tool resolution and event emission happen inside the agent loop before any hook runs.
+
+### Expected merge conflict zones
+
+- LOW: the `tool_execution_start` emit sites in `executeToolCallsSequential`/`executeToolCallsParallel` and the head of `prepareToolCall` in `agent-loop.ts`; `tool-name-alias.ts` (fork-only).
+
+## 2026-09-23 - Resolve gateway-namespaced and recased tool-call names (senpi#2025)
+
+### What changed
+
+- `packages/agent/src/tool-name-alias.ts`: new `resolveToolNameAlias(requested, available)`. An exact name wins; otherwise a `mcp__<id>__` gateway namespace is stripped and the remainder is compared with case and `-`/`_` separators folded away. A name resolves only when exactly one available tool owns the folded key, so two candidates are never guessed between. `toolNameCorrectionNotice` renders the `[auto-corrected]` line the result carries.
+- `packages/agent/src/agent-loop.ts`: `prepareToolCall` tries the alias against the active tools after the exact lookup and the host's `resolveUnknownToolCall`. When the resolved tool's name differs from the requested one, preparation continues on a copy of the call carrying the canonical name, so `beforeToolCall`, execution, `tool_execution_update`/`tool_execution_end` and the tool result all see the registered name; the result is prefixed with the correction notice. Sequential-mode lookup and immediate outcomes use the resolved call.
+- `packages/agent/src/index.ts`: exports `resolveToolNameAlias` so a host with a deferred catalog applies the same rule.
+
+### Why
+
+- On a Claude-Code-compatible gateway path the model sees non-native tools as `mcp__<id>__<PascalName>`. For a deferred tool it learned by its bare name from `tool_search`, a model wrote `mcp__686f__team_create`; the exact lookup answered `Tool mcp__686f__team_create not found` and a full turn was wasted before the model retried the bare name. senpi#1480 already folds the same shapes when repairing replayed history; the inbound call path had no equivalent.
+- Hooks must see the canonical name: a permission hook that matches `bash` would otherwise be bypassed by a call named `mcp__x__Bash` that still ran `bash`.
+
+### Why an extension could not handle it
+
+- Tool lookup happens inside the agent loop before any `tool_call` hook fires; an extension cannot rename a call the loop has already rejected as unknown.
+
+### Expected merge conflict zones
+
+- MEDIUM: `prepareToolCall` in `packages/agent/src/agent-loop.ts` (split into `prepareToolCall` + `prepareResolvedToolCall`), the `PreparedToolCall` type, and the tail of `finalizeExecutedToolCall`.
+- LOW: `packages/agent/src/tool-name-alias.ts` is new; one export line in `packages/agent/src/index.ts`.
+
+## 2026-09-22 - Tool-argument preparation runs on a detached copy (senpi#1472)
+
+### What changed
+
+- `packages/agent/src/tool-arguments.ts`: new home for `prepareToolArguments` and `prepareAgentToolCallArguments`. The shim now receives `structuredClone(args)`, so what it returns is always a separate object from the one the assistant message holds.
+- `packages/agent/src/index.ts`: exports `prepareToolArguments` so a package outside the agent loop reaches the same detach seam instead of calling a tool's shim directly.
+- `packages/agent/src/agent-loop.ts`: delegates `prepareAgentToolCallArguments` to that module and re-exports it, so the public surface is unchanged. The old identity guard (`prepared === toolCall.arguments` short-circuits to the original call) is gone: it only ever held for a shim that returned its input, which is exactly the shim that had already rewritten it.
+- `packages/senpi-codemode/src/tool/render.ts`: the eval call renderer clamps the summary it displays through `clampEvalSummary`. Before this change the in-place mutation clamped the message itself, so every render surface inherited the limit for free; with preparation detached, the persisted assistant keeps the provider's full summary and a rebuilt transcript would have shown it untruncated. The clamp is idempotent, so a live turn (whose `tool_execution_start` already carries the prepared arguments) renders identically.
+
+### Why
+
+- `prepareArguments` is documented as a normalizer, but several shims normalize by mutating the object they were handed and returning that same reference: `packages/senpi-codemode/src/tool/eval-tool.ts` assigns and deletes `record.summary`, and `packages/agent/src/harness/tools/edit.ts` assigns `args.edits`. That object is the one stored in the assistant message, so preparation silently rewrote the answer the provider had produced.
+- On the `claude-sdk-oauth` lane the consequence is expensive rather than cosmetic. `AssistantCommitBoundary` fingerprints the streamed assistant at `message_update` and the committed assistant at `message_end`; a mutated tool argument makes those digests differ, the turn commits as `assistant_rewritten`, the binding is invalidated, and the next turn re-sends the whole conversation. senpi#1472 measured a single such re-send at 1,209,471 bytes with 562,740 cache-write tokens, and one reporting session hit it eleven times.
+- The same mutation also breaks restarts: the persisted sidecar stores `assistantContentHash` of the committed assistant, and a later run compares it against the transcript copy that preparation had already edited.
+- Fixing it at the caller covers every shim, present and future, instead of the one tool that happened to be reported. `validateToolArguments` (`packages/ai/src/utils/validation.ts`) already clones for the same reason, so the cost profile is established.
+
+### Why an extension could not handle it
+
+- `prepareArguments` is invoked by the agent loop between the provider stream and tool execution. No extension hook sits at that seam, and an extension cannot change how the loop hands arguments to a tool it does not own.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `packages/agent/src/agent-loop.ts` and the single re-export line where `prepareAgentToolCallArguments` used to be defined.
+- LOW: `packages/agent/src/tool-arguments.ts` is new; upstream has no file at that path.
+
 ## 2026-09-16 - Grammar-backed fold boundaries for structural reads (senpi#1685)
 
 ### What changed
@@ -1653,3 +1775,26 @@ Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
 - HIGH: `packages/agent/src/harness/env/nodejs.ts` capture pipeline and Windows kill path; `packages/agent/src/types.ts` `AgentLoopConfig`/`AgentTool` interfaces.
 - MEDIUM: `estimateContextTokens`/`findCutPoint` in `compaction.ts`; `execute` bodies of `tools/edit.ts` and `tools/write.ts`; `ShellExecOptions` in `harness/types.ts`.
 - LOW: `convertToLlm` tail in `harness/messages.ts`; `retryNotBefore` signature; the `assistant-terminal-state.ts` export line in `index.ts`.
+
+## 2026-09-27 — Carry providerDiagnostic through the agent (#2197)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `AgentState` keeps `providerDiagnostic` next to `errorMessage`: `turn_end` sets it (revalidated with `sanitizeProviderDiagnostic`) whenever it sets `errorMessage`, and reset/run start clear it with `errorMessage`. `handleRunFailure` copies `readProviderDiagnostic(error)` onto the synthesized failure message when the run was not aborted.
+- `packages/agent/src/types.ts`: `AgentState.providerDiagnostic?: ProviderDiagnostic`.
+- Fork-only `src/assistant-terminal-state.ts`: `createTerminalFailureAssistantMessage` copies `readProviderDiagnostic(error)` for `reason: "error"`.
+
+### Why
+
+- Terminal failure messages are rebuilt field by field, so an adapter's diagnostic attached to a thrown provider error was lost before it reached SDK consumers; `AgentState` exposed only the string error.
+
+### Why an extension could not handle it
+
+- The terminal message literals and `AgentState` reducer are core agent-loop contracts; an extension only sees the rebuilt message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `MutableAgentState`/`createMutableAgentState`, `handleRunFailure` and the `turn_end` case of `processEvents` in `agent.ts`.
+- LOW: the `AgentState` interface tail in `types.ts`.
+
+- Covered production paths: `packages/agent/src/agent.ts`, `packages/agent/src/types.ts`.

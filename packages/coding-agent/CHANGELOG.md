@@ -6,11 +6,557 @@
 
 ### Added
 
+- `readOwnFootprint()` and `readProcessFootprint(pid)` are exported from `@code-yeongyu/senpi`: they return how much memory a process really holds (`{ bytes, measure }`, where `measure` is `phys_footprint` on macOS, `rss_anon` on Linux, `private_usage` on Windows, or `rss` when none of those can be read) without spawning a process. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+
+### Changed
+
+### Fixed
+
+- A shared RPC host no longer stays in memory pressure after its memory was returned. It judged `SENPI_RPC_HOST_RSS_WARN_MB` by RSS, which keeps counting freed memory (2314 MB RSS against a 143 MB footprint after an eval kernel reset), so it kept halving idle parking and reporting `memory_pressure: true`. It now compares the process footprint, and each `host_memory_pressure` record carries `footprintMb` and `measure` beside `rssMb`. `senpi host status` still shows RSS. ([#2261](https://github.com/code-yeongyu/senpi/issues/2261))
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- GPT-6 Astra, Sol, and Luna stay on the stated goal: an unrelated error or bug they run into is reported in the final message instead of being investigated or fixed (unless it blocks the goal), and a quick check such as a short test run is run directly instead of through a monitor. Bug fixes still go to the root cause. ([#2256](https://github.com/code-yeongyu/senpi/issues/2256))
+
+### Fixed
+
+- `new Bun.WebView()` works in eval cells on Windows and Linux, and with `backend: "chrome"` on macOS. Bun builds Chrome-backed views only on the process main thread, so they are now served there for the eval kernel (also when the session runs in an RPC worker host), each kernel through its own private port: a cell cannot reach another session's views, and a kernel reset, a closed session, or a crashed or killed worker closes that kernel's views and ends Bun's Chrome once no view needs it. ([#2248](https://github.com/code-yeongyu/senpi/issues/2248))
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- With Anthropic native tool search, a deferred tool whose parameters are a root union (`anyOf` with no top-level `type`, as the desktop `computer` tool has) no longer makes every request fail with `tools.N.custom.input_schema.type: Field required`: the injected schema is resolved into one object, as resident tools already were. ([#2252](https://github.com/code-yeongyu/senpi/issues/2252))
+- Submitting a bare `/skill` or `/skill:` with Enter or Alt+Enter no longer sends it to the model. The editor goes back to `/skill:` with the skill list open, or a warning says that no skill is loaded or that skill commands are disabled. Choosing the `skill:` row ("Browse available skills") in the slash picker with Enter or Tab now fills in `/skill:` and lists the skills too. ([#2249](https://github.com/code-yeongyu/senpi/issues/2249))
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+- `/sessions` opens the session picker as an alias of `/resume`, and `/help` and the startup tips now say how to change the thinking level (`/thinking <level>`, Shift+Tab, `/efforts <level>`) and how to reopen a past session (`/resume` or `/sessions` in the TUI, `-r` or `-c` from the shell) ([#1437](https://github.com/code-yeongyu/senpi/issues/1437)).
+- `senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider in `models.json` and adds every listed model to that provider's `models` array (the previous file is kept as a timestamped backup). When the provider sets `"compat": { "supportsReasoningEffort": true }`, the `reasoning_efforts` each entry advertises become its `thinkingLevelMap` (the endpoint's own names are sent on the wire, levels it does not list are hidden) and its `default` becomes the model's new `defaultThinkingLevel`. A model's `defaultThinkingLevel` is where a session starts when you have not chosen a level for that model. ([#2196](https://github.com/code-yeongyu/senpi/issues/2196))
+- A model fallback-chain entry that keeps failing is circuit-broken. Once it fails out of its chain (a transient or 5xx failure after the retry budget, or a quota/credit failure), every session in the process on the same agent directory (including `/new` sessions and in-process subagents) skips it without sending a request, for a cooldown that starts at `fallback.circuitCooldownMs` (default 60s, `0` disables) and doubles on each consecutive failure up to `fallback.circuitMaxCooldownMs` (default 30 minutes). Billing, credit, quota, and budget exhaustion open it at once, even on the last entry, while authentication and request-shape errors never do. A provider `Retry-After` header (seconds or HTTP-date, on 429 and 503, now kept on terminal OpenAI-compatible errors) keeps it open until that time, a success closes it, and after the cooldown exactly one session probes it: the probe holds the circuit exclusively until it settles - even against a background probe-back of the same session - falls back on its first failure without same-model retries, and 429 probe-backs wait for the circuit too. The chain still sends the request when every entry is open. `/session` and `get_session_stats` gain a failure-cost report: failed requests and their share, time spent in them, and the retries after a failure in the same turn that missed the prompt cache, with their uncached input tokens. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
+- `senpi host status` (and each `senpi host status --all` row) shows `memory_pressure`: `true` while that endpoint's host reads its memory above `SENPI_RPC_HOST_RSS_WARN_MB`, `false` otherwise, `null` when nothing answers. Multi-session hosts report the same flag in `get_protocol_info`. It is informational only: a pressured host still admits every session.
+- `senpi host gc [--agent-dir <dir>] [--json]` removes the state (directory, `endpoint.json`, socket, successor/shield siblings) of RPC host endpoints whose host is provably gone - no live generation, no live session-path claim, a socket that refuses - checked under that endpoint's ensure lock. A refused connection counts only when the entry is a socket, and a handoff successor is recorded from the moment it starts, so gc never judges an endpoint by a dead predecessor. It removes the siblings and the socket before the directory, leaves a sibling that is a directory in place (reported under `skipped`), and reports an endpoint whose removal fails as `failed` while it goes on to the others. It never signals a process, never runs on its own inside `ensure` or `status`, and reports every endpoint it keeps with the reason (`live_generation`, `live_claim`, `reachable`, `locked`, `legacy_layout`, `unknown_identity`). ([#2226](https://github.com/code-yeongyu/senpi/issues/2226))
+- `senpi host status --all` lists every RPC host endpoint under the agent directory - including ones whose host exited or crashed - without removing anything, reading up to 64 of them at once so a batch of hung hosts costs one 10 s probe, and hundreds of them cannot exhaust the file descriptors, and `senpi host status` adds `crashes`, `shard`, `claims_live`, and (with `--include-workers`) `session_rows` and `claims`. Each endpoint directory now keeps a durable `endpoint.json`, written atomically (a plain exclusive create on exFAT and other filesystems without hard links); the next `senpi host ensure` rewrites one that is torn instead of leaving the endpoint unaddressable. `senpi host shard-path --kind <p|i> --owner <id>` prints the per-session/per-thread shard socket, and `shardKey`, `shardSocketPath`, `shardSocketPathForKey` and `daemonDirectoryName` are exported from `@code-yeongyu/senpi` for clients that compute the same names. Every session on a socket host sees `host_socket` (the endpoint's resolved path, identical for every generation of that endpoint) and `host_instance` in its session context; a client-supplied value for either key is overwritten. ([#2226](https://github.com/code-yeongyu/senpi/issues/2226))
+
+### Changed
+
+- `ensureHost()` returns `release()` on `EnsuredHost` (public SDK type), and every caller must call it once its own client is attached, or right away when it attaches later: until then the host counts the calling process as attached, so a running process that never releases keeps a transient host from idle-exiting. The interactive host runtime and `senpi host ensure` release after attaching; embedders that call `ensureHost()` directly need the same call. ([#2227](https://github.com/code-yeongyu/senpi/issues/2227))
+- Upgrading from 2026.9.27-4 or older: a host that an older build started through a socket path that is not canonical (a `/tmp/...` path on macOS, or a path through a symlinked directory) keeps its registration in the directory named after that spelling. This build attaches to such a host with `pid: 0` and cannot hand it off to a new generation, and `senpi host stop` and `senpi host handoff` through this build refuse it as `unknown_owner`. Stop it with the build that started it, or let it idle out; the next ensure then registers its host in the canonical directory. Until every client on the machine runs this release, an older build's ensure and this build's ensure, handoff or gc through such a spelling take different locks and do not wait for each other, so do not run `senpi host gc` while older clients may still be starting hosts there. A socket path whose directories contain no symlink is not affected: its directory and its lock stay the same.
+- A shared RPC host's stall report now says whether the host was busy or was not running: the stderr line gains `cpu=<ms> heap=<+/-MB>` for the stalled window, and the `host_stalled` record gains `processCpuMs` and `heapDeltaMb`. CPU close to the stall length means the host's own work (or a garbage collection) held the loop; CPU close to zero means the machine did not schedule the process. ([#2211](https://github.com/code-yeongyu/senpi/issues/2211))
+
+### Fixed
+
+- `/thinking` and `/thinking <level>` now open the thinking-level selector or set the session level instead of being sent to the model as a user message; the interactive dispatch dropped by the upstream sync merge is restored with argument completions ([#1437](https://github.com/code-yeongyu/senpi/issues/1437)).
+- Submitting `/skill` or `/skill:` on its own no longer sends that text to the model: the editor goes back to `/skill:` with the skill list open, or shows a warning when no skill is loaded or skill commands are disabled. ([#2249](https://github.com/code-yeongyu/senpi/issues/2249))
+- A transient RPC host with a short idle window no longer exits between `ensureHost()` and the ensuring client's first attach. `ensureHost()` now keeps the connection that proved the host ready as an attach hold and returns `release()` on `EnsuredHost`; the interactive host runtime and `senpi host ensure` release it once attached. A slow attach (a loaded machine, a slow lock release) found the host already gone (`connect ENOENT`). ([#2227](https://github.com/code-yeongyu/senpi/issues/2227))
+- An RPC host that goes away removes its registration pointer last, after `settings.json` and its generation record, on the graceful and the crash path alike, so "no host registered" is never observable while the rest of its daemon state still exists. On Windows the crash path removed the pointer first and then the other files one by one. ([#2241](https://github.com/code-yeongyu/senpi/issues/2241))
+
+- A refused `senpi host handoff` (the new generation failed before or after it started, or never answered) no longer leaves traces behind. The endpoint's `settings.json` kept naming the killed successor, so the running host's next restart read the refused generation's settings. The successor's generation record is now released once it has exited, and `settings.json` is restored byte for byte, so `senpi host status --all` never lists the refused generation either.
+- `senpi host handoff` now holds the endpoint's ensure lock while it brings the successor up, like `senpi host ensure` and `senpi host gc`. A concurrent ensure used to probe the endpoint mid-handoff and attach to the generation that was about to drain; it now waits and attaches to the successor the handoff registered.
+- Two spellings of one RPC host socket (`/tmp/...` and `/private/tmp/...`, or a path through a symlinked directory) now share one daemon directory, not only one ensure lock. Each spelling used to keep its own directory, so an ensure through the second spelling attached without knowing which process it attached to and `senpi host stop` through it refused a host the first spelling had started. A socket spelled canonically keeps the directory it already had; a directory an older build named after another spelling is still listed and collected by `senpi host gc`.
+- Two spellings of one RPC host socket (`/tmp/...` and `/private/tmp/...`, or a path through a symlinked directory) now share one ensure lock. `senpi host gc` working through one spelling could otherwise remove a socket that a `senpi host ensure` through the other spelling had just started.
+- A socket host started with `--listen` now exits after its empty-host window even while a client keeps a connection open that only sends `observe: true` reads. Such a connection used to count as a client, so a status panel that stayed connected kept an empty host running forever.
+- Polling `senpi host status` or `senpi host status --all` no longer keeps an RPC host alive. Each poll used to count as a client attaching and restarted the host's idle window, so a panel or doctor loop polling faster than the window (15 minutes by default) kept every host it looked at running forever. Status reads now mark themselves `observe: true` on `get_protocol_info`/`list_sessions`, and a connection that only sends such reads never counts as activity.
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The shared RPC host no longer refuses new worker sessions when its memory crosses a watermark: it has no resource caps, so every open is admitted. Memory pressure is still reported and idle sessions still park sooner. `SENPI_RPC_HOST_RSS_REFUSE_MB` is no longer read. `senpi host status` adds `host_rss_mb` (the supervisor and host processes, as `ps` shows them) beside `rss_mb` (the whole process tree, including every tool the sessions spawned), per generation too. ([#2207](https://github.com/code-yeongyu/senpi/issues/2207))
+
+### Fixed
+
+- RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- Startup and working tips for the `/computer` command (stop chord, background input, look-only permissions, macOS grants), shown only where an extension registers `/computer`. ([#2204](https://github.com/code-yeongyu/senpi/issues/2204))
+- Interactive and print processes leave a record when they crash natively. Each writes a lifetime marker under `<agent dir>/process-crashes/live/` that any exit JavaScript can observe removes; the next start turns the marker of a dead process into one entry in `process-crashes/crashes.jsonl` with the process kind, uptime, and Bun and senpi versions. RPC host crash records now name their kind and versions too. ([#2194](https://github.com/code-yeongyu/senpi/issues/2194))
+- RPC `get_state` reports `lastProviderDiagnostic`, the structured provider failure family (auth, rate limit, quota, context limit, invalid request, provider unavailable) of the most recent failed turn; the failed assistant message in `message_end`, `--mode json` output and the session file carries the same `providerDiagnostic`. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
+- The in-session `/resume` selector offers to move a session of this repository recorded at another path (a moved or re-cloned checkout) here, like `--session <id>` does, and both `/resume` and `--resume` list the sessions of this repository whose old path is gone in the current-folder view, marked "moved from <old path>". `--continue` in a project with no session of its own offers the newest moved one. A move now refuses while another senpi process still has the session open (naming its pid and directory), and concurrent moves of one session are serialized. ([#2184](https://github.com/code-yeongyu/senpi/issues/2184))
+
+### Changed
+
+### Fixed
+
+- Starting a branded install (such as omo) no longer empties an upstream pi install: `~/.pi/agent`, `~/.pi/mom` and a project's `.pi` are copied into the branded directories and left untouched. If an earlier start already moved them, the next start copies pi's settings, credentials, sessions and extensions back into a `~/.pi/agent` (and `~/.pi/mom`) that holds nothing of the user's, without overwriting any real file. ([oh-my-openagent#8039](https://github.com/code-yeongyu/oh-my-openagent/issues/8039))
+- Task children and other RPC clients no longer fail to open a session after 30 s when the shared host is busy. Once the host acknowledges an `open_session` with its `queued` record, the client waits for the answer (up to 10 minutes) instead of giving up at the generic 30 s request deadline. A loaded host was measured answering after 57 s. A timeout after the acknowledgement names the queue position. ([#2209](https://github.com/code-yeongyu/senpi/issues/2209))
+- A shared RPC host keeps opening sessions after the directory of a session it still holds is deleted (a task child's directory removed with its record, or a QA run's temp project). Every listing and open used to fail with `ENOENT`, so every new task child on the machine failed to start. An unattached session whose directory is gone is now closed with the `session_closed` reason `session_dir_removed`. ([#2206](https://github.com/code-yeongyu/senpi/issues/2206))
+- A Claude subscription (`anthropic-subscription`) turn no longer fails with "Anthropic Subscription pre-replay buffer overflow" or "result arrived before replay claim" when Claude Code is still running a turn of its own (a background task notification or a background subagent) as the message is sent. That turn's output is no longer counted against, or flushed into, the waiting turn, and the session stays open. ([#2192](https://github.com/code-yeongyu/senpi/issues/2192))
+- MCP tools are registered once per session. Before, a server whose catalog was still loading when the startup window ended had its catalog listed again and every tool registered twice, and each connect re-registered an unchanged catalog about 300ms later. ([#2177](https://github.com/code-yeongyu/senpi/issues/2177))
+
+### Removed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- Extension tools can declare `kernelPrelude` (JavaScript/Python snippets, one documentation line, exported names) to add globals to eval kernels while the tool is active; `getAllTools()` projects it and rejects exports that shadow built-in kernel helpers. ([#2128](https://github.com/code-yeongyu/senpi/issues/2128))
+- Extension tools can declare `permissionParser(input, cwd)`, so permission rules can gate their calls by tier (for example `my_tool:exec=deny`). A built-in parser for the same tool name always wins.
+- New `tool_activated` extension event, fired when the active tool set gains tools through `pi.setActiveTools()`, `tool_search` promotion, or a lazy by-name activation.
+
+- Sessions follow a moved or re-cloned repository: when `--session <id>` (or a `--resume` pick) finds a session filed under another path of the same git repository, senpi shows both paths and offers to move it here, keeping its id, history, goal, loops, and monitors; `--rebind <path|id>` does it without asking, and a different repository keeps the fork prompt. Sessions now record their repository (root commit and `origin` remote) so this works after the old path is gone. ([#2181](https://github.com/code-yeongyu/senpi/issues/2181))
+
+### Changed
+
+### Fixed
+
+- The built-in Fireworks default is `accounts/fireworks/models/kimi-k3`; the previous default `kimi-k2p6` is no longer in the Fireworks catalog. ([#2175](https://github.com/code-yeongyu/senpi/issues/2175))
+
+- Answering `y` or `yes` to "Fork this session into current directory?" (shown when `--session` finds the session in another project, for example after moving the repository) now forks the session instead of printing `Aborted.`; closing the input without an answer still declines. ([#2180](https://github.com/code-yeongyu/senpi/issues/2180), [#1042](https://github.com/code-yeongyu/senpi/pull/1042) by [@beengineer500](https://github.com/beengineer500))
+
+### Removed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- The interactive UI shows a one-time "Running on Node.js" notice (once per version) when senpi or OmO Native starts on Node.js. It says how to install or upgrade Bun and gives the clean reinstall command for the package manager that installed it, for example `npm uninstall -g @code-yeongyu/senpi && bun add -g --ignore-scripts @code-yeongyu/senpi`. Set `SENPI_RUNTIME=node` (`OMO_RUNTIME=node` for OmO Native) to stay on Node.js without it, or `SENPI_SKIP_RUNTIME_NOTICE=1` to hide it. ([#2157](https://github.com/code-yeongyu/senpi/issues/2157))
+
+### Changed
+
+- npm, pnpm, Yarn, and npx installs now run on Bun when Bun 1.4.0 or newer is installed, like `bun add -g` installs already did. `SENPI_RUNTIME=node` keeps them on Node.js. ([#2157](https://github.com/code-yeongyu/senpi/issues/2157))
+
+### Fixed
+
+- A session recovers after the provider rejects an image. It used to fail every later turn, text-only ones included, with `Codex error: The image data you provided does not represent a valid image`. The rejected image is now replaced in later requests by a note naming its file, the error says which file was left out, and the next message goes through, also after a restart. ([#2170](https://github.com/code-yeongyu/senpi/issues/2170))
+- The read tool finds a file whose path is wrapped in quotes, such as the `"C:\Users\<user>\Pictures\Screenshots\aaa.png"` that Windows Explorer's "Copy as path" produces, instead of failing with ENOENT. ([#2170](https://github.com/code-yeongyu/senpi/issues/2170))
+- On Bun 1.3.x, extensions now load when they declare a package directory as their entry (`"pi": { "extensions": ["."] }`) or depend on a package that requires a JSON file, such as ajv. Both used to fail with `Cannot find module 'file:/…'` or `ENOENT reading "file:/…"` even though Bun itself loads them. ([#2164](https://github.com/code-yeongyu/senpi/issues/2164))
+- Automatic session titles work on models that cannot turn reasoning off, such as `openrouter/meta/muse-spark-1.3-contributor` and Z.ai GLM 5.3. The title request now asks for the model's lowest supported reasoning level and no longer fails with `Reasoning is mandatory for this endpoint and cannot be disabled. (HTTP 400)`. A title that still fails is recorded in `logs/session.log` instead of showing a runtime error. ([#2163](https://github.com/code-yeongyu/senpi/issues/2163))
+
+### Removed
+
+## [2026.9.26] - 2026-09-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `bun add @code-yeongyu/senpi` works again. 2026.9.25 declared five unpublished desktop packages as dependencies, which npm installs from the bundle but bun looks up on the registry and fails; the package no longer ships them until a released feature uses them. ([#2141](https://github.com/code-yeongyu/senpi/issues/2141))
+
+- A turn that keeps repeating is caught again when its text contains `Ask:` outside a handoff block; only the restated request inside a handoff block is ignored. ([#2143](https://github.com/code-yeongyu/senpi/issues/2143))
+### Removed
+
+## [2026.9.25] - 2026-09-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The package now bundles the desktop computer-use engine (`@code-yeongyu/senpi-desktop-engine` with a per-platform `senpi-desktop-engine` executable) and its protocol package. Nothing uses them yet; the `computer` tool that drives them lands in a later release. ([#2129](https://github.com/code-yeongyu/senpi/pull/2129))
+
+### Fixed
+
+- The Cursor CLI lane (`cursor-cli-oauth`) now sends your request together with any hidden messages that follow it in the same turn; the first request of a session was reaching the model as only the hidden plan reminder, and the model replied that the request was empty. ([#2139](https://github.com/code-yeongyu/senpi/issues/2139))
+
+- The repetitive-turns stream rule no longer aborts a handoff block because it restates your request; it compares only the status the block reports, so an agent that repeats the same status is still stopped, and its remediation no longer forbids progress reports. ([#2135](https://github.com/code-yeongyu/senpi/issues/2135))
+
+- The first-turn plan opener now waits for your first request instead of arming on a turn an extension started before you spoke (such as a first-launch onboarding greeting), so your real request still opens with a phased todo list. `before_agent_start` handlers can read `event.trigger` (`"prompt"` or `"extension"`). ([#2137](https://github.com/code-yeongyu/senpi/issues/2137))
+- When every todo closes, the cue in the todo result now says that any other report an instruction asks for (a self-review, a checklist) goes inside the handoff block's For you slot, so a project rule that asks for a report no longer replaces the block. ([#2133](https://github.com/code-yeongyu/senpi/issues/2133))
+
+### Removed
+
+## [2026.9.24-3] - 2026-09-24
+
+### Breaking Changes
+
+- `ctx.getPromptCachePrefixRequest()` resolves `{ status: "ready", request }` or `{ status: "skipped", reason }` instead of the request or `undefined`, and accepts `{ signal }`. ([#2115](https://github.com/code-yeongyu/senpi/issues/2115))
+
+### Added
+
+- When a main-session turn ends text-only (no active goal, no continuation, no question to the user, not print/json) while the todo list still has open tasks, the agent gets one hidden `senpi.todo-owed` followUp naming the Ask/Now/Next anchors; a second one is prefixed "Second and final reminder. ", after which a warning notification fires once and the backstop stays silent until the next accepted user message. Set `todo.turnEndBackstop: false` to disable it. ([#2121](https://github.com/code-yeongyu/senpi/issues/2121))
+- The first work request of a session (not a question) now opens with a phased `todo` init: a hidden reminder asks for it, and on providers that accept a named tool choice (OpenAI Responses, OpenAI Chat Completions, Anthropic models that allow forced tool use with thinking off) the first request also forces the `todo` call. Set `todo.firstTurnPlan` to `"remind"` for the reminder only or `"off"` to disable it. ([#2121](https://github.com/code-yeongyu/senpi/issues/2121))
+- A `todo` result that creates the list, closes a phase, or closes the last task ends with a one-line cue to write the handoff block, so the report lands right where the transition happens instead of depending on a system-prompt rule the model read long ago. ([#2121](https://github.com/code-yeongyu/senpi/issues/2121))
+- Every `todo` tool result, including errors, opens with `Ask:` (the user request the list serves), `Now:` (the task in progress), and `Next:` (the next open task) lines; the tool result view and `/todo` show the Ask too. The first list anchors to the session's first user message and a later `init` to the newest one; the ask survives compaction. ([#2121](https://github.com/code-yeongyu/senpi/issues/2121))
+- Persistent command monitors now receive `SENPI_MONITOR_ID` and a per-monitor `SENPI_MONITOR_STATE_DIR` that survives restarts, and a re-run after a restart also gets `SENPI_MONITOR_RESTORED=1` and `SENPI_MONITOR_DOWNTIME_MS` (an upper bound), so a watch can keep its baseline and still report a change that happened while senpi was down. ([#2108](https://github.com/code-yeongyu/senpi/issues/2108))
+- `pi.on("before_agent_start", handler, { previewSafe: true })` declares a handler side-effect free in a preview. Only such handlers run in the session-start prompt-cache preview. ([#2115](https://github.com/code-yeongyu/senpi/issues/2115))
+
+### Changed
+
+- Every system prompt now carries a `## Handoff` contract in place of the old stay-quiet / never-restate / announcement-language rules: at the start of a turn, each todo phase change, a blocker or plan change, and the final message, the agent first weighs what the user asked for and what they need to know, then states the original ask, the wanted outcome, what the user needs now (ledger N/M done, findings, blockers), the task in progress, and the next task, and executes that next task in the same response. The shared core and the Claude, Kimi, and Grok cores use a labeled block; GPT-5.5 and GPT-5.6 use an outcome-first block; GPT-6 renders it as the `handoff-report` reporting rule. Every core also gains a completion bullet in Hard Limits: never present partial work as complete or deliver a stub, placeholder, or no-op as the feature. Word counts per preset before and after are recorded in `dynamic-prompt/changes.md` and `prompt-preset/changes.md`. ([#2121](https://github.com/code-yeongyu/senpi/issues/2121))
+- The handoff block's first moment is now the todo list's creation, and the routing line no longer counts as a handoff, so weaker models report the plan to the user instead of treating the routing line as the report. Each core's final-summary rule now describes the handoff block's outcome slot instead of competing with it, so the final message is one handoff block with the outcome and its verification inside. ([#2121](https://github.com/code-yeongyu/senpi/issues/2121))
+- The Grok 4.7 preset is tuned against a field trace instead of being a byte copy of Grok 4.6: it identifies as Grok 4.7, defines done as "the deliverable exists and the user can see it working" instead of a self-declared stop condition, routes deliverable-shaped and refactor requests to direct implementation (proposing first only when the change would be large or destructive), and drops the over-work warning that did not match its observed failure of stopping early. The 4.6 byte-equality tests are replaced by sentinel checks. ([#2121](https://github.com/code-yeongyu/senpi/issues/2121))
+
+### Fixed
+
+- Restarting or resuming a session now brings its persistent monitors back reliably: a stale lease left by a crashed or reused process id is reclaimed, an in-process `/resume` no longer reports its own monitors as "attached in another live process", and a session held by another live process takes over automatically when that process exits. ([#2108](https://github.com/code-yeongyu/senpi/issues/2108))
+- A restored command monitor is reported restored only if it is still running 2 seconds after the re-run; one that exits is reported lost with its exit code and first output line, a watcher left running by a crash is stopped before the re-run (only when its identity is confirmed), and each restored watch gets one "restored after up to <downtime> offline" line. ([#2108](https://github.com/code-yeongyu/senpi/issues/2108))
+- The restore summary is one message that names every monitor with its outcome and reason, is shown to the user as well as the model, and waits for a model instead of being dropped when none is selected yet. ([#2108](https://github.com/code-yeongyu/senpi/issues/2108))
+- One-shot `--print`/`--mode json` runs no longer write terminal leases or manifests, an empty manifest is deleted instead of written, stale leases and empty manifests are cleaned up in the background, and a persistent file monitor no longer times out after 5 minutes. ([#2108](https://github.com/code-yeongyu/senpi/issues/2108))
+- The hidden `<environment_context>` block is now the first content block of the user message it precedes instead of a separate user message, so OpenAI Chat Completions requests no longer carry two consecutive user messages that alternation-enforcing chat templates (vLLM Mistral tool template, Gemma 3) reject. Saved sessions, date or directory rollover, and resume behave as before. ([#2118](https://github.com/code-yeongyu/senpi/issues/2118))
+- The session-start prompt-cache prewarm no longer runs `before_agent_start` handlers that never opted in to previews, so an extension that consumes one-shot state there (such as delivering queued notices) no longer loses it before the first turn. While such a handler is registered the prewarm is skipped and a `prompt-cache-prewarm` entry records `phase: "skipped"` with the reason; a prompt that starts its turn while the preview is still composing cancels it. ([#2115](https://github.com/code-yeongyu/senpi/issues/2115))
+
+### Removed
+
+## [2026.9.24-2] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+- OpenAI GPT-5.6+ sessions on `api.openai.com` prewarm the prompt cache once at session start without delaying the first turn. The prewarm sends the first turn's own prefix (the system prompt after `before_agent_start` additions and discovered skills, the same tools, reasoning effort, and service tier), so that turn reads the cache; it is skipped when `cacheRetention` is `none`, and the billed cache write is counted in session stats. Extensions see `before_agent_start` with `event.preview: true` during that composition and can read the prefix through `ctx.getPromptCachePrefixRequest()`. ([#2096](https://github.com/code-yeongyu/senpi/issues/2096))
+- The `websearch` builtin supports Kagi (`"provider": "kagi"`) and SERPdive (`"provider": "serpdive"`) search providers; both need an `apiKey`. Ported from pi-websearch 0.4.0. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
+- The `rules` builtin discovers rule files in `.pi/rules/` (project) and `~/.pi/rules/` (home), ahead of `.omo/rules/`. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
+
+- Setting `TIMING=1` in the environment now prints per-phase switch timings in the "Resumed session" status line when `/resume` opens another session. ([#2087](https://github.com/code-yeongyu/senpi/issues/2087))
+
+### Changed
+
+- The system prompt no longer ends with the current date and working directory. Both reach the model in a hidden `<environment_context>` message placed before the first user turn and appended again only when the date or directory changes, so the prompt stays byte-identical across days and directories and provider prompt caches keep hitting it. ([#2093](https://github.com/code-yeongyu/senpi/issues/2093))
+- Dynamic project rules reach the enclosing git repository root: reading a file inside a workspace member (a nested `package.json` or `Cargo.toml`) now also applies repository-level `.github/instructions` rules. Ported from pi-rules 0.2.0. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
+- Goal continuation prompts describe the objective as untrusted goal data instead of user-provided data, since the model may have written it with `create_goal`. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
+- The vendored builtin manifest pins the 2026-09-24 pi-* extension releases and now also records `anthropic-web-search`, `openai-web-search` and `anthropic-bash`. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
+
+- The `/resume` picker filters sessions in 0.6 to 27 ms per keystroke on a 1,088-session directory, down from 75 to 235 ms. Search text (raw, case-folded, and whitespace-normalized) is computed once per session row at list time and reused across keystrokes; fuzzy matching runs over the pre-lowered form, and session tree path resolution happens once for the whole list. ([#2087](https://github.com/code-yeongyu/senpi/issues/2087))
+
+- The `/resume` picker writes a `.session-summaries.index` file in each sessions directory and reads summaries from it on the next launch instead of streaming every `.jsonl` file individually. On a 1,088-session / 2.46 GB directory, the picker opens in 0.6 to 2.0 s cold instead of 15 to 29 s. The index is append-only with last-write-wins deduplication per session file, compacted atomically when stored bytes exceed twice the live size or 256 MiB; a corrupt or version-mismatched index is silently deleted and rebuilt. The underlying session reader now uses a chunked 1 MiB buffer instead of `readline`, removing an 18x per-line overhead and a correctness gap where `readline` split records at U+2028/U+2029 Unicode line separators. ([#2087](https://github.com/code-yeongyu/senpi/issues/2087))
+
+### Fixed
+
+- A model that calls a tool with a different case, a different or missing `mcp_`/`mcp__` namespace, or a namespace id containing underscores now runs the one registered tool it names instead of getting `Tool ... not found`. Examples: `MCP__fx__Tool_1` or bare `tool_1` for the MCP tool `mcp_fx_tool_1`. ([#2111](https://github.com/code-yeongyu/senpi/issues/2111))
+- A model that capitalizes the gateway namespace on a tool call, such as `Mcp__686f__Eval` for `eval`, now runs that tool instead of getting `Tool Mcp__686f__Eval not found` and wasting a turn. ([#2104](https://github.com/code-yeongyu/senpi/issues/2104))
+- Cache-aware foreground waits for OpenAI GPT-5.6+/GPT-6 sessions use the documented 30-minute prompt-cache lifetime (a 29m 30s budget instead of 4m 30s), and the Goal cache-warm card reports the 30m TTL. Direct DeepSeek sessions no longer wake the Goal every 4m 30s to preserve a fabricated 5-minute TTL: an unconfigured Goal backstop becomes the 59m 30s liveness re-check, an explicit `promptCache.goalBackstopMaxSeconds` other than the default is still honored, and the card says the provider cache is best-effort instead of claiming a TTL or savings. ([#831](https://github.com/code-yeongyu/senpi/issues/831), [#2090](https://github.com/code-yeongyu/senpi/issues/2090))
+- Changing the thinking level mid-session keeps the prompt cache on every OpenAI GPT-5.6 and GPT-6 model, not only GPT-6 Astra: the change is sent as a `configuration_update` item, which also happens again after compaction. ([#2094](https://github.com/code-yeongyu/senpi/issues/2094))
+- On OpenAI GPT-5.6+ models, a tool leaving or rejoining the active set mid-session (ask-user, apply-patch toggles, tool-search promotion, MCP, eval-only filtering) no longer rewrites the provider tool list or the system prompt's tool section, so the cached prompt prefix survives; inactive tools stay declared and are excluded through `allowed_tools`, and a call to one is still refused. Other models keep sending only the active tools. ([#2095](https://github.com/code-yeongyu/senpi/issues/2095))
+- A read of a file inside a skill directory other than its `SKILL.md` - a `references/` document, a script, a template - is labeled by its skill as `<skill>/<path inside the skill>` (for example `read ulw-plan/references/stance-calibration.md`) on the read card and in the `Explored` group, instead of the full install path on the card and the bare file name in the group. A session running inside the skill directory keeps its cwd-relative paths. ([#2082](https://github.com/code-yeongyu/senpi/issues/2082))
+- The `rules` builtin no longer re-injects an `AGENTS.md` / `CLAUDE.md` that pi already loaded into the system prompt when a file read reaches it, uses only the higher-priority root `AGENTS.md` / `CLAUDE.md` for a nested file, keeps only the first home-level single-file rule, resolves symlinked project paths, and `/rules show` without an id reports that an id is required. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
+- Todo type guards no longer accept the legacy `cancelled` status without migrating it to `abandoned`. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
+
+### Removed
+
+## [2026.9.24] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+- RPC and `--mode json` `toolcall_start` / `toolcall_end` records carry `resolvedToolName`, the tool the call will run, so a client can title a gateway-namespaced or recased call (`mcp__<id>__Edit` → `edit`) correctly before it executes. ([#2068](https://github.com/code-yeongyu/senpi/issues/2068))
+
+### Changed
+
+- The `Stop` hook no longer fires when a turn ends while background work that will wake the session is still running - a background subagent task, a DAG run, a terminal monitor, a background bash session, a detached eval cell, or a loop-guard recovery hold. It fires once that work is done: at the end of the turn the work wakes, or right after the work clears if nothing wakes the session. A pending ask-user question still counts as stopped, since the session is waiting on you. Turns with no background work fire `Stop` exactly as before. ([#2077](https://github.com/code-yeongyu/senpi/issues/2077))
+- The builtin herdr reporter keeps a pane `working` while any background wake source is live - DAG runs, background bash sessions, and detached eval cells now count alongside subagents and terminal monitors - and names each kind of live work in the pane message. The pane returns to `idle` when the last source clears, even without another turn. ([#2077](https://github.com/code-yeongyu/senpi/issues/2077))
+- The recommended default model ladder is now Claude Opus 5.5 (medium), Claude Fable 5.1 (xhigh), Kimi K3 (max), GPT-6 Astra (xhigh), GPT-6 Sol (medium), GLM 5.3 (max). When a recommended model is available from several providers, the subscription lane wins (for Claude: the Claude subscription before the Anthropic API, Copilot, and OpenCode), and gateway aggregators such as OpenGateway and OpenRouter are never picked. ([#2074](https://github.com/code-yeongyu/senpi/issues/2074))
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Truncated `bash` output no longer ends with `[Showing lines … ; earlier output dropped]` in the TUI. The marker still reaches the model unchanged as a model-only text part, and `bash_output` treats its `[N earlier chars dropped]` notice the same way. ([#2063](https://github.com/code-yeongyu/senpi/issues/2063))
+- Cursor legacy variant references for families the static alias table does not list (grok-4.7, claude-opus-5-5, claude-fable-5-1, gemini-3.8-flash, muse-spark-1.3) now resolve onto the runtime-derived identity with their thinking level instead of fuzzy-matching a flat `-fast` model: `--model cursor/grok-4.7:low` selects grok-4.7 at low (previously grok-4.7-xhigh-fast with thinking off), `cursor/grok-4.7-xhigh` (in any letter case) and stored variant ids restore their level, `cursor/grok-4.7-*` globs project the derived identity alongside the fast models, and both Cursor lanes keep the derived level-to-variant-id map across CLI catalog cache reloads. Exact raw models still win over derived aliases. The CLI catalog cache rebuilds its models from the stored `cursor-agent models` listing, so a recorded context limit no longer forces a re-probe, and a cache written before this change probes once; if that probe fails, the cached models are still served instead of the built-in offline list. ([#2038](https://github.com/code-yeongyu/senpi/issues/2038))
+- A tool call whose name senpi auto-corrects (a gateway-namespaced or recased name such as `mcp__<id>__Edit`) now looks like a direct call to the resolved tool: its card uses that tool's renderer live and on resume, and the `[auto-corrected]` notice reaches only the model. ([#2064](https://github.com/code-yeongyu/senpi/issues/2064))
+
+### Removed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+- A `Project rules` notice for a read inside an `Explored` cell now joins that cell as one `Applied N project rules` line instead of a standalone card that split the cell in two. Stream-rule notices and notices from older sessions stay as their own cards. ([#2057](https://github.com/code-yeongyu/senpi/issues/2057))
+
+### Changed
+
+- Nested AGENTS.md directory-context blocks are model-only text parts too, so their headers and instruction bodies stay out of the TUI while reaching the model unchanged. ([#2041](https://github.com/code-yeongyu/senpi/issues/2041))
+
+- Built-in read, bash, find, ls, grep, webfetch, and injected-rule notices are separate model-only text parts. Interactive tool cards omit them, including grep statistics and renderer-owned truncation warnings, while preserving tool bodies and rule-activation entries. Provider text and session content remain available to the model. ([#2041](https://github.com/code-yeongyu/senpi/issues/2041))
+
+### Fixed
+
+- Loading a skill or recalling a memory no longer disappears into the `Explored` cell as `Read SKILL.md`. Those reads keep their own `[skill] <name>` and `✦ Recalled <label>` cards, so loading two skills shows both names, and the reads around them form separate cells. Ordinary, docs, and `AGENTS.md` reads still group as before. ([#2060](https://github.com/code-yeongyu/senpi/issues/2060))
+
+### Removed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+- The interactive TUI shows consecutive `read`, `grep`, `find`, and `ls` calls as one exploration cell, the way Codex does: `• Explored` followed by lines such as `Read a.ts, b.ts`, `Search <pattern> in <dir>`, and `List <dir>`, with no line ranges or output. Reading one file three times now shows its name once instead of three cards. A failed call stays in the cell and is counted as ` · 1 failed`. Press the tool-expand key (default `ctrl+o`) or click the header to see the original cards. Any other tool, assistant text, or your next message ends the cell, and resumed sessions show the same cells. ([#2042](https://github.com/code-yeongyu/senpi/issues/2042))
+
+### Changed
+
+- The GPT-5.6 and GPT-6 system prompts no longer demand a failing test before every behavior change. They now read the tests that already cover the area as the behavior of record, reproduce a bug before fixing it, let the run prove the change, and add a test only where the repository keeps tests for that behavior and a regression would otherwise pass unnoticed - the stance the Claude and Kimi prompts already had. Sessions on those models stop producing tests that only restate a small change. ([#2035](https://github.com/code-yeongyu/senpi/issues/2035))
+
+### Fixed
+
+- A Goal parked on a live wake source shows one `Cache-warm` card per wait instead of a stack of `iteration 1` cards. A config reload used to re-append the parked wait as a new iteration-1 card, drop its cache line, and restart the backstop clock from the reload, which could push the wake past the prompt-cache TTL the card promised; the reload now keeps the same wait, iteration, cache figures, and ready time. The wait card also turns into the `Cache-warm wake` card when the wait ends instead of stacking a second card, and resumed sessions that already recorded stacked cards show one. Extensions can opt into the same in-place update with the new `replaces` option of `pi.registerEntryRenderer()`. ([#2051](https://github.com/code-yeongyu/senpi/issues/2051))
+
+- Hidden diagnostics no longer duplicate the terminal screen when mouse capture is enabled. Messages saved only to the debug log leave the current frame intact; errors actually printed to the terminal still reset mouse targeting. ([#1879](https://github.com/code-yeongyu/senpi/issues/1879))
+- A `models.json` written before the subscription provider rename is now updated to the new provider ids (`chatgpt-subscription`, `anthropic-subscription`) automatically on the first launch, keeping its comments and formatting and a timestamped backup of the original, instead of printing "models.json uses renamed provider ids" on every launch. ([#2044](https://github.com/code-yeongyu/senpi/issues/2044))
+- `--no-model-fallback`, `SENPI_NO_FALLBACK=1`, `--no-ask-user` and `--theme` now hold for the whole session. They were silently dropped the first time the session saved any setting, so a run that opted out of model fallback could still answer from a different model. Changing the same setting yourself during the session (for example with `/fallback`) still takes effect. ([#2052](https://github.com/code-yeongyu/senpi/issues/2052))
+- When a Claude subscription model rejects the local Claude Code as too old, the message now names the binary that ran and where it came from (`CLAUDE_CODE_EXECUTABLE`, the copy senpi ships, or `claude` on your PATH) and gives the fix that works for that binary, instead of always telling you to update senpi. On Windows, a Claude Code installed with `npm i -g @anthropic-ai/claude-code` is now found and used when it is newer than the bundled copy. ([#2053](https://github.com/code-yeongyu/senpi/issues/2053))
+- `/mcp auth <server>` opens the system browser and keeps the complete authorization URL in the transcript instead of replacing it with a progress notice. Browser launch failures leave manual authorization usable, and the MCP documentation now names the supported `auth`, `auth-start`, and `auth-complete` commands. ([oh-my-openagent#6724](https://github.com/code-yeongyu/oh-my-openagent/issues/6724))
+
+### Removed
+
+## [2026.9.23-2] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Claude subscription sessions (`claude-sdk-oauth`) run Claude Code 2.1.280 again, the version Claude Opus 5.5 requires. The bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.278 to 0.3.280, and the engine's own requests now identify as `claude-cli/2.1.280` instead of `claude-cli/2.1.251`. That identity no longer depends on an installer script, so installs made with `ignore-scripts=true` or through `bun install -g` get it too. If you keep a newer Claude Code on your PATH (for example after `claude update`), senpi now runs that one instead of the older bundled copy; `CLAUDE_CODE_EXECUTABLE` still overrides both. ([#2033](https://github.com/code-yeongyu/senpi/issues/2033))
+
+- A model that calls a deferred (search-exposed) tool under a gateway-namespaced or recased name, such as `mcp__686f__team_create` for `team_create`, now activates and runs that tool on the first call instead of getting `Tool ... not found` and wasting a turn. Tools that disallow lazy activation stay blocked. ([#2025](https://github.com/code-yeongyu/senpi/issues/2025))
+
+- Installs from npm or `bun install -g` load the bundled `gpt-image-gen` skill again. The published bundle resolved its embedded skill file against the current directory, so every session with image-generation credentials printed `[imagegen] bundled skill not found ... skipping contribution` and the skill the system prompt points to was missing. Under Bun (`bun install -g`) the same fix also lets structural reads find their bundled JavaScript grammar. ([#2028](https://github.com/code-yeongyu/senpi/issues/2028))
+
+### Removed
+
+## [2026.9.23] - 2026-09-23
+
+### Breaking Changes
+
+- The recommended OpenAI model is now GPT-6 Sol at `medium`, one slot below GPT-6 Astra and one above GPT-5.6 Sol, and `gpt-6-sol` is the implicit default for the `openai` and `chatgpt-subscription` providers where `gpt-5.6-sol` was. A session that lands on an implicit OpenAI default picks `gpt-6-sol:medium` when it is authenticated. Your explicitly configured `defaultModel` and `recommendedModels` are untouched; GPT-5.6 Sol stays selectable and stays on the recommendation ladder behind it.
+
+### Added
+
+- The high-reasoning warning that fires for GPT-5.6 Sol at `xhigh` / `max` and for GPT-6 Astra at `max` now also covers GPT-6 Sol at `xhigh` / `max`, including `-fast`, `-pro` and gateway-prefixed ids. GPT-6 Luna is not covered.
+
+- GPT-6 Sol and GPT-6 Luna run on the GPT-6 system prompt. OpenAI publishes one set of prompting practices for the whole GPT-6 family, so any `gpt-6-sol` or `gpt-6-luna` id (Fast variants, dated snapshots, gateway-prefixed and Bedrock-style ids, and the display names "GPT-6 Sol" / "GPT-6 Luna") now selects the prompt GPT-6 Astra already used instead of falling back to the generic one; `promptPreset: "gpt-6-astra"` keeps its name and now reads as the family preset.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-4] - 2026-09-22
+
+### Breaking Changes
+
+- The recommended Anthropic model is now Claude Opus 5.5 at `max`, in the slot Claude Opus 5 held at `xhigh`. A session that lands on an implicit Anthropic default picks `claude-opus-5-5:max` when it is authenticated; the shipped Fable 5.1 / Fable 5 fallback ladders step down onto `claude-opus-5-5:max` first (then Opus 5, 4.8, 4.6, all at `max`), and Opus 5.5 ships its own ladder. Your explicitly configured `defaultModel`, `recommendedModels`, and `retry.fallbackChains` are untouched; if you carry `claude-opus-5:xhigh` in your own configuration and want the recommended level on the new model, change it to `claude-opus-5-5:max`. Claude Opus 5 stays selectable.
+
+### Added
+
+- Claude Opus 5.5 gets its own system prompt preset (`promptPreset: "claude-opus-5-5"`, selected automatically for any `claude-opus-5-5` / `claude-opus-5.5` id, Bedrock profiles and Vertex `@default` included). It is the Opus 5 prompt plus what Anthropic's Opus 5.5 guide documents for coding agents: the model is told which text-only turn endings count as stopping early while work is still owed, to read the sources that bear on a loosely specified task before changing anything, and to treat time spent as a cost when deciding what to delegate.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-3] - 2026-09-22
+
+### Breaking Changes
+
+- Typing a renamed provider id now tells you the new one: `/login openai-codex` and `--provider claude-sdk-oauth` fail with the new id named, instead of a generic error or an empty selector. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+### Fixed
+
+- The "File operations" section of the system prompt now names the editing tool your session actually has. It was written from the model preset rather than the live toolset, so a Grok 4.5 session - where `apply_patch` can never activate - was told to route every file edit through it, and so was any GPT model served over an API that cannot carry the tool. Sessions that do have `apply_patch` still get it as the single edit verb, the guard against editing files through `cat >`, `sed -i`, `awk -i` or inline `python` stays in both cases, and the instruction is direct again instead of asking the model to work out which tools it has ([#1968](https://github.com/code-yeongyu/senpi/issues/1968)).
+
+- Reusing a transcript container after teardown re-arms progressive hydration instead of leaving it permanently halted, so `clear()` and `detachAll()` reset the hydration halt alongside the watermark rather than only the watermark. Teardown still halts hydration; only reuse re-arms it. Latent today, since the chat container is constructed once and never disposed ([#2002](https://github.com/code-yeongyu/senpi/pull/2002)).
+- Daemon status reads no longer spawn a `ps` process per request. `senpi host status` and the generations rows now read the process table through the kernel (`sysctl` on macOS, `/proc` on Linux), so a client polling daemon status costs zero child processes and nothing can accumulate as unreaped `<defunct>` children on a runtime whose `execFile` does not reap them - the leak class that filled the macOS process table from a long-lived RPC host ([code-yeongyu/omo-desktop-app#594](https://github.com/code-yeongyu/omo-desktop-app/issues/594), [#1507](https://github.com/code-yeongyu/senpi/issues/1507)). On runtimes without the kernel bindings (plain Node) the memory, descriptor and zombie fields report `null` instead of spawning a probe.
+- RPC `open_session.durableSessionId` is now enforced on the worker-backed multi-session host too: a duplicate live id is refused with `session_id_in_use` and a malformed id with `invalid_session_id` at the registry boundary. A session created under a caller-chosen id writes its header at open, so reopening that path before the first assistant message keeps the chosen identity. ([#2010](https://github.com/code-yeongyu/senpi/issues/2010))
+
+### Added
+
+### Changed
+
+- Internal code names now follow the subscription provider rename: TypeScript symbols, module files and the builtin extension directory read `anthropic-subscription` instead of `claude-sdk-oauth`, and `chatgpt-subscription` instead of `openai-codex` in `@earendil-works/pi-ai`. Nothing you can observe changes — provider ids, the wire api id, stored files, diagnostics ids and env-var names stay byte-identical. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+- Upgrading across the subscription provider rename is now covered end to end: an agent directory written by an older senpi keeps its logins, settings, custom models and saved accounts, and is migrated exactly once. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+- Settings, credentials, sessions and `models.json` written before the subscription provider rename keep working: the old provider ids are resolved on read everywhere they are stored, and senpi tells you once which ids to update in `models.json`. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+
+- Your saved settings survive the subscription provider rename: `defaultProvider`, `defaultModel`, favourites, per-model thinking/tier maps and fallback chains written under `openai-codex`/`claude-sdk-oauth` are rewritten once to `chatgpt-subscription`/`anthropic-subscription` on first load. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+- Your saved Claude subscription accounts survive the provider rename: the per-account directory is moved once from the old name to `anthropic-subscription-accounts`, preserving each account's stored login. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+- The Claude subscription provider is now `anthropic-subscription`, shown as **Anthropic Subscription**, instead of `claude-sdk-oauth` / "Claude SDK OAuth" — the id named an SDK integration detail, not the thing you are signing in with. The wire api id stays `claude-sdk-oauth`, and nothing persisted moves: stored accounts, the binding sidecar, `CLAUDE_CODE_OAUTH_TOKEN*` env vars, and session diagnostics keep their exact names, so existing installs keep working without re-login. The subscription lane also keeps its first rung in the fallback precedence table. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+- Stored logins survive the subscription provider rename: an `auth.json` credential saved under `openai-codex` or `claude-sdk-oauth` is rewritten once under `chatgpt-subscription` / `anthropic-subscription`, with a timestamped `0600` backup taken first and pooled accounts, slot names and the pinned account preserved exactly. You stay logged in across the upgrade. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-2] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+- Grok 4.7 is a supported model family: every grok-4.7 id shape (including aggregator ids like `openrouter/x-ai/grok-4.7` and Venice's dashed `grok-4-7`) routes to a prompt preset that reuses the Grok 4.6 system prompt verbatim — Grok 4.7 has no separate prompt tuning yet, so any wording difference would be a defect. `grok-4.7` is also the new `promptPreset` setting value, and the xAI provider default model moves from grok-4.5 to grok-4.7. ([#1990](https://github.com/code-yeongyu/senpi/issues/1990))
+- RPC `open_session` accepts an optional `durableSessionId`, so a client that already owns a stable id for the conversation can create the session under that id instead of mapping to a host-minted one. Advertised as host capability `durable_session_id`; applies to session creation only, since re-opening an existing session file keeps that file's header id. A malformed id is refused with `invalid_session_id` and an id a live session already holds with `session_id_in_use`. ([#1951](https://github.com/code-yeongyu/senpi/issues/1951))
+
+### Changed
+
+### Fixed
+
+- A supervised RPC host whose supervisor loses its observer connection now keeps reconnecting, and no longer stays alive forever on the strength of not knowing. The supervisor retried a lost observer exactly once; if that retry failed it gave up silently, and because an unhealthy observer is treated as "a turn might be running", the host's idle window could never elapse. Reconnects now continue until they succeed, and an observer that stays unhealthy for a whole idle window stops counting as busy, so a host with no clients attached exits as it should. A host started as `persistent` still never exits for idleness. ([#1979](https://github.com/code-yeongyu/senpi/issues/1979))
+
+- A session whose worker dies while it is being opened now reports that failure instead of claiming the session is closing. The error a client received was `session_closing`, which means a session somebody else is tearing down, so the reported problem and the real one pointed in opposite directions and the actual reason appeared only in the host's stderr. It now arrives as `open_failed` carrying the worker's own reason. ([#1953](https://github.com/code-yeongyu/senpi/issues/1953))
+
+- A dead OpenAI account no longer burns the turn's retry budget. The hard-quota 429 (`usage_limit_reached`, "The usage limit has been reached") used to classify as a transient rate limit, so a turn spent five retries over roughly a minute on an account that cannot serve another request until its quota resets. It is now terminal on the first failure, and the same wording pins a billing fallback for the rest of the session instead of letting cooldown expiry revert into the dead account. Warnings that merely approach the usage limit keep their retryable treatment. ([#1969](https://github.com/code-yeongyu/senpi/issues/1969))
+
+- A supervised RPC host whose socket file is deleted now drains and exits instead of living on unreachable. Removing the workspace it was started in, sweeping the temp directory that held its socket, or deleting that socket by hand used to leave the supervisor and its host running until the machine rebooted, because a lost name was only recognised when another host took it over, never when it simply went away. The pair that measured this had been alive for 23 hours and 45 minutes with its socket directory long gone, reachable by nobody. Sessions that are still attached are never cut short: the host drains, finishes what it is holding, and then exits. ([#1961](https://github.com/code-yeongyu/senpi/issues/1961))
+
+- Opening a second terminal on a live Claude SDK session no longer throws away the resumable binding. The startup notice it appends is an append-only entry, but it retired the binding and the next turn re-sent the entire conversation as `registry_miss`. Append-only entries after the committed assistant - notices, user messages and tool results - now keep the binding, while a later assistant message, a compaction, a branch summary and an explicit invalidation still discard it. A restart whose SDK transcript already carries a user frame after that anchor still cold-seeds, so a turn interrupted between send and commit is never sent twice. ([#1964](https://github.com/code-yeongyu/senpi/issues/1964))
+
+- A Claude SDK fork point that Claude Code reports missing is no longer handed back to the next turn. The lane recognized a missing session id but not a missing message id, so it republished the rejected UUID, asked for it again, and re-sent the whole conversation every turn until the session ended. The rejected UUID is now dropped, so the dead id is never requested twice; the earlier mapped boundaries stay recorded so a later change can fork at one of them instead of re-sending ([#1973](https://github.com/code-yeongyu/senpi/issues/1973)). ([#1958](https://github.com/code-yeongyu/senpi/issues/1958))
+- A shared RPC host that dies now leaves a durable record instead of vanishing. The supervisor already told a clean idle exit apart from a crash, but reported the crash only to stderr - and the daemon's stderr log is truncated by the very restart that replaces the dead host, so a host dying hourly was indistinguishable from one that had never died. A crash-classified exit now appends its timestamp, signal or exit code, and the child's uptime to `<daemonDir>/crashes.jsonl`, which survives restarts and is bounded so a crash loop cannot grow it forever. A clean idle exit still writes nothing, so the line count is a crash count. ([#1950](https://github.com/code-yeongyu/senpi/issues/1950))
+
+- Shared RPC hosts no longer grow by one permanent copy of the extension module graph per session. Extension sources are compiled once per process and recompiled only when a source file changes, which cuts per-session retained memory on a long-lived host from tens of megabytes to well under one ([#1948](https://github.com/code-yeongyu/senpi/issues/1948)).
+
+- Preparing a tool call's arguments no longer rewrites the assistant message the model actually produced. Shims that normalize in place — the `eval` run summary clamp and the `edit` tool's `edits` coercion — now run against a detached copy. On the `claude-sdk-oauth` lane this removes the dominant cause of `Session continuity lost - resent the full conversation (assistant_rewritten)`, where a clamped summary made an otherwise unchanged turn look rewritten and forced a full-history re-send. The advertised 80-character limit on an `eval` summary is unchanged: it is now enforced where it belongs, on the rendered line, so a rebuilt transcript shows the same truncated summary a live turn does. ([#1472](https://github.com/code-yeongyu/senpi/issues/1472))
+
+### Removed
+
+## [2026.9.22] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+- `/login kimi-coding` asks which service hosts the account, **Mainland China (kimi.com)** or **Outside mainland China (kimi.ai)**, for both the subscription sign-in and the API-key path. International accounts authorize at `auth.kimi.ai` and send requests to `api.kimi.ai/coding`; the choice is saved with the credential and survives restarts, token refresh, and env changes. `KIMI_CODE_REGION=global` answers the question for headless setups. Existing credentials keep today's behaviour. ([#1890](https://github.com/code-yeongyu/senpi/issues/1890))
+- `agent()` forwards `isolated`, `apply`, and `merge` when the task host advertises isolation. Hosts that do not still drop those options with the existing warning. A foreground call whose isolation did not apply now raises instead of looking successful; with `handle: true` the isolation result arrives on completion. ([#1910](https://github.com/code-yeongyu/senpi/issues/1910))
+
+### Changed
+
+### Fixed
+
+- A dropped Codex WebSocket no longer ends a long session with `Error: senpi:no-turn-retry:WebSocket error`. When an account pool is in use, a connection that died after the reply had started used to throw the partial reply away and switch off both the same-model retry and the fallback chain; the internal marker then landed in the transcript as the only explanation. The pool now hands the provider's own terminal message through with the partial text, usage and transport diagnostics intact, and the session retries or falls back as it does for a stalled stream. Abnormal closures, the runtime's bare `WebSocket error`, and connect or liveness timeouts count as transport faults that earn a same-slot retry; a connection that fails right after the message opened, with no text yet, is retried in place. The runtime's `error` event carries no message for an unclean disconnect, so the close code and reason (`WebSocket closed 1006 Connection ended`) are reported instead of `WebSocket error`. The transcript, print mode and the end-of-turn text explain the interruption in plain language and never show the marker. ([#1628](https://github.com/code-yeongyu/senpi/issues/1628))
+- Streamed model responses no longer stall after the headers when the CLI runs on Bun 1.3.x. HTTP dispatcher setup used to replace Bun's native `fetch` with the bundled undici implementation, whose fetch on that runtime never delivered an SSE body; Bun now keeps its own fetch, and proxy env vars plus the stream idle guards still apply. Node behaviour is unchanged. ([#1890](https://github.com/code-yeongyu/senpi/issues/1890))
+- `senpi host ensure` no longer refuses `foreign_writer` forever when the registered generation is still alive but nothing accepts connections at its public socket path - the entry is gone, or a dead listener left it behind. Nothing serves that path, so a fresh generation is started beside the stranded one, which is never signalled and keeps its registration until it exits. Before, a superseded host draining its last session locked every other client out of the endpoint until it happened to end. ([#1936](https://github.com/code-yeongyu/senpi/issues/1936))
+
+- Fixed `apply_patch` activation for provider-prefixed GPT model IDs and kept file-editing guidance consistent with the active tool set ([#1891](https://github.com/code-yeongyu/senpi/issues/1891)).
+
+### Removed
+
+## [2026.9.21-2] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+- `navigate_tree` accepts `intent: "resume"` to resume a branch at exactly the requested entry, including an unanswered edited user message, without returning `editorText` or starting a turn. Both `entryId` and `targetId` retain their released retry-selection behavior by default; leaf-token checks, cancellation and lifecycle remain shared. ([#1926](https://github.com/code-yeongyu/senpi/issues/1926))
+- `providers.<id>.maxConcurrency` caps the number of streaming requests one provider serves at once. A provider that rate-limits on concurrent connections - or a local runtime with a small worker pool - turned burst fan-out into 429s and refused sockets, and there was no way to express "at most N at once" for a single provider. Set the key and extra requests wait in line instead of failing; unset keeps today's behaviour, and no provider ships a default. ([#1909](https://github.com/code-yeongyu/senpi/issues/1909))
+
+### Changed
+
+- The ask-user builtin's `schema.ts` re-exports `QuestionRequest` and `QuestionResponse` from the public extension API (`core/extensions/types.ts`) instead of declaring a second, identical copy, so the question tool, the TUI dialog and the RPC bridge share one contract. Type-only; no runtime change. ([#1931](https://github.com/code-yeongyu/senpi/issues/1931))
+- Sessions in the in-process daemon now share connections to the same HTTP or session-independent stdio MCP server. Closing one session leaves other sessions' tools available; catalogs and elicitation stay session-owned. Servers with cwd/session-dependent arguments or environment, including ast-grep, remain separate. Standalone and worker sessions are unchanged. ([#1921](https://github.com/code-yeongyu/senpi/issues/1921))
+
+- Updated the test runner to Vitest 5.0.1. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+- An upgraded RPC host now tells attached clients `host_superseded`, parks their sessions when current turns and requests finish, and closes their connections so they can reopen by session path on the new host. Idle sessions and persistent monitors no longer keep the old generation in memory indefinitely. The handoff grace defaults to 10 minutes and never interrupts a running turn. ([#1933](https://github.com/code-yeongyu/senpi/issues/1933))
+- The Bun extension importer reads `es-module-lexer` 3's tagged-union import records, so extensions load unchanged after the lexer upgrade to 3.0.2. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+- RPC `navigate_tree` now returns the documented `errorCode: "not_found"` when its target entry is missing, instead of an untyped error. The refusal leaves the session unchanged. ([#1892](https://github.com/code-yeongyu/senpi/issues/1892))
+
+### Removed
+
+## [2026.9.21] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+- RPC clients can edit a user message in place. `edit_user_message` moves the session leaf to the prompt's parent and appends the edited prompt there as a new branch, the same thing `/tree` does when you select a prompt, except the text lands in the session instead of the editor. The original and every reply after it stay in the file; nothing is deleted and no turn starts. Images and other attachments on the original carry over. `navigate_tree` now also accepts `entryId`, which applies the `/tree` selection rule on the host (a user message selects its parent and returns `editorText`; the root prompt resets to an empty conversation) so a client never computes a parent id. Both commands take `expectedLeafId` and refuse with `stale_leaf` when another client moved the conversation first, and every response reports the resulting `leafId`. Documented under `docs/rpc.md`, with a test that fails when a new RPC command ships without a section there.
+
+### Changed
+
+- Updated the bundled dependencies: @anthropic-ai/sdk 0.123.0 -> 0.127.0, @anthropic-ai/claude-agent-sdk 0.3.259 -> 0.3.278, @aws-sdk/client-bedrock-runtime 3.1127.0 -> 3.1136.0, @bufbuild/protobuf 2.14.0 -> 2.15.0, @smithy/types 4.17.2 -> 4.18.0, zod 4.4.3 -> 4.6.5, typebox 1.3.27 -> 1.3.34, ignore 7.0.8 -> 7.0.9, linkedom 0.18.12 -> 0.18.13, marked 18.0.11 -> 18.0.13, picomatch 4.0.5 -> 4.0.7, yaml 2.9.0 -> 2.9.1 and get-east-asian-width 1.6.0 -> 1.7.0. The transitive copies of fast-uri, hono, ip-address, qs, express-rate-limit, brace-expansion and undici carrying published advisories are pinned past them, so `npm audit` and `bun audit` both report nothing. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+- The config-reload watcher now shares one filesystem-watch worker across every session in a process instead of giving each session its own. On the shared RPC host, each session used to add one watch thread and a few MB of RSS (1,023 threads at 1,000 sessions); the whole process now runs a single watch worker, torn down when the last session's watcher closes. A watch worker that dies is still replaced and its live subscriptions re-armed. ([#1794](https://github.com/code-yeongyu/senpi/issues/1794))
+
+### Fixed
+
+- Retained RPC sessions stop file-monitor polling and prompt-cache keepalive after their last client disconnects, then resume on reattachment without undoing manually muted monitors. Extensions can observe the new `session_parked` and `session_resumed` events. ([#1902](https://github.com/code-yeongyu/senpi/issues/1902))
+
+- The shared host no longer drops your sessions' children when it stalls, and it stops growing into a crash. A long block of the host's event loop used to trip the 30-second dead-peer check the moment the loop woke up, which cut every connection that still had events queued: each delegated child then ended with `transport_gone` while its session kept working unseen. The check now counts only time the host was actually running. Sessions closed during such a window also left their provider scope closed while shutdown handlers were still running, so the config watcher of every dead session kept firing and leaked a thread each; the scope now closes after shutdown finishes, and a watcher of a closed session is silent. Above `SENPI_RPC_HOST_RSS_REFUSE_MB` (default twice the 4 GB warning threshold) the host declines to create new worker sessions with `host_memory_pressure` and a retry hint, while everything it already holds keeps running, instead of growing until the runtime dies. ([#1905](https://github.com/code-yeongyu/senpi/issues/1905))
+- Extensions that touch the theme load again on the shared socket host. A refactor had moved the theme bootstrap into the per-session workers, which left the in-process runtime (what a `--listen` socket host runs by default) without an initialized theme: every theme-touching extension failed to load with "Theme not initialized. Call initTheme() first." and embedder sessions logged the message as runtime warnings. The host initializes the theme before serving its first session, on both session runtimes. ([#1894](https://github.com/code-yeongyu/senpi/issues/1894))
+- An old engine generation no longer sits on your sessions after an upgrade. When a newer build takes the shared daemon's socket, the previous one was meant to finish its work and leave, but the request to do so could never arrive - and the old process then kept every retained session and its claim on each session file, while nothing could reach it. Reopening one of those sessions answered `session_path_in_use` until you killed the process by hand, and the machine carried several multi-gigabyte daemons at once. A generation that loses the socket now notices within a second, parks the sessions nobody is attached to, releases their files and exits. A session file claimed by such a generation can be opened by the current one, `senpi host status` lists every daemon generation that is really running with its own memory and session count, and records of ones that ended are cleared away instead of accumulating. ([#1893](https://github.com/code-yeongyu/senpi/issues/1893))
+- MCP servers' tool catalogs are cached in the directory the session started with. The backgrounded cache write re-read the agent-directory environment variable at write time, so a change made between session start and that write - as test runs make - could deposit a server's catalog into a different, unrelated agent directory. ([#1904](https://github.com/code-yeongyu/senpi/issues/1904))
+
+### Removed
+
+## [2026.9.20] - 2026-09-20
+
+### Breaking Changes
+
+### Added
+
 - Fable 5 ships with a fallback chain again. A refusal or a rate limit on `claude-fable-5-1` or `claude-fable-5` used to end the turn with an error unless you had written `retry.fallbackChains` yourself. The session now steps down to Opus 5, then Opus 4.8, then Opus 4.6, each at max thinking, and it never leaves the Anthropic family: the default removed on 2026-09-05 led with Kimi K3 rungs, so a Claude session changed vendor mid-turn. Your own configuration still wins. A chain under the same key replaces the shipped one, an empty array turns it off, and `retry.modelFallback: false` disables fallback entirely. ([#1860](https://github.com/code-yeongyu/senpi/issues/1860))
 
 ### Changed
 
 ### Fixed
+
+- Typing works again after answering an ask-user question with the mouse. Clicking the option rows and the Submit line left keyboard focus on the clickable wrapper around them, which has no key handler, so the composer stayed empty while output, tools and the rest of the session carried on as usual. Focus now resolves to a component that can receive keys, and a focus change made by a click handler is no longer overwritten afterwards. ([#1882](https://github.com/code-yeongyu/senpi/issues/1882))
+
+- An automatic fallback no longer gives up on a model just because the conversation is currently too long for it. The chain reduces the conversation first, without asking any provider, and then hands the turn to that model. A conversation with no earlier turn to drop still fails the rung, and nothing is reduced when auto-compaction is off ([#1873](https://github.com/code-yeongyu/senpi/issues/1873)).
+
+- Picking a model that cannot hold the conversation yet no longer throws the choice away. The switch is held, your next message compacts the conversation first - summarized by the model that can still read all of it, sized for the window it is moving into - and the new model takes over from there. Ctrl+P now only passes over a model that could never serve the session, instead of skipping anything that does not fit right now. Nothing is written down while a switch is held, so a session that ends before the next message is still on the model it was using ([#1873](https://github.com/code-yeongyu/senpi/issues/1873)).
+
+- Switching models no longer fails because of headroom the switch does not need. Admission used to charge the speculation lead - the margin the background compactor works inside - against a transcript that had not been admitted yet, so a model the session would have fit onto was refused with a token shortfall smaller than the lead itself. A live switch is now admitted on whether the next request fits, which is the same reasoning already applied to resume. Starting a session on a model still charges the lead, because at that point the margin describes the model itself ([#1873](https://github.com/code-yeongyu/senpi/issues/1873)).
+
+- Provider network failures now update one retry status instead of filling the transcript with repeated error payloads. Recovery clears the status, cancellation no longer reports a failed retry, and exhausted retries leave one notice with a next step. Partial answers and stored error details remain available, including when reopening a session. ([#1874](https://github.com/code-yeongyu/senpi/issues/1874))
 
 - The startup timing table no longer files the help-flags cache write under the stdin read. `PI_TIMING=1` reported that work in a row named `readPipedStdin`, which returns immediately on a terminal; the write is now its own row. Timings only, no behavior change.
 
@@ -143,13 +689,11 @@
 
 - `senpi host ensure|handoff --launch-spec <file>` states what a daemon should be started with — `{ spec_version: 1, core: { session_runtime, multi_session, extensions }, tunables: { idleExitMs, coldStart }, env }` — with extension paths resolved against the SPEC FILE's own directory. The spec decides which code a long-lived machine-wide daemon loads, so it is a file rather than stdin or an argv blob (neither has an owner to check) and four properties are proven before anything is started, each with exit 2 and a typed reason: `launch_spec_insecure` (not owned by this user, or group/world writable), `launch_spec_path_escape` (an extension path leaves the spec directory, lexically or through a symlink), `launch_spec_env_denied` (an `env` key outside `^(SENPI|OMO|PI)_[A-Z0-9_]+$`) and `launch_spec_missing_extension` (a listed extension does not exist — a daemon never boots with half a profile). The daemon itself no longer inherits the ensuring process's environment: it receives an allowlist of NAMES (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TERM`, `LANG`, `LC_*`, `XDG_*`, `SENPI_*`/`OMO_*`/`PI_*`, the proxy variables, `*_API_KEY` and the provider prefixes) plus whatever the spec's `env` states, with the win32 system wiring allowed there as well — so a token exported in one terminal is no longer held for hours by a process serving every other client. ([#1782](https://github.com/code-yeongyu/senpi/issues/1782))
 
-
 ### Changed
 
 ### Fixed
 
 - **Devin and Cursor login work again on the bundled CLI.** Since 2026.9.17-3 both failed with `Cannot find module .../dist/bundle/chunks/devin.js`. The bundle resolves each provider's login flow through a relative import the bundler cannot see, so it ships those flows as sibling files next to the chunk that loads them; the Devin and Cursor flows, and their two provider streams, were missing from that list. They are emitted now, and the bundle smoke test starts a login for six providers under Node and Bun to keep it that way. ([#1810](https://github.com/code-yeongyu/senpi/issues/1810))
-
 
 ### Removed
 
@@ -178,7 +722,6 @@
 
 ### Fixed
 - The published bundle no longer breaks a consumer that has `ws`'s optional native accelerators installed. `bufferutil` and `utf-8-validate` load their binding through `node-gyp-build`, whose computed require esbuild cannot analyse, so bundling them left an unresolvable external and the bundle build failed with `Bundle left unexpected external imports: <runtime>`. senpi's own CI never hit it because neither package is installed there; a consumer that has them - omo's desktop runtime build - could not build at all. Both are now external, the way the other native and runtime-guarded dependencies already were.
-
 
 ### Removed
 
@@ -217,7 +760,6 @@
 
 - The published package now ships `@earendil-works/pi-agent-core`'s tree-sitter assets. Its `dist` reaches those grammars through compile-time `type: "file"` imports, but publish staging copied only `dist`, `native` and the manifest files, so the tarball carried specifiers pointing five directories above the package at files that were never published. Any consumer bundling senpi with `bun build --compile` failed to resolve them. Staging now copies a bundled workspace's `assets` as well, and the pack gate requires those two grammar files so a future drop fails the release instead of the consumer. ([#1800](https://github.com/code-yeongyu/senpi/issues/1800))
 
-
 - A shared RPC host started under its lifecycle supervisor no longer hangs when it decides to exit on its own. The host watches an inherited pipe to notice its supervisor dying, and reading that pipe through a file stream parked a thread-pool worker in a blocking read for the process's whole life — which `process.exit()` waits for, so a self-exit never completed and the host only died when something killed it. The same pipe is now watched on the event loop, so an idle exit (and the drain of a generation handoff) ends the process immediately. ([#1782](https://github.com/code-yeongyu/senpi/issues/1782))
 
 - An `ensureHost` for a second socket in one agent directory no longer stops the daemon serving the first. The daemon directory holds one pidfile per agent directory, and a record naming another endpoint was read as "our host is not answering" and stopped; the pidfile now records which socket it is about, and a record for a different endpoint is left alone. ([#1782](https://github.com/code-yeongyu/senpi/issues/1782))
@@ -247,7 +789,6 @@
 
 - Agent-session services build the model runtime and load resources concurrently instead of one after the other. The two are independent - the resource loader is constructed from cwd, agent dir and settings and never touches the model runtime - so they are joined with a deterministic settle that keeps today's behavior: a model-runtime failure is still reported first when both fail, and neither branch can leave an unhandled rejection behind. Measured (median of 5, warm): `createAgentSessionRuntime` 277 ms to 180 ms; a cold run is unchanged, since overlapping two CPU-bound phases on one thread only buys the I/O wait they share. ([#1781](https://github.com/code-yeongyu/senpi/issues/1781))
 
-
 ### Fixed
 - Compaction summarization retries once without the reasoning-effort override after an empty stop. Some providers return an empty summary with `stopReason: "stop"` when the override suppresses thinking; the retry lets the provider use its default reasoning and still falls through to the terminal `empty-summary` path if that also returns nothing. ([#1773](https://github.com/code-yeongyu/senpi/issues/1773))
 
@@ -258,7 +799,6 @@
 - App-server `mcpServerStatus/list` no longer reports an empty MCP inventory for the life of a thread. Taking attach off the first-paint path meant the inventory copied when a thread binds is captured while servers are still booting, and nothing refreshed it afterwards. The thread's adapter now takes later inventories from the MCP service's existing wire-status subscription, and the thread registry drops that subscription when the thread goes away. ([#1781](https://github.com/code-yeongyu/senpi/issues/1781))
 
 - An `auto` theme no longer repaints on every launch. Making theme detection non-blocking meant the first frame is painted from a guess, and for `light/dark` that guess came from `COLORFGBG` alone - unset by most terminals - while the detected answer was never remembered. A user on a light terminal therefore got a dark first frame on every start, corrected one OSC round trip later. The detected terminal background is now remembered in `<agentDir>/cache/terminal-theme.json` and seeds the next launch, so the repaint happens at most once after install; the file is written atomically and a missing or malformed one simply falls back to the environment guess. ([#1781](https://github.com/code-yeongyu/senpi/issues/1781))
-
 
 - Reopening a session path right after it was closed no longer fails on a shared RPC host. `open_session { sessionPath }` was refused with `session_path_in_use` while the previous session was still being disposed, so "close this session, then open its file again" — and the same reopen after the last client of a closed session dropped — succeeded or failed depending on how long that disposal happened to take, which no client can time (measured on a loaded host: the path stayed refused for 300 ms to 1 s after the close). This is a long-standing behaviour of shared hosts, present since multi-session hosts shipped, not something introduced this release. The open now waits for a teardown already in flight and then opens the file fresh, bounded by the same close-grace window that bounds the teardown, so a wedged disposal still ends in the old refusal instead of an open that never answers. Attaching to a live session, retained sessions, parked sessions and the duplicate-open refusal while a session is still opening are all unchanged. ([#1782](https://github.com/code-yeongyu/senpi/issues/1782))
 
@@ -299,14 +839,12 @@
 
 - Skill discovery reads only the YAML frontmatter prefix of each `SKILL.md` (the first 8 KiB, falling back to the rest of the file when the closing `---` is not in that prefix) and skips `node_modules` and `.git` while walking. Discovered skill names, descriptions and order are unchanged. ([#1781](https://github.com/code-yeongyu/senpi/issues/1781))
 
-
 - `ExtensionContext.kernelTools` is typed as the shipped kernel-tools surface: `invoke(request, options?)` accepts `{ signal?, scope? }` (a bare `AbortSignal` still works) and `capabilities.invokeScope` is present. Coding-agent owns `ExtensionKernelTools`, `KernelToolInvokeOptions`, and `KernelToolInvokeScope`; senpi-codemode binds its implementation to those types so they cannot drift ([#1731](https://github.com/code-yeongyu/senpi/issues/1731)).
 
 ### Fixed
 - A models.json `!command` API key is classified at startup without executing the helper, including when a keyless stored credential exists for the same provider. The command still runs on the first auth path that needs the secret; before this, an interactive boot paid the helper's full runtime (`execSync` through `resolveBaseAuth`) before the first frame. ([#1781](https://github.com/code-yeongyu/senpi/issues/1781))
 
 - The published package now contains the bundled CLI its `pi` command points at. `bin.pi` resolves to `dist/bundle/cli.js`, but no build produced that file - only a test script did - so a release tarball packed a `pi` entry with no target (`bin.senpi`, on the unbundled `dist/cli.js`, was unaffected). The coding-agent build now runs the esbuild bundler as its last step, so every build that ships the package emits `dist/bundle/`, and the smoke exercises that bundle under both Node and Bun: `--version`, `--help`, an external TypeScript extension loaded with `--extension`, and an RPC `--multi-session` session lifecycle. The bundled entry also starts faster than the unbundled one: `--version` 19.5ms against 23.6ms on Bun and 47.1ms against 52.5ms on Node, and a full startup through model resolution 295ms against 946ms on Bun and 360ms against 877ms on Node (median of 5). ([#1781](https://github.com/code-yeongyu/senpi/issues/1781))
-
 
 - A shared RPC host no longer disconnects a client that is merely busy. The host used to return a session worker's output credit only after every connected client had drained that record to the kernel, so the slowest client paced the producing session and the stall cut had to fire before the worker's 5-second credit deadline: a client that stopped reading its socket for 4 seconds with as little as 16 KB pending was treated as dead, cut, and had all of its sessions released (observed 12 times in 35 minutes against one desktop client on a loaded machine). Credit is now returned as soon as each connection has accepted the record into its own 64 MiB queue, the dead-peer cut is a 30-second transport liveness budget that no longer depends on the worker deadline, and a cut connection is half-closed instead of destroyed, so a client that resumes reading within 5 seconds finally receives the `overflow` notice - and the records already queued for it - before EOF. A client that outruns its own reading still overflows its queue and is cut, and a client that never reads again is still disconnected. ([#1774](https://github.com/code-yeongyu/senpi/issues/1774))
 - Compaction no longer gives up on a summarizer that answers with a normal stop and no text when the request had pinned a reasoning override. Some OpenAI-completions relays answer a summarization request that carries an explicit reasoning effort with an empty 200 stream (seen on z-ai/glm-5.3-flash behind a custom relay: only the role prelude, 7 completion tokens), while the same model answers ordinary agent traffic without the pin. Each empty answer used to throw the terminal "summarization response contained no text (stopReason: stop)" error at once, so every route that re-triggered compaction (the pre-prompt check before each turn, the idle warm-up and its retries, the breaker reopening after its cooldown) paid a full summarization request for nothing, and on routes without the deterministic checkpoint the session kept reporting "Compaction rejected". An empty stop now earns one retry of the same request without the reasoning override before the terminal error, and only when the first attempt carried one: a non-reasoning model still fails on the first empty answer instead of replaying an identical prompt. Persistent emptiness keeps the deterministic fallback contract.
@@ -349,12 +887,6 @@
 - Branched sessions materialize entry content before the previous backing is released, so resident tokens can no longer be written into a new branched session file.
 
 ### Fixed
-
-- An automatic fallback no longer gives up on a model just because the conversation is currently too long for it. The chain reduces the conversation first, without asking any provider, and then hands the turn to that model. A conversation with no earlier turn to drop still fails the rung, and nothing is reduced when auto-compaction is off ([#1873](https://github.com/code-yeongyu/senpi/issues/1873)).
-
-- Picking a model that cannot hold the conversation yet no longer throws the choice away. The switch is held, your next message compacts the conversation first - summarized by the model that can still read all of it, sized for the window it is moving into - and the new model takes over from there. Ctrl+P now only passes over a model that could never serve the session, instead of skipping anything that does not fit right now. Nothing is written down while a switch is held, so a session that ends before the next message is still on the model it was using ([#1873](https://github.com/code-yeongyu/senpi/issues/1873)).
-
-- Switching models no longer fails because of headroom the switch does not need. Admission used to charge the speculation lead - the margin the background compactor works inside - against a transcript that had not been admitted yet, so a model the session would have fit onto was refused with a token shortfall smaller than the lead itself. A live switch is now admitted on whether the next request fits, which is the same reasoning already applied to resume. Starting a session on a model still charges the lead, because at that point the margin describes the model itself ([#1873](https://github.com/code-yeongyu/senpi/issues/1873)).
 
 - Moving the model selector off a Claude model and back no longer re-sends the whole conversation. Leaving the `claude-sdk-oauth` provider now closes the live SDK session but keeps its continuity binding - the same thing a thinking-level change already did - so returning to the same Claude model re-attaches to the existing session and sends only the messages added while you were away, instead of paying for the full history again. Switching to a different Claude model, a restart with no usable transcript, a diverged conversation and an unacknowledged session id all still start fresh exactly as before. When a binding really was discarded, the transcript notice now names the recorded cause (`model_selected`, `tainted_compaction`, `branch_diverged`, `extensions_removed`, ...) instead of the generic `registry_miss`, which from now on means only "no record was ever found" ([#1747](https://github.com/code-yeongyu/senpi/issues/1747)).
 
@@ -404,7 +936,6 @@
 
 - Long, compaction-trimmed sessions no longer re-parse the entire session file every time the working/retry status animation cadence is decided (which periodically froze the UI on multi-day sessions): the cadence reads an O(1) maintained entry count, `SessionManager#getEntryCount()`; explicit full-history retrieval is unchanged ([#1699](https://github.com/code-yeongyu/senpi/issues/1699)).
 
-
 - The Cursor CLI OAuth lane no longer spawns `cursor-agent models` on every senpi start. The startup catalog probe runs only when the lane is usable (not disabled, `cursor-agent` installed, at least one account bound), inside that account's HOME, and every `cursor-agent` spawn (turn, `models`, `--version`) now receives the same explicit environment allowlist instead of the inherited `process.env`. Hermetic or SSH-launched senpi processes therefore never trigger the CLI's macOS keychain preflight, which used to surface as a blocking "Keychain Not Found" dialog for `cursor-keychain-probe` on the logged-in console ([#1722](https://github.com/code-yeongyu/senpi/issues/1722)).
 
 ### Removed
@@ -437,7 +968,6 @@
 
 - Compiled Bun binaries load TypeScript extensions through native runtime modules instead of embedding jiti, preserving host-module identity and fresh dependency graphs on reload. Computed imports and requires share their generation, unused graphs can be reclaimed, native data imports keep Bun's loaders, and parser errors retain source locations. Node runtimes retain their existing jiti options and load only their own importer when needed ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 
-
 ### Fixed
 
 - Fixed background processes surviving shutdown when the shell that started them exited first: the bash tool now keeps owning a command's process group until its last descendant is gone, so `sleep 30 &` or `nohup server &` is killed by shutdown cleanup instead of being orphaned. Tracked groups that have drained are pruned, and a group whose leader already exited is never re-signalled by bare pid ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
@@ -468,10 +998,7 @@
 
 ### Added
 
-
 - Added `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` to the extension session environment, exposing the session working directory and authoritative goal-store file to kernels and shell children while clearing inherited stale values (fixes #1663).
-
-
 
 - Added a pending-question queue in the interactive TUI: concurrent async questions stay open instead of superseding one another, the widget shows the pending count with `+N more`, `alt+down` cycles requests from an empty composer, and each request keeps its own draft and idle deadline ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
@@ -480,7 +1007,6 @@
 - Added question arrival signals: a `? <header>` terminal-title layer while a question is pending, a one-time terminal bell controlled by the new `askUser.bell` setting (default true), an `ask-user:asked` bus event with a matching `ask-user-asked` Notification hook, and `herdr:blocked` active/inactive pairs for questions and host dialogs. Reconnect replay and hydration do not repeat these signals ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
 - Added compact answered-question chips in the transcript: an answered, commented, dismissed or timed-out question renders as `↳ <header>: <answer>` and expands to the original message on click ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
-
 
 - Added the TUI foundation for host-leased regular-mode mouse clicks, with fail-closed frame anchoring and private cursor-position calibration; native selection and scrollback remain unchanged when no lease is active ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
@@ -737,8 +1263,6 @@
 - The update-available notice no longer clips a long update command into an unrunnable fragment. The command is shown on its own line and the notice box wraps to the terminal width ([#1539](https://github.com/code-yeongyu/senpi/issues/1539)).
 
 - The Claude SDK OAuth lane no longer hands the Claude Agent SDK an executable path it has not verified is spawnable. `CLAUDE_CODE_EXECUTABLE`, the compiled-Bun extraction, the platform sidecar packages (resolved from the same `@anthropic-ai/claude-agent-sdk` instance senpi imports, walking parents so a sidecar hoisted above it is found) and finally `claude` on `PATH` (honouring `PATHEXT` on Windows, files only, no shell) are each accepted only when the exact string passed to the SDK is an absolute path to a regular file in this process; on Windows that string carries the `\?\` namespace prefix so a path Explorer can see but `CreateProcess` rejects still launches. When nothing is spawnable the turn fails with senpi's own error naming every candidate tried instead of the SDK's generic `Claude Code native binary not found`, and `describeClaudeLane()` reports the same resolution plus the Bun/Node runtime for doctor surfaces ([#1541](https://github.com/code-yeongyu/senpi/issues/1541)).
-
-
 
 - OpenAI Codex multi-account: a login started with `/gpt-account add` is no longer bound to the streaming turn's abort signal, so Esc, steering or a timeout on the response cannot kill the browser or device-code login; the login is cancelled only by dismissing its own dialog or re-issuing the command. Cancelling a `/login` or API-key dialog now prints a neutral `Login cancelled` status instead of `Failed to login to <provider>: This operation was aborted`, and only a genuine provider, network or OAuth error is rendered as a failure. The `auth.json` lock is no longer held across the OAuth token exchange: the refresh runs outside the lock and is compare-and-swapped on the slot's refresh token, so several accounts refreshing at once no longer fail with `CredentialStoreBusyError`, and a catalog refresh for the same provider joins an in-flight token refresh instead of aborting it ([#1542](https://github.com/code-yeongyu/senpi/issues/1542)).
 

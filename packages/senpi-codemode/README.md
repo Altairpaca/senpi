@@ -29,7 +29,9 @@ task-tool names are known.
   session-adjacent spill files for large streams.
 - TUI and HTML-export rendering for syntax-highlighted cells, status rows,
   task progress, structured display values, truncation warnings, and image
-  fallbacks.
+  fallbacks. A JavaScript cell sent as dense one-line code is previewed broken
+  at statement, block, and long-array boundaries; the cell itself runs exactly
+  as sent.
 - Runtime identity badges in eval headers — `eval py (3.14.7, ~/.venv/bin/python3)`,
   `eval js (node 26.7.0, /opt/…/bin/node)` — with the same `runtime` info on
   `EvalToolDetails` and its `cells` for RPC consumers; interpreter detection
@@ -93,6 +95,7 @@ Configuration is loaded in this order:
   "foregroundWindowSeconds": 60,
   "runBudgetSeconds": 300,
   "hardLimitSeconds": 1800,
+  "maxDetachedCells": 15,
   "parallelPoolWidth": 4,
   "taskTools": {
     "task": "task",
@@ -102,7 +105,11 @@ Configuration is loaded in this order:
     "headBytes": 20480,
     "maxColumns": 768
   },
-  "statusEvents": true
+  "statusEvents": true,
+  "memory": {
+    "retainedResultsMb": 32,
+    "retainedImagesMb": 256
+  }
 }
 ```
 
@@ -110,15 +117,18 @@ Configuration is loaded in this order:
 | --- | --- | --- |
 | `languages` | `py`/`js` enabled; `rb`/`jl` disabled | Selects desired languages before interpreter detection. |
 | `cellTimeoutSeconds` | `30` | Idle time an interactive call blocks the turn before the cell detaches. Print/json calls never detach. |
-| `foregroundWindowSeconds` | `60` | Caps `cellTimeoutSeconds` and the grace a bridge-parked cell gets before it detaches, so an interactive call never blocks the turn longer than this. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
-| `runBudgetSeconds` | `300` | Kill deadline for a cell's own execution time - child processes, network, timers, CPU. Time parked in host tool calls (`agent()`, `tool.*`) is not charged, and the budget keeps counting after the cell detaches. A per-call `timeout` replaces it for that cell. Env override: `SENPI_CODEMODE_RUN_BUDGET_SECONDS`. |
-| `hardLimitSeconds` | `1800` | Wall-clock kill deadline for a cell, parked or not; a per-call `timeout` above it raises it. Env override: `SENPI_CODEMODE_HARD_LIMIT_SECONDS`. |
+| `foregroundWindowSeconds` | `60` | Submission-based foreground limit, including queue and bridge pauses. The cell detaches if capacity is available; otherwise it is cancelled with `eval_background_capacity_reached`. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
+| `runBudgetSeconds` | `300` | Kill deadline for a cell's own execution time - child processes, network, timers, CPU. Time queued or parked in host tool calls (`agent()`, `tool.*`) is not charged, and the budget keeps counting after the cell detaches. A per-call `timeout` replaces it for that cell. Env override: `SENPI_CODEMODE_RUN_BUDGET_SECONDS`. |
+| `hardLimitSeconds` | `1800` | Wall-clock kill deadline from submission, including queue and parked time; a per-call `timeout` above it raises it. Env override: `SENPI_CODEMODE_HARD_LIMIT_SECONDS`. |
+| `maxDetachedCells` | `15` | Global detached-cell capacity across all kernels, including queued cells. At capacity, interactive cells stay foreground until completion or the foreground window elapses. Env override: `SENPI_CODEMODE_MAX_DETACHED_CELLS`. |
 | `parallelPoolWidth` | `4` | Maximum concurrent `parallel()` thunks. |
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
 | `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
 | `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
+| `memory.retainedResultsMb` | `32` | In-memory byte budget (MiB) for the settled cells kept for `peek`/`list`, on top of the 32-cell count cap; the oldest go first and the newest is always kept. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_RESULTS_MB` (a non-negative integer). |
+| `memory.retainedImagesMb` | `256` | Disk budget (MiB) for settled-cell images. Images of settled cells (foreground and detached) are written as base64 files under `<session artifacts>/settled-images/` instead of staying in memory, and `peek` reads them back, so it returns the full result. Beyond the budget the oldest files are deleted first; an evicted cell's files are deleted with it; the directory is removed when the session ends. A `peek` whose image file is gone returns the text plus a one-line note. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_IMAGES_MB` (a non-negative integer). |
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
@@ -126,6 +136,9 @@ enables; `0` or `false` disables. Any other value leaves the file setting in
 effect.
 
 Malformed JSON or invalid settings fall back to defaults with a warning.
+The detached-cell environment override uses the run-budget parser: a positive
+base-10 integer wins over the file value; zero, negative, and malformed values
+leave the file value in effect.
 
 ## Cell helpers
 
@@ -155,6 +168,13 @@ into the cell carries the tool's expected parameters, so the cell can correct th
 arguments and retry instead of falling back to one-at-a-time tool calls.
 `tool_schema()` exposes the same catalog up front.
 
+A tool may also contribute globals of its own through `ToolDefinition.kernelPrelude`
+(JavaScript and Python snippets that call the ordinary `tool.<name>()`, one
+documentation line, and the exported names). While the tool is active, each
+JavaScript and Python cell installs any missing export first and the eval prompt
+lists the documentation line; once the tool is deactivated, the next cell deletes
+those names. Exports that shadow a built-in helper are rejected by the host.
+
 `agent()` is available only when the configured task tool is active in the
 session. `output()` similarly requires the configured task-output tool and
 returns immediately: a running task reports its current status, while completed
@@ -162,13 +182,25 @@ tasks return the requested transcript. Missing tools produce a clear
 availability error instead of importing an orchestration package. `agent()`
 delegates through the tool contract, so task-engine permissions, progress
 updates, and transcripts remain owned by that engine.
-`isolated`, `apply`, and `merge` are accepted for compatibility but emit a
-warning because this task-engine integration has no isolation model.
+`isolated` and `apply` accept booleans; `merge` accepts `"patch"` or `"branch"`
+(and `false`/`true` aliases respectively). The bridge checks the configured task
+parameter schema once per bridge, using the same host catalog as `tool_schema()`.
+If it advertises `isolated`, these options are forwarded; otherwise they are
+omitted with the existing warning. Senpi does not implement isolation itself.
+A foreground host result with `details.isolation.changes_applied === false`
+raises `AgentIsolationNotAppliedError` (`isolation_not_applied`), including any
+`patch_path`, `branch_name`, and `manual_command` recovery fields in its message.
+The bridge retains host `details.isolation`; successful foreground helpers still
+return text or parsed JSON.
 
 Background `agent()` handles retain `id` and `agent://<id>` and include `run_epoch`.
 The host must return structured `details.task_id` (`st_` plus lowercase hex) and
 an integer `details.run_epoch >= 0`. Missing or malformed details raise
-`invalid_task_handle`; prose IDs are never used. Foreground text/JSON is unchanged.
+`invalid_task_handle`; prose IDs are never used. Handles return immediately,
+so final isolation results are not available on the initial handle: await the
+completion notification or read `task_output` (via `output()`) after completion.
+Any isolation metadata supplied by the host on a handle is preserved as
+`details.isolation`, not interpreted as a foreground apply failure.
 
 `workpool` takes exactly one of `{category, prompt, model?}` or
 `{subagent_type, prompt, model?}` as its plain-data agent spec. Mode is `fresh`
@@ -188,37 +220,47 @@ that implements it. Reset only removes kernel variables: save `pool_id` and use
 arguments in other languages). An open pool's adapter can be recreated with the
 same name/spec/mode; no worker state is reconstructed in the prelude.
 
-## Required summary
+## Required run fields
 
-Every `eval` run call MUST include a `summary` — one line in the user's
-conversational language stating what the cell does and for what purpose (e.g.
-a Korean conversation produces a Korean summary such as "src 전체에서
-legacyClient 사용처 집계"). The summary is shown in the TUI while the cell
-runs and in the finished result, so you can always tell what is running and
-why. Values longer than 80 characters are force-truncated. A run request
-without a `summary` fails with a teaching error.
+Every `eval` run call MUST include a `language` (the kernel that runs the
+cell, one of the enabled languages), the `code` cell body, and a `summary` —
+one line in the language the
+user writes in: a progress update saying what the agent is doing and why, not
+a label for the code. The
+summary is shown in the TUI while the cell runs and in the finished result, so
+you can always tell what is running and why. It has no length limit; a
+collapsed block shows its first three lines. The schema marks all three
+optional only because the control actions (`peek`, `stop`, `list`) share it; a
+run request missing any of them fails with a teaching error that names what to
+add.
 
 ## Detached cells
 
 `eval` accepts `on_timeout: "detach"|"error"`. The default is `"detach"` in
 interactive TUI, RPC, and app-server sessions; print and JSON one-shot runs
 default to `"error"` so their result is never silently detached. A detached
-cell keeps only its own language kernel busy. A new same-language call returns
-a busy error with its cell id and output tail; calls in other languages continue
-normally. Do not re-run the cell.
+cell keeps only its own language kernel busy. New same-language cells are admitted
+into its FIFO queue; calls in other languages continue normally. Queued cells may
+also detach, within the global `maxDetachedCells` cap. At capacity, the first idle
+detach attempt leaves the cell foreground and re-arms one wait for the remaining
+submission-based foreground window. At the window, it detaches if a slot is now
+free; otherwise it settles `cancelled` with `eval_background_capacity_reached`,
+listing the live cells and a stop-or-wait remedy. Cells that complete inside the
+window return normally. Cancelling a queued cell never interrupts its predecessor.
+Do not re-run a detached or queued cell; each detached cell completes as one notification.
 
 Queued steering also detaches an eligible interactive foreground call, including
 one paused in a host tool bridge, without cancelling its computation. If the
-language's detached slot is occupied, steering leaves the call waiting. Follow-up
+global detached cap is reached, steering leaves the call waiting. Follow-up
 messages, explicit `on_timeout: "error"`, and print/JSON calls do not trigger this
 transition; caller abort and existing deadlines retain their cancellation behavior.
 
 Every cell, detached or not, is bounded by two kill deadlines. The run budget
 (`runBudgetSeconds`, or the call's `timeout`) charges only the cell's own
-execution time and is paused while a host tool call is in flight, so a cell
+execution time and is paused while queued or while a host tool call is in flight, so a cell
 waiting on `agent()` survives while a runaway child process or loop does not.
 The hard limit (`hardLimitSeconds`, raised by a larger `timeout`) is wall-clock
-and bounds parked cells too. A cell killed by either deadline reports which one
+from submission and bounds queued and parked cells too. A cell killed by either deadline reports which one
 in its result or completion notification, together with whether kernel state
 survived; the tool schema states the configured numbers. The `timeout` value
 never changes the idle detach deadline: that is `cellTimeoutSeconds` capped by
@@ -227,9 +269,24 @@ never changes the idle detach deadline: that is `cellTimeoutSeconds` capped by
 While any cell is detached, the interactive footer shows a highlighted
 `↗ <language> · <summary>` status on the extension status line (the cell id
 when the call had no summary), clearing as soon as the last detached cell settles.
+Queued entries are labelled `queued`; an all-queued footer shows `(queued)` instead
+of an elapsed duration. Elapsed time counts only from execution start.
+
+Use `eval({ action: "list" })` without a language or cell id to see live and
+recently settled cells across languages. Each line includes the id, language,
+state, elapsed execution seconds, queue predecessors, and summary (or a short code
+preview); `details.cells` carries the typed cell metadata. Listing never consumes
+completion notifications.
+
+A run with `reset: true` resets only its selected language and is refused with
+`eval_kernel_busy_reset_refused` while any other cell in that language is live,
+including queued cells. The requesting cell fails without changing the kernel or
+cancelling existing work. Stop those cells explicitly or wait for their completion
+notifications before resetting; live cells in other languages do not block reset.
 
 Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
-`eval({ action: "stop", cell_id })` to cancel it. Python stop interrupts the
+`eval({ action: "stop", cell_id })` to cancel it. Stopping a queued cell removes it
+without interrupting the active cell; kernel state is retained. Python running-cell stop interrupts the
 existing kernel and preserves variables. JavaScript stop is cooperative first:
 the worker rejects the cell's pending bridge `tool.*` calls and kills the
 `Bun.spawn` children it started, and a cell that settles within the 2 s grace

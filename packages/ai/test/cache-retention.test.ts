@@ -493,35 +493,38 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it.each([
-			["gpt-4o-mini", "24h", undefined],
-			["gpt-6-astra", undefined, { ttl: "30m" }],
-		] as const)("should use the supported long cache field for %s", async (modelId, retention, cacheOptions) => {
-			const model = getModel("openai", modelId);
-			let capturedPayload: OpenAIResponsesCachePayload | undefined;
+			["gpt-4o-mini", "24h", undefined, "session-2"],
+			["gpt-6-astra", undefined, { ttl: "30m" }, undefined],
+		] as const)(
+			"should use the supported long cache field for %s",
+			async (modelId, retention, cacheOptions, cacheKey) => {
+				const model = getModel("openai", modelId);
+				let capturedPayload: OpenAIResponsesCachePayload | undefined;
 
-			const { streamOpenAIResponses } = await import("../src/providers/openai-responses.ts");
+				const { streamOpenAIResponses } = await import("../src/providers/openai-responses.ts");
 
-			try {
-				const s = streamOpenAIResponses(model, context, {
-					apiKey: "fake-key",
-					cacheRetention: "long",
-					sessionId: "session-2",
-					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
-						capturedPayload = payload;
-					}),
-				});
+				try {
+					const s = streamOpenAIResponses(model, context, {
+						apiKey: "fake-key",
+						cacheRetention: "long",
+						sessionId: "session-2",
+						onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
+							capturedPayload = payload;
+						}),
+					});
 
-				for await (const event of s) {
-					if (event.type === "error") break;
+					for await (const event of s) {
+						if (event.type === "error") break;
+					}
+				} catch {
+					// Expected to fail
 				}
-			} catch {
-				// Expected to fail
-			}
 
-			expect(capturedPayload?.prompt_cache_key).toBe("session-2");
-			expect(capturedPayload?.prompt_cache_retention).toBe(retention);
-			expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
-		});
+				expect(capturedPayload?.prompt_cache_key).toBe(cacheKey);
+				expect(capturedPayload?.prompt_cache_retention).toBe(retention);
+				expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
+			},
+		);
 
 		it("uses model cacheRetention when request options omit cacheRetention", async () => {
 			const model = {

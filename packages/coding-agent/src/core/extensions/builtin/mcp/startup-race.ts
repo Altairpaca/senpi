@@ -5,7 +5,8 @@ import type { ServerConnection } from "./connection.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { createMcpLogger } from "./log.ts";
 import { ensureMcpResourceSubscriptions } from "./resources.ts";
-import type { McpConnectionEntry } from "./service-types.ts";
+import type { McpConnectionEntry, McpStartupCatalogClaim } from "./service-types.ts";
+import { SharedMcpLease } from "./shared-lease.ts";
 import { safeTimer } from "./wrap.ts";
 
 export const MCP_STARTUP_RACE_MS = 250;
@@ -91,9 +92,17 @@ export class McpDeferredAttach {
 }
 
 export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOptions): Promise<void> {
-	const connect = ignoreStartupNeedsAuth(
-		options.entry,
-		connectAndRefreshMcpCatalog(options.entry, options.serverConfig),
+	const { entry, pi } = options;
+	const claim: McpStartupCatalogClaim = {
+		cachedCatalog: entry.cachedCatalog,
+		ownsRegistration: () => pi !== undefined && options.shouldRefreshTools(),
+	};
+	entry.startupCatalogClaim = claim;
+	const releaseClaim = (): void => {
+		if (entry.startupCatalogClaim === claim) entry.startupCatalogClaim = undefined;
+	};
+	const connect = ignoreStartupNeedsAuth(entry, connectAndRefreshMcpCatalog(entry, options.serverConfig)).finally(
+		releaseClaim,
 	);
 	const result = await waitForMcpStartupRace(connect, options.deadlineMs);
 	if (result === "settled" || options.pi === undefined) return;
@@ -117,6 +126,11 @@ export async function connectAndRefreshMcpCatalog(
 	}
 	await connectMcpServer(entry.connection, entry.logger);
 	if (entry.connection.state !== "connected") return;
+	if (entry.connection instanceof SharedMcpLease) {
+		entry.cachedCatalog = await entry.connection.catalog();
+		entry.cacheRefreshedAfterConnect = true;
+		return;
+	}
 	if (entry.cacheRefreshedAfterConnect) return;
 	entry.cacheRefreshedAfterConnect = true;
 	try {

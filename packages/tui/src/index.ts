@@ -71,7 +71,7 @@ export {
 // Editor component interface (for custom editors)
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
-export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+export { type FuzzyMatch, fuzzyFilter, fuzzyMatch, fuzzyMatchLower } from "./fuzzy.ts";
 // Atomic image markers (ids only - never image bytes)
 export {
 	type EditorImageState,
