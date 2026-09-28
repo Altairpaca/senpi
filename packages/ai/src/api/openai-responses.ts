@@ -12,6 +12,7 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -29,9 +30,17 @@ import type {
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
-import { limitGitHubCopilotTools, recordGitHubCopilotToolLimit } from "../utils/github-copilot-tool-limit.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import {
+	awaitProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
@@ -331,9 +340,11 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 			params = sanitizeUnsupportedNativeTools(params, compat);
 			params = applyAllowedToolsChoice(params, context, compat);
-			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools);
-			params.tools = limitedTools.tools;
-			recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			if (limitedTools.omittedCount > 0) {
+				params = { ...params, tools: limitedTools.tools };
+				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+			}
 			const transport = options?.transport ?? "sse";
 			if (transport !== "sse" && compat.supportsWebSocket) {
 				let websocketStarted = false;
@@ -385,7 +396,11 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					params,
 					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
 					isForced: isForcedOpenAIResponsesToolChoice,
-					send: (body: MutableResponsesPayload) => client.responses.create(body, requestOptions).withResponse(),
+					send: (body: MutableResponsesPayload) =>
+						awaitProviderTransport(
+							() => client.responses.create(body, requestOptions).withResponse(),
+							openAICompatibleProviderDiagnosticFromError,
+						),
 				});
 				params = sent.params;
 				return sent.result;
@@ -425,7 +440,9 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatOpenAIResponsesError(error);
+			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
+			output.errorMessage = formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -494,7 +511,8 @@ export async function warmOpenAIResponsesPromptCache(
 	const nextParams = await resolved.onPayload?.(params, model);
 	if (nextParams !== undefined) params = nextParams as MutableResponsesPayload;
 	params = sanitizeUnsupportedNativeTools(params, compat);
-	params.tools = limitGitHubCopilotTools(model.provider, params.tools).tools;
+	const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+	if (limitedTools.omittedCount > 0) params = { ...params, tools: limitedTools.tools };
 	const body = {
 		...params,
 		stream: false,

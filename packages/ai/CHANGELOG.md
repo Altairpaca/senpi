@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- GitHub Copilot requests now keep at most 128 serialized tools on Chat Completions, Responses, and Anthropic Messages routes. Excess definitions are omitted deterministically with a diagnostic instead of reaching Copilot as an opaque HTTP 400, and a generic `400 Bad Request` after limiting now explains the likely tool-cap mismatch. ([#2298](https://github.com/code-yeongyu/senpi/issues/2298))
+- GitHub Copilot requests now keep at most 128 serialized tools on Chat Completions, Responses, and Anthropic Messages routes while retaining any explicitly forced tool. Excess definitions are omitted deterministically with a diagnostic instead of reaching Copilot as an opaque HTTP 400, and a generic `400 Bad Request` after limiting now explains the likely tool-cap mismatch on all three routes. ([#2298](https://github.com/code-yeongyu/senpi/issues/2298))
 
 ### Removed
 
