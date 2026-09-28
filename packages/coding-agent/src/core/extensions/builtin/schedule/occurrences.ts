@@ -49,12 +49,15 @@ export async function cancelScheduledJob(
 	if (representative === undefined) return undefined;
 	if (options.sessionId !== undefined && representative.job.sessionId !== options.sessionId) return undefined;
 	await writeAtomic(tombstonePath(dir, id), `${new Date().toISOString()}\n`);
+	// Read in-flight state only now: a claim that landed after the listing but before the tombstone
+	// (its tombstone check came too early to see it) is on disk in firing/ by this point.
+	const inFlight = (await occurrenceNumbers(dir, "firing", id)).length > 0;
 	await rm(join(dir, "pending", `${id}.json`), { force: true });
 	const failed = records.filter((record) => record.state === "failed");
 	for (const record of failed) await rm(join(dir, record.file), { force: true });
 	return {
 		job: representative.job,
-		inFlight: records.some((record) => record.state === "firing"),
+		inFlight,
 		removedFailed: failed.length,
 	};
 }
