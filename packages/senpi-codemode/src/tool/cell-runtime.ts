@@ -7,6 +7,8 @@ import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } fro
 import type { EvalMemoryDetails, EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 const LIVE_UPDATE_LINES = 8;
+/** Same cadence as the core bash tool's streaming updates (BASH_UPDATE_THROTTLE_MS). */
+const LIVE_OUTPUT_UPDATE_THROTTLE_MS = 100;
 
 type KernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 type DisplayMessage = Extract<KernelToHostMessage, { type: "display" }>;
@@ -46,6 +48,8 @@ export class CellResultBuilder {
 	readonly #state: CellState;
 	#memory: KernelMemoryReport | undefined;
 	readonly #liveLines = new TailLineRing({ maxBytes: DEFAULT_MAX_BYTES * 2, maxLines: LIVE_UPDATE_LINES });
+	#lastOutputUpdateAt = 0;
+	#outputUpdateTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(options: CellResultBuilderOptions) {
 		this.#state = options.state;
@@ -57,8 +61,7 @@ export class CellResultBuilder {
 			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 			onChunk: (chunk) => {
 				this.#liveLines.append(chunk);
-				options.state.output = this.#output.cellTailText();
-				this.emitUpdate(false);
+				this.#scheduleOutputUpdate();
 			},
 		});
 		if (options.state.status !== "queued") options.state.status = "running";
@@ -104,6 +107,7 @@ export class CellResultBuilder {
 	}
 
 	liveResult(): AgentToolResult<EvalToolDetails> {
+		this.#state.output = this.#output.cellTailText();
 		return {
 			content: [{ type: "text", text: this.#liveUpdateText() }],
 			details: this.#details(undefined, this.#state.status === "error"),
@@ -118,7 +122,33 @@ export class CellResultBuilder {
 		});
 	}
 
+	#scheduleOutputUpdate(): void {
+		const delay = LIVE_OUTPUT_UPDATE_THROTTLE_MS - (Date.now() - this.#lastOutputUpdateAt);
+		if (delay <= 0) {
+			this.#clearOutputUpdateTimer();
+			this.#emitOutputUpdate();
+			return;
+		}
+		this.#outputUpdateTimer ??= setTimeout(() => {
+			this.#outputUpdateTimer = undefined;
+			this.#emitOutputUpdate();
+		}, delay);
+	}
+
+	#emitOutputUpdate(): void {
+		this.#lastOutputUpdateAt = Date.now();
+		this.#state.output = this.#output.cellTailText();
+		this.emitUpdate(false);
+	}
+
+	#clearOutputUpdateTimer(): void {
+		if (this.#outputUpdateTimer === undefined) return;
+		clearTimeout(this.#outputUpdateTimer);
+		this.#outputUpdateTimer = undefined;
+	}
+
 	async #finish(isError: boolean): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#clearOutputUpdateTimer();
 		const output = await this.#output.finish();
 		this.#state.output = output.output;
 		const details = this.#details(output, isError);

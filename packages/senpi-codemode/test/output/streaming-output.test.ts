@@ -101,9 +101,11 @@ describe("TailBuffer", () => {
 				const chunk =
 					kind < 0.1
 						? ""
-						: kind < 0.4
+						: kind < 0.3
 							? "abcdefghij".slice(0, 1 + Math.floor(random() * 10))
-							: `${"xy".repeat(1 + Math.floor(random() * 60))}\n`;
+							: kind < 0.45
+								? "가😀é\ud800".slice(0, 1 + Math.floor(random() * 5))
+								: `${"xy".repeat(1 + Math.floor(random() * 60))}\n`;
 				chunks.push(chunk);
 				buffer.append(chunk);
 

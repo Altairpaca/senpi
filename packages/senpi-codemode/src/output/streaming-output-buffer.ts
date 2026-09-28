@@ -23,6 +23,32 @@ export function truncateTailBytes(text: string, maxBytes: number): ByteSlice {
 	return { text: slice.toString("utf8"), bytes: slice.length };
 }
 
+/** UTF-8 width of the code point starting at `index`; a lone surrogate counts 3 bytes, as the encoder writes U+FFFD. */
+function utf8Width(codePoint: number): number {
+	if (codePoint < 0x80) return 1;
+	if (codePoint < 0x800) return 2;
+	if (codePoint < 0x10000) return 3;
+	return 4;
+}
+
+/**
+ * The shortest suffix of `text` whose leading whole code points total at least `excess` UTF-8 bytes, i.e. exactly
+ * what truncateTailBytes keeps, computed by walking the dropped prefix only. Lone surrogates in the kept text become
+ * U+FFFD as they would after a UTF-8 round trip.
+ */
+function dropLeadingBytes(text: string, excess: number): ByteSlice {
+	const totalBytes = Buffer.byteLength(text, "utf8");
+	let index = 0;
+	let dropped = 0;
+	while (dropped < excess && index < text.length) {
+		const codePoint = text.codePointAt(index) ?? 0;
+		dropped += utf8Width(codePoint);
+		index += codePoint > 0xffff ? 2 : 1;
+	}
+	const kept = text.slice(index);
+	return { text: kept.isWellFormed() ? kept : kept.toWellFormed(), bytes: totalBytes - dropped };
+}
+
 export class TailBuffer {
 	readonly #maxBytes: number;
 	#text = "";
@@ -48,10 +74,12 @@ export class TailBuffer {
 			this.#bytes += incomingBytes;
 			return;
 		}
+		// Over the budget: drop whole code points from the front instead of re-encoding the window, so a
+		// streaming append allocates no native buffer per chunk (#2262). Same result as truncateTailBytes.
 		const next =
 			incomingBytes >= this.#maxBytes
-				? truncateTailBytes(text, this.#maxBytes)
-				: truncateTailBytes(this.#text + text, this.#maxBytes);
+				? dropLeadingBytes(text, incomingBytes - this.#maxBytes)
+				: dropLeadingBytes(this.#text + text, this.#bytes + incomingBytes - this.#maxBytes);
 		this.#text = next.text;
 		this.#bytes = next.bytes;
 	}

@@ -1,11 +1,13 @@
 import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MAX_BYTES, truncateTailBytes } from "../src/output/streaming-output.ts";
 import { CellResultBuilder, type CellState } from "../src/tool/cell-runtime.ts";
 import { EvalOutputCollector } from "../src/tool/image.ts";
 import type { EvalToolDetails } from "../src/tool/types.ts";
 
 const LIVE_UPDATE_LINES = 8;
+/** Output-driven live updates are coalesced to one per this window (cell-runtime.ts). */
+const OUTPUT_UPDATE_WINDOW_MS = 100;
 
 type Update = Parameters<AgentToolUpdateCallback<EvalToolDetails>>[0];
 
@@ -48,6 +50,14 @@ function referenceCellTail(stream: string): string {
 }
 
 describe("cell result builder live output", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it("streams live updates byte-identical to the aggregate-tail algorithm for every chunk", () => {
 		// Given
 		const chunkSequences: readonly string[][] = [
@@ -73,6 +83,7 @@ describe("cell result builder live output", () => {
 			for (const chunk of chunks) {
 				builder.push(chunk);
 				stream += chunk;
+				vi.advanceTimersByTime(OUTPUT_UPDATE_WINDOW_MS);
 
 				// Then
 				const expected = referenceLiveText(stream, "running");
@@ -97,10 +108,56 @@ describe("cell result builder live output", () => {
 		for (const chunk of chunks) {
 			builder.push(chunk);
 			stream += chunk;
+			vi.advanceTimersByTime(OUTPUT_UPDATE_WINDOW_MS);
 
 			// Then
 			expect(outputs.at(-1)).toBe(referenceCellTail(stream));
 		}
+	});
+
+	it("coalesces a burst of output into one live update per window and flushes the latest tail", () => {
+		// Given
+		const updates: string[] = [];
+		const state = makeState((update) => {
+			const part = update.content[0];
+			if (part.type === "text") updates.push(part.text);
+		});
+		const builder = new CellResultBuilder({ state, headBytes: 4096, maxColumns: 0, model: undefined });
+		const afterConstruction = updates.length;
+		let stream = "";
+
+		// When: 1,000 chunks arrive inside one window
+		for (let index = 0; index < 1_000; index++) {
+			const chunk = `line-${index}\n`;
+			builder.push(chunk);
+			stream += chunk;
+		}
+		const duringBurst = updates.length - afterConstruction;
+		vi.advanceTimersByTime(OUTPUT_UPDATE_WINDOW_MS);
+
+		// Then: at most the leading update fires inside the window, and the trailing one carries the latest tail
+		expect(duringBurst).toBeLessThanOrEqual(1);
+		expect(updates.length - afterConstruction).toBeLessThanOrEqual(2);
+		expect(updates.at(-1)).toBe(referenceLiveText(stream, "running"));
+	});
+
+	it("serves the current tail from liveResult without waiting for the window", () => {
+		// Given
+		const state = makeState(() => {});
+		const builder = new CellResultBuilder({ state, headBytes: 4096, maxColumns: 0, model: undefined });
+		let stream = "";
+
+		// When
+		for (let index = 0; index < 20; index++) {
+			const chunk = `row-${index}\n`;
+			builder.push(chunk);
+			stream += chunk;
+		}
+		const live = builder.liveResult();
+
+		// Then
+		expect(textOf(live)).toBe(referenceLiveText(stream, "running"));
+		expect(live.details.cells?.[0]?.output).toBe(referenceCellTail(stream));
 	});
 
 	it("never asks the collector for whole-output text during streaming or finalization", async () => {
