@@ -45,6 +45,24 @@
 
 - LOW: the fork-only detached-cell manager, snapshot store, new spill module, and the settings memory block.
 
+## 2026-09-28 - Stable JS kernel prelude source URL (#2263)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js`: the loader/contribution prelude is evaluated under one stable source URL (`senpi:kernel-prelude`) instead of a per-cell `` `${cellId}:prelude` `` URL, so identical prelude text reuses the engine's eval code-cache entry instead of gaining one per cell. Tests: `test/js-kernel-prelude-source-url.test.ts` pins the shared URL via the `__senpi_import__` stack frame across two cells.
+
+### Why
+
+- Every JavaScript eval cell re-evaluated identical prelude text under a cell-unique source name, which defeated the eval code cache: ~2.6 KB of kernel heap per cell, plateauing at ~3.5 MB across 2,000 code-cache entries after ~1,000 cells (#2263).
+
+### Why an extension could not handle it
+
+- The prelude evaluation site is the kernel worker runtime owned by this package.
+
+### Expected merge conflict zones
+
+- LOW: the prelude eval site in `worker-runtime.js`; the eval-mem-fix memory lane extends the same file's run path.
+
 ## 2026-09-27 - Tool kernel preludes in the eval kernels
 
 ### What changed
