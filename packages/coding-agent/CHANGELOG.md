@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- `/thinking` and `/thinking <level>` now open the thinking-level selector or set the session level instead of being sent to the model as a user message; the interactive dispatch dropped by the upstream sync merge is restored with argument completions ([#1437](https://github.com/code-yeongyu/senpi/issues/1437)).
 - A transient RPC host with a short idle window no longer exits between `ensureHost()` and the ensuring client's first attach. `ensureHost()` now keeps the connection that proved the host ready as an attach hold and returns `release()` on `EnsuredHost`; the interactive host runtime and `senpi host ensure` release it once attached. A slow attach (a loaded machine, a slow lock release) found the host already gone (`connect ENOENT`). ([#2227](https://github.com/code-yeongyu/senpi/issues/2227))
 - An RPC host that goes away removes its registration pointer last, after `settings.json` and its generation record, on the graceful and the crash path alike, so "no host registered" is never observable while the rest of its daemon state still exists. On Windows the crash path removed the pointer first and then the other files one by one. ([#2241](https://github.com/code-yeongyu/senpi/issues/2241))
 
@@ -1243,7 +1244,6 @@
 - Extensions can inspect the effective shared-host capability during registration, allowing RPC-dependent tools to stay absent when shared-host support is disabled and available when it is enabled.
 
 - Oversized resumed sessions now open in a required-compaction state and compact before the first prompt instead of failing constructor-time model-budget admission ([#1511](https://github.com/code-yeongyu/senpi/issues/1511)).
-- `/thinking` and `/thinking <level>` now open the thinking-level selector or set the session level instead of being sent to the model as a user message; the interactive dispatch dropped by the upstream sync merge is restored with argument completions ([#1437](https://github.com/code-yeongyu/senpi/issues/1437)).
 - Fresh `claude-sdk-oauth` sessions with injected context and multiple first-turn user messages now report continuity `bootstrap` instead of a false `registry_miss` loss; sessions that have a prior assistant message still flatten on a genuine registry miss.
 
 ### Removed

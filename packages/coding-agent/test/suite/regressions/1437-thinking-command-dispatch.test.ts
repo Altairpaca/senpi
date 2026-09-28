@@ -36,6 +36,7 @@ type SubmitContext = {
 	pendingImages: Map<number, unknown>;
 	optimisticUserEchoes: ReturnType<typeof createEchoControllerStub>;
 	takeSubmissionImages: (submittedText: string) => unknown[];
+	beginUserEcho: (text: string, images: unknown[]) => string;
 	handleThinkingCommand: (searchTerm?: string) => Promise<void>;
 };
 
@@ -81,6 +82,7 @@ function createSubmitContext(): SubmitContext {
 		pendingImages: new Map(),
 		optimisticUserEchoes: createEchoControllerStub(),
 		takeSubmissionImages: vi.fn(() => []),
+		beginUserEcho: vi.fn(() => "pending-test"),
 		handleThinkingCommand: vi.fn(async () => {}),
 	};
 	context.takeSubmissionImages = prototype.takeSubmissionImages.bind(context);
