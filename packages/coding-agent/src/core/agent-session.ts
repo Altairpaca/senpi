@@ -290,7 +290,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
-import { findUnknownCommand } from "./unknown-command.ts";
+import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */
@@ -4368,6 +4368,7 @@ export class AgentSession {
 	 * rewrites and expanded commands never reach here as unknown.
 	 */
 	private _rejectUnknownCommand(text: string): void {
+		if (commandShapedName(text) === undefined) return;
 		const promptCommands = new Set<string>([
 			...this._extensionRunner.getRegisteredCommands().map((command) => command.invocationName),
 			...this.promptTemplates.map((template) => template.name),
