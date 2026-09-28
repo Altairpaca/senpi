@@ -46,7 +46,9 @@ async function sandbox(): Promise<{ root: string; agentDir: string; dir: string 
 
 function spawnCli(agentDir: string, args: string[]): ChildProcess {
 	const child = spawn(process.execPath, [cliEntry, "schedule", ...args], {
-		env: { ...process.env, SENPI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
+		// SENPI_RUNTIME=bun (set in every omo session) would re-exec the CLI under Bun behind a wrapper
+		// process, so `child.pid` would not be the runner these tests signal and look up.
+		env: { ...process.env, SENPI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", SENPI_RUNTIME: "node" },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	children.push(child);
