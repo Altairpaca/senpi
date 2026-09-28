@@ -97,6 +97,7 @@ import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
+import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
@@ -1447,6 +1448,13 @@ export async function main(args: string[], options?: MainOptions) {
 			.finally(() => clearTimeout(timeout));
 	}
 
+	// Every mode hosts the eval kernel, and a worker thread that is terminated takes its children's exit
+	// watchers with it, so single-session modes arm the same reaper the multi-session host runs (#1962). The
+	// TUI owns stderr, so interactive mode reaps silently.
+	const stopChildReaper = await startHostChildReaper(
+		appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
+	);
+
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
@@ -1499,6 +1507,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialImages,
 		});
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode"));
+		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();
 		if (exitCode !== 0) {

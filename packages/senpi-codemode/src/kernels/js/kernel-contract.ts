@@ -20,6 +20,11 @@ export function resolveKernelToolNameSource(names?: KernelToolNameSource): strin
 export interface JavaScriptKernelOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
+	/**
+	 * Collects the exit status of a retired worker's children once they are killed (#1962): no thread is left to
+	 * wait on them. Absent, they stay zombies until the host's child reaper or process exit collects them.
+	 */
+	readonly collectOrphanedChildren?: (pids: readonly number[]) => Promise<unknown>;
 	readonly parallelPoolWidth: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly workerEntryUrl?: URL;

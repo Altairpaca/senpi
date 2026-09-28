@@ -384,5 +384,7 @@ export class JavaScriptKernel {
 		const pids = [...this.#childPids];
 		this.#childPids.clear();
 		await terminateProcessTrees(pids, { graceMs: WORKER_LOSS_CHILD_GRACE_MS, ownerPid: process.pid });
+		// The worker that owned these children and their exit watchers is gone, so nothing else will wait on them.
+		await this.#options.collectOrphanedChildren?.(pids);
 	}
 }
