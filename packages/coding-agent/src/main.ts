@@ -6,6 +6,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
@@ -28,7 +29,9 @@ import {
 	printAuthCommandHelp,
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
+import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { chooseCrossProjectAction, confirmSameRepositoryRebind } from "./cli/cross-project-session.ts";
 import {
 	dispatchAppServerCommand,
 	dispatchConfigCommand,
@@ -41,6 +44,7 @@ import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./c
 import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
+import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	createStartupLoadingIndicator,
@@ -69,8 +73,11 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
 	formatMissingSessionCwdPrompt,
@@ -79,6 +86,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { shouldJoinSharedHost } from "./core/shared-host-policy.ts";
@@ -367,17 +375,24 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
  * Resolves false on stdin EOF (Ctrl+D, closed pipe): without the close handler a
  * readline question never settles once the input stream ends, hanging the process.
  */
-async function promptConfirm(message: string): Promise<boolean> {
+export async function promptConfirm(message: string): Promise<boolean> {
 	return new Promise((resolve) => {
 		const rl = createInterface({
 			input: process.stdin,
 			output: process.stdout,
 		});
+		let settled = false;
+		const settle = (result: boolean): void => {
+			if (settled) return;
+			settled = true;
+			resolve(result);
+		};
 		rl.question(`${message} [y/N] `, (answer) => {
+			const normalized = answer.trim().toLowerCase();
+			settle(normalized === "y" || normalized === "yes");
 			rl.close();
-			resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
 		});
-		rl.on("close", () => resolve(false));
+		rl.once("close", () => settle(false));
 	});
 }
 
@@ -393,6 +408,24 @@ function validateForkFlags(parsed: Args): void {
 
 	if (conflictingFlags.length > 0) {
 		console.error(chalk.red(`Error: --fork cannot be combined with ${conflictingFlags.join(", ")}`));
+		process.exit(1);
+	}
+}
+
+function validateRebindFlags(parsed: Args): void {
+	if (!parsed.rebind) return;
+
+	const conflictingFlags = [
+		parsed.session ? "--session" : undefined,
+		parsed.fork ? "--fork" : undefined,
+		parsed.continue ? "--continue" : undefined,
+		parsed.resume ? "--resume" : undefined,
+		parsed.noSession ? "--no-session" : undefined,
+		parsed.sessionId !== undefined ? "--session-id" : undefined,
+	].filter((flag): flag is string => flag !== undefined);
+
+	if (conflictingFlags.length > 0) {
+		console.error(chalk.red(`Error: --rebind cannot be combined with ${conflictingFlags.join(", ")}`));
 		process.exit(1);
 	}
 }
@@ -440,6 +473,26 @@ function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string,
 	}
 }
 
+async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string): Promise<SessionManager> {
+	try {
+		const reboundPath = await rebindSessionFile(sourcePath, cwd, sessionDir);
+		console.log(chalk.dim(`Session moved to ${cwd}`));
+		return SessionManager.open(reboundPath, sessionDir);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.red(`Error: ${message}`));
+		process.exit(1);
+	}
+}
+
+function sessionCwdOrUndefined(sessionFile: string): string | undefined {
+	try {
+		return readSessionCwd(sessionFile);
+	} catch {
+		return undefined;
+	}
+}
+
 export async function createSessionManager(
 	parsed: Args,
 	cwd: string,
@@ -474,6 +527,27 @@ export async function createSessionManager(
 		}
 	}
 
+	if (parsed.rebind) {
+		const resolved = await resolveSessionPath(parsed.rebind, cwd, sessionDir);
+		if (resolved.type === "not_found") {
+			console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+			process.exit(1);
+		}
+		const sessionCwd = resolved.type === "global" ? resolved.cwd : sessionCwdOrUndefined(resolved.path);
+		if (resolved.type === "local" || sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(cwd)) {
+			return openSessionOrExit(resolved.path, sessionDir);
+		}
+		if ((await classifySessionRepository(resolved.path, sessionCwd, cwd)) === "different") {
+			console.error(
+				chalk.red(
+					`Refusing to rebind: ${cwd} is a different git repository than ${sessionCwd}. Use --fork '${parsed.rebind}' to copy the session into this directory instead.`,
+				),
+			);
+			process.exit(1);
+		}
+		return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+	}
+
 	if (parsed.session) {
 		const resolved = await resolveSessionPath(parsed.session, cwd, sessionDir);
 
@@ -483,27 +557,24 @@ export async function createSessionManager(
 				return openSessionOrExit(resolved.path, sessionDir);
 
 			case "global": {
-				if (appMode !== "interactive") {
-					// The fork confirmation below blocks on readline, which only an
-					// interactive session can answer. Print, JSON, RPC, and app-server runs
-					// reach here with a TTY attached too (`-p` from a terminal), where the
-					// question hangs the process or resolves as "no" on stdin EOF. Fail fast
-					// with an actionable message instead.
-					console.error(chalk.red(`Session found in different project: ${resolved.cwd}`));
-					console.error(
-						chalk.red(
-							`Cannot confirm forking without an interactive session. Use --fork '${parsed.session}' to fork it into the current directory, or re-run interactively from ${resolved.cwd}.`,
-						),
-					);
-					process.exit(1);
-				}
-				console.log(chalk.yellow(`Session found in different project: ${resolved.cwd}`));
-				const shouldFork = await promptConfirm("Fork this session into current directory?");
-				if (!shouldFork) {
-					console.log(chalk.dim("Aborted."));
-					process.exit(0);
-				}
-				return forkSessionOrExit(resolved.path, cwd, sessionDir);
+				// The confirmation blocks on readline, which only an interactive session can
+				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
+				// too (`-p` from a terminal), where the question hangs the process or resolves
+				// as "no" on stdin EOF, so they get the exact commands and a non-zero exit.
+				const action = await chooseCrossProjectAction({
+					sessionArg: parsed.session,
+					sessionCwd: resolved.cwd,
+					cwd,
+					match: await classifySessionRepository(resolved.path, resolved.cwd, cwd),
+					interactive: appMode === "interactive",
+					confirm: promptConfirm,
+					out: (line) => console.log(line),
+					err: (line) => console.error(line),
+				});
+				if (action === "rebind") return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+				if (action === "fork") return forkSessionOrExit(resolved.path, cwd, sessionDir);
+				if (action === "abort") console.log(chalk.dim("Aborted."));
+				return process.exit(action === "abort" ? 0 : 1);
 			}
 
 			case "not_found":
@@ -515,23 +586,53 @@ export async function createSessionManager(
 	if (parsed.resume) {
 		try {
 			const { selectSession } = await import("./cli/session-picker.ts");
+			const movedOptions = sessionDir === undefined ? {} : { sessionDir };
 			const selectedPath = await selectSession(
-				(onProgress) => SessionManager.list(cwd, sessionDir, onProgress),
-				(onProgress) => SessionManager.listAll(sessionDir, onProgress),
+				(onProgress) => withMovedSessions(SessionManager.list(cwd, sessionDir, onProgress), cwd, movedOptions),
+				async (onProgress) => markMovedSessions(await SessionManager.listAll(sessionDir, onProgress), cwd),
 				settingsManager,
 			);
 			if (!selectedPath) {
 				console.log(chalk.dim("No session selected"));
 				process.exit(0);
 			}
-			return SessionManager.open(selectedPath, sessionDir);
+			const target = await resolveResumeTarget({
+				sessionPath: selectedPath,
+				cwd,
+				...movedOptions,
+				confirm: (selectedCwd) => {
+					console.log(chalk.yellow(`Session found in different project: ${selectedCwd}`));
+					return confirmSameRepositoryRebind({
+						sessionArg: selectedPath,
+						cwd,
+						confirm: promptConfirm,
+						out: (line) => console.log(line),
+					});
+				},
+			}).catch((error: unknown) => {
+				console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+				return process.exit(1);
+			});
+			if (target.rebound) console.log(chalk.dim(`Session moved to ${cwd}`));
+			return SessionManager.open(target.path, sessionDir);
 		} finally {
 			stopThemeWatcher();
 		}
 	}
 
 	if (parsed.continue) {
-		return SessionManager.continueRecent(cwd, sessionDir);
+		const recent = SessionManager.continueRecent(cwd, sessionDir);
+		const recentFile = recent.getSessionFile();
+		if (recentFile !== undefined && existsSync(recentFile)) return recent;
+		const moved = await movedSessionToContinue({
+			cwd,
+			...(sessionDir === undefined ? {} : { sessionDir }),
+			interactive: appMode === "interactive",
+			confirm: promptConfirm,
+			out: (line) => console.log(line),
+			err: (line) => console.error(line),
+		});
+		return moved === undefined ? recent : rebindSessionOrExit(moved, cwd, sessionDir);
 	}
 
 	if (parsed.sessionId) {
@@ -930,6 +1031,11 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
+	if (isModelsDiscoverCommand(args)) {
+		process.exitCode = await runModelsDiscoverCommand(args.slice(2));
+		return;
+	}
+
 	// Internal launch surface used by bundled/rebranded runtimes. It is deliberately
 	// not accepted by parseArgs, so existing CLI modes remain unchanged. The route and
 	// the RPC host graph behind it live in ./modes/rpc/supervisor-route.ts.
@@ -1030,6 +1136,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	validateForkFlags(parsed);
+	validateRebindFlags(parsed);
 	validateSessionIdFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
@@ -1285,6 +1392,9 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("readPipedStdin");
+	// An RPC process always has a parent that watches its exit; every other mode dies unobserved.
+	recordProcessLifetime(agentDir, appMode, { supervised: appMode === "rpc" });
+	time("recordProcessLifetime");
 
 	const { initialMessage, initialImages, initialTitlePrompt } = await prepareInitialMessage(
 		parsed,
