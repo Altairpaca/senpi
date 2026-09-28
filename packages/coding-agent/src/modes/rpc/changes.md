@@ -1,3 +1,23 @@
+## 2026-09-28 - The lifecycle supervisor no longer loads the CLI parser and provider catalog
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-identity-env.ts` (new): `HOST_GENERATION_ENV` and `HOST_INSTANCE_ID_ENV`, moved out of `protocol-identity.ts`, which re-exports them unchanged.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-spawn-environment.ts` import the names from the new leaf module.
+- `test/supervisor-import-graph.test.ts` (new): the supervisor graph must not reach `cli/args.js` or the pi-ai barrel.
+
+### Why
+
+The supervisor imported `protocol-identity.ts` for one environment-name constant, and that module's launch-profile parsing imports `cli/args.ts`, which imports the `@earendil-works/pi-ai` barrel. Every supervisor (one per omo task shard and Desktop thread host) therefore kept the provider catalog resident. Measured on the compiled omo binary: supervisor physical footprint 49.5 MB -> 36.3 MB idle; plain bun import of `host-lifecycle.js` 40.0 MB -> 11.8 MB.
+
+### Why an extension could not handle it
+
+The supervisor runs before and outside any session, so no extension is loaded in it.
+
+### Expected merge conflict zones
+
+- The import blocks of `host-lifecycle.ts`, `host-spawn-environment.ts` and `protocol-identity.ts`.
+
 ## 2026-09-28 - One session can no longer stop a handoff drain (senpi#2285)
 
 ### What changed
