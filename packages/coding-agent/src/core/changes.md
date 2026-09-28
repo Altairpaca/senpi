@@ -125,6 +125,24 @@ The `context` hook cannot see failed assistant turns in a form that ties a rejec
 - LOW: the `return` of `convertToLlm()` in `messages.ts`.
 - LOW: the Cursor quota note block in the agent-end handler of `agent-session.ts`.
 
+## 2026-09-28 - OpenCode Go default follows the catalog after v2026.9.28-4 (senpi#2295)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in `opencode-go` default is now `kimi-k3`, because the release-regenerated catalog no longer lists `kimi-k2.6`.
+
+### Why
+
+- A default that is missing from its provider catalog cannot resolve, and `model-resolver.test.ts` failed on main.
+
+### Why an extension could not handle it
+
+- Built-in default model table.
+
+### Expected merge conflict zones
+
+- LOW: the `opencode-go` row of the defaults table.
+
 ## 2026-09-27 - Fireworks default follows the catalog after v2026.9.27 (senpi#2175)
 
 ### What changed

@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The built-in OpenCode Go default model is now `kimi-k3`. The previous default, `kimi-k2.6`, is no longer in the OpenCode Go catalog, so OpenCode Go without an explicit model had no default that resolved. ([#2295](https://github.com/code-yeongyu/senpi/issues/2295))
+
 ### Removed
 
 ## [2026.9.28-4] - 2026-09-28
