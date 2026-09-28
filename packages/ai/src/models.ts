@@ -33,6 +33,7 @@ import type {
 	Model,
 	ModelCostRates,
 	ModelThinkingLevel,
+	OpenAIResponsesCompat,
 	ProviderHeaders,
 	ProviderRequestOptions,
 	ProviderStreams,
@@ -1080,6 +1081,22 @@ export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
 	if (mapped !== undefined) return true;
 	if (model.thinkingLevelMap !== undefined) return false;
 	return supportsMaxModel(model);
+}
+
+const CONFIGURATION_UPDATE_APIS: readonly Api[] = [
+	"openai-responses",
+	"openai-codex-responses",
+	"azure-openai-responses",
+];
+
+/**
+ * Whether a mid-session reasoning-effort change is sent as a Responses `configuration_update`
+ * input item instead of a new top-level `reasoning.effort`, which discards the cached prefix.
+ * Only catalog metadata (`compat.supportsConfigurationUpdate`) opts a model in.
+ */
+export function supportsConfigurationUpdate<TApi extends Api>(model: Model<TApi>): boolean {
+	if (!CONFIGURATION_UPDATE_APIS.includes(model.api)) return false;
+	return (model.compat as OpenAIResponsesCompat | undefined)?.supportsConfigurationUpdate === true;
 }
 
 /** OpenAI-compatible APIs that accept a native `max` reasoning effort on the wire. */

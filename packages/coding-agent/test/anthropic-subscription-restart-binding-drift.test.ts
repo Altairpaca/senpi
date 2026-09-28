@@ -144,7 +144,9 @@ describe("claude-sdk-oauth restart binding drift (#7884)", () => {
 	});
 });
 
-describe("claude-sdk-oauth fingerprint midnight stability (#7884)", () => {
+// senpi#2093: the generated prompt no longer carries a date line, so there is no midnight
+// normalization left to pin; extension appends still fingerprint fail-closed.
+describe("claude-sdk-oauth fingerprint with extension appends (#7884)", () => {
 	const STABLE = ["You are senpi, a coding agent.", "", "## Available Tools", "- read: Read file contents"].join("\n");
 	const APPEND = [
 		"",
@@ -156,8 +158,8 @@ describe("claude-sdk-oauth fingerprint midnight stability (#7884)", () => {
 		"",
 	].join("\n");
 
-	function omoPrompt(date: string, append = APPEND): string {
-		return `${STABLE}\n\nCurrent date: ${date}\nCurrent working directory: /repo\n${append}`;
+	function omoPrompt(append = APPEND): string {
+		return `${STABLE}\n${append}`;
 	}
 
 	function options(systemPrompt: string): Options {
@@ -176,25 +178,10 @@ describe("claude-sdk-oauth fingerprint midnight stability (#7884)", () => {
 		return { systemPrompt: "", messages: [], tools: [] } as unknown as Context;
 	}
 
-	it("stays stable across midnight when extension appends follow the cwd line", () => {
-		const before = configFingerprint(options(omoPrompt("2026-09-06")), context(), "oauth-slots", "primary");
-		const after = configFingerprint(options(omoPrompt("2026-09-07")), context(), "oauth-slots", "primary");
-
-		expect(after.systemPromptHash).toBe(before.systemPromptHash);
-	});
-
-	it("stays stable across midnight for the bare generated prompt shape", () => {
-		const bare = (date: string): string => `${STABLE}\n\nCurrent date: ${date}\nCurrent working directory: /repo`;
-		const before = configFingerprint(options(bare("2026-09-06")), context(), "oauth-slots", "primary");
-		const after = configFingerprint(options(bare("2026-09-07")), context(), "oauth-slots", "primary");
-
-		expect(after.systemPromptHash).toBe(before.systemPromptHash);
-	});
-
 	it("stays fail-closed when a trailing append changes content", () => {
-		const before = configFingerprint(options(omoPrompt("2026-09-07")), context(), "oauth-slots", "primary");
+		const before = configFingerprint(options(omoPrompt()), context(), "oauth-slots", "primary");
 		const after = configFingerprint(
-			options(omoPrompt("2026-09-07", "\nAlways respond in Korean.\n")),
+			options(omoPrompt("\nAlways respond in Korean.\n")),
 			context(),
 			"oauth-slots",
 			"primary",

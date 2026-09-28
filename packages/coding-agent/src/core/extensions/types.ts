@@ -546,6 +546,18 @@ export interface ExtensionContext {
 	 * boundary. Persisted session messages are never modified.
 	 */
 	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
+	/**
+	 * The provider request prefix the next user turn will send, with an empty conversation:
+	 * the system prompt composed through a `before_agent_start` preview pass, the session's
+	 * tools in request order, and the request options (auth, reasoning, service tier, payload
+	 * hooks) resolved the way the turn resolves them.
+	 *
+	 * The preview pass invokes only handlers registered with `{ previewSafe: true }`, so the
+	 * result is `skipped` when any `before_agent_start` handler is not preview-safe, when no
+	 * model is selected, and when `signal` aborts or a user prompt starts composing its turn
+	 * before the prefix is built.
+	 */
+	getPromptCachePrefixRequest?(options?: PromptCachePrefixRequestOptions): Promise<PromptCachePrefixResult>;
 	/** Start user-visible compaction feedback before an extension has a precomputed summary to apply. */
 	beginCompaction?(options: BeginCompactionOptions): AbortSignal | undefined;
 	/** Stream user-visible compaction content while an extension-generated summary is available. */
@@ -578,6 +590,23 @@ export interface ExtensionContext {
 	 */
 	updateToolHookStatus?(statusMessage: string): void;
 }
+
+/** Provider request prefix of the next user turn (see `ExtensionContext.getPromptCachePrefixRequest`). */
+export interface PromptCachePrefixRequest {
+	readonly model: Model<Api>;
+	readonly context: Context;
+	readonly options: SimpleStreamOptions;
+}
+
+export interface PromptCachePrefixRequestOptions {
+	/** Aborting stops the preview pass before its next handler and resolves the build as `skipped`. */
+	readonly signal?: AbortSignal;
+}
+
+/** Outcome of `ExtensionContext.getPromptCachePrefixRequest`. */
+export type PromptCachePrefixResult =
+	| { readonly status: "ready"; readonly request: PromptCachePrefixRequest }
+	| { readonly status: "skipped"; readonly reason: string };
 
 /** Request-local transformations shared by normal and compaction provider calls. */
 export interface ProviderRequestPreparation {
@@ -725,6 +754,32 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 export type ToolExposure = "direct" | "search" | "eval";
 
 /**
+ * Globals a tool contributes to the persistent eval kernels while it is active. Each snippet runs before a cell
+ * only when one of `exports` is missing, and calls the tool through the ordinary `tool.<name>()` helper; a
+ * deactivated tool's exports are removed before the next cell. `documentation` is one line rendered into the
+ * eval prompt's helper list while the tool is active.
+ */
+export interface KernelPreludeContribution {
+	/** JavaScript statements that assign every name in `exports` onto `globalThis`. */
+	readonly javascript: string;
+	/** Python statements that bind every name in `exports` in the kernel namespace. */
+	readonly python: string;
+	readonly documentation: string;
+	/** Global names the snippets define; must not shadow a built-in kernel helper such as `display` or `tool`. */
+	readonly exports: readonly string[];
+}
+
+/** One permission request a tool's own parser derives from a call's input (see {@link ToolDefinition.permissionParser}). */
+export interface ToolPermissionRequest {
+	/** Permission class matched against rules, e.g. `"my_tool"` for `my_tool:read=allow`. */
+	readonly permission: string;
+	/** Patterns this call is checked against. */
+	readonly patterns: readonly string[];
+	/** Patterns an "always" approval of this call records. */
+	readonly always: readonly string[];
+}
+
+/**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
@@ -767,6 +822,14 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * prompt-cache prefix.
 	 */
 	promptGuidelines?: string[];
+	/** Optional eval-kernel globals installed while this tool is active; see {@link KernelPreludeContribution}. */
+	kernelPrelude?: KernelPreludeContribution;
+	/**
+	 * Optional permission parsing for this tool: the permission-system checks the returned requests instead of one
+	 * catch-all request named after the tool, so rules can grant tiers such as `my_tool:read=allow`. A built-in
+	 * parser for the same tool name always wins.
+	 */
+	permissionParser?: (input: Record<string, unknown>, cwd: string) => ToolPermissionRequest[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional OpenAI Responses freeform tool metadata. */
@@ -1151,12 +1214,38 @@ export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
 	/** The raw user prompt text (after expansion). */
 	prompt: string;
+	/**
+	 * Who started this turn: `"prompt"` for a user prompt (and a preview of one), `"extension"` for a
+	 * turn an extension triggered with `sendMessage(..., { triggerTurn: true })`, whose `prompt` is
+	 * that custom message's text.
+	 */
+	trigger: "prompt" | "extension";
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
 	/** The fully assembled system prompt string. */
 	systemPrompt: string;
 	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
 	systemPromptOptions: BuildSystemPromptOptions;
+	/**
+	 * `true` when the host composes the next turn's system prompt ahead of any user prompt
+	 * (the session-start prompt-cache prewarm). `prompt` is empty and no turn follows, so a
+	 * handler must return the system prompt it would return for a real turn but must not
+	 * consume one-shot state, start work, or change session state. Only handlers registered
+	 * with `{ previewSafe: true }` receive a preview.
+	 */
+	preview?: boolean;
+}
+
+/** Registration options for `pi.on("before_agent_start", handler, options)`. */
+export interface BeforeAgentStartHandlerOptions {
+	/**
+	 * Declares that the handler has no side effects when `event.preview` is `true`: it only
+	 * computes the system prompt a real turn would get, and consumes no one-shot state,
+	 * starts no work, and changes nothing a later turn observes. Only preview-safe handlers
+	 * run in a preview; while any registered `before_agent_start` handler is not preview-safe,
+	 * the host skips previews (and with them the session-start prompt-cache prewarm).
+	 */
+	previewSafe?: boolean;
 }
 
 /** Fired when an agent loop starts */
@@ -1300,6 +1389,16 @@ export interface ThinkingLevelSelectEvent {
 	type: "thinking_level_select";
 	level: ThinkingLevel;
 	previousLevel: ThinkingLevel;
+}
+
+/**
+ * Fired after the active tool set gains tools: `pi.setActiveTools()`, tool_search promotion, or a
+ * by-name call that lazily activates a deferred tool. Notification-only; `toolNames` lists only the
+ * newly active tools.
+ */
+export interface ToolActivatedEvent {
+	type: "tool_activated";
+	toolNames: string[];
 }
 
 // ============================================================================
@@ -1582,6 +1681,7 @@ export type ExtensionEvent =
 	| ModelSelectEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
+	| ToolActivatedEvent
 	| UserBashEvent
 	| InputEvent
 	| InputDispositionEvent
@@ -1728,6 +1828,15 @@ export type EntryRenderer<T = unknown> = (
 	theme: Theme,
 ) => Component | undefined;
 
+export interface EntryRendererOptions<T = unknown> {
+	/**
+	 * Return true when `next` should replace `previous` in place instead of rendering as a
+	 * second card. Only consulted when `previous` is the transcript card directly before
+	 * `next` (nothing visible in between) and both carry this renderer's custom type.
+	 */
+	readonly replaces?: (previous: CustomEntry<T>, next: CustomEntry<T>) => boolean;
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -1854,7 +1963,11 @@ export interface ExtensionAPI {
 	): void;
 	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
-	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
+	on(
+		event: "before_agent_start",
+		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
+		options?: BeforeAgentStartHandlerOptions,
+	): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
@@ -1871,6 +1984,7 @@ export interface ExtensionAPI {
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): void;
 	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
@@ -1953,7 +2067,11 @@ export interface ExtensionAPI {
 	registerMarkdownTransformer(transformer: MarkdownTransformer): void;
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
-	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+	registerEntryRenderer<T = unknown>(
+		customType: string,
+		renderer: EntryRenderer<T>,
+		options?: EntryRendererOptions<T>,
+	): void;
 
 	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
 	registerReadClassifier(classifier: ReadClassifier): () => void;
@@ -2343,7 +2461,10 @@ export type RegisterLazyToolActivatorHandler = (activator: LazyToolActivator) =>
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with normalized exposure metadata and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "label" | "description" | "parameters" | "promptGuidelines" | "kernelPrelude" | "permissionParser"
+> & {
 	sourceInfo: SourceInfo;
 	exposure: ToolExposure;
 	searchText?: string;
@@ -2496,6 +2617,7 @@ export interface ExtensionContextActions {
 	getSystemPrompt: () => string;
 	getLoadedHookSources: () => LoadedHookSources;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
+	getPromptCachePrefixRequest?: (options?: PromptCachePrefixRequestOptions) => Promise<PromptCachePrefixResult>;
 }
 
 export interface LoadedHookSources {
@@ -2560,6 +2682,8 @@ export interface Extension {
 	hidden?: boolean;
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
+	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
+	previewSafeHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;
@@ -2569,6 +2693,7 @@ export interface Extension {
 	messageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
+	entryRendererOptions?: Map<string, EntryRendererOptions>;
 	commands: Map<string, RegisteredCommand>;
 	/** Optional for compatibility with extension records created before RPC requests. */
 	rpcHandlers?: Map<string, ExtensionRpcRequestHandler>;

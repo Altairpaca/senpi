@@ -1075,6 +1075,8 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 
 // OpenAI charges prompt-cache writes starting with the GPT-5.6 family, and exactly
 // those models accept `prompt_cache_options`; older models reject the parameter.
+// The same family keeps the cache warm across tool-set changes by accepting
+// `tool_choice: allowed_tools` with an unchanged `tools` list (senpi#2095).
 // https://developers.openai.com/api/docs/guides/prompt-caching
 function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 	if (model.provider !== "openai" || model.api !== "openai-responses") return;
@@ -1082,6 +1084,27 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 	model.compat = {
 		...(model.compat as OpenAIResponsesCompat | undefined),
 		supportsExplicitPromptCacheMode: true,
+		supportsAllowedTools: true,
+	};
+}
+
+// A `configuration_update` input item changes reasoning effort without discarding the cached
+// prefix; a new top-level `reasoning.effort` reports `reasoning_effort_changed` and caches 0.
+// The direct API accepts the item on the same GPT-5.6+ family that prices cache writes
+// (measured 2026-09-24 on gpt-6-luna and gpt-5.6-luna). The Codex backend was verified only
+// on gpt-6-astra, so the ChatGPT subscription lane stays limited to that id.
+const CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS = new Set(["gpt-6-astra"]);
+
+function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
+	const isOpenAI = model.provider === "openai" && model.api === "openai-responses" && model.cost.cacheWrite > 0;
+	const isChatGptSubscription =
+		model.provider === "chatgpt-subscription" &&
+		model.api === "openai-codex-responses" &&
+		CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS.has(model.id);
+	if (!(isOpenAI || isChatGptSubscription)) return;
+	model.compat = {
+		...(model.compat as OpenAIResponsesCompat | undefined),
+		supportsConfigurationUpdate: true,
 	};
 }
 
@@ -1439,6 +1462,7 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
 
 			const contextWindow = model.top_provider?.context_length || model.context_length || 4096;
+			const thinkingLevelMap = getOpenRouterThinkingLevelMap(model.reasoning as OpenRouterReasoningMetadata | undefined);
 
 			const useAnthropicMessages = /^anthropic\//.test(modelKey) && !modelKey.endsWith(":batch");
 			const normalizedModel: Model<any> = {
@@ -1448,6 +1472,7 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 				baseUrl: useAnthropicMessages ? "https://openrouter.ai/api" : "https://openrouter.ai/api/v1",
 				provider,
 				reasoning: model.supported_parameters?.includes("reasoning") || false,
+				...(thinkingLevelMap && { thinkingLevelMap }),
 				input,
 				cost: {
 					input: inputCost,
@@ -3585,6 +3610,7 @@ async function generateModels() {
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
+		applyOpenAIConfigurationUpdateMetadata(model);
 		applyGpt6ContextWindow(model);
 		applyGpt6ThinkingLevels(model);
 		applyBaiReasoningConsistency(model);

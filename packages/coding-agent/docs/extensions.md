@@ -660,6 +660,8 @@ Fired after user submits prompt, before agent loop. Can inject a message and/or 
 ```typescript
 pi.on("before_agent_start", async (event, ctx) => {
   // event.prompt - user's prompt text
+  // event.trigger - "prompt" for a user prompt, "extension" for a turn an extension triggered
+  //   with sendMessage(..., { triggerTurn: true }) (event.prompt is then that message's text)
   // event.images - attached images (if any)
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)
@@ -689,6 +691,28 @@ pi.on("before_agent_start", async (event, ctx) => {
 The `systemPromptOptions` field gives extensions access to the same structured data senpi uses to build the system prompt. This lets you inspect what senpi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
+
+`event.preview` is `true` when senpi composes the next turn's system prompt before any user prompt exists: the session-start prompt-cache prewarm sends the first turn's prefix ahead of time, and `ctx.getPromptCachePrefixRequest()` returns that prefix to extensions. In a preview `event.prompt` is empty and no turn follows.
+
+A preview only reaches handlers that opt in with `{ previewSafe: true }`:
+
+```typescript
+pi.on(
+  "before_agent_start",
+  async (event) => {
+    if (event.preview === true) {
+      // Compose only: no one-shot state, no work, no session changes.
+      return { systemPrompt: `${event.systemPrompt}\n\nProject conventions...` };
+    }
+    return { systemPrompt: `${event.systemPrompt}\n\nProject conventions...`, message: drainNotices() };
+  },
+  { previewSafe: true },
+);
+```
+
+Opt in only when the handler has no side effects in a preview: it returns the same `systemPrompt` a real turn would get and consumes no one-shot state, starts no work, and changes nothing a later turn observes (the builtin `compaction`, `hooks`, and `prompt-url-widget` handlers return early; `rules` and `openai-image-gen` compose without committing state). A handler registered without the option is never called for a preview. While any registered `before_agent_start` handler lacks it, senpi skips the preview entirely, because a prefix composed without that handler's additions would not match the first turn; the prewarm then appends a `prompt-cache-prewarm` custom entry with `phase: "skipped"` and a `reason` naming the extensions.
+
+`ctx.getPromptCachePrefixRequest({ signal })` resolves `{ status: "ready", request }` or `{ status: "skipped", reason }`. It is skipped when a handler is not preview-safe, when no model is selected, when `signal` aborts, and when a user prompt starts its turn first: senpi cancels every in-flight preview before a real turn dispatches `before_agent_start`, so the two passes never run the same handlers concurrently.
 
 #### agent_start / agent_end / agent_settled
 
@@ -911,6 +935,17 @@ pi.on("thinking_level_select", async (event, ctx) => {
 ```
 
 Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or built-in thinking-level controls change the active thinking level.
+
+#### tool_activated
+
+Fired after the active tool set gains tools. This covers `pi.setActiveTools()`, a `tool_search` promotion, and a by-name call that activates a deferred tool. The event is notification-only: handler return values are ignored.
+
+```typescript
+pi.on("tool_activated", async (event, ctx) => {
+  // event.toolNames - only the tools that just became active
+  if (event.toolNames.includes("my_tool")) await warmUp(ctx);
+});
+```
 
 ### Tool Events
 
@@ -1652,6 +1687,21 @@ Use `promptSnippet` to opt a custom tool into a one-line entry in `Available too
 
 **Important:** `promptGuidelines` bullets are appended flat to the `Guidelines` section with no tool name prefix. Each guideline must name the tool it refers to — avoid "Use this tool when..." because the LLM cannot tell which tool "this" means. Write "Use my_tool when..." instead.
 
+Use `kernelPrelude` to give the `eval` kernels globals that call your tool while it is active. It takes `javascript` and `python` statements, one `documentation` line for the eval prompt's helper list, and the `exports` those statements define. Each snippet runs before a cell only when one of its exports is missing, and a deactivated tool's exports are removed before the next cell. Exports must not shadow built-in kernel helpers such as `display` or `tool`.
+
+Use `permissionParser` to classify your tool's calls for the permission system. It receives the call input and the working directory and returns requests (`permission`, `patterns`, `always`), so a rule like `my_tool:read=allow` can grant one tier while another stays gated. Without it, every call is one request named after the tool. A built-in parser for the same tool name always wins.
+
+```typescript
+pi.registerTool({
+  name: "my_tool",
+  // ...
+  permissionParser: (input) => {
+    const tier = input.action === "add" ? "exec" : "read";
+    return [{ permission: "my_tool", patterns: [tier], always: [tier] }];
+  },
+});
+```
+
 See [dynamic-tools.ts](../examples/extensions/dynamic-tools.ts) for a full example.
 
 ```typescript
@@ -2035,6 +2085,14 @@ pi.registerEntryRenderer("status-card", (entry, { expanded }, theme) => {
 pi.appendEntry("status-card", { title: "Indexed files", count: 17 });
 ```
 
+Pass an optional third argument to let a newer entry update the card before it instead of adding a second card. `replaces(previous, next)` is consulted only when the card directly before the new entry (nothing visible in between) renders an entry of the same custom type; returning `true` swaps that card for the new one, both live and when a session is resumed.
+
+```typescript
+pi.registerEntryRenderer("status-card", renderStatusCard, {
+  replaces: (previous, next) => previous.data?.jobId === next.data?.jobId,
+});
+```
+
 ### pi.registerShortcut(shortcut, options)
 
 Register a keyboard shortcut. See [keybindings.md](keybindings.md) for the shortcut format and built-in keybindings.
@@ -2094,7 +2152,7 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
-`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, and `sourceInfo`.
+`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
 
 Typical `sourceInfo.source` values:
 - `builtin` for built-in tools

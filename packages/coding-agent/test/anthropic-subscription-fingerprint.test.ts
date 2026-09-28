@@ -12,8 +12,9 @@ const STABLE_PROMPT_BODY = [
 	"- read: Read file contents",
 ].join("\n");
 
-function promptWith(date: string, cwd = "/repo"): string {
-	return `${STABLE_PROMPT_BODY}\n\nCurrent date: ${date}\nCurrent working directory: ${cwd}`;
+// senpi#2093: the generated prompt carries no date or cwd, so it is hashed verbatim.
+function promptWith(suffix = ""): string {
+	return `${STABLE_PROMPT_BODY}${suffix}`;
 }
 
 function options(overrides: Partial<Options> = {}): Options {
@@ -23,7 +24,7 @@ function options(overrides: Partial<Options> = {}): Options {
 		tools: ["Read", "Bash"],
 		permissionMode: "dontAsk",
 		includePartialMessages: true,
-		systemPrompt: promptWith("2026-07-31"),
+		systemPrompt: promptWith(),
 		settingSources: [],
 		...overrides,
 	} as Options;
@@ -31,7 +32,7 @@ function options(overrides: Partial<Options> = {}): Options {
 
 function context(): Context {
 	return {
-		systemPrompt: promptWith("2026-07-31"),
+		systemPrompt: promptWith(),
 		messages: [],
 		tools: [{ name: "read", description: "Read file contents", parameters: { type: "object", properties: {} } }],
 	} as unknown as Context;
@@ -46,40 +47,35 @@ describe("claude-sdk-oauth config fingerprint stability", () => {
 		expect(second.toolsetHash).toBe(first.toolsetHash);
 	});
 
-	it("survives a UTC midnight rollover: only the generated date line changed", () => {
+	it("hashes the prompt verbatim: a date line inside it is not normalized away", () => {
 		const before = configFingerprint(
-			options({ systemPrompt: promptWith("2026-07-31") }),
+			options({ systemPrompt: promptWith("\n\nCurrent date: 2026-07-31") }),
 			context(),
 			"oauth-slots",
 			"primary",
 		);
 		const after = configFingerprint(
-			options({ systemPrompt: promptWith("2026-08-01") }),
-			context(),
-			"oauth-slots",
-			"primary",
-		);
-
-		expect(after.systemPromptHash).toBe(before.systemPromptHash);
-	});
-
-	it("stays fail-closed when the working directory changes", () => {
-		const before = configFingerprint(options(), context(), "oauth-slots", "primary");
-		const after = configFingerprint(
-			options({ cwd: "/elsewhere", systemPrompt: promptWith("2026-07-31", "/elsewhere") }),
+			options({ systemPrompt: promptWith("\n\nCurrent date: 2026-08-01") }),
 			context(),
 			"oauth-slots",
 			"primary",
 		);
 
 		expect(after.systemPromptHash).not.toBe(before.systemPromptHash);
+	});
+
+	it("stays fail-closed when the working directory changes", () => {
+		const before = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const after = configFingerprint(options({ cwd: "/elsewhere" }), context(), "oauth-slots", "primary");
+
+		expect(after.systemPromptHash).toBe(before.systemPromptHash);
 		expect(after.toolsetHash).not.toBe(before.toolsetHash);
 	});
 
 	it("stays fail-closed when a semantic prompt instruction changes", () => {
 		const before = configFingerprint(options(), context(), "oauth-slots", "primary");
 		const after = configFingerprint(
-			options({ systemPrompt: `${promptWith("2026-07-31")}\nAlways respond in Korean.` }),
+			options({ systemPrompt: promptWith("\nAlways respond in Korean.") }),
 			context(),
 			"oauth-slots",
 			"primary",
@@ -90,7 +86,7 @@ describe("claude-sdk-oauth config fingerprint stability", () => {
 
 	it("stays fail-closed when a tool description changes", () => {
 		const changed = {
-			systemPrompt: promptWith("2026-07-31"),
+			systemPrompt: promptWith(),
 			messages: [],
 			tools: [
 				{ name: "read", description: "Read files differently", parameters: { type: "object", properties: {} } },

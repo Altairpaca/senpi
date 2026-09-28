@@ -8,7 +8,7 @@ import {
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import { executeEvalControl } from "./detached-eval-result.ts";
-import { clampEvalSummary, isEvalControlRequest, parseEvalRequest } from "./eval-request.ts";
+import { isEvalControlRequest, normalizeEvalSummary, parseEvalRequest } from "./eval-request.ts";
 import type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 import { runEvalCell } from "./run-eval-cell.ts";
 import {
@@ -54,6 +54,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		...(options.hostLine === undefined ? {} : { hostLine: options.hostLine }),
 		...(options.runtimes?.js === undefined ? {} : { jsRuntime: options.runtimes.js }),
 		...(options.bunSkillPath === undefined ? {} : { bunSkillPath: options.bunSkillPath }),
+		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
 	const cellManager =
@@ -73,7 +74,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 	async function execute(
 		...[toolCallId, params, signal, onUpdate, ctx]: EvalExecuteArgs<EvalToolRequest>
 	): Promise<AgentToolResult<EvalResultDetails>> {
-		const request = parseEvalRequest(params);
+		const request = parseEvalRequest(params, languages);
 		if (isEvalControlRequest(request)) return await executeEvalControl(cellManager, request);
 		if (options.proxyExecutor) return await options.proxyExecutor(request, signal);
 		if (!languages.includes(request.language))
@@ -109,7 +110,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 			const record = args as Record<string, unknown>;
 			if (record.action === "peek" || record.action === "stop" || record.action === "list")
 				return args as EvalToolRequest;
-			const summary = clampEvalSummary(record.summary);
+			const summary = normalizeEvalSummary(record.summary);
 			if (summary === undefined) delete record.summary;
 			else record.summary = summary;
 			return args as EvalToolRequest;

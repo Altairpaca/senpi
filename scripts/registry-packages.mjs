@@ -13,6 +13,15 @@ export const registryPackageNames = new Map([
 
 export const registrySourcePackageNames = new Set(registryPackageNames.keys());
 
+const publishedRegistryNames = new Set(registryPackageNames.values());
+
+// A fork-scope package outside the publish set is never on the registry. bun resolves every declared
+// dependency from the registry even when it is bundled, so such a package must never be declared by the
+// published tarball (senpi#2141).
+export function isUnpublishedForkPackage(packageName) {
+	return packageName.startsWith("@code-yeongyu/") && !publishedRegistryNames.has(packageName);
+}
+
 export function resolveRegistryPackages(packages) {
 	const resolved = new Map();
 	for (const pkg of packages) {

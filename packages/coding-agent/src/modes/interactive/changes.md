@@ -1,3 +1,294 @@
+## 2026-09-28 - Show Copilot tool-limit omissions once per session (senpi#2298)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a successful assistant message carrying the `github_copilot_tool_limit` diagnostic shows its redaction-safe message as a warning once for the current session, independently of the cache-miss-notice setting. Transcript rebuilds re-arm the notice so the rebuilt chat still contains it, while later turns in the same rendered session do not repeat it.
+
+### Why
+
+- The AI adapter diagnostic was persisted in session JSONL and available to RPC consumers, but the interactive TUI ignored it. A request could succeed after omitting excess Copilot tools and the user would have no visible indication that some definitions were unavailable to the model.
+
+### Why an extension could not handle it
+
+- The diagnostic is attached inside the provider adapter after extension payload hooks run, and the completed assistant message is rendered by `InteractiveMode`; no extension hook owns that host diagnostic-to-transcript presentation.
+
+### Expected merge conflict zones
+
+- LOW: the field block beside other session-scoped warning guards, the start of `renderSessionItems`, and `maybeShowAssistantDiagnostics` in `interactive-mode.ts`.
+
+## 2026-09-28 - No runtime error output on the TUI screen (#2284)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `registerSignalHandlers` prepends an `unhandledRejection` listener (removed with the other signal cleanups) that routes to the new private `unhandledRejection`: a dead-terminal reason takes the silent `emergencyTerminalExit`, a recoverable Inspector VM import keeps its warning, and everything else is appended to the debug log (`appendUnhandledRejectionLog`, redacted) and never printed; the session keeps running. `init` awaits `prepareInteractiveStderrCapture()` before the first `takeOverInteractiveStderr()`. `uncaughtCrash` prints `exiting due to uncaughtException: <name>: <message>` on one line plus `Details: <debug log path>` after the terminal is restored; the whole error is printed only when the debug-log write failed.
+- `packages/coding-agent/src/modes/interactive/interactive-stderr-guard.ts` and the new `stderr-fd-redirect.ts` (fork-only): on Bun (darwin/linux) the takeover also points fd 2 at the debug log with `dup`/`dup2` through `bun:ffi`, and `restoreInteractiveStderr` puts the original descriptor back first, so every existing restore path (quit, crash, SIGTERM/SIGHUP shutdown, ctrl+z suspend, external editor) returns the terminal's fd 2. Node and Windows keep the JS-level guard only.
+
+### Why
+
+- Under Bun an unhandled rejection never reaches `uncaughtException`: Bun printed its native source-preview dump onto the terminal the TUI was drawing on (the reported `Timeout waiting for response to prompt` spray, repeated, inside the input box) and nothing reached the debug log. Worker-thread `console.*` and children spawned with `stderr: "inherit"` wrote fd 2 directly and bypassed the JS guard the same way.
+
+### Why an extension could not handle it
+
+- Process-level error routing and terminal ownership belong to `InteractiveMode`; an extension cannot own fd 2 or register the TUI's crash policy, and the output being hidden often comes from extensions themselves.
+
+### Expected merge conflict zones
+
+- LOW: the `uncaughtException` listener block in `registerSignalHandlers`, the tail of `uncaughtCrash`, and the `takeOverInteractiveStderr()` try block in `init`.
+
+## 2026-09-28 - /sessions alias and thinking/resume guidance (#1437)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setupEditorSubmitHandler` opens the session selector for `/sessions` exactly as for `/resume`.
+- `packages/coding-agent/src/modes/interactive/help-content.ts`: the `/help` getting-started primer names `/thinking <level>` with the live `app.thinking.cycle` key, and `/resume` (or `/sessions`).
+- `packages/coding-agent/src/modes/interactive/tips/catalog/model-tips.ts`: the `thinking-level` tip names `/thinking <level>` and `/thinking` beside the cycle key; a new `efforts-command` tip, gated by `requiresCommand: "efforts"`, names `/efforts <level>`.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/session-tips.ts`: the `continue-session` tip names `/resume` and `/sessions` in the TUI beside `-r` and `-c` from the shell.
+
+### Why
+
+- A new user could not find how to change the thinking level (`/thinking` was broken, #1437) or how to reopen a session: they looked for `/sessions`, the OpenCode name, and `/help` and the tips never mentioned either path.
+
+### Why an extension could not handle it
+
+- `/sessions` has to open the interactive session selector, which only `InteractiveMode` owns, and builtin names are matched in the submit handler before extension commands; the `/help` primer and the tip catalog are host-owned with no extension registration API.
+
+### Expected merge conflict zones
+
+- LOW: the `/resume` branch in `setupEditorSubmitHandler`, `buildGettingStarted` in `help-content.ts`, and the two tip catalog files.
+
+## 2026-09-28 - Restore the /thinking interactive dispatch (#1437)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setupEditorSubmitHandler` dispatches `/thinking` and `/thinking <level>` to `handleThinkingCommand` (next to the `/model` branch); `createBaseAutocompleteProvider` gives the `thinking` builtin argument completions from `session.getAvailableThinkingLevels()`; `handleThinkingCommand`, `selectThinkingLevel`, and `showThinkingSelector` are restored from upstream 496185f6 with the `ThinkingSelectorComponent` import.
+- Upstream's single `session.setThinkingLevel(level, { persist })` is mapped onto the fork's split setters: `/thinking <level>` and Enter in the selector call `setSessionThinkingLevel` (session scope), Ctrl+S in the selector calls `setThinkingLevel`, which records the per-model level and refreshes `defaultThinkingLevel`, the same persistence as Shift+Tab and `/efforts <level>`.
+- `getAvailableThinkingLevels()` is awaited at every new call site because `InteractiveSession` widens it for the shared-host proxy; `getArgumentCompletions` is async for the same reason.
+
+### Why
+
+- The sync merge 463279038 (#1119) kept upstream's `thinking` entry in `BUILTIN_SLASH_COMMANDS` but resolved `interactive-mode.ts` without the handler, so autocomplete and `/help` advertised a command that fell through to `session.prompt()` and reached the model as a user message (#1437).
+
+### Why an extension could not handle it
+
+- Builtin slash commands are matched by literal text inside the interactive submit handler before extension commands are consulted; an extension cannot register `thinking` because the name is reserved by `BUILTIN_SLASH_COMMANDS` (`reasoning-commands.test.ts` pins that no alias is registered).
+
+### Expected merge conflict zones
+
+- MEDIUM: the `/model`..`/export` run of `if (text === ...)` branches in `setupEditorSubmitHandler`, the `loginCommand`/`thinkingCommand` completion blocks in `createBaseAutocompleteProvider`, and the three methods above `handleModelCommand`. Upstream carries the same methods with a `{ persist }` setter option; keep the fork's split-setter mapping on merge.
+
+## 2026-09-27 - /session shows what failed provider requests cost (senpi#2198)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleSessionCommand` appends `formatSessionFailureInfo(stats.failures)` (`session-failure-info.ts`, new) after the Cost block: failed requests with their errored/aborted split and share, time in failed requests, and retries after a failure (same user turn) that had no cache hit, with their uncached input tokens. Nothing is shown for a session without a failed request or a host that predates the report.
+
+### Why
+
+- Provider failures had no visible cost in the session stats surface (senpi#2198).
+
+### Why an extension could not handle it
+
+- `/session` is a builtin interactive command rendered inside `InteractiveMode`.
+
+### Expected merge conflict zones
+
+- LOW: the end of the Cost block in `handleSessionCommand` and one import in `interactive-mode.ts`.
+
+## 2026-09-27 - Tips for the /computer command (senpi#2204)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/computer-tips.ts` (new) adds five tips gated by `requiresCommand: "computer"`: what computer use does, the stop chord and user-only `/computer resume` (the chord is chosen by `process.platform`), background input, `--permission computer:exec=deny` for look-only work, and the macOS Screen Recording and Accessibility grants.
+- `packages/coding-agent/src/modes/interactive/tips/registry.ts` appends `COMPUTER_TIPS` after `DAG_TIPS`.
+
+### Why
+
+- The `/computer` command comes from OmO's computer-use extension component; its users need the stop chord and permission facts where they already look, like the `/facts` and `/dag` tips.
+
+### Why an extension could not handle it
+
+- The tip catalog is host-owned and has no extension registration API; commands from extensions reach it only through `requiresCommand` gating, which keeps these tips invisible where `/computer` is not registered.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/tips/registry.ts`: the import list and the `TIP_DEFINITIONS` spread order.
+
+## 2026-09-27 - /resume offers to move a moved repository's session here (senpi#2184)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showSessionSelector` loads the current-folder scope through `currentScopeSessions` (this project's sessions plus the moved sessions of its repository) and the all scope through `allScopeSessions` (moved ones marked), and resolves a pick through `chooseResumePath` (`resume-rebind.ts`, new): a session of this repository recorded at another path gets the #2181 rebind question in a Yes/No dialog, a failure (for example another process still holding the session) is shown as an error and the current session stays.
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: a row with `session.moved` shows `moved from <old path>` on the right in every scope.
+
+### Why
+
+- Picking a moved repository's session from `/resume` either switched to a vanished cwd or offered a one-off "continue in current cwd" that was never persisted, and the session was invisible in the default current-folder view (senpi#2184).
+
+### Why an extension could not handle it
+
+- The session selector and its loaders are built inside `InteractiveMode`; no extension hook sits between a selector pick and the runtime switch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the two loaders and the `onSelect` callback in `showSessionSelector`, and one import.
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: the `rightPart` cwd block, the `spacing` / `styledRight` computation in the session row render.
+
+## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` calls `maybeShowRuntimeNotice` right after the risky-model and subscription-auth startup warnings, rendering through `showNoticeBox`.
+- `packages/coding-agent/src/modes/interactive/runtime-notice.ts` (new, pure): `runtimeNoticeSkipReason` hides the notice on Bun, for a user Node pin (`SENPI_RUNTIME=node`; under `OMO_NATIVE=1` only `OMO_RUNTIME=node`, because the OmO Native launcher always forwards its own runtime as `SENPI_RUNTIME`), for an inherited `--inspect*` option, for `*_SKIP_RUNTIME_NOTICE`, and when the engine version was already shown. `buildRuntimeNotice` names the Bun step (install, or `bun upgrade` below 1.4.0) and a clean reinstall (`npm uninstall -g` / `pnpm remove -g` / `yarn global remove`, then `bun add -g`) for senpi or for the brand's update package and dist-tag.
+- `packages/coding-agent/src/modes/interactive/runtime-notice-presenter.ts` (new): reads the process facts, probes Bun through `bun-runtime.ts`, and records the shown engine version in `<agentDir>/runtime-notice.json`.
+
+### Why
+
+- A process still on Node.js after the launchers' Bun hand-off is one the user can fix (no Bun, an old Bun, or a Node-managed install), and nothing told them.
+
+### Why an extension could not handle it
+
+- The notice must appear with the other host-owned startup warnings, before extensions bind and for every brand of the engine.
+
+### Expected merge conflict zones
+
+- LOW: one import beside `risky-main-model-warning.ts` and one call after `maybeWarnAboutAnthropicSubscriptionAuth()` in `init()`.
+
+## 2026-09-24 - Show switch timings on "Resumed session" under TIMING (senpi#2087)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `rebindCurrentSession` marks `render` and `bindExtensions` in the `switch` timing namespace; `handleResumeSession` appends `| switch timings: ...` to the "Resumed session" status when `formatTimings("switch")` has entries, mirroring the reload status line. Without `TIMING=1` the status text is unchanged.
+
+### Why
+
+- Extension `session_start` handlers and the transcript render are the largest slices of a resume switch; the status line makes the breakdown visible on the real surface without a debugger.
+
+### Why an extension could not handle it
+
+- The rebind sequence and the status line are host-owned.
+
+### Expected merge conflict zones
+
+- LOW: two marks in `rebindCurrentSession` and the status call in `handleResumeSession`.
+
+## 2026-09-24 - Keep /resume search and tree rebuilds off the per-keystroke path (senpi#2087)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts`: each `SessionInfo`'s search text (`id name allMessagesText cwd`) is built once and kept in a module `WeakMap` keyed by the row object, together with its lower-cased form and, on the first phrase token, its whitespace-normalized form. Query tokens are lower-cased or normalized once per `filterAndSortSessions` call, and fuzzy tokens go through pi-tui `fuzzyMatchLower` against the cached lower-cased text. Regex, fuzzy and phrase results, scores and ordering are unchanged; `matchSession` keeps its signature.
+- `packages/coding-agent/src/modes/interactive/components/session-selector-tree.ts` (new): `buildSessionTree` / `flattenSessionTree` and their node types moved out of `session-selector.ts`. `buildSessionTree` takes a `CanonicalPathResolver`; `createCanonicalPathResolver()` memoizes `canonicalizePath` per path.
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: `SessionList` creates one resolver in its constructor and a fresh one in `setSessions`, and uses it for tree rebuilds and `isCurrentSessionPath`, which runs for every rendered row on every frame.
+- Tests: `test/session-selector-search.test.ts` (mixed-case fuzzy tokens; a new row object for the same session is searched by its own text), `test/session-selector-tree.test.ts` (new; the resolver answers exactly what `canonicalizePath` answers), `test/session-selector-path-delete.test.ts` (a replaced session list re-resolves a retargeted symlink alias).
+
+### Why
+
+- With about 1,100 sessions whose transcript text totals tens of MB, every keystroke rebuilt and lower-cased the whole search text once per token: 75-150 ms per fuzzy query, 240-350 ms per quoted phrase, all synchronous inside `handleInput`. Every threaded rebuild also ran `realpathSync.native` twice per session (about 20 ms).
+
+### Why an extension could not handle it
+
+- The `/resume` picker's filtering and tree construction are private to the built-in session selector component. No extension hook reaches them.
+
+### Expected merge conflict zones
+
+- `session-selector-search.ts`: `getSessionSearchText`, `matchSession` and the two scoring loops in `filterAndSortSessions`.
+- `session-selector.ts`: the imports, the removed tree block ahead of `class SessionList`, the `SessionList` constructor, `setSessions`, `filterSessions` and `isCurrentSessionPath`. Upstream edits to `buildSessionTree` / `flattenSessionTree` now land in `session-selector-tree.ts`.
+
+## 2026-09-24 - Label skill-directory reads by skill in the exploration group (senpi#2082)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-call.ts`: a grouped `read` of a file inside a skill directory is labeled `<skill>/<path inside the skill>` via `getSkillReadPath` (`core/tools/renderers/skill-read-path.ts`) instead of its basename; other reads keep the basename.
+- `packages/coding-agent/test/suite/exploration-semantic-reads.test.ts`: a skill reference outside the cwd shows `Read a.ts, demo/references/guide.md, loose.md` in one group and `read demo/references/guide.md` when expanded; a session running inside the skill directory keeps `Read guide.md` / `read references/guide.md`.
+
+### Why
+
+- A skill reference collapsed to its bare file name in the `Explored` cell, so the user could not tell which skill it came from.
+
+### Why an extension could not handle it
+
+- Exploration labels are computed by the interactive projection from the built-in read renderer's args; an extension has no hook into the group's label.
+
+### Expected merge conflict zones
+
+- The `read` branch of `explorationCall` in `exploration-call.ts`.
+
+## 2026-09-23 - Render a resolved tool-call name as the resolved tool (senpi#2064)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `createToolExecutionComponent` maps the requested name through `session.resolveToolCallName` before choosing the renderer. Every card path (streaming tool call, `tool_execution_start`, late `tool_execution_end`, and `replayAssistantTools`) goes through it, so a `mcp__<id>__Read` call renders, groups and replays as `read`.
+- `packages/coding-agent/test/suite/regressions/issue-2064-tool-name-correction-invisible.test.ts` (new): a real session runs a faux `mcp__686f__Read` call; the start event names `read`, the tool result keeps the notice as model-only text, and both the live and replayed transcripts show `Read sample.ts` with no `mcp__686f__` or `auto-corrected` text, collapsed or expanded.
+
+### Why
+
+- The card used the requested name, which has no renderer: the user saw the raw JSON arguments under `mcp__686f__Edit` and the correction notice, even though the call ran as `edit`.
+
+### Why an extension could not handle it
+
+- Card construction and renderer choice are owned by the interactive transcript.
+
+### Expected merge conflict zones
+
+- LOW: the head of `createToolExecutionComponent`.
+
+## 2026-09-23 - Keep skill and memory reads out of the exploration group (senpi#2060)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-call.ts`: `explorationCall` asks `getCompactReadClassification` (exported from `core/tools/renderers/read.ts`) about a `read` before grouping it; a `skill` or `memory` classification returns no exploration call, so the card renders on its own and ends the open group. `docs` and `resource` reads still group.
+- `packages/coding-agent/test/suite/exploration-semantic-reads.test.ts` (new): a skill read splits the group and shows `[skill] <name>`; two skills show both names with no `Explored` cell; a registered memory classifier keeps `✦ Recalled <label>`; `AGENTS.md` stays grouped; live and replay text match.
+
+### Why
+
+- Since senpi#2042 every built-in `read` joined the `Explored` cell, including skill loads and memory recalls, which collapsed to `Read SKILL.md` and deduplicated several skills into one line. The compact `[skill]` / `✦ Recalled` cards predate the cell and carry the information the cell drops.
+
+### Why an extension could not handle it
+
+- Group membership is decided by the interactive projection; an extension only registers a classifier and has no view of the transcript's sibling cards.
+
+### Expected merge conflict zones
+
+- The `read` branch of `explorationCall` in `exploration-call.ts`.
+
+## 2026-09-23 - Fold project-rules notices into the exploration group of their call (senpi#2057)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`: a `rule-activation` card of kind `project-rules` whose `toolCallId` belongs to a call in the open group joins the group instead of closing it.
+- `packages/coding-agent/src/modes/interactive/components/exploration-group.ts`: `setMembers` takes the absorbed rule paths; the collapsed cell adds `Applied N project rules` (distinct paths). Expanding shows the original cards.
+- `packages/coding-agent/src/modes/interactive/components/exploration-rules.ts` (new): `projectRulesOfCall`.
+
+### Why
+
+- One run of reads split into several `Explored` cells with `Project rules` cards between them whenever a read matched a rule.
+
+### Why an extension could not handle it
+
+- The exploration projection is interactive-mode code; entry renderers cannot see sibling cards.
+
+### Expected merge conflict zones
+
+- The projection loop in `exploration-transcript-container.ts` and `setMembers`/`render` in `exploration-group.ts`.
+
+## 2026-09-23 - Replace the previous custom-entry card in place when its renderer asks (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `addCustomEntryToChat` asks `getEntryRendererOptions` for the entry type and, when `replacedEntryCardIndex` reports a match, swaps the previous card instead of appending. The streaming insertion point is unchanged. Live `entry_appended` and `renderSessionItems` replay share the path.
+- `packages/coding-agent/src/modes/interactive/components/custom-entry.ts`: `CustomEntryComponent.customEntry` getter and the exported `replacedEntryCardIndex(children, insertIndex, entry, options)` helper (only the child directly before the insertion point, same custom type, `replaces` accepts the pair).
+
+### Why
+
+- One Goal wait rendered as a stack of cache-warm cards (scheduled, reload re-arm, wake). The goal extension now opts into in-place replacement through the `replaces` renderer option.
+
+### Why an extension could not handle it
+
+- The transcript container and its insertion logic belong to interactive mode.
+
+### Expected merge conflict zones
+
+- `addCustomEntryToChat` in `interactive-mode.ts` (the streaming splice block) and the bottom of `custom-entry.ts`.
+
 ## 2026-09-23 — Wire visible-stderr observation into the interactive TUI (senpi#1879)
 
 ### What changed
@@ -1434,3 +1725,44 @@ The login command is interactive mode's own command handler; an extension cannot
 
 - MEDIUM: the chat container construction and the assistant branch of `renderSessionItems` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
 - LOW: the added getters in `packages/coding-agent/src/modes/interactive/components/tool-execution.ts` and `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`, and the spinner helper in `packages/coding-agent/src/modes/interactive/tool-progress.ts`.
+
+
+## 2026-09-23 — Filter model-only text at the tool-renderer boundary
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: Filter marked parts in createRenderState only, before both custom and built-in renderers receive content. Retain the original stored result and all exploration hooks.
+
+### Why
+
+Custom renderers and fallback text joins must observe the same visibility contract without changing session persistence.
+
+### Why an extension could not handle it
+
+The interactive component controls the common render-state boundary for every tool definition.
+
+### Expected merge conflict zones
+
+The result field of createRenderState; exploration-container hooks belong to the sibling lane.
+
+- Covered production paths: `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`.
+
+## 2026-09-28 - A bare /skill namespace never reaches the model (senpi#2249)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the Enter submit handler and the Alt+Enter follow-up path treat a submitted `/skill` or `/skill:` as the skill namespace: the editor is reset to `/skill:` and `openAutocomplete()` lists the skills, or a warning explains that no skill is loaded or skill commands are disabled. Nothing is sent to `session.prompt`.
+
+### Why
+
+Users told to "type /skill: and pick a skill" submitted `/skill:` itself, and it reached the model as a user message.
+
+### Why an extension could not handle it
+
+An extension `input` handler runs inside `AgentSession.prompt`, after the TUI has already cleared the editor; only the submit handler can keep the user in the picker.
+
+### Expected merge conflict zones
+
+- LOW: the `isBareSkillNamespace` checks just before the `isExtensionCommand` branch of `setupEditorSubmitHandler` and at the top of `handleFollowUp`, and the new `openSkillPickerForBareNamespace` method beside `isExtensionCommand` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+- Covered production paths: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.

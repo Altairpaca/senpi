@@ -8,6 +8,8 @@ import {
 	nativePrebuildTarget,
 } from "./prepare-senpi-bundled-workspaces.mjs";
 
+const PTY_PACKAGE = "@earendil-works/pi-pty";
+const UNPUBLISHED_PACKAGE = "@code-yeongyu/senpi-never-published";
 function clientProtocolFiles(prefix = "package/") {
 	return [
 		{ path: `${prefix}vendor/pi-client/index.js` },
@@ -75,7 +77,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 
 	it("rejects a packed tarball that omits a declared runtime dependency", () => {
 		// Given: workspace bundles are present, but the cross-spawn registry dep is not vendored.
-		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
+		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget(), PTY_PACKAGE);
 		const packed = {
 			files: [
 				{ path: "package/dist/cli.js" },
@@ -108,7 +110,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 
 	it("accepts a packed tarball whose declared runtime dependencies are all vendored", () => {
 		// Given
-		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
+		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget(), PTY_PACKAGE);
 		const packed = {
 			files: [
 				{ path: "package/dist/cli.js" },
@@ -144,7 +146,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		// Given: a shipped npm-shrinkwrap.json is fatal — npm treats it as the complete
 		// locked tree and never installs the non-bundled direct deps (cross-spawn, the
 		// MCP sdk, ...), so the installed CLI dies with ERR_MODULE_NOT_FOUND.
-		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
+		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget(), PTY_PACKAGE);
 		const packed = {
 			files: [
 				{ path: "package/dist/cli.js" },
@@ -177,7 +179,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 
 	it("rejects senpi package metadata that omits the codemode Babel parser", () => {
 		// Given
-		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
+		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget(), PTY_PACKAGE);
 		const packed = {
 			files: [
 				{ path: "package/dist/cli.js" },
@@ -208,7 +210,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 
 	it("accepts npm dry-run package metadata with unprefixed paths", () => {
 		// Given
-		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
+		const hostPrebuild = nativePrebuildFile(nativePrebuildTarget(), PTY_PACKAGE);
 		const packed = {
 			files: [
 				{ path: "dist/cli.js" },
@@ -308,7 +310,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/node_modules/@earendil-works/pi-pty/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-pty/native/index.js" },
-				{ path: `package/node_modules/@earendil-works/pi-pty/${nativePrebuildFile("darwin-arm64")}` },
+				{ path: `package/node_modules/@earendil-works/pi-pty/${nativePrebuildFile("darwin-arm64", PTY_PACKAGE)}` },
 				{ path: "package/node_modules/@earendil-works/pi-tui/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-tui/dist/index.js" },
 				{ path: "package/node_modules/@code-yeongyu/senpi-codemode/package.json" },
@@ -340,7 +342,22 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		assert.ok(ptyCheck);
 		assert.deepEqual(
 			ptyCheck.requiredFiles.filter((file) => file.startsWith("native/prebuilds/")),
-			SUPPORTED_NATIVE_PREBUILD_TARGETS.map(nativePrebuildFile),
+			SUPPORTED_NATIVE_PREBUILD_TARGETS.map((target) => `native/prebuilds/${target}/senpi_pty.${target}.node`),
+		);
+	});
+
+	it("rejects a packed manifest that declares a never-published fork package (senpi#2141)", () => {
+		// Given: a fork-scope package outside the publish set, which bun cannot resolve.
+		const packed = { files: [{ path: "package/dist/cli.js" }] };
+
+		// When / Then
+		assert.throws(
+			() =>
+				assertSenpiPackedWorkspaceFiles(packed, {
+					runtimeDependencies: ["cross-spawn", UNPUBLISHED_PACKAGE],
+					bundledDependencies: ["cross-spawn", UNPUBLISHED_PACKAGE],
+				}),
+			/declares packages that are never published.*@code-yeongyu\/senpi-never-published/,
 		);
 	});
 });

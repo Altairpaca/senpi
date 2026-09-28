@@ -17,8 +17,8 @@ import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/t
 import { resolveToCwd } from "../path-utils.ts";
 import type { ReadToolDetails } from "../read.ts";
 import { type CompactReadClassification, classifyRead } from "../read-classifiers.ts";
-import { getTextOutput, renderToolPath, replaceTabs, str } from "../render-utils.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../truncate.ts";
+import { getTextOutput, linkPath, renderToolPath, replaceTabs, str } from "../render-utils.ts";
+import { getSkillReadPath } from "./skill-read-path.ts";
 
 /**
  * Classifications are memoized per tool call (unclaimed paths included) so a redraw or an
@@ -28,7 +28,7 @@ export interface ReadRenderState {
 	classifications?: Map<string | null, CompactReadClassification | undefined>;
 }
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
-type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
+export type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
 function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
 	if (args?.offset === undefined && args?.limit === undefined) return "";
 	const startLine = args.offset ?? 1;
@@ -36,7 +36,12 @@ function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): st
 	return theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 }
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
-	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
+	const rawPath = str(args?.file_path ?? args?.path);
+	const skillPath = rawPath ? getSkillReadPath(resolveToCwd(rawPath, cwd), cwd) : undefined;
+	const pathDisplay =
+		rawPath && skillPath
+			? linkPath(theme.fg("accent", skillPath), rawPath, cwd)
+			: renderToolPath(rawPath, theme, cwd);
 	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`;
 }
 function trimTrailingEmptyLines(lines: string[]): string[] {
@@ -67,7 +72,8 @@ function getPiDocsClassification(absolutePath: string): CompactReadClassificatio
 	}
 	return undefined;
 }
-function getCompactReadClassification(
+/** The compact headline a collapsed read card shows for these args, or undefined for a plain file read. */
+export function getCompactReadClassification(
 	args: ReadRenderArgs | undefined,
 	cwd: string,
 ): CompactReadClassification | undefined {
@@ -151,16 +157,6 @@ function formatReadResult(
 		text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 	}
 
-	const truncation = result.details?.truncation;
-	if (truncation?.truncated) {
-		if (truncation.firstLineExceedsLimit) {
-			text += `\n${theme.fg("warning", `[First line exceeds ${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit]`)}`;
-		} else if (truncation.truncatedBy === "lines") {
-			text += `\n${theme.fg("warning", `[Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines (${truncation.maxLines ?? DEFAULT_MAX_LINES} line limit)]`)}`;
-		} else {
-			text += `\n${theme.fg("warning", `[Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)]`)}`;
-		}
-	}
 	return text;
 }
 

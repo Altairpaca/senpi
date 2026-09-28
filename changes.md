@@ -1,5 +1,80 @@
 # changes — senpi-monorepo root
 
+## Remove the desktop computer-use stack, now owned by omo (2026-09-28)
+
+### What changed
+
+- `Cargo.toml`: the workspace keeps `crates/senpi-pty` and `crates/senpi-grep`; the ten `crates/senpi-desktop-*` members and the desktop-only dependency pins are gone, and `Cargo.lock` loses only the packages they alone pulled in.
+- `tsconfig.json`: the `@code-yeongyu/senpi-desktop-{engine,prelude,protocol,service,tool}` path mappings are removed with the packages.
+- `bun.lock`, `package-lock.json`: the five `packages/desktop-*` workspaces drop out.
+
+### Why
+
+- Computer use ships from omo (code-yeongyu/oh-my-openagent#8893). senpi keeps only the generic hooks (tool kernel preludes, tool-owned permission parsers, the `tool_search` activation event; #2178). Wave 0 (#2129) had left the engine crates, packages and CI here (senpi#2128).
+
+### Why an extension could not handle it
+
+- Workspace layout and toolchain configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `members` list and `[workspace.dependencies]` in `Cargo.toml`; the `paths` block in `tsconfig.json`.
+
+## Reject committed merge-conflict markers (2026-09-27)
+
+### What changed
+
+- `package.json`: `check` runs the new `check:conflict-markers` (`scripts/check-conflict-markers.mjs`), which fails on any tracked text line that opens (`<<<<<<< `), bases (`||||||| `) or closes (`>>>>>>> `) a conflict.
+
+### Why
+
+- Merge resolutions kept committing diff3 leftovers into trackers and changelogs (#963, #1189, and #2087's leftover in `core/changes.md`, senpi#2173).
+
+### Why an extension could not handle it
+
+- Repository validation gate.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script chain in the root `package.json`.
+
+## Resolve the desktop packages from source in the root type check (2026-09-24)
+
+### What changed
+
+- `tsconfig.json` `paths` maps `@code-yeongyu/senpi-desktop-{engine,prelude,protocol,service,tool}` to each package's `src/index.ts`, beside the existing workspace entries.
+
+### Why
+
+- The root `tsc --noEmit` in `bun run check` has to resolve the desktop packages (senpi#2128) from source, like every other workspace package. Without the mapping it reads `dist/*.d.ts`, which is missing in a fresh checkout and stale after a source edit.
+
+### Why an extension could not handle it
+
+- The root type check runs on the repository before any senpi extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `paths` block of `tsconfig.json`, where upstream adds its own workspace entries.
+
+## Add senpi-desktop crate workspace skeletons (2026-09-25)
+
+### What changed
+
+- `Cargo.toml` workspace `members` now includes the ten `crates/senpi-desktop-*` computer-use crates: core, safety, session, backend-fake, backend-atspi, backend-macos, backend-x11, backend-wayland, backend-win32, and engine.
+- `[workspace.dependencies]` pins the desktop native stack copied from oh-my-pi `crates/pi-natives` (image with `bmp`, png, flume, parking_lot, xcap, core-graphics, objc2*, foreign-types, tempfile, libc, x11rb, atspi, ashpd, reis, zbus, xkeysym, windows-sys, enigo, uiautomation) plus serde/serde_json/schemars/thiserror/tokio/clap/ulid/sha2 and a proptest dev pin.
+
+### Why
+
+- Wave 0 freezes the crate graph and exact dependency versions so later computer-use lanes compile against a locked workspace without napi or pipewire.
+
+### Why an extension could not handle it
+
+- Cargo workspace membership and `[workspace.dependencies]` are resolved by the Rust toolchain before any senpi extension loads.
+
+### Expected merge conflict zones
+
+- Root `Cargo.toml` `members` list and the `[workspace.dependencies]` table against any upstream native-crate pin bump.
+
 ## Harness state leaves the tree and cannot be tracked again (2026-09-23)
 
 ### What changed

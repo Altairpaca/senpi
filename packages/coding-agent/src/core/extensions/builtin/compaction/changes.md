@@ -1,3 +1,21 @@
+## 2026-09-25 - Todo snapshots carry the captured ask (senpi#2121)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/todo-bridge.ts`: `createTodoSnapshot` records the latest todo state's `ask`, `findLatestTodoSnapshot` keeps a valid snapshot `ask`, and the `compaction.todo-restore-request` message details therefore re-emit it. The restore message type comes from `todotools/state.ts` (`TODO_RESTORE_REQUEST_TYPE`).
+
+### Why
+
+The todo tool anchors a rebuilt list to the ask in the restore request, so a list restored after compaction keeps the user's original request instead of the newest message.
+
+### Why an extension could not handle it
+
+Snapshot capture and restore are private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: `todo-bridge.ts` snapshot shape and restore parsing.
+
 ## 2026-09-22 - claude-sdk-oauth provider id renamed to anthropic-subscription in compaction comments (senpi#1989)
 
 ### What changed

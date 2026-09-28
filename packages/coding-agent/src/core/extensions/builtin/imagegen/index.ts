@@ -58,10 +58,14 @@ export function registerImageGenExtension(pi: ExtensionAPI, baseDir = IMAGEGEN_B
 		return skillPath === undefined ? undefined : { skillPaths: [skillPath] };
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (!(await isImageGenActive(ctx))) return undefined;
-		return { systemPrompt: `${event.systemPrompt}\n${IMAGE_GEN_SECTION}` };
-	});
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			if (!(await isImageGenActive(ctx))) return undefined;
+			return { systemPrompt: `${event.systemPrompt}\n${IMAGE_GEN_SECTION}` };
+		},
+		{ previewSafe: true },
+	);
 }
 
 export default function imageGenExtension(pi: ExtensionAPI): void {

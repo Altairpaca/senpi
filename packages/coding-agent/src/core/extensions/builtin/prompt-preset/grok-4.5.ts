@@ -18,10 +18,16 @@
 // Reuses `buildTestDisciplineSection()` and `buildFileOperationsTuning()` so
 // shared rules stay single-sourced. Dynamic pieces (tool section, context
 // files, skills, date, cwd) come from `buildDynamicSystemPrompt`.
+//
+// 2026-09-24 (senpi#2121): the shared `## Handoff` block (buildHandoffSection)
+// replaces the phase-change-only update line; no vendor guide covers this, the
+// user directive and the Grok field trace (silent runs, done claimed with work
+// open) do.
 
 import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
+import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
 
@@ -51,10 +57,13 @@ ${context.toolSection}
 - Never suppress type errors, lint warnings, or test failures; never delete, skip, or weaken a failing test to go green.
 - Never present unread code or unrun commands as verified fact; never invent tool output, worker results, or verification evidence.
 - A worker that fails three different approaches stops, documents, and asks you — you relay one precise question to the user.
+- Never present partial work as complete, swap the request for an easier adjacent one, or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
+
+${buildHandoffSection()}
 
 ## Output
 
-Update only at meaningful phase changes — a discovery that changes the plan, a worker returning, a blocker — one sentence each. You are the human surface: the final message leads with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, what you could not verify and why, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
+You are the human surface: the final message is the Handoff block, whose For you slot leads with the outcome (delivered / blocked / partial), then evidence — what you verified directly, what a worker verified and you audited, what you could not verify and why, pre-existing issues left alone. Reference files as \`src/auth.ts\` or \`src/auth.ts:42\`, never bracketed citations. Be direct; have an opinion when context supports one. Default to ASCII.
 
 ## Stop Goal
 

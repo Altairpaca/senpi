@@ -13,6 +13,8 @@ const moonshotToolSchemaRejectionMessage =
 	"500 server_error: Invalid request: tools.0.function.parameters: invalid tool schema";
 const anthropicInvalidMaxTokensMessage =
 	'400 {"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be greater than or equal to 1"}}';
+const gatewayStreamingIndexReplayRejectionMessage =
+	"the reasoning_details at position 1271 entry 0 must not contain streaming index";
 const anthropicCreditsRequiredMessage =
 	'429 event: error\ndata: {"type":"error","error":{"type":"rate_limit_error","message":"Usage credits are required for this model.","details":{"error_code":"credits_required","model":"claude-fable-5"}},"request_id":"req_011CdW2nFxprAx6KQ9JhnAvq"}';
 const gatewayModelRequestRejectedMessage = "Error: The model request was rejected. Check the request and try again.";
@@ -112,6 +114,7 @@ describe("classifySenpiAssistantFailure", () => {
 		["openai responses early EOF", openAIResponsesEarlyEofMessage, true],
 		["wrapped DNS lookup failure", wrappedDnsLookupError, true],
 		["anthropic orphan server-tool 400", anthropicOrphanServerToolMessage, true],
+		["gateway streaming-index replay rejection", gatewayStreamingIndexReplayRejectionMessage, true],
 	])("mirrors isRetryableErrorMessage: %s", (_label, message, retryable) => {
 		const failure: RetryFailure = { origin: "senpi-assistant-test", kind: "unknown", message };
 		// Pin the fixture's expected boolean first so regex drift surfaces here too.

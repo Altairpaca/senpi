@@ -1,5 +1,25 @@
 # TUI delta rendering fork changes
 
+## 2026-09-24 - Fuzzy matching over pre-lowered text (senpi#2087)
+
+### What changed
+
+- `packages/tui/src/fuzzy.ts`: new exported `fuzzyMatchLower(queryLower, textLower)` holds the direct and letter/digit-swap scoring. `fuzzyMatch` lower-cases its inputs and delegates to it, so scoring has one source. `packages/tui/src/index.ts` exports `fuzzyMatchLower` next to `fuzzyMatch`.
+- `packages/tui/test/fuzzy.test.ts`: `fuzzyMatchLower` on lower-cased inputs returns exactly what `fuzzyMatch` returns for mixed-case pairs, swap variants included.
+
+### Why
+
+- `fuzzyMatch` lower-cases the whole text on every call. The coding-agent `/resume` search calls it once per token per session over tens of MB of transcript text, so the same text was lower-cased again on every keystroke.
+
+### Why an extension could not handle it
+
+- The scoring lives in the TUI package. A caller outside it can only reach `fuzzyMatch`, which always lower-cases.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/fuzzy.ts`: the `fuzzyMatch` body, now a delegating wrapper above `fuzzyMatchLower`.
+- `packages/tui/src/index.ts`: the `./fuzzy.ts` export line.
+
 ## 2026-09-23 — Let hosts observe the real stderr destination (senpi#1879)
 
 ### What changed
@@ -1311,3 +1331,25 @@ Component-level caching is added in coding-agent components because high-frequen
 - HIGH: `packages/tui/src/components/editor.ts` marker handling and input dispatch; `packages/tui/src/terminal.ts` `ProcessTerminal` start/stop.
 - MEDIUM: `packages/tui/src/index.ts` export list; `packages/tui/src/utils.ts` width cache and ANSI helpers; `select-list.ts` render path.
 - LOW: `box.ts` lifecycle methods; `tui-alt-screen.ts` teardown call sites.
+
+## 2026-09-28 - The skill: namespace row drills down instead of submitting (senpi#2249)
+
+### What changed
+
+- `packages/tui/src/slash-command-autocomplete.ts`: `isSlashNamespaceItem(value)` names the namespace rule (a slash item whose value ends in `:`, today only `skill:`).
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider.applyCompletion` completes a namespace item as `/skill:` with no trailing space, so the namespace's own list can follow; every other command keeps `/name `.
+- `packages/tui/src/components/editor.ts`: Enter and Tab on a namespace row apply that completion and re-request suggestions instead of submitting; public `openAutocomplete()` requests suggestions at the cursor.
+- `packages/tui/src/editor-component.ts`: optional `openAutocomplete?()` on `EditorComponent`.
+
+### Why
+
+- The `skill:` row is an autocomplete-only drill-down with no command behind it. Enter submitted `/skill: ` to the model, and the trailing space kept the skill list from opening even on Tab.
+
+### Why an extension could not handle it
+
+- Picker confirm handling and completion text live in the editor and the combined provider; an extension cannot intercept the editor's Enter before it submits.
+
+### Expected merge conflict zones
+
+- MEDIUM: the autocomplete `tui.select.confirm` and `tui.input.tab` branches in `packages/tui/src/components/editor.ts`; the slash-command branch of `CombinedAutocompleteProvider.applyCompletion` in `packages/tui/src/autocomplete.ts`.
+- LOW: the added optional member in `packages/tui/src/editor-component.ts`.

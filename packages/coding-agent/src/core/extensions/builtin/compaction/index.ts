@@ -1,7 +1,15 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
-import type { ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent, SessionCompactEvent } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+	SessionBeforeCompactEvent,
+	SessionCompactEvent,
+} from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
 import { buildCompactionContext } from "./context-pipeline.ts";
@@ -831,7 +839,12 @@ export default function compactionExtension(
 		}
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
+	const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+		event,
+		ctx,
+	) => {
+		// A preview composes a prompt no turn follows: no compaction, reminder, or restoration.
+		if (event.preview === true) return undefined;
 		sessionIdleSinceAgentEnd = false;
 		cancelIdleWarmupRetry();
 		const message = checkpointState.attachRestorationDirective(
@@ -935,7 +948,8 @@ export default function compactionExtension(
 			...(deliveredMessage ? { message: deliveredMessage } : {}),
 			...(reminderSystemPrompt ? { systemPrompt: reminderSystemPrompt } : {}),
 		};
-	});
+	};
+	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
 	pi.on("context", (event, ctx) => {
 		const usage = ctx.getContextUsage();

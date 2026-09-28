@@ -13,6 +13,7 @@ import { convertToLlm, filterContextExcludedMessages } from "../../../messages.t
 import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionFactory } from "../../types.ts";
 import { formatWarmTokenCount } from "../goal/cache-warm.ts";
+import { createSessionPrewarm } from "./session-prewarm.ts";
 
 export const CACHE_KEEPALIVE_ENTRY_TYPE = "cache-keepalive";
 export const CACHE_WARM_PING_EVENT = "cache_warm_ping";
@@ -57,10 +58,14 @@ export const renderCacheKeepAliveEntry: EntryRenderer<CacheKeepAliveEntryData> =
 });
 
 export function createCacheKeepAliveExtension(
-	dependencies: { readonly warmPromptCache?: WarmPromptCacheFn } = {},
+	dependencies: {
+		readonly warmPromptCache?: WarmPromptCacheFn;
+		readonly isPromptCachePrewarmModel?: (model: Model<any>) => boolean;
+	} = {},
 ): ExtensionFactory {
 	const warm = dependencies.warmPromptCache ?? warmPromptCache;
 	return (pi: ExtensionAPI) => {
+		const prewarm = createSessionPrewarm(pi, { warm, isPrewarmModel: dependencies.isPromptCachePrewarmModel });
 		let ctx: ExtensionContext | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let inFlight = false;
@@ -239,6 +244,7 @@ export function createCacheKeepAliveExtension(
 			lastUsage = usage;
 			lastCompletedAtMs = lastAssistantTimestamp(lastMessages);
 			arm();
+			prewarm.start(nextCtx);
 		});
 
 		pi.on("agent_end", (event, nextCtx) => {
@@ -272,6 +278,7 @@ export function createCacheKeepAliveExtension(
 		pi.on("input", () => stop("user-input"));
 		pi.on("session_shutdown", () => {
 			stop("session-dispose");
+			prewarm.cancel();
 			ctx = undefined;
 		});
 	};

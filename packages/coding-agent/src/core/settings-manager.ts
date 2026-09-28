@@ -40,6 +40,11 @@ import {
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
+import {
+	type FallbackCircuitSettings,
+	type ResolvedFallbackCircuitSettings,
+	resolveFallbackCircuitSettings,
+} from "./retry-fallback/circuit.ts";
 import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
 import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
@@ -50,6 +55,7 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { withoutOverride } from "./settings-overrides.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
@@ -64,6 +70,8 @@ import {
 	type PromptCacheSettings,
 	type ProviderConcurrencySettings,
 	type ThinkingBudgetsSettings,
+	type TodoFirstTurnPlan,
+	type TodoSettings,
 } from "./settings-shapes.ts";
 import {
 	type BranchSummarySettings,
@@ -166,6 +174,7 @@ export interface Settings {
 	compaction?: CompactionSettings & { model?: string };
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
+	fallback?: FallbackCircuitSettings;
 	hideThinkingBlock?: boolean;
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
@@ -196,6 +205,7 @@ export interface Settings {
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
@@ -622,6 +632,8 @@ export class SettingsManager {
 	private projectSettings: Settings;
 	private settings: Settings;
 	private projectTrusted: boolean;
+	/** CLI/SDK overrides (`applyOverrides`): never persisted, re-applied on every recompute. */
+	private runtimeOverrides: Settings = {};
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
 	private modifiedNestedFields = new Map<keyof Settings, Set<string>>(); // Track global nested field modifications
 	private modifiedProjectFields = new Set<keyof Settings>(); // Track project fields modified during session
@@ -936,6 +948,16 @@ export class SettingsManager {
 		};
 	}
 
+	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+		const configured = this.settings.todo?.firstTurnPlan;
+		return configured === "remind" || configured === "off" ? configured : "force";
+	}
+
+	getTodoTurnEndBackstop(): boolean {
+		const configured = this.settings.todo?.turnEndBackstop;
+		return typeof configured === "boolean" ? configured : true;
+	}
+
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
 	}
@@ -952,7 +974,7 @@ export class SettingsManager {
 		if (!trusted) {
 			this.projectSettings = {};
 			this.projectSettingsLoadError = null;
-			this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+			this.updateSettings(this.mergedSettings());
 			return;
 		}
 
@@ -963,7 +985,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 	}
 
 	async reload(): Promise<void> {
@@ -993,7 +1015,7 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 	}
 
 	getSelectedSettingsSources(): SettingsSourceSelection[] {
@@ -1020,11 +1042,18 @@ export class SettingsManager {
 
 	/** Apply additional overrides on top of current settings */
 	applyOverrides(overrides: Partial<Settings>): void {
-		this.updateSettings(deepMergeSettings(this.settings, overrides));
+		this.runtimeOverrides = deepMergeSettings(this.runtimeOverrides, overrides);
+		this.updateSettings(this.mergedSettings());
+	}
+
+	/** Persisted global+project settings with the session-only override layer on top. */
+	private mergedSettings(): Settings {
+		return deepMergeSettings(deepMergeSettings(this.globalSettings, this.projectSettings), this.runtimeOverrides);
 	}
 
 	/** Mark a global field as modified during this session */
 	private markModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedNestedFields.has(field)) {
@@ -1036,6 +1065,7 @@ export class SettingsManager {
 
 	/** Mark a project field as modified during this session */
 	private markProjectModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedProjectFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedProjectNestedFields.has(field)) {
@@ -1119,7 +1149,7 @@ export class SettingsManager {
 	}
 
 	private save(): void {
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 
 		if (this.globalSettingsLoadError) {
 			return;
@@ -1137,7 +1167,7 @@ export class SettingsManager {
 	private saveProjectSettings(settings: Settings): void {
 		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 
 		if (this.projectSettingsLoadError) {
 			return;
@@ -1487,6 +1517,10 @@ export class SettingsManager {
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
 		return resolveRetryFallbackSettings(this.settings.retry);
+	}
+
+	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
+		return resolveFallbackCircuitSettings(this.settings.fallback);
 	}
 
 	getHintPolicySettings(): ResolvedHintPolicySettings {

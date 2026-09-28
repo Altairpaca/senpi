@@ -41,7 +41,9 @@ import {
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
 import type {
+	BeforeAgentStartHandlerOptions,
 	EntryRenderer,
+	EntryRendererOptions,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
@@ -382,11 +384,15 @@ function createExtensionAPI(
 		sessionContext: session.sessionContext,
 
 		// Registration methods - write to extension
-		on(event: string, handler: HandlerFn): void {
+		on(event: string, handler: HandlerFn, options?: BeforeAgentStartHandlerOptions): void {
 			assertActive();
 			const list = extension.handlers.get(event) ?? [];
 			list.push(handler);
 			extension.handlers.set(event, list);
+			if (event === "before_agent_start" && options?.previewSafe === true) {
+				extension.previewSafeHandlers ??= new WeakSet();
+				extension.previewSafeHandlers.add(handler);
+			}
 		},
 
 		registerTool(tool: ToolDefinition): void {
@@ -482,10 +488,17 @@ function createExtensionAPI(
 			extension.markdownTransformer = transformer;
 		},
 
-		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
+		registerEntryRenderer<T>(
+			customType: string,
+			renderer: EntryRenderer<T>,
+			options?: EntryRendererOptions<T>,
+		): void {
 			assertActive();
 			extension.entryRenderers ??= new Map();
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
+			extension.entryRendererOptions ??= new Map();
+			if (options === undefined) extension.entryRendererOptions.delete(customType);
+			else extension.entryRendererOptions.set(customType, options as EntryRendererOptions);
 		},
 
 		registerReadClassifier(classifier: ReadClassifier): () => void {

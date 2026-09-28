@@ -14,6 +14,7 @@ anchor most suites).
 | Cell execution, settlement | `cell-handler.ts`, `cell-execution.ts`, `cell-runtime.ts` |
 | Detached cells | `detached-cell-manager.ts` + `detached-cell-{state,snapshot,notification}.ts`, `detached-notification-queue.ts`, `detached-eval-result.ts` |
 | Call/result rendering | `render.ts`, `runtime-label.ts`, `json-tree.ts`, `image.ts`, `tool-widgets.ts` |
+| Code preview layout | `code-preview.ts` -> `display-code.ts` (JS: `display-js*.ts` Bun-only masked `Bun.Transpiler`; Python: `display-python*.ts` user interpreter, background + repaint) |
 | Status events, execution events | `status-events.ts`, `eval-execution-event.ts` |
 | Interrupt, capture | `interrupt-note.ts`, `call-capture.ts` |
 

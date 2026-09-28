@@ -1,3 +1,68 @@
+## 2026-09-24 - Pin the refreshed pi-* extension releases (senpi#2079)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/external-versions.json`: every entry moves to the 2026-09-24 release (bash-timeout 0.1.2, gpt-apply-patch 0.1.3, todowrite 0.2.1, goal 0.3.1, websearch 0.4.0, webfetch 0.1.3, nested-agents-md 0.1.1, rules 0.2.0), and `anthropic-web-search` (pi-anthropic-web-search 0.1.1), `openai-web-search` (pi-openai-web-search 0.1.1) and `anthropic-bash` (pi-anthropic-bash 0.1.1) are recorded for the first time.
+- `packages/coding-agent/scripts/sync-builtin-extensions.mjs`: the three single-file builtins join `MANUAL_PACKAGES`, so a manifest refresh keeps them.
+- The three new entries need no code change. `anthropic-bash` matches upstream except the `ExtensionAPI` import. The web-search copies differ from upstream only where upstream loosens types for its `*` peer range (structural model records, `unknown` compat readers, bracket property access) and prefixes its status/widget keys; senpi reads the typed in-tree `Model` whose `compat` flags are schema-validated booleans, mirroring pi-ai's own `compat ?? endpoint` default, and keeps its unprefixed keys.
+- Per-builtin ports are recorded in `rules/changes.md`, `websearch/changes.md`, `todotools/changes.md` and `goal/changes.md`; the in-sync builtins note it in their own tracker.
+
+### Why
+
+senpi#2079: the manifest is the record of which upstream release each vendored builtin corresponds to, and three vendored builtins were missing from it.
+
+### Why an extension could not handle it
+
+The manifest and sync script describe the builtin snapshots shipped in the binary.
+
+### Expected merge conflict zones
+
+- LOW in `external-versions.json` and `MANUAL_PACKAGES`.
+
+## 2026-09-24 - Stop waits for background work that will wake the session (senpi#2077)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts` (new): owns the `Stop` dispatch that used to live in the `agent_end` handler of `hooks/index.ts`. It mirrors live `wake_source_state` counts off `pi.events` (every source except `ask-user`). An `agent_end` with a live source parks the built Stop input instead of dispatching it; a later `agent_start` drops the parked Stop (that turn's own end reports); when the live set drains to zero while the session is idle, a `STOP_DRAIN_GRACE_MS` (2 s, unref) timer dispatches the parked Stop unless a turn started or a message was queued in the meantime. `session_shutdown` drops everything. The Stop reentry tracker moved with it; `hooks/index.ts` calls `registerStopLifecycle` and `resetTurn()` on real user input.
+- `packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts` / `herdr/index.ts`: the reporter subscribes to `wake_source_state` and folds every source into the state. `selectHerdrReport` reports `working` while any source is live and labels each one (`terminal-background-sessions`, `senpi-codemode`, `omo-dag`, `loop-guard-hard-stop` have friendly names; unknown sources render as `<count> <source>`); `terminal-monitors` and `senpi-task` are not relabelled because the monitor snapshot and the child-task count already carry them (the child count is the max of the polled records and the published count), and `ask-user` is left to the blocked state.
+- `packages/coding-agent/test/suite/hooks-stop-background-work.test.ts` (new, real hooks.json + trust + child process): Stop held while a source is live and dispatched once on drain (fake `setTimeout` only around the drain, completion observed through the `entry_appended` stop-state entry); Stop at turn end when only `ask-user` is live; the wake turn's `agent_start` cancels the drain timer and that turn reports exactly one Stop; a wake turn that ends with the work still live keeps Stop held. `hooks-builtin-extension.test.ts` pins the new `agent_start` / `session_shutdown` registrations.
+- `packages/coding-agent/test/suite/herdr-reporter-harness.ts` (extracted from `herdr-reporter.test.ts`, unchanged behavior) and `herdr-reporter-wake-sources.test.ts` (new): working through settlement with a live DAG run and idle on clear; stable multi-source message without double counting; ask-user ignored; malformed and repeated payloads ignored.
+- `packages/coding-agent/test/suite/regressions/settled-idle-with-background-wake-source.test.ts`: pins that `ctx.isIdle()` still reads `true` at `agent_settled` while a wake source is live.
+
+### Why
+
+A user with a Stop-hook notifier, or many herdr panes, was told "the agent stopped" at every turn end, including turns that had just handed the session to a subagent, a DAG run, or a monitor - and on arrival there was nothing to do. `Stop` now means the session actually stopped. The drain timer exists because completion handlers publish their zero count and wake the session in the same tick in either order; without the grace the drain would fire Stop a moment before the wake turn fires it again. `ask-user` is the one source that means the user's turn, so it does not hold Stop, and the herdr reporter already shows it as `blocked`.
+
+Two earlier shapes of this change were dropped: a `Notification` of `kind: "turn-settled"` fired at settlement while work was live added a ping at exactly the moment the user asked for silence and reached every bare `Notification` hook; and reporting `ctx.isIdle()` as false during `agent_settled` while a source was live postponed `config-reload`'s pending-reload flush and the `loop` builtin's deferred tick drain (both gate on `ctx.isIdle()` in their `agent_settled` handlers) for as long as any monitor stayed armed.
+
+### Why an extension could not handle it
+
+The Stop dispatch, its trust resolution and its reentry tracker are inside the hooks builtin, and the herdr reporter is the builtin that owns the pane's lifecycle report. Both already run in-process next to the bus the wake sources publish on; no core API changed.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: the removed `agent_end` block and the `registerStopLifecycle` / `resetTurn` wiring.
+- LOW in `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` (one more subscription in `session_start`) and `herdr-state.ts` (new event variant, `selectHerdrReport` labels).
+- LOW in `packages/coding-agent/CHANGELOG.md` under `## [Unreleased]` -> `### Changed`.
+
+## 2026-09-24 - Recommended ladder reordered, provider lanes ranked per rung (senpi#2074)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: `RECOMMENDED_DEFAULT_MODELS` is now `claude-opus-5-5` medium, `claude-fable-5-1` xhigh, `kimi-k3` max, `gpt-6-astra` xhigh, `gpt-6-sol` medium, `glm-5.3` max. `gpt-5.6-sol` and `glm-5.2` are no longer recommendations (both stay selectable). Each entry carries a third element, the ranked provider lanes (Claude `anthropic-subscription, anthropic, anthropic-api, github-copilot, opencode`; Kimi `kimi-coding, kimi-for-coding, moonshotai, opencode-go`; GPT `chatgpt-subscription, openai, github-copilot, opencode`; GLM `zai-coding-plan, opencode-go`), and `findAvailableRecommendation` picks the highest-ranked provider among the models whose canonical id matches. A shipped rung is served only by its ranked lanes; a `settings.recommendedModels` id outside the table has no ranking and any provider may serve it.
+
+### Why
+
+The product default is Claude first, then Kimi, then GPT, then GLM, and a machine holding both an Anthropic API key and the Claude subscription must land on the subscription lane rather than on whichever provider the registry happened to list first. Gateway aggregators (opengateway, openrouter, vercel-ai-gateway) and other resellers must never be pulled in by the default ladder; restricting a rung to its ranked lanes guarantees that, and tests pin both the gateway and the unranked-reseller case.
+
+### Why an extension could not handle it
+
+The shipped priority list is the binary default every session gets without a `settings.recommendedModels` override.
+
+### Expected merge conflict zones
+
+- MEDIUM in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` around `RECOMMENDED_DEFAULT_MODELS` and `findAvailableRecommendation`: the entries are now 3-tuples.
+
 ## 2026-09-22 - Claude Opus 5.5 becomes the recommended Opus
 
 ### What changed

@@ -9,7 +9,7 @@ import {
 it("accepts consumer-resolved platform optionals outside the packed bundle", () => {
 	// Given: the portable SDK is bundled, while npm must install the target-native
 	// optional package on the consumer machine.
-	const hostPrebuild = nativePrebuildFile(nativePrebuildTarget());
+	const hostPrebuild = nativePrebuildFile(nativePrebuildTarget(), "@earendil-works/pi-pty");
 	const packed = {
 		files: [
 			{ path: "package/dist/cli.js" },

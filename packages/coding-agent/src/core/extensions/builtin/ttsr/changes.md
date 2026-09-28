@@ -1,5 +1,43 @@
 # TTSR Fork Tracker
 
+## 2026-09-25 - The handoff Ask exemption needs a closing status label (senpi#2143)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/repetitive-turns.ts`: `HANDOFF_ASK_CLAUSE` drops its end-of-text branch, so an `Ask:` clause is removed only when `For you:`, `You need:` or `Now:` closes it. `test/ttsr/repetitive-turns.test.ts` adds an unlabeled `Ask:` loop that must still fire on its third turn (RED with the old branch).
+
+### Why
+
+The end-of-text branch removed everything after any `Ask:`, so a stuck turn that merely contained the word normalized to nothing and scored 0 against itself, which hid it from `repetitive-turns` and from `collapse-near-duplicates` (same normalizer). #2136 meant to exempt only the restated request inside a handoff block.
+
+### Why an extension could not handle it
+
+This is the detector's own normalizer.
+
+### Expected merge conflict zones
+
+- `HANDOFF_ASK_CLAUSE` in `detectors/repetitive-turns.ts`.
+
+## 2026-09-25 - repetitive-turns ignores the restated Ask of a handoff block (senpi#2135)
+
+### What changed
+
+- `detectors/repetitive-turns.ts` `normalizeTurnText` drops a handoff block's `Ask: ...` clause (up to `For you:` / `You need:` / `Now:`) before comparison. Both the mid-stream lane (`repetitive-turns-lane.ts`) and the cross-turn detector normalize through it, so both stop counting the restated request.
+- `prompts.ts` `REPETITIVE_TURNS_RULE_CONTENT`: `Stop restating the situation. Do not emit another progress recap.` -> `Stop repeating the same status; a report is useful only when something has changed.`
+- `test/ttsr/repetitive-turns.test.ts`: the recorded final-block prefix scores under the threshold against the previous block (0.69 before, RED), and a block that repeats the same For you / Now / Next still scores as a near-duplicate.
+
+### Why
+
+- The handoff contract (senpi#2121) makes every block open by restating the user's request, so block N+1's opening is a near-copy of block N by design. On the released 2026.9.24-3 the lane armed on the final block's prefix, aborted it, and injected "Do not emit another progress recap", after which grok-4.7 closed without the block. The status the model reports (For you / Now / Next) still participates, so a model that re-emits the same status turn after turn is still caught.
+
+### Why an extension could not handle it
+
+- This is the ttsr builtin's own detector and remediation text.
+
+### Expected merge conflict zones
+
+- `normalizeTurnText` in `detectors/repetitive-turns.ts`; `REPETITIVE_TURNS_RULE_CONTENT` in `prompts.ts`. Fork-only files.
+
 ## 2026-09-16 - Near-duplicate paragraph frequency
 
 ### What changed and why

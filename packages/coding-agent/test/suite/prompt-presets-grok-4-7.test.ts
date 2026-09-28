@@ -2,7 +2,6 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { BuildDynamicSystemPromptOptions } from "../../src/core/dynamic-prompt/build.ts";
-import { buildGrok46Prompt } from "../../src/core/extensions/builtin/prompt-preset/grok-4.6.ts";
 import { buildGrok47Prompt } from "../../src/core/extensions/builtin/prompt-preset/grok-4.7.ts";
 import {
 	type PromptPresetSettings,
@@ -30,6 +29,10 @@ function hasGrok47CatalogSignal(model: Model<Api>): boolean {
 	// Keep in sync with presets.ts hasGrok47Signal — colon provider sep, compact grok47, and
 	// venice's dashed grok-4-7 all count.
 	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?7(?:$|[/@._:-])/.test(searchable);
+}
+
+function occurrences(haystack: string, needle: string): number {
+	return haystack.split(needle).length - 1;
 }
 
 function getGrok47CatalogModels(): Model<Api>[] {
@@ -100,16 +103,15 @@ describe("Grok 4.7 prompt preset", () => {
 		expect(grok47?.name).toBe("grok-4.7");
 	});
 
-	it("reuses the Grok 4.6 system prompt verbatim — byte-identical builds", () => {
-		// given: Grok 4.7 has not been prompt-tuned; the preset must delegate to the
-		// Grok 4.6 builder so the two prompts can never drift.
-		const settings: PromptPresetSettings = { promptPreset: "auto" };
-		const grok46 = resolvePreset(createModel("grok-4.6", "xai", "openai-responses"), settings);
-		const grok47 = resolvePreset(createModel("grok-4.7", "xai", "openai-responses"), settings);
+	it("renders its own tuned core, self-identified as Grok 4.7", () => {
+		// given
+		const prompt = buildGrok47Prompt(sharedOptions);
 
-		// when / then
-		expect(grok47?.prompt).toBe(grok46?.prompt);
-		expect(buildGrok47Prompt(sharedOptions)).toBe(buildGrok46Prompt(sharedOptions));
+		// then
+		expect(prompt).toContain("running on Grok 4.7");
+		expect(prompt).not.toContain("Grok 4.6");
+		expect(occurrences(prompt, "## Handoff")).toBe(1);
+		expect(prompt).toContain("## Intent Gate");
 	});
 
 	it("allows settings.json to force grok-4.7 regardless of model id", () => {
@@ -122,7 +124,7 @@ describe("Grok 4.7 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("grok-4.7");
-		expect(preset?.prompt).toContain("Grok 4.6");
+		expect(preset?.prompt).toContain("running on Grok 4.7");
 	});
 
 	it("returns grok-4.7 preset for every Grok 4.7 built-in catalog model", () => {
