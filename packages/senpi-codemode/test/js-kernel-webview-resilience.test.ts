@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { retireBunChrome } from "../../coding-agent/src/core/webview/bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebViewClass } from "../../coding-agent/src/core/webview/native-webview.ts";
 import {
 	mainThreadWebViewService,
@@ -143,8 +144,9 @@ describe.skipIf(!bunWebViewAvailable)("a misbehaving Chrome behind the main-thre
 			expect(await bunChromeChildren()).toEqual([]);
 		} finally {
 			grant.port.close();
-			// Keep a regression here from leaking its Chrome into the next test.
-			nativeClass.closeAll();
+			// Keep a regression here from leaking its Chrome into the next test, through the product's own
+			// retire: `closeAll()` on macOS would also end the WebKit host other processes' views run on.
+			await retireBunChrome(nativeClass);
 		}
 	});
 });
