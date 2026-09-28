@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- Adjacent user messages sent through the OpenAI-compatible Chat Completions adapter are folded into one ordered message for non-OpenAI hosts, while direct OpenAI requests retain their existing message boundaries. ([#2120](https://github.com/code-yeongyu/senpi/issues/2120))
-
 ### Removed
 
 ## [2026.9.28-3] - 2026-09-28
