@@ -10,7 +10,9 @@
 
 ### Fixed
 
-- With Anthropic native tool search, a deferred tool whose parameters are a root union (`anyOf` with no top-level `type`, such as a desktop `computer` tool) no longer makes every request fail with `tools.N.custom.input_schema.type: Field required`: the injected schema is resolved into one object, as resident tools already were. ([#2252](https://github.com/code-yeongyu/senpi/issues/2252))
+- With Anthropic native tool search, a deferred tool whose parameters are a root union (`anyOf` with no top-level `type`, as the desktop `computer` tool has) no longer makes every request fail with `tools.N.custom.input_schema.type: Field required`: the injected schema is resolved into one object, as resident tools already were. ([#2252](https://github.com/code-yeongyu/senpi/issues/2252))
+- Submitting a bare `/skill` or `/skill:` with Enter or Alt+Enter no longer sends it to the model. The editor goes back to `/skill:` with the skill list open, or a warning says that no skill is loaded or that skill commands are disabled. Choosing the `skill:` row ("Browse available skills") in the slash picker with Enter or Tab now fills in `/skill:` and lists the skills too. ([#2249](https://github.com/code-yeongyu/senpi/issues/2249))
+
 ### Removed
 
 ## [2026.9.28] - 2026-09-28
