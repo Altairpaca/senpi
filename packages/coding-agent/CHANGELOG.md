@@ -8,6 +8,8 @@
 
 - `senpi app-server` and `senpi app-server daemon start|restart` accept `--extension <path>` (repeatable) and load those extensions into every thread, so a launcher that ships its plugin beside the engine gets the plugin's tools and `extension_event`s in app-server sessions. The daemon records the list and `restart` keeps it. ([code-yeongyu/oh-my-openagent#9117](https://github.com/code-yeongyu/oh-my-openagent/issues/9117))
 
+- A multi-session RPC host answers a new `warm` command: it loads what the next `open_session` for a cwd, kind and context needs (the extension graph and the runtimes those extensions load) without opening a session. Nothing is listed, the connection never counts as an attachment, and the host still idles out on schedule, so a client that starts one host per session no longer pays the first-session cost on every session. Hosts advertise it as the `warm` capability. ([#2314](https://github.com/code-yeongyu/senpi/issues/2314))
+
 ### Changed
 
 - The `/computer` introduction tip now says computer use is experimental. The tip ids, their `/computer` gating and the other tips are unchanged. ([#2315](https://github.com/code-yeongyu/senpi/issues/2315))
