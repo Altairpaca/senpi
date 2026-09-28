@@ -6,7 +6,14 @@ export interface SessionTeardownHost {
 	get(handle: string): RpcSessionEntry | undefined;
 	delete(handle: string): void;
 	releaseReservation(key: string): void;
+	/** Publishes that this path is retained with no client attached, for the cross-generation claim. */
+	markDetached(key: string): void;
 	sync(): void;
+}
+
+/** Session-owned work that outlives its client: a turn, a tool, anything still appending records. */
+function sessionIsWriting(entry: RpcSessionEntry): boolean {
+	return entry.worker?.busy === true || entry.runtime?.session.isSessionBusy === true;
 }
 
 function reportDetachedFailure(handle: string, cause: unknown): void {
@@ -34,6 +41,10 @@ export function beginSessionClose(
 	// reservation, and is torn down only by an explicit close or the idle window.
 	if (options?.detach && entry.retainOnDisconnect) {
 		entry.attachments = 0;
+		// A retained session nobody is attached to is what another generation may reclaim the path
+		// from (#1893) - but only once nothing is still WRITING it. A session mid-turn keeps its claim
+		// until it parks, because reclaiming it would put two writers on one transcript.
+		if (entry.reservationKey && !sessionIsWriting(entry)) host.markDetached(entry.reservationKey);
 		return entry;
 	}
 	entry.state = "closing";
@@ -69,9 +80,15 @@ export function closeMarkedSession(host: SessionTeardownHost, handle: string): P
 		disposePromise = Promise.resolve(entry.runtime?.dispose());
 		return disposePromise;
 	};
+	// The scope is what the runtime's shutdown handlers still look providers up in, so it
+	// closes only once disposal has settled - however disposal ended, and on the grace path
+	// too. Closing it beside a running disposal made every scope-bound callback of the
+	// session throw "Provider scope is closed" and leaked the watchers dispose was about to
+	// stop (senpi#1905).
 	const closeScopeOnce = async (): Promise<void> => {
 		if (scopeClosed) return;
 		scopeClosed = true;
+		await disposeOnce().catch(() => undefined);
 		await entry.scope.close?.();
 	};
 	const release = (): void => {

@@ -34,7 +34,7 @@ export interface ResolvedRetryFallbackSettings {
  * Shipped defaults are declared as model families (bare ids, no provider prefix).
  * `canonicalizeFallbackChains` expands them against the live registry, so the chain
  * follows Fable 5 whichever provider serves it - the builtin Anthropic provider, the
- * Claude SDK OAuth extension, a gateway, or Bedrock.
+ * Anthropic Subscription extension, a gateway, or Bedrock.
  *
  * The ladder never leaves the Anthropic Opus family. The previous shipped default was
  * removed because it led with cross-family rungs (`k3`, `kimi-k3`), which moved a Claude
@@ -43,9 +43,10 @@ export interface ResolvedRetryFallbackSettings {
  * wildcard lane.
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	// Every rung is `:max` because `claude-opus-4-6` publishes only that thinking level.
-	"claude-fable-5-1": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
-	"claude-fable-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+	// Every rung is `:max`: Opus 5.5 is recommended at max, and `claude-opus-4-6` publishes only that thinking level.
+	"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+	"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+	"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {

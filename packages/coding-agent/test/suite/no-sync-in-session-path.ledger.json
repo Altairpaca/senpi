@@ -88,20 +88,6 @@
 			"note": "2-byte auth.json seed"
 		},
 		{
-			"file": "src/core/auth-storage.ts",
-			"api": "writeFileSync",
-			"symbol": "withLock",
-			"count": 1,
-			"note": "auth.json read+write under the sync file lock (KB-scale)"
-		},
-		{
-			"file": "src/core/auth-storage.ts",
-			"api": "writeFileSync",
-			"symbol": "withLockAsync",
-			"count": 1,
-			"note": "auth.json read+write inside the async lock (KB-scale)"
-		},
-		{
 			"file": "src/core/credential-pool/state-store.ts",
 			"api": "readFileSync",
 			"symbol": "withDocument",
@@ -170,6 +156,34 @@
 			"symbol": "loadSync",
 			"count": 1,
 			"note": "models config JSON (KB-scale, cached after the first load)"
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"api": "readFileSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 1,
+			"note": "one-shot legacy provider-id migration (senpi#2044): re-reads models.json (KB-scale) right before the rename to refuse clobbering a concurrent edit. Runs only while the file still carries a legacy id, so at most once per file"
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"api": "writeFileSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 2,
+			"note": "one-shot legacy provider-id migration (senpi#2044): the backup copy and the temp file renamed over models.json (KB-scale each). Runs only while the file still carries a legacy id, so at most once per file"
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"api": "readFileSync",
+			"symbol": "activeMover",
+			"count": 1,
+			"note": "session move lock (~100 bytes), read once when a runtime opens or switches to a session (senpi#2184)"
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"api": "writeFileSync",
+			"symbol": "publishHolderRecord",
+			"count": 1,
+			"note": "this process's holder record for the open session (~100 bytes), written once per session open or switch (senpi#2184)"
 		},
 		{
 			"file": "src/core/session-manager.ts",
@@ -289,6 +303,20 @@
 			"symbol": "getFileContentRevision",
 			"count": 1,
 			"note": "whole file hashed for a content revision (file-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "writeFileSync",
+			"symbol": "writeAuthFile",
+			"count": 1,
+			"note": "auth.json atomic persist (temp+rename, 0600); the credential write formerly in withLock/withLockAsync, now factored into one helper (KB-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "writeFileSync",
+			"symbol": "backupAuthFile",
+			"count": 1,
+			"note": "one-shot timestamped auth.json backup taken before the senpi#1989 provider-key migration rewrites it; runs once per install (KB-scale)"
 		}
 	]
 }

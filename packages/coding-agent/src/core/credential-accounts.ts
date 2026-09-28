@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import type { Credential } from "@earendil-works/pi-ai";
+import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
 import {
 	accountDisplayName,
 	listSlots,
@@ -11,8 +11,8 @@ import {
 import type { AuthStorage } from "./auth-storage.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { CredentialSlotRepository, type CredentialSlotState, slotHealth } from "./credential-pool/state-store.ts";
-import { emitProviderAccountsChanged } from "./extensions/builtin/claude-sdk-oauth/account-events.ts";
-import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/claude-sdk-oauth/accounts.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
+import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
 
 export type CredentialAccountSource = "login" | "import" | "env";
 
@@ -102,8 +102,10 @@ export async function summarizeCredentialAccounts(
 
 	if (credential) {
 		const state = await repository.listSlots(provider, "stored");
+		// Read boundary (senpi#1989): a caller may still pass the legacy provider
+		// id (an older session, a stored account payload), so compare normalized.
 		const storedAccounts =
-			provider === "claude-sdk-oauth"
+			normalizeProviderId(provider) === "anthropic-subscription"
 				? Array.isArray(credential.accounts)
 					? listSlots(credential)
 					: []
@@ -126,7 +128,7 @@ export async function summarizeCredentialAccounts(
 				pinned: pinned === slot.name,
 			});
 		}
-		if (provider !== "claude-sdk-oauth") return summaries;
+		if (normalizeProviderId(provider) !== "anthropic-subscription") return summaries;
 	}
 
 	const state = await repository.listSlots(provider, "env");
@@ -187,7 +189,7 @@ export async function pinCredentialAccount(
 	}
 	await storage.modify(provider, async (current) => {
 		if (current === undefined) {
-			if (provider !== "claude-sdk-oauth" || name === null) {
+			if (normalizeProviderId(provider) !== "anthropic-subscription" || name === null) {
 				throw new Error(`No stored credential for provider: ${provider}`);
 			}
 			return pinSlot({ type: "oauth", ...SENTINEL_OAUTH_FIELDS, accounts: [] }, name);

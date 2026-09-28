@@ -58,6 +58,7 @@ describe("multi-session RPC routing", () => {
 					"session_context",
 					"session_kind",
 					"auto_title_per_session",
+					"durable_session_id",
 				],
 				mode: "multi",
 				// Host identity (`protocol-identity.ts`): the instance is this process, the
@@ -70,6 +71,7 @@ describe("multi-session RPC routing", () => {
 				engineVersion: VERSION,
 				engineOrdinal: engineBuildIdentityFrom({ version: VERSION }).ordinal,
 				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
+				memory_pressure: false,
 			},
 		});
 	});

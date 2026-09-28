@@ -1,4 +1,132 @@
+## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: the test env adds `PI_SKIP_RUNTIME_NOTICE: "1"` next to `PI_OFFLINE`.
+
+### Why
+
+- Vitest runs on Node.js, so every in-process interactive test would otherwise render the new one-time runtime notice and write its state file; notice tests unstub it explicitly.
+
+### Why an extension could not handle it
+
+- Test-runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `env` object in `vitest.config.ts`.
+
 # Local fork changes
+
+## 2026-09-23 - claude-agent-sdk 0.3.280 (senpi#2033)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.278 -> 0.3.280 (Claude Code 2.1.278 -> 2.1.280). `bun.lock`, `package-lock.json`, `install-lock/package-lock.json` and `publish-deps.lock.json` are regenerated with `bun run refresh-lock`, and the eight platform packages are relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs` (npm's lock-only pass dropped them).
+
+### Why
+
+- Claude Opus 5.5 needs Claude Code 2.1.280 or newer, and the bundled binary is what `claude-sdk-oauth` spawns unless a newer `claude` is on PATH.
+
+### Why an extension could not handle it
+
+- The published tarball's dependency closure is resolved by the package manager and the publish pipeline, never by the runtime extension system.
+
+### Expected merge conflict zones
+
+- The `@anthropic-ai/claude-agent-sdk` pin in `packages/coding-agent/package.json` and the lockfiles.
+
+## 2026-09-22 - Grok 4.7 preset + xAI default (#1990)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.xai` moves `grok-4.5` -> `grok-4.7` (port of upstream 1a584a7a56); nearest-tracker detail in `src/core/changes.md`.
+- `packages/coding-agent/test/model-resolver.test.ts`: the xai-default assertion and the initial-selection fixture (`custom` xai model + `defaultModelId`) realign to `grok-4.7` — the provider-default branch resolves `defaultModelPerProvider.xai`, so a `grok-4.5` fixture fell through to first-available.
+
+### Why
+
+- The catalog gained `xai/grok-4.7`; the default tracks the current model.
+
+### Why an extension could not handle it
+
+- The provider default is core model-resolution state, not extension-visible.
+
+### Expected merge conflict zones
+
+- LOW: `model-resolver.ts` provider-default map on upstream syncs.
+
+
+## 2026-09-22 - modelOverrides tests fail loudly when a fixture model is missing (senpi#1993)
+
+### What changed
+
+- `packages/coding-agent/test/model-registry.test.ts`: the three `modelOverrides` cases that used `anthropic/claude-opus-4` now inject `fixture/override-target` and `fixture/sibling-model` (same approach as `41c7e6cd58`) and call `requireModel` before any override assertion, so a missing id names that id instead of `expected undefined to be ...`.
+
+### Why
+
+- Catalog regeneration `9f11abadfb` dropped `claude-opus-4`. Optional chaining on the lookup then yielded `undefined`, so the assertions reported a missing override rather than a missing fixture. That silent miss went red on `main` and blocked unrelated PRs (#1991, #1992).
+
+### Why an extension could not handle it
+
+- These are package tests of `ModelRegistry` composition. No extension hook observes or repairs the fixture catalog.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/test/model-registry.test.ts`: the `modelOverrides (per-model customization)` describe, especially `supportsFinishReason`, `multiple model overrides on same provider`, and `model override combined with baseUrl override`.
+
+## 2026-09-21 - Take es-module-lexer 3 (senpi#1895)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `es-module-lexer` 2.1.0 -> 3.0.2, with `package-lock.json`, `bun.lock`, the coding-agent install-lock and `publish-deps.lock.json` regenerated the repository way.
+
+### Why
+
+- 3.x is the maintained line (Node 18+, SIMD scanning, eval-free string decoding so the Wasm builds run under `--disallow-code-generation-from-strings`, TypeScript type-only edge lexing). The importer adaptation lives in `src/core/extensions/changes.md`.
+
+### Why an extension could not handle it
+
+- Dependency pins are resolved by the package manager and the publish pipeline, never by the runtime extension system.
+
+### Expected merge conflict zones
+
+- LOW: the dependency version block.
+
+## 2026-09-21 - Migrate the test runner to Vitest 5 (senpi#1895)
+
+### What changed
+
+- `packages/coding-agent/package.json`: Updated the test runner to Vitest 5.0.1.
+
+### Why
+
+- Run this workspace on the pinned Vitest 5 release.
+
+### Why an extension could not handle it
+
+- The package manager resolves development tools before extensions load.
+
+### Expected merge conflict zones
+
+- The development dependency pins in `packages/coding-agent/package.json`.
+
+## 2026-09-21 - Refresh the CLI dependency pins (senpi#1895)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/sdk` 0.123.0 -> 0.127.0, `@anthropic-ai/claude-agent-sdk` 0.3.259 -> 0.3.278, `@aws-sdk/client-bedrock-runtime` 3.1127.0 -> 3.1136.0, `@bufbuild/protobuf` 2.14.0 -> 2.15.0, `@smithy/types` 4.17.2 -> 4.18.0, `zod` 4.4.3 -> 4.6.5, `typebox` 1.3.27 -> 1.3.34, `ignore` 7.0.8 -> 7.0.9, `linkedom` 0.18.12 -> 0.18.13, `marked` 18.0.11 -> 18.0.13, `picomatch` 4.0.5 -> 4.0.7, `yaml` 2.9.0 -> 2.9.1, `get-east-asian-width` 1.6.0 -> 1.7.0 and `@types/node` 26.2.0 -> 26.6.2.
+
+### Why
+
+- These are the fork's exact runtime pins for the published CLI, refreshed to the newest release in the same minor that satisfies `min-release-age=2`. The eight `@anthropic-ai/claude-agent-sdk` platform packages are relocked with it, so `scripts/generate-claude-agent-sdk-platform-lock.mjs --check` still passes.
+
+### Why an extension could not handle it
+
+- The published tarball's dependency closure is resolved by the package manager and the publish pipeline, never by the runtime extension system.
+
+### Expected merge conflict zones
+
+- LOW: the dependency version block, on every upstream release bump.
 
 ## 2026-09-20 - Boot the senpi command from the bundled entry (senpi#1868)
 
@@ -450,7 +578,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `packages/coding-agent/install-lock/package.json` and `packages/coding-agent/install-lock/package-lock.json`: regenerated from the refreshed root lock.
 - `packages/coding-agent/publish-deps.lock.json`: regenerated shrinkwrap for the same tree.
 - `packages/coding-agent/test/mermaid.test.ts`: the two tests covering the partial-render warning path now use input that still warns under grok-mermaid 0.2.3, which learned to render the `:::className` node syntax the old fixtures relied on failing.
-- `packages/coding-agent/test/suite/claude-sdk-oauth-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
+- `packages/coding-agent/test/suite/anthropic-subscription-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
 
 ### Why
 
@@ -823,7 +951,7 @@ amplification or dropping classic per-event backpressure.
 
 ## 2026-07-29 — OpenAI Codex usage extension example
 
-- Changed: added a standalone `examples/extensions/openai-codex-usage/` example that resolves Senpi-managed Codex OAuth, fetches the remaining five-hour and weekly limits, and publishes them through `ctx.ui.setStatus()`. Missing windows render as unavailable; sanitized HTTP/network/parse failures replace stale values with an unavailable status. The poller is single-flight, abortable, and cleared on model changes, shutdown, or `/usage`.
+- Changed: added a standalone `examples/extensions/chatgpt-subscription-usage/` example that resolves Senpi-managed Codex OAuth, fetches the remaining five-hour and weekly limits, and publishes them through `ctx.ui.setStatus()`. Missing windows render as unavailable; sanitized HTTP/network/parse failures replace stale values with an unavailable status. The poller is single-flight, abortable, and cleared on model changes, shutdown, or `/usage`.
 - Why: users can see provider limits with the built-in footer or any custom footer that consumes extension statuses, without coupling usage retrieval to one footer implementation or presenting unknown/stale percentages as current.
 - Extension boundary: the example uses public model-registry, lifecycle, command, and status APIs; no core footer or authentication source changes are required. Deterministic fake-API and fake-timer tests cover toggle, model-change, abort, scheduled polling, and shutdown cleanup.
 - Merge-conflict risk: low. The change adds an isolated example directory, one test, one catalog row, documentation, and this record.

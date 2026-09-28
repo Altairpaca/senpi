@@ -36,6 +36,7 @@ import type {
 	ContextEventResult,
 	ContextUsage,
 	EntryRenderer,
+	EntryRendererOptions,
 	Extension,
 	ExtensionActions,
 	ExtensionCommandContext,
@@ -256,10 +257,9 @@ export type ForkHandler = (
 	options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 ) => Promise<{ cancelled: boolean }>;
 
-export type NavigateTreeHandler = (
-	targetId: string,
-	options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-) => Promise<{ cancelled: boolean }>;
+export type NavigateTreeHandler = ExtensionCommandContextActions["navigateTree"];
+
+export type EditUserMessageHandler = ExtensionCommandContextActions["editUserMessage"];
 
 export type EditAssistantMessageHandler = (
 	entryId: string,
@@ -458,11 +458,13 @@ export class ExtensionRunner {
 		runtimeHookSourcePaths: [],
 	});
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
+	private getPromptCachePrefixRequestFn: ExtensionContextActions["getPromptCachePrefixRequest"] = undefined;
 	private getAgentDirFn: () => string = () => getAgentDir();
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private editAssistantMessageHandler: EditAssistantMessageHandler = async () => ({ cancelled: false });
+	private editUserMessageHandler: EditUserMessageHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler | undefined;
 	private reloadRequestPromise: Promise<void> | undefined;
@@ -558,6 +560,7 @@ export class ExtensionRunner {
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
+		this.getPromptCachePrefixRequestFn = contextActions.getPromptCachePrefixRequest;
 
 		for (const extension of this.extensions) {
 			for (const [name, hint] of extension.removedToolHints ?? []) {
@@ -626,6 +629,7 @@ export class ExtensionRunner {
 			this.forkHandler = actions.fork;
 			this.navigateTreeHandler = actions.navigateTree;
 			this.editAssistantMessageHandler = actions.editAssistantMessage;
+			this.editUserMessageHandler = actions.editUserMessage;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
 			return;
@@ -636,6 +640,7 @@ export class ExtensionRunner {
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.editAssistantMessageHandler = async () => ({ cancelled: false });
+		this.editUserMessageHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = undefined;
 	}
@@ -1003,6 +1008,12 @@ export class ExtensionRunner {
 		return undefined;
 	}
 
+	/** Options registered alongside the renderer `getEntryRenderer` returns for this custom type. */
+	getEntryRendererOptions(customType: string): EntryRendererOptions | undefined {
+		const owner = this.extensions.find((ext) => ext.entryRenderers?.has(customType));
+		return owner?.entryRendererOptions?.get(customType);
+	}
+
 	private resolveRegisteredCommands(): ResolvedCommand[] {
 		const commands: RegisteredCommand[] = [];
 		const counts = new Map<string, number>();
@@ -1243,6 +1254,12 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.prepareProviderRequest(messages, excludeBeforeProviderRequestExtensionPath);
 			},
+			getPromptCachePrefixRequest: async (options) => {
+				runner.assertActive();
+				const build = runner.getPromptCachePrefixRequestFn;
+				if (build === undefined) return { status: "skipped", reason: "the host builds no prompt-cache prefix" };
+				return await build(options);
+			},
 			beginCompaction: (options) => {
 				runner.assertActive();
 				compactionSignal = runner.beginCompactionFn?.(options);
@@ -1305,11 +1322,17 @@ export class ExtensionRunner {
 		};
 		context.navigateTree = (targetId, options) => {
 			this.assertActive();
-			return this.navigateTreeHandler(targetId, options);
+			if (typeof targetId === "string") return this.navigateTreeHandler(targetId, options);
+			const { entryId, ...navigationOptions } = targetId;
+			return this.navigateTreeHandler(entryId, navigationOptions);
 		};
 		context.editAssistantMessage = (entryId, text, options) => {
 			this.assertActive();
 			return this.editAssistantMessageHandler(entryId, text, options);
+		};
+		context.editUserMessage = (entryId, text, options) => {
+			this.assertActive();
+			return this.editUserMessageHandler(entryId, text, options);
 		};
 		context.switchSession = (sessionPath, options) => {
 			this.assertActive();
@@ -1818,21 +1841,39 @@ export class ExtensionRunner {
 		return headers;
 	}
 
+	/** Paths of extensions with a `before_agent_start` handler not registered `{ previewSafe: true }`. */
+	getPreviewUnsafeBeforeAgentStartPaths(): string[] {
+		const paths: string[] = [];
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("before_agent_start") ?? [];
+			if (handlers.some((handler) => ext.previewSafeHandlers?.has(handler) !== true)) paths.push(ext.path);
+		}
+		return paths;
+	}
+
 	async emitBeforeAgentStart(
 		prompt: string,
 		images: ImageContent[] | undefined,
 		systemPrompt: string,
 		systemPromptOptions: BuildSystemPromptOptions,
+		options: {
+			readonly preview?: boolean;
+			readonly signal?: AbortSignal;
+			readonly trigger?: BeforeAgentStartEvent["trigger"];
+		} = {},
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
 
-		for (const ext of this.extensions) {
+		dispatch: for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("before_agent_start");
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
+				if (options.signal?.aborted === true) break dispatch;
+				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
+				if (options.preview === true && ext.previewSafeHandlers?.has(handler) !== true) continue;
 				try {
 					// Keep guarded context getters lazy while giving each handler its
 					// own legacy omitted-signal ownership slot.
@@ -1847,9 +1888,11 @@ export class ExtensionRunner {
 					const event: BeforeAgentStartEvent = {
 						type: "before_agent_start",
 						prompt,
+						trigger: options.trigger ?? "prompt",
 						images,
 						systemPrompt: currentSystemPrompt,
 						systemPromptOptions,
+						...(options.preview === true ? { preview: true } : {}),
 					};
 					const handlerResult = await handler(event, ctx);
 

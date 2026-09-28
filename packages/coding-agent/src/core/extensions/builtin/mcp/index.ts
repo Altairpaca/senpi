@@ -1,5 +1,13 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory, SessionStartEvent } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionFactory,
+	ExtensionHandler,
+	SessionStartEvent,
+} from "../../types.ts";
 import { installMcpNativeToolSearchGate } from "../tool-search/native-search.ts";
 import { registerMcpCommands } from "./commands.ts";
 import {
@@ -135,12 +143,22 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			// it, so the first turn still carries the full tool set; only the first paint stops waiting.
 			void work;
 		});
-		pi.on("before_agent_start", async (event, ctx) => {
+		const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+			event,
+			ctx,
+		) => {
 			try {
-				// Elicitation (todo 41): point mid-call forms at this session's UI.
-				service.setMcpElicitationUiProvider(() => ctx.ui);
-				await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
-				const skills = (event.systemPromptOptions.skills ?? []) as readonly SkillLike[];
+				// A preview (senpi#2115) composes from the attach session_start already started:
+				// it binds no elicitation UI, starts no attach, and attaches no skill-declared servers.
+				const preview = event.preview === true;
+				if (preview) {
+					await attachPromise;
+				} else {
+					// Elicitation (todo 41): point mid-call forms at this session's UI.
+					service.setMcpElicitationUiProvider(() => ctx.ui);
+					await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
+				}
+				const skills = preview ? [] : ((event.systemPromptOptions.skills ?? []) as readonly SkillLike[]);
 				if (skills.length > 0) {
 					skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
 					skillDecls = parseSkillMcpDeclarations(skills);
@@ -170,7 +188,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				await reportMcpAsyncError("mcp.before_agent_start", error, sink);
 				return undefined;
 			}
-		});
+		};
+		pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 		pi.on(
 			"session_shutdown",
 			wrapAsync(

@@ -33,6 +33,7 @@ import type {
 	Model,
 	ModelCostRates,
 	ModelThinkingLevel,
+	OpenAIResponsesCompat,
 	ProviderHeaders,
 	ProviderRequestOptions,
 	ProviderStreams,
@@ -1036,6 +1037,8 @@ const XHIGH_MODEL_IDS = [
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
 	"deepseek-v4-pro",
 	"deepseek-v4-flash",
 	"opus-4-6",
@@ -1080,6 +1083,22 @@ export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
 	return supportsMaxModel(model);
 }
 
+const CONFIGURATION_UPDATE_APIS: readonly Api[] = [
+	"openai-responses",
+	"openai-codex-responses",
+	"azure-openai-responses",
+];
+
+/**
+ * Whether a mid-session reasoning-effort change is sent as a Responses `configuration_update`
+ * input item instead of a new top-level `reasoning.effort`, which discards the cached prefix.
+ * Only catalog metadata (`compat.supportsConfigurationUpdate`) opts a model in.
+ */
+export function supportsConfigurationUpdate<TApi extends Api>(model: Model<TApi>): boolean {
+	if (!CONFIGURATION_UPDATE_APIS.includes(model.api)) return false;
+	return (model.compat as OpenAIResponsesCompat | undefined)?.supportsConfigurationUpdate === true;
+}
+
 /** OpenAI-compatible APIs that accept a native `max` reasoning effort on the wire. */
 const OPENAI_MAX_APIS: Api[] = [
 	"openai-responses",
@@ -1088,8 +1107,8 @@ const OPENAI_MAX_APIS: Api[] = [
 	"openai-completions",
 ];
 
-/** Model family that accepts native `max` effort on OpenAI-compatible APIs. */
-const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra"];
+/** Model families that accept native `max` effort on OpenAI-compatible APIs. */
+const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
 
 const MAX_MODEL_IDS = [
 	"opus-4-6",

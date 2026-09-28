@@ -8,6 +8,216 @@
 
 ### Fixed
 
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.26] - 2026-09-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.25] - 2026-09-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.24-3] - 2026-09-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.24-2] - 2026-09-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.24] - 2026-09-24
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23-2] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.23] - 2026-09-23
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22-4] - 2026-09-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22-3] - 2026-09-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22-2] - 2026-09-22
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.22] - 2026-09-21
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.21-2] - 2026-09-21
+
+### Breaking Changes
+
+### Changed
+
+- Updated the test runner to Vitest 5.0.1. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+## [2026.9.21] - 2026-09-21
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.9.20] - 2026-09-20
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.9.19-2] - 2026-09-19
 
 ### Breaking Changes

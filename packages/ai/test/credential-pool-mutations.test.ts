@@ -212,6 +212,90 @@ describe("credential pool slot algebra", () => {
 		expect(stored).toEqual(authoritative.accounts?.[0]);
 	});
 
+	// senpi#2222 / oh-my-openagent#8673: a re-login that refreshes an existing
+	// slot in place must persist; the merge used to keep the stored revoked slot.
+	test("a same-name re-login with newer material replaces the stored slot and lifts its block", () => {
+		type BlockableSlot = CredentialSlot & { blockedUntil?: number; blockReason?: string };
+		const revoked: BlockableSlot = {
+			name: "default",
+			source: "login",
+			access: "revoked-access",
+			refresh: "revoked-refresh",
+			expires: 999,
+			blockReason: "auth_error",
+		};
+		const sibling: CredentialSlot = {
+			name: "work",
+			source: "login",
+			access: "work-a",
+			refresh: "work-r",
+			expires: 5_000,
+		};
+		const current: PooledCredential = { ...sentinelPool(), pinned: "work", accounts: [revoked, sibling] };
+		const refreshed: CredentialSlot = {
+			name: "default",
+			source: "login",
+			access: "fresh-access",
+			refresh: "fresh-refresh",
+			expires: 9_999,
+		};
+		const providerLoginResult: PooledCredential = { ...current, accounts: [refreshed, sibling] };
+
+		const next = appendLoginSlot(current, providerLoginResult) as PooledCredential;
+
+		expect(names(next)).toEqual(["default", "work"]);
+		expect(next.accounts?.[0]).toEqual(refreshed);
+		expect(next.accounts?.[1]).toBe(sibling);
+		expect(next.pinned).toBe("work");
+	});
+
+	test("a re-login refresh persists while a sibling rotated during the round trip is not rewound", () => {
+		const revoked: CredentialSlot = {
+			name: "default",
+			source: "login",
+			access: "dead-a",
+			refresh: "dead-r",
+			expires: 999,
+		};
+		const snapshotSibling: CredentialSlot = {
+			name: "work",
+			source: "login",
+			access: "old-a",
+			refresh: "old-r",
+			expires: 5_000,
+		};
+		const rotatedSibling: CredentialSlot = {
+			name: "work",
+			source: "login",
+			access: "new-a",
+			refresh: "new-r",
+			expires: 8_000,
+		};
+		const refreshed: CredentialSlot = {
+			name: "default",
+			source: "login",
+			access: "fresh-a",
+			refresh: "fresh-r",
+			expires: 9_999,
+		};
+		const authoritative: PooledCredential = { ...sentinelPool(), accounts: [revoked, rotatedSibling] };
+		const providerLoginResult: PooledCredential = { ...sentinelPool(), accounts: [refreshed, snapshotSibling] };
+
+		const next = appendLoginSlot(authoritative, providerLoginResult) as PooledCredential;
+
+		expect(next.accounts).toEqual([refreshed, rotatedSibling]);
+	});
+
+	test("a same-name slot without newer material keeps the stored copy", () => {
+		const current = sentinelPool();
+		const echoed: PooledCredential = {
+			...current,
+			accounts: [{ name: "default", source: "login", access: "echo-a", refresh: "echo-r", expires: 999 }],
+		};
+
+		expect(appendLoginSlot(current, echoed)).toBe(current);
+	});
+
 	test("a provider-owned pool onto a flat current keeps the whole-write shape", () => {
 		const flat: PooledCredential = { type: "oauth", access: "legacy-a", refresh: "legacy-r", expires: 999 };
 		const providerLoginResult: PooledCredential = {
@@ -302,7 +386,7 @@ describe("ordinary auth resolution after removing a promoted account", () => {
 });
 
 describe("provider-managed sentinel slot repair", () => {
-	const sentinel = managedSentinelMaterial("claude-sdk-oauth");
+	const sentinel = managedSentinelMaterial("anthropic-subscription");
 
 	function poisoned(): PooledCredential {
 		return {
@@ -319,11 +403,11 @@ describe("provider-managed sentinel slot repair", () => {
 	}
 
 	test("recognizes a slot carrying the provider's managed sentinel in both fields", () => {
-		expect(isManagedSentinelSlot("claude-sdk-oauth", { name: "login-2", access: sentinel, refresh: sentinel })).toBe(
-			true,
-		);
 		expect(
-			isManagedSentinelSlot("claude-sdk-oauth", { name: "default", access: "real-access", refresh: sentinel }),
+			isManagedSentinelSlot("anthropic-subscription", { name: "login-2", access: sentinel, refresh: sentinel }),
+		).toBe(true);
+		expect(
+			isManagedSentinelSlot("anthropic-subscription", { name: "default", access: "real-access", refresh: sentinel }),
 		).toBe(false);
 		expect(isManagedSentinelSlot("other-provider", { name: "default", access: sentinel, refresh: sentinel })).toBe(
 			false,
@@ -332,18 +416,18 @@ describe("provider-managed sentinel slot repair", () => {
 
 	test("repair drops a poisoned slot and clears a pin that pointed at one", () => {
 		const poisonedPinnedAtJunk: PooledCredential = { ...poisoned(), pinned: "login-2" };
-		const repaired = repairManagedSentinelSlots("claude-sdk-oauth", poisonedPinnedAtJunk);
+		const repaired = repairManagedSentinelSlots("anthropic-subscription", poisonedPinnedAtJunk);
 		expect(repaired).toBeDefined();
 		expect(listSlots(repaired).map((slot) => slot.name)).toEqual(["default"]);
 		expect(repaired?.pinned).toBeUndefined();
-		expect(repairManagedSentinelSlots("claude-sdk-oauth", poisoned())?.pinned).toBe("default");
+		expect(repairManagedSentinelSlots("anthropic-subscription", poisoned())?.pinned).toBe("default");
 	});
 
 	test("a clean pool or flat credential is a no-op so no storage is rewritten", () => {
 		const clean = removeSlot(poisoned(), "login-2") as PooledCredential;
-		expect(repairManagedSentinelSlots("claude-sdk-oauth", clean)).toBeUndefined();
+		expect(repairManagedSentinelSlots("anthropic-subscription", clean)).toBeUndefined();
 		expect(
-			repairManagedSentinelSlots("claude-sdk-oauth", { type: "oauth", access: "a", refresh: "r", expires: 1 }),
+			repairManagedSentinelSlots("anthropic-subscription", { type: "oauth", access: "a", refresh: "r", expires: 1 }),
 		).toBe(undefined);
 	});
 });

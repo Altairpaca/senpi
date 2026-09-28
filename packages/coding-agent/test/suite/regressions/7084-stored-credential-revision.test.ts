@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listRotationSlots, streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 
-const PROVIDER = "claude-sdk-oauth";
+const PROVIDER = "anthropic-subscription";
 const env = () => undefined;
 
 let dir: string;
@@ -107,9 +107,11 @@ describe("stored-lane credential revision healing (omo#7084)", () => {
 				yield { type: "error", error: { errorMessage: "HTTP 401 unauthorized" } } as never;
 			},
 		});
-		await expect(async () => {
-			for await (const _event of stream);
-		}).rejects.toThrow();
+		// The pool has one slot, so the auth failure exhausts it; the provider's
+		// own terminal event is forwarded (senpi#1628) rather than rethrown.
+		const seen: string[] = [];
+		for await (const event of stream) seen.push(event.type);
+		expect(seen).toEqual(["error"]);
 		const state = await repository.listSlots(PROVIDER, "stored");
 		expect(state["default"]?.blockReason).toBe("auth_error");
 		expect(state["default"]?.credentialRevision).toBe(await revisionFor(PROVIDER, "default", "a1", "r1"));

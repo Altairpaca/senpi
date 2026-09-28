@@ -1,3 +1,116 @@
+## 2026-09-27 - `senpi schedule` command for durable scheduled prompts
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-command.ts` (new): `senpi schedule list [--json]`, `cancel <id>`, and `run [--watch] [--exec <command>] [--poll-seconds <n>] [--timeout-seconds <n>] [--concurrency <n>]` over the job files of the builtin `schedule` extension (`core/extensions/builtin/schedule/`). Every runner holds a lease with a 30s heartbeat (`schedule/runners/<pid>.json`); `--watch` is woken by new jobs through a `pending/` watch and stops cleanly on SIGTERM/SIGINT. `run` prints one JSON line per event; usage errors exit 2; a failed one-shot delivery exits 1.
+- `packages/coding-agent/src/cli/schedule-watch.ts` (new): the runner process - lease, heartbeat (a failing refresh prints one `lease_error`), `pending/` watch, signal handling, event lines.
+- `packages/coding-agent/src/cli/schedule-delivery.ts` (new): the `--exec` hook and `senpi -p --session` deliveries (on POSIX each waits on an fd-3 gate until its pid is recorded in the session lock and leads its own process group; a timeout kills the group, or the tree via `taskkill /T` on Windows, and is reported only after the process exits) and the open-session deferral.
+- `packages/coding-agent/src/cli/schedule-runner.ts` (new): one runner pass - each job is delivered under its session's cross-process delivery lock - - recover occurrences whose runner died (to `failed/`, never retried), then claim and deliver due jobs concurrently across sessions and one at a time within a session, re-arming recurring jobs before delivery. Deliveries: `--exec` hook (event JSON on stdin) or `senpi -p --session` resume, which defers while `liveSessionHolders` reports another process on the session file.
+- `packages/coding-agent/src/cli/deferred-commands.ts`: `SCHEDULE_COMMAND_ARGV` plus `dispatchScheduleCommand(args)`, an exit-code dispatch shaped like `dispatchHostCommand`.
+- `packages/coding-agent/src/cli/args.ts`: one `Commands:` line in `printHelp` for `schedule`, beside `host`.
+
+### Why
+
+- `/loop` keeps its timers in the session process and refuses `--print`, so a headless run (a chat bridge that runs one `senpi -p` per message) could not schedule anything. Scheduled prompts are now files, and this command is the out-of-process runner that fires them.
+
+### Why an extension could not handle it
+
+- The runner has to outlive every session process, and CLI commands are routed before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: one help line in `args.ts`; the tail of `deferred-commands.ts`.
+
+## 2026-09-28 - `host shard-path|gc` in the help text (senpi#2245)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `host` line in the Commands section lists `<ensure|status|stop|handoff|shard-path|gc>`, matching the subcommands `senpi host` accepts.
+
+### Why
+
+- `shard-path` and `gc` are commands clients are told to call, so `--help` has to name them like the `host` usage text does.
+
+### Why an extension could not handle it
+
+- The help text is built by the CLI before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the `host` line of the Commands help block, beside `app-server daemon`.
+
+## 2026-09-27 - `models discover` in the help text (senpi#2196)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the Commands section lists `senpi models discover <provider>` after `config`.
+
+### Why
+
+- The new subcommand has to be discoverable from `--help`.
+
+### Why an extension could not handle it
+
+- The help text is built by the CLI before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the Commands help block after the `config` line.
+
+## 2026-09-27 - --rebind <path|id> (senpi#2181)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--rebind <path|id>` into `Args.rebind` and lists it in the help text beside `--fork`.
+
+### Why
+
+- Scripts need a non-interactive way to move a session of a moved or re-cloned repository into the current directory; the interactive prompt alone cannot serve them.
+
+### Why an extension could not handle it
+
+- CLI argument parsing and session resolution run before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: `Args` (after `fork`), the `--fork` parse branch, and the `--fork` help line.
+
+## 2026-09-22 - --provider rejects a typed legacy provider id (senpi#1989)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `--provider` branch rejects a legacy provider id at parse time with a message naming the id it was renamed to, instead of letting it fail later as a generic unknown provider.
+
+### Why
+
+A user who types a renamed id must learn the new one. This is the counterpart to the read-boundary normalization: ids read from disk are normalized and never rejected, while ids the user TYPES are rejected by name. Both are driven by the same legacy map so they cannot drift apart.
+
+### Why an extension could not handle it
+
+CLI argument parsing runs before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts` the `--provider` branch.
+
+## 2026-09-22 - chatgpt-subscription provider id in CLI help (senpi#1989)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `--provider` usage example names `chatgpt-subscription` instead of the renamed id.
+
+### Why
+
+The OpenAI subscription provider id was renamed from `openai-codex` to `chatgpt-subscription` (senpi#1989): the old id named a CLI rather than the thing a user signs in with. These modules name that provider id in user-visible text or resolve it at runtime, so they move with it. The wire api id `openai-codex-responses` is deliberately NOT renamed - it names the dialect, not the provider - and neither are file names or module paths.
+
+### Why an extension could not handle it
+
+The provider id is resolved and rendered inside the package before any extension loads; an extension cannot rewrite an id the package has already used to build its own help text and requests.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`, against any other flag-help change.
+
 # changes
 
 ## 2026-09-17 - `senpi host` command surface and its dispatch (senpi#1782)
