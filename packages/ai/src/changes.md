@@ -1,3 +1,27 @@
+## 2026-09-28 - Copilot account model limits drive compaction and output budgets (senpi#2299)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/github-copilot.ts` persists the account catalog's normalized per-model limits on credentials returned by both login and refresh.
+- `packages/ai/src/auth/oauth/github-copilot-model-catalog.ts`: the extracted Copilot catalog parser keeps positive `capabilities.limits.max_context_window_tokens`, `max_prompt_tokens`, and `max_output_tokens` beside the existing availability and policy results.
+- `packages/ai/src/providers/github-copilot.ts` applies credential-scoped limits after filtering the generated catalog to the authenticated account.
+- `packages/ai/src/providers/github-copilot-limits.ts`: the account prompt cap (falling back to the reported context window) overrides `Model.contextWindow`, the reported output cap overrides `Model.maxTokens`, malformed persisted values are ignored, and the generated model remains the fallback.
+- `packages/ai/src/utils/overflow.ts` recognizes Copilot's `model_max_prompt_tokens_exceeded` code explicitly in addition to its existing prompt-count prose.
+
+### Why
+
+- Copilot's authenticated `GET /models` can advertise smaller prompt, context, and output limits than the native models.dev rows senpi generates. The previous parser discarded those fields, so models such as Kimi K3 and Claude Opus kept million-token native windows even when Copilot would reject the account at a smaller prompt cap; pre-flight compaction therefore started too late.
+- Microsoft VS Code records the rejection as HTTP 400 with code `model_max_prompt_tokens_exceeded` and message `prompt token count of 13613 exceeds the limit of 12288`. Treating either preserved part of that response as context overflow routes the turn into the existing bounded compact-and-retry recovery.
+
+### Why an extension could not handle it
+
+- The account catalog is parsed and attached to the credential inside the bundled OAuth flow, before extensions can observe model availability. `Models.getAvailable()` applies the provider's credential-aware shaping before a model is selected, and the shared overflow classifier runs inside the harness recovery path before extension hooks can repair a terminal assistant error.
+
+### Expected merge conflict zones
+
+- MEDIUM: `parseGitHubCopilotModelCatalog` was extracted from `auth/oauth/github-copilot.ts`; the parallel senpi#2297 lane also changes refresh/login code, but this entry only adds the parser import and carries `modelLimits` through the existing return objects.
+- LOW: `filterModels` in `providers/github-copilot.ts` and the GitHub Copilot regex row in `utils/overflow.ts`.
+
 ## 2026-09-28 - A same-name re-login refresh survives the provider-pool merge (senpi#2222)
 
 ### What changed

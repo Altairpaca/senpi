@@ -5,6 +5,7 @@ import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadGitHubCopilotOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { GITHUB_COPILOT_MODELS } from "./github-copilot.models.ts";
+import { applyGitHubCopilotModelLimits } from "./github-copilot-limits.ts";
 
 export function githubCopilotProvider(): Provider<"anthropic-messages" | "openai-completions" | "openai-responses"> {
 	return createProvider({
@@ -23,7 +24,10 @@ export function githubCopilotProvider(): Provider<"anthropic-messages" | "openai
 				return models;
 			}
 			const available = new Set(availableModelIds);
-			return models.filter((model) => available.has(model.id));
+			return applyGitHubCopilotModelLimits(
+				models.filter((model) => available.has(model.id)),
+				credential,
+			);
 		},
 		api: {
 			"anthropic-messages": anthropicMessagesApi(),
