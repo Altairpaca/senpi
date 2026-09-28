@@ -5,7 +5,7 @@
  */
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -125,6 +125,29 @@ const job = (dueAt: number) => ({
 	prompt: "remind Howard about the PR review",
 	dueAt,
 	everyMs: null,
+});
+
+describe("senpi schedule --exec on every platform", () => {
+	it("runs an operator command whose quoted program and script paths contain spaces", async () => {
+		const { root, agentDir, dir } = await sandbox();
+		const hookDir = join(root, "hook dir");
+		await mkdir(hookDir);
+		const hook = join(hookDir, "hook.mjs");
+		const out = join(root, "hook stdin.json");
+		await writeFile(
+			hook,
+			`import { readFileSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(out)}, readFileSync(0, "utf8"));\n`,
+		);
+		const created = await createScheduledJob(dir, job(Date.now() - 1000), Date.now() - 60_000);
+
+		const result = await runCli(agentDir, ["run", "--exec", `"${process.execPath}" "${hook}"`]);
+
+		expect(result.code, result.stdout + result.stderr).toBe(0);
+		expect(jsonLines(result.stdout)).toEqual([
+			expect.objectContaining({ event: "fired", id: created.id, outcome: "delivered" }),
+		]);
+		expect(JSON.parse(await readFile(out, "utf8"))).toMatchObject({ type: "scheduled_prompt", id: created.id });
+	}, 60_000);
 });
 
 describe.skipIf(process.platform === "win32")("senpi schedule", () => {
