@@ -8,6 +8,8 @@
 
 ### Changed
 
+- GPT-6 Astra, Sol, and Luna stay on the stated goal: an unrelated error or bug they run into is reported in the final message instead of being investigated or fixed (unless it blocks the goal), and a quick check such as a short test run is run directly instead of through a monitor. Bug fixes still go to the root cause. ([#2256](https://github.com/code-yeongyu/senpi/issues/2256))
+
 ### Fixed
 
 ### Removed
