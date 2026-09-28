@@ -200,6 +200,57 @@ describe("ensureHost-spawned host lifecycle", () => {
 		}
 	}, 45_000);
 
+	// A status poller must not keep every host it looks at alive (senpi#2245 review M1).
+	it("keeps the idle window running across observing status reads", async () => {
+		const qa = scratch("observe");
+		const { supervisor, exited } = clockSupervisor(qa);
+		try {
+			await supervisorMessage(supervisor, "ready");
+			await advanceSupervisorClock(supervisor, 0, true);
+			await advanceSupervisorClock(supervisor, 799, false);
+			const peer = await JsonlPeer.connect(qa.socket);
+			expect(await peer.request({ id: "info", type: "get_protocol_info", observe: true })).toMatchObject({
+				success: true,
+			});
+			expect(await peer.request({ id: "list", type: "list_sessions", observe: true })).toMatchObject({
+				success: true,
+			});
+			const detached = supervisorMessage(supervisor, "detached");
+			peer.destroy();
+			await detached;
+			expect(await advanceSupervisorClock(supervisor, 800, true)).toMatchObject({ shuttingDown: true });
+			expect(await exited).toEqual([0, null]);
+		} finally {
+			supervisor.kill();
+			await exited;
+		}
+	}, 45_000);
+
+	it("attaches a connection from its first request that is not an observing read", async () => {
+		const qa = scratch("obsattach");
+		const { supervisor, exited } = clockSupervisor(qa);
+		try {
+			await supervisorMessage(supervisor, "ready");
+			await advanceSupervisorClock(supervisor, 0, true);
+			await advanceSupervisorClock(supervisor, 799, false);
+			const peer = await JsonlPeer.connect(qa.socket);
+			await peer.request({ id: "info", type: "get_protocol_info", observe: true });
+			// `observe` on anything but a read does not make it one.
+			await peer.request({ id: "commands", type: "get_commands", observe: true });
+			const detached = supervisorMessage(supervisor, "detached");
+			peer.destroy();
+			await detached;
+			// The attachment restarted the window when it detached, at 799.
+			expect(await advanceSupervisorClock(supervisor, 800, true)).toMatchObject({ shuttingDown: false });
+			expect(await advanceSupervisorClock(supervisor, 1_598, true)).toMatchObject({ shuttingDown: false });
+			expect(await advanceSupervisorClock(supervisor, 1_599, true)).toMatchObject({ shuttingDown: true });
+			expect(await exited).toEqual([0, null]);
+		} finally {
+			supervisor.kill();
+			await exited;
+		}
+	}, 45_000);
+
 	it("exits cleanly after the idle window with no connections and no active turns", async () => {
 		const qa = scratch("idle");
 		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
@@ -537,6 +588,25 @@ async function supervisorMessage(supervisor: ChildProcess, type: string): Promis
 		if (typeof message === "object" && message !== null && "type" in message && message.type === type) return message;
 	}
 	throw new Error(`supervisor closed before ${type}`);
+}
+
+/** The real supervisor on a test-driven clock (`fixtures/rpc-lifecycle-clock.ts`), idle window 800 ms. */
+function clockSupervisor(qa: Scratch): { supervisor: ChildProcess; exited: Promise<unknown[]> } {
+	const supervisor = spawn(
+		process.execPath,
+		["--import", "tsx", join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
+		{
+			env: {
+				...process.env,
+				...hermeticProviderEnv(),
+				SENPI_CODING_AGENT_DIR: qa.agentDir,
+				SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
+				[HOST_IDLE_EXIT_MS_ENV]: "800",
+			},
+			stdio: ["ignore", "ignore", "pipe", "ipc"],
+		},
+	);
+	return { supervisor, exited: once(supervisor, "exit", { signal: AbortSignal.timeout(30_000) }) };
 }
 
 function advanceSupervisorClock(supervisor: ChildProcess, now: number, tick: boolean): Promise<RecordValue> {

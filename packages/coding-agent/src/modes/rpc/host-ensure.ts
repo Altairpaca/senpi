@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,7 +13,13 @@ import {
 	readProcessStartTime,
 	waitForStartTime,
 } from "../app-server/daemon/process.ts";
-import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import {
+	createDaemonDirectories,
+	createHostDaemonPaths,
+	ensureEndpointIdentity,
+	type HostDaemonPaths,
+	sameEndpoint,
+} from "./host-daemon-paths.ts";
 import {
 	clearHostRegistration,
 	legacyHostIsLive,
@@ -32,7 +38,8 @@ import {
 	type HostProtocolInfo,
 	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
-import { handoffHost } from "./host-handoff.ts";
+import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS, type HostColdStart, type HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
@@ -42,7 +49,7 @@ import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import { statSocketIdentity } from "./socket-ownership.ts";
-import { createSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
+import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 export {
 	createHostDaemonPaths,
@@ -51,6 +58,7 @@ export {
 	HostDaemonStateError,
 	type HostGenerationPaths,
 } from "./host-daemon-paths.ts";
+export { hostEnsureLockTarget } from "./host-ensure-lock.ts";
 export { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 export { type ProbeHostOptions, probeHost } from "./host-probe.ts";
 export type { HostColdStart, HostLifecyclePolicyInput };
@@ -113,26 +121,26 @@ const DEFAULT_STOP_TIMEOUT_MS = 10_000;
 const SIGKILL_GRACE_MS = 2_000;
 /**
  * A lock waiter must outlast the longest critical section a holder can run:
- * probing an existing host, stopping an incompatible one (SIGTERM wait plus the
- * SIGKILL grace), then spawning the replacement and waiting for it to answer.
+ * probing an existing host, then either stopping an incompatible one (SIGTERM wait
+ * plus the SIGKILL grace) and spawning the replacement and waiting for it to answer,
+ * or handing it off (an upgrade) - which is also as long as a forced handoff holds it.
  * Each SQLite busy wait stays short because it blocks the event loop; this
  * cumulative budget is what covers the whole section, with headroom for a slow
  * runner. A waiter that gives up early surfaces as a raw "database is locked"
  * failure on the second of two concurrent starts.
  */
 const ENSURE_LOCK_WAIT_MS =
-	EXISTING_HOST_PROBE_TIMEOUT_MS + DEFAULT_STOP_TIMEOUT_MS + SIGKILL_GRACE_MS + DEFAULT_READINESS_TIMEOUT_MS + 10_000;
-const LOCK_BUSY_WAIT_MS = 100;
-const lockOptions = {
-	retries: { retries: ENSURE_LOCK_WAIT_MS / LOCK_BUSY_WAIT_MS, minTimeout: 20, maxTimeout: LOCK_BUSY_WAIT_MS },
-} as const;
+	EXISTING_HOST_PROBE_TIMEOUT_MS +
+	Math.max(DEFAULT_STOP_TIMEOUT_MS + SIGKILL_GRACE_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
+	10_000;
+const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
 export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
 	const socket = normalizeSocketPath(options.socket);
 	const paths = createHostDaemonPaths({ socket, ...(options.agentDir ? { agentDir: options.agentDir } : {}) });
 	await createDaemonDirectories(paths);
 	// The public socket is the shared resource; agent directories are not a
 	// sufficient lock scope when two installations target the same endpoint.
-	const lockTarget = join(tmpdir(), "senpi-rpc-host-locks", createSocketLockName(socket));
+	const lockTarget = hostEnsureLockTarget(socket);
 	await mkdir(dirname(lockTarget), { recursive: true });
 	await writeFile(lockTarget, "", { flag: "a", mode: 0o600 });
 	// Opportunistic GC of other installs' leftovers stays OUTSIDE the endpoint lock.
@@ -155,6 +163,8 @@ async function ensureHostLocked(
 	socket: string,
 	options: EnsureHostOptions,
 ): Promise<EnsuredHost> {
+	// Under the lock, so a torn or foreign `endpoint.json` is repaired rather than left unaddressable.
+	await ensureEndpointIdentity(paths, socket, { repair: true });
 	const testOptions = options._test;
 	const registered = await readHostRegistration(paths);
 	// A record naming ANOTHER endpoint is not about this ensure's host. The per-socket directory
@@ -268,7 +278,7 @@ async function upgradeGeneration(
 	options: EnsureHostOptions,
 	attachedPid: number,
 ): Promise<EnsuredHost> {
-	const result = await handoffHost({
+	const result = await handoffHostLocked({
 		socket,
 		agentDir: options.agentDir ?? getAgentDir(),
 		hostArgs: options.hostArgs ?? [],
@@ -320,7 +330,7 @@ function hostChildArgv(hostArgs: readonly string[]): string[] {
 /** Whether a registration is about this endpoint. A record written before the field existed is. */
 function registersSocket(registered: RegisteredHost | undefined, socket: string): boolean {
 	if (registered === undefined) return false;
-	return registered.socket === undefined || registered.socket === socket;
+	return registered.socket === undefined || sameEndpoint(registered.socket, socket);
 }
 
 /**
@@ -620,13 +630,6 @@ async function appendStderr(paths: HostDaemonPaths, message: string): Promise<st
 		if (isNodeErrorCode(error, "ENOENT")) return message;
 		throw error;
 	}
-}
-
-function createSocketLockName(socket: string): string {
-	return createHash("sha256")
-		.update(resolveSocketTransportAddress(socket, process.platform), "utf8")
-		.digest("hex")
-		.slice(0, 32);
 }
 
 function normalizeSocketPath(value: string): string {

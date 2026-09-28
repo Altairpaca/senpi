@@ -10,6 +10,7 @@
 import { createConnection, type Socket } from "node:net";
 import { type HostAttachHold, holdAttachment } from "./host-attach-hold.ts";
 import { type HostProtocolInfo, parseHostProtocolInfo } from "./host-decision.ts";
+import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
@@ -33,6 +34,19 @@ export function probeHost(options: ProbeHostOptions): Promise<HostProtocolInfo |
 
 export async function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise<HostProtocolInfo | undefined> {
 	const reply = await requestOnSocket(socketPath, { type: "get_protocol_info" }, timeoutMs);
+	return reply === undefined ? undefined : parseHostProtocolInfo(reply);
+}
+
+/** `probeProtocolInfo` for a read that must not count as host activity, such as `host status`. */
+export async function observeProtocolInfo(
+	socketPath: string,
+	timeoutMs: number,
+): Promise<HostProtocolInfo | undefined> {
+	const reply = await requestOnSocket(
+		socketPath,
+		{ type: "get_protocol_info", [OBSERVE_REQUEST_FIELD]: true },
+		timeoutMs,
+	);
 	return reply === undefined ? undefined : parseHostProtocolInfo(reply);
 }
 

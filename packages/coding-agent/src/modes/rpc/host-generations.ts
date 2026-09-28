@@ -14,7 +14,7 @@
  */
 import { readdir, rm } from "node:fs/promises";
 import { processIsLive } from "../app-server/daemon/process.ts";
-import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
@@ -73,31 +73,38 @@ export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<Prun
 	return { generations, claims, pointer: pointerRemoved };
 }
 
-/**
- * Every generation of this daemon that is still running, newest ordinal last. A record naming a
- * dead pid is omitted rather than reported as history: `host status` answers who is alive now.
- */
 function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb"> {
 	return { rss_mb: metrics.rss_mb, host_rss_mb: metrics.host_rss_mb };
 }
 
-export async function readGenerationRows(paths: HostDaemonPaths): Promise<readonly HostGenerationRow[]> {
+/**
+ * Every generation of this daemon that is still running, newest ordinal last. A record naming a
+ * dead pid is omitted rather than reported as history: `host status` answers who is alive now.
+ * `includeDead` is for the reader that must not prune (`host status --all`): a dead record is then
+ * reported as a row with `alive: false` instead of being dropped, so the stale state stays visible.
+ */
+export async function readGenerationRows(
+	paths: HostDaemonDirectory,
+	options: { readonly includeDead?: boolean } = {},
+): Promise<readonly HostGenerationRow[]> {
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile).catch(() => undefined));
 	const currentId = typeof pointer?.instance_id === "string" ? pointer.instance_id : undefined;
 	const claims = await readSessionPathClaims(paths.reservationsDir);
 	const rows: HostGenerationRow[] = [];
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
 		const record = parseJson(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
-		if (typeof record?.pid !== "number" || !processIsLive(record.pid)) continue;
+		if (typeof record?.pid !== "number") continue;
+		const alive = processIsLive(record.pid);
+		if (!alive && options.includeDead !== true) continue;
 		rows.push({
 			instanceId,
 			generation: typeof record.generation === "number" ? record.generation : 0,
 			pid: record.pid,
 			engineVersion: typeof record.engineVersion === "string" ? record.engineVersion : null,
-			...memoryOf(await readHostProcessMetrics(record.pid)),
+			...(alive ? memoryOf(await readHostProcessMetrics(record.pid)) : { rss_mb: null, host_rss_mb: null }),
 			sessions: claims.filter((claim) => claim.owner.instanceId === instanceId).length,
 			current: instanceId === currentId,
-			alive: true,
+			alive,
 		});
 	}
 	return rows.sort((left, right) => left.generation - right.generation);
