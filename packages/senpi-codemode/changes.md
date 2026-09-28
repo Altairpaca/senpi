@@ -85,6 +85,28 @@
 
 - LOW: the prelude eval site in `worker-runtime.js`; the eval-mem-fix memory lane extends the same file's run path.
 
+## 2026-09-28 - Live eval output updates stay proportional to the chunk
+
+### What changed
+
+- `packages/senpi-codemode/src/output/streaming-output-buffer.ts`: `TailBuffer` queues chunks and drops whole chunks that fall out of its window on append, trimming to the exact code-point boundary only when the window is read (same result as truncating after every append), so an append costs time and memory proportional to the chunk; a new `TailLineRing` keeps the last lines of a trailing byte window over a chunk stream in time proportional to the chunk.
+- `packages/senpi-codemode/src/output/streaming-output.ts`: re-exports `TailLineRing`.
+- `packages/senpi-codemode/src/tool/image.ts`: `EvalOutputOptions.onChunk` now receives the chunk itself instead of two whole-tail strings, and `EvalOutputCollector` exposes `cellTailText()` for the running cell state.
+- `packages/senpi-codemode/src/tool/cell-runtime.ts`: the live update text reads an eight-line `TailLineRing` instead of splitting the whole aggregate tail per chunk, and output-driven live updates are coalesced to one per 100 ms (leading update immediately, trailing update with the latest tail; the same cadence as the core bash tool's `BASH_UPDATE_THROTTLE_MS`). `state.output` is refreshed with each emitted update and by `liveResult()` (detached peek), and the final result is unchanged.
+- Tests: `test/output/tail-line-ring.test.ts` (byte-identical to the truncate-then-split reference over generated chunk sequences), `test/output/streaming-output.test.ts` (TailBuffer reference equivalence), `test/eval-cell-runtime-live-output.test.ts` (builder-level live-text equivalence per window, burst coalescing, `liveResult` current without waiting, no whole-output text reads while streaming); `test/eval-tool-output.test.ts` live-tail tests drive chunks one window apart with fake timers.
+
+### Why
+
+- Every output chunk rebuilt both retained tails and split the full aggregate tail to render a live preview, so a cell printing thousands of lines paid quadratic time and allocations (#2262). One update per chunk also produced tens of thousands of update objects carrying a fresh copy of the output tail, which raised the process memory peak whenever output streamed faster than consumers drained it.
+
+### Why an extension could not handle it
+
+- The output collector, the live update text, and the tail buffers belong to codemode.
+
+### Expected merge conflict zones
+
+- LOW: `streaming-output-buffer.ts`, the `onChunk` signature in `image.ts`, and the live-text block in `cell-runtime.ts`.
+
 ## 2026-09-27 - Tool kernel preludes in the eval kernels
 
 ### What changed
