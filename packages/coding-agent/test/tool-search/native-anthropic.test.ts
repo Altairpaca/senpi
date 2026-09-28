@@ -143,7 +143,8 @@ describe("todo 9 generalized catalog injection", () => {
 
 		const injected = named(toolsOf(out), "computer");
 		expect(injected).toMatchObject({ defer_loading: true, input_schema: { type: "object", required: ["action"] } });
-		const inputSchema = (injected ?? {}).input_schema as { properties?: object; anyOf?: unknown };
+		if (injected === undefined) throw new Error("computer was not injected");
+		const inputSchema = injected.input_schema as { properties?: object; anyOf?: unknown };
 		expect(Object.keys(inputSchema.properties ?? {}).sort()).toEqual(["action", "chain"]);
 		expect(inputSchema.anyOf).toBeUndefined();
 	});
