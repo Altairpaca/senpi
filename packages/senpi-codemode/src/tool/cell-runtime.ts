@@ -1,9 +1,12 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
 import type { EvalMemoryDetails, EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+
+const LIVE_UPDATE_LINES = 8;
 
 type KernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 type DisplayMessage = Extract<KernelToHostMessage, { type: "display" }>;
@@ -42,6 +45,7 @@ export class CellResultBuilder {
 	readonly #output: EvalOutputCollector;
 	readonly #state: CellState;
 	#memory: KernelMemoryReport | undefined;
+	readonly #liveLines = new TailLineRing({ maxBytes: DEFAULT_MAX_BYTES * 2, maxLines: LIVE_UPDATE_LINES });
 
 	constructor(options: CellResultBuilderOptions) {
 		this.#state = options.state;
@@ -51,8 +55,9 @@ export class CellResultBuilder {
 			model: options.model,
 			...(options.artifactPath === undefined ? {} : { artifactPath: options.artifactPath }),
 			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
-			onChunk: (_aggregate, cell) => {
-				options.state.output = cell;
+			onChunk: (chunk) => {
+				this.#liveLines.append(chunk);
+				options.state.output = this.#output.cellTailText();
 				this.emitUpdate(false);
 			},
 		});
@@ -173,11 +178,7 @@ export class CellResultBuilder {
 			return `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
 		}
 		const summary = this.#state.input.summary === undefined ? "" : ` ${this.#state.input.summary}`;
-		const aggregateOutput = this.#output.aggregateText();
-		const outputLines = aggregateOutput.split("\n");
-		const hasTrailingNewline = aggregateOutput.endsWith("\n");
-		if (hasTrailingNewline) outputLines.pop();
-		const output = `${outputLines.slice(-8).join("\n")}${hasTrailingNewline ? "\n" : ""}`;
+		const output = this.#liveLines.text();
 		return `1/1 cells ${this.#state.status}\n[1] ${this.#state.input.language}${summary} ${this.#state.status}${output.length === 0 ? "" : `\n${output}`}`;
 	}
 }

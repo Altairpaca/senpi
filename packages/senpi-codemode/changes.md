@@ -85,6 +85,28 @@
 
 - LOW: the prelude eval site in `worker-runtime.js`; the eval-mem-fix memory lane extends the same file's run path.
 
+## 2026-09-28 - Live eval output updates stay proportional to the chunk
+
+### What changed
+
+- `packages/senpi-codemode/src/output/streaming-output-buffer.ts`: `TailBuffer.append` skips the encode/truncate round trip while the retained window is below its byte budget, and a new `TailLineRing` keeps the last lines of a trailing byte window over a chunk stream in time proportional to the chunk.
+- `packages/senpi-codemode/src/output/streaming-output.ts`: re-exports `TailLineRing`.
+- `packages/senpi-codemode/src/tool/image.ts`: `EvalOutputOptions.onChunk` now receives the chunk itself instead of two whole-tail strings, and `EvalOutputCollector` exposes `cellTailText()` for the running cell state.
+- `packages/senpi-codemode/src/tool/cell-runtime.ts`: the live update text reads an eight-line `TailLineRing` instead of splitting the whole aggregate tail per chunk; `state.output` still tracks the cell tail per chunk (the partial renderer and the detached snapshot read `cells[0].output`).
+- Tests: `test/output/tail-line-ring.test.ts` (byte-identical to the truncate-then-split reference over generated chunk sequences), `test/output/streaming-output.test.ts` (TailBuffer reference equivalence), `test/eval-cell-runtime-live-output.test.ts` (builder-level live-text equivalence, no whole-output text reads while streaming).
+
+### Why
+
+- Every output chunk rebuilt both retained tails and split the full aggregate tail to render a live preview, so a cell printing thousands of lines paid quadratic time and allocations (#2262).
+
+### Why an extension could not handle it
+
+- The output collector, the live update text, and the tail buffers belong to codemode.
+
+### Expected merge conflict zones
+
+- LOW: `streaming-output-buffer.ts`, the `onChunk` signature in `image.ts`, and the live-text block in `cell-runtime.ts`.
+
 ## 2026-09-27 - Tool kernel preludes in the eval kernels
 
 ### What changed
