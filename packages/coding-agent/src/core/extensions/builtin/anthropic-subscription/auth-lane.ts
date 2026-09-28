@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import type { CredentialStore } from "@earendil-works/pi-ai";
+import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { loadAnthropicOAuth } from "@earendil-works/pi-ai/oauth";
 import { getAgentDir } from "../../../../config.ts";
 import { AuthStorage } from "../../../auth-storage.ts";
+import { CredentialStoreBusyError } from "../../../lockfile-policy.ts";
 import { emitProviderAccountFailover, emitProviderAccountsChanged } from "./account-events.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import {
@@ -27,6 +28,8 @@ import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenI
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 
 export const EXPIRING_WITHIN_MS = 5 * 60_000;
+
+const TRANSIENT_REFRESH_FAILURE = /\bstatus=5\d\d\b|\bTimeoutError\b/;
 
 /** A managed lane with an empty pool must refuse rather than spawn the SDK against ambient host credentials. */
 const NO_MANAGED_ACCOUNTS_ERROR =
@@ -125,6 +128,40 @@ async function managedPool(
 	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
 }
 
+function storedSlot(credential: Credential | undefined, pool: ManagedPool, name: string): AccountSlot | undefined {
+	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;
+	return listAccounts(stored ?? emptyCredential(), (key) => pool.environment[key]).find(
+		(candidate) => candidate.name === name,
+	);
+}
+
+/**
+ * Another writer holds auth.json for longer than the lock budget, almost always
+ * a sibling session redeeming this same slot. Contention says nothing about the
+ * credential: adopt the sibling's rotated token, or keep the stored one while it
+ * is still inside its lifetime (the refresh window opens before expiry).
+ */
+async function continueWhileStoreBusy(pool: ManagedPool, slot: AccountSlot, busy: Error): Promise<void> {
+	const latest = storedSlot(await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID), pool, slot.name);
+	if (latest && latest.refresh !== slot.refresh) {
+		Object.assign(slot, latest);
+		return;
+	}
+	if (activeBoundary.now() < slot.expires) return;
+	throw busy;
+}
+
+/** Throttling, server errors and timeouts on the token endpoint are not a verdict on the grant. */
+function refreshFailure(error: unknown): Error {
+	const detail = error instanceof Error ? error.message : String(error);
+	const classification = classifySdkError(detail);
+	if (classification.kind === "rate_limit" || classification.kind === "overloaded") return new Error(detail);
+	if ((classification.kind === "other" && classification.retryable) || TRANSIENT_REFRESH_FAILURE.test(detail)) {
+		return new Error(`server_error: ${detail}`);
+	}
+	return new Error(`authentication_failed: ${detail}`);
+}
+
 async function prepareSlot(
 	pool: ManagedPool,
 	selected: AccountSlot,
@@ -142,23 +179,15 @@ async function prepareSlot(
 				signal,
 				(expires) => activeBoundary.now() >= expires - EXPIRING_WITHIN_MS,
 			);
-			const credential = refreshed?.type === "oauth" ? (refreshed as AnthropicSubscriptionCredential) : undefined;
-			const updated = listAccounts(credential ?? emptyCredential(), (name) => environment[name]).find(
-				(candidate) => candidate.name === slot.name,
-			);
+			const updated = storedSlot(refreshed, pool, slot.name);
 			if (!updated) throw new Error("selected account disappeared during refresh");
 			Object.assign(slot, updated);
 		} catch (error) {
 			// A cancelled turn is not an authentication verdict: an aborted refresh
 			// must not surface as authentication_failed and auth-block the account.
 			signal.throwIfAborted();
-			const detail = error instanceof Error ? error.message : String(error);
-			const classification = classifySdkError(detail);
-			throw new Error(
-				classification.kind === "other" && classification.retryable
-					? `server_error: ${detail}`
-					: `authentication_failed: ${detail}`,
-			);
+			if (!(error instanceof CredentialStoreBusyError)) throw refreshFailure(error);
+			await continueWhileStoreBusy(pool, slot, error);
 		}
 	}
 	const access = slot.source === "env" ? envSlotToken((name) => environment[name], slot.name) : slot.access;
