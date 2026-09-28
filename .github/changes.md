@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-28 - Windows CI job for durable scheduled prompts (senpi#2216)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `schedule-windows` job builds the workspace entries and runs `test/suite/schedule-runner.test.ts`, `schedule-extension.test.ts` and `schedule-cli.test.ts` on windows-latest, and is added to the `Check and test` fan-in and its summary.
+
+### Why
+
+- The coding-agent test job is Linux-only and the POSIX CLI suite is skipped on Windows, so rename claims, runner leases, ungated delivery locks, `taskkill` timeouts and `cmd.exe` `--exec` hooks had no coverage on the platform where they behave differently (the quoted `--exec` bug was found by this job).
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the job list before `rpc-windows` and the `check-and-test` `needs` list and summary in `ci.yml`.
+
 ## 2026-09-28 - Cross-OS CI job for eval-kernel Bun.WebView (senpi#2248)
 
 ### What changed
