@@ -97,6 +97,7 @@
 
 ### Fixed
 
+- Claude subscription accounts no longer end up "blocked until re-login" after a token refresh. A live Claude session now resumes on the refreshed token instead of sending the next turn with the revoked one, and an authentication failure on a token that another session already replaced retries on the stored token instead of blocking a valid account. ([oh-my-openagent#8762](https://github.com/code-yeongyu/oh-my-openagent/issues/8762))
 - RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
 
 ### Removed

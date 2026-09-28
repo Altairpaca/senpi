@@ -1,3 +1,24 @@
+## 2026-09-27 - a refreshed token never leaves a resident session on the revoked one or auth-blocks a valid account (oh-my-openagent#8762)
+
+### What changed
+
+- `auth-lane.ts`: `prepareSlot` returns the child env together with `credentialDigest` (SHA-256 of the access token the attempt authenticates with), and `runAttempt` passes it on `AuthenticatedAttemptInput`. A refresh aborted by the turn's signal rethrows the abort instead of surfacing as `authentication_failed`.
+- `session-continuity.ts`: the entry snapshot and decision input carry `credentialDigest`; `decideFromState` reattaches a resident entry spawned with a different token (new reason `credential_refreshed` in `session-observability.ts`). Unknown digests on either side keep the previous decision.
+- `session-stream.ts` / `session-registry.ts`: `createResidentAttempt` records the attempt's digest on the entry it runs on.
+- `failover.ts`: `persistBlock` writes an `auth_error` only while the stored slot still holds the rejected `access`/`refresh`; otherwise it writes nothing and returns the stored slot, and `runFailover` retries that account once on the stored material before failing over. Rate-limit blocks are unchanged. Each attempt runs on its own copy of the selected slot: stored slot objects are shared by concurrent requests in one process (RPC host sessions, in-process subagents) and `prepareSlot` refreshes the selected slot in place, so without the copy another request's refresh rewrote the token this attempt reports and `persistBlock` stamped `auth_error` on the fresh stored token (from #2254).
+
+### Why
+
+- Refreshing redeems the refresh token and revokes the previous access token. A resident Claude Code subprocess keeps the `CLAUDE_CODE_OAUTH_TOKEN` it was spawned with, and `decideNativeContinuity` never compared credentials (the `bound_account_token_expiring` input was dropped when the stream moved to it), so the first `delta` after any refresh - this process's own, or a sibling process's on the shared `auth.json` - answered `401 OAuth access token has been revoked`. Failover then stamped `auth_error` on a slot whose stored token was valid, and every process reported the account "blocked until re-login".
+
+### Why an extension could not handle it
+
+- Continuity decisions, the resident registry, and block persistence are internal to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `identityDrift` tail of `decideFromState`; `persistBlock` and the catch block of `runFailover`; the return of `prepareSlot` and the `runAttempt` callback in `auth-lane.ts`.
+
 ## 2026-09-27 - another turn's events never fail the pending turn before its replay (senpi#2192)
 
 ### What changed
