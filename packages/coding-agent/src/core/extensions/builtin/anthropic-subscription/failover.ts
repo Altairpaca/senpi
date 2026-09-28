@@ -161,7 +161,9 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	const retriedOnStoredMaterial = new Set<string>();
 
 	for (let attempt = 0; attempt < accounts.length; attempt++) {
-		const account = options.selectFn(accounts);
+		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
+		// attempt holding the same stored object must still report the token it actually sent.
+		const account = { ...options.selectFn(accounts) };
 		let visibleDeltaEmitted = false;
 		try {
 			const attemptStream = await options.runAttempt(account);

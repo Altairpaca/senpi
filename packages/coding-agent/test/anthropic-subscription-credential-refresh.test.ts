@@ -83,6 +83,33 @@ describe("anthropic-subscription auth blocks follow the rejected token, not the 
 		expect(stored?.blockReason).toBeUndefined();
 	});
 
+	it("does not auth-block when an in-process refresh rewrites the shared slot object mid-request", async () => {
+		const store = await storeWith(original);
+		const shared: AccountSlot = { ...original };
+		const used: string[] = [];
+		const stream = runFailover<Done>({
+			accounts: [shared],
+			selectFn: (pool) => pool[0]!,
+			runAttempt: async function* (slot) {
+				used.push(slot.access);
+				if (used.length === 1) {
+					Object.assign(shared, rotated);
+					await rotateStoredToken(store);
+					throw new Error(REVOKED);
+				}
+				yield { type: "done", value: slot.access };
+			},
+			classify: classifySdkError,
+			store,
+			providerId: PROVIDER,
+			now: () => now,
+		});
+
+		expect(await collect(stream)).toEqual([{ type: "done", value: "a-new" }]);
+		expect(used).toEqual(["a-old", "a-new"]);
+		expect((await storedSlot(store))?.blockReason).toBeUndefined();
+	});
+
 	it("still auth-blocks when the stored token itself is rejected", async () => {
 		const store = await storeWith(original);
 		const used: string[] = [];
