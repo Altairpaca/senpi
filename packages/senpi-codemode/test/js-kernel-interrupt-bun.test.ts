@@ -96,7 +96,11 @@ async function runInterruptDriver(cell: string, bounds: JavaScriptInterruptBound
 		const driverPath = join(root, "driver.ts");
 		const reportPath = join(root, "report.json");
 		await writeFile(driverPath, driverSource(cell, bounds), "utf8");
-		const run = spawnSync("bun", [driverPath, reportPath], { encoding: "utf8", cwd: root, timeout: DRIVER_TIMEOUT_MS });
+		const run = spawnSync("bun", [driverPath, reportPath], {
+			encoding: "utf8",
+			cwd: root,
+			timeout: DRIVER_TIMEOUT_MS,
+		});
 		if (run.status !== 0) throw new Error(`bun driver exited with ${run.status}: ${run.stderr}`);
 		return JSON.parse(await readFile(reportPath, "utf8"));
 	} finally {

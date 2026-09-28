@@ -99,7 +99,11 @@ async function runCellEndDriver(cell: string, probe: string | null = null): Prom
 		const driverPath = join(root, "driver.ts");
 		const reportPath = join(root, "report.json");
 		await writeFile(driverPath, driverSource(cell, probe), "utf8");
-		const run = spawnSync("bun", [driverPath, reportPath], { encoding: "utf8", cwd: root, timeout: DRIVER_TIMEOUT_MS });
+		const run = spawnSync("bun", [driverPath, reportPath], {
+			encoding: "utf8",
+			cwd: root,
+			timeout: DRIVER_TIMEOUT_MS,
+		});
 		if (run.status !== 0) throw new Error(`bun driver exited with ${run.status}: ${run.stderr}`);
 		return JSON.parse(await readFile(reportPath, "utf8"));
 	} finally {
@@ -107,64 +111,68 @@ async function runCellEndDriver(cell: string, probe: string | null = null): Prom
 	}
 }
 
-describe.skipIf(!bunAvailable)("JavaScript kernel under Bun retires a cell's children at settle", { timeout: TEST_TIMEOUT_MS }, () => {
-	it("Given a cell that returns without awaiting its child when the cell settles then the child is not left running", async () => {
-		const report = await runCellEndDriver(ABANDONED_CHILD_CELL);
+describe.skipIf(!bunAvailable)(
+	"JavaScript kernel under Bun retires a cell's children at settle",
+	{ timeout: TEST_TIMEOUT_MS },
+	() => {
+		it("Given a cell that returns without awaiting its child when the cell settles then the child is not left running", async () => {
+			const report = await runCellEndDriver(ABANDONED_CHILD_CELL);
 
-		expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
-		expect(report.pid).toBeGreaterThan(0);
-		expect(report.aliveAfterSettle).toBe(false);
-	});
+			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(report.pid).toBeGreaterThan(0);
+			expect(report.aliveAfterSettle).toBe(false);
+		});
 
-	// #2275: the SIGKILL escalation is proven by the exit signal the kernel's own handle recorded, not by settle time.
-	it("Given a child that ignores SIGTERM when the cell settles then the SIGKILL escalation ends it", async () => {
-		const report = await runCellEndDriver(TERM_IGNORING_CHILD_CELL, TERM_IGNORING_EXIT_SIGNAL_PROBE);
+		// #2275: the SIGKILL escalation is proven by the exit signal the kernel's own handle recorded, not by settle time.
+		it("Given a child that ignores SIGTERM when the cell settles then the SIGKILL escalation ends it", async () => {
+			const report = await runCellEndDriver(TERM_IGNORING_CHILD_CELL, TERM_IGNORING_EXIT_SIGNAL_PROBE);
 
-		expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
-		expect(report.aliveAfterSettle).toBe(false);
-		expect(report.probe).toMatchObject({ ok: true, valueRepr: '"SIGKILL"' });
-	});
+			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(report.aliveAfterSettle).toBe(false);
+			expect(report.probe).toMatchObject({ ok: true, valueRepr: '"SIGKILL"' });
+		});
 
-	it("Given a cell that spawned a detached child when the cell settles then the child is left running", async () => {
-		// `detached: true` is the cell asking for a process that outlives it, so
-		// cleanup must not treat it as abandoned.
-		const report = await runCellEndDriver(DETACHED_CHILD_CELL);
+		it("Given a cell that spawned a detached child when the cell settles then the child is left running", async () => {
+			// `detached: true` is the cell asking for a process that outlives it, so
+			// cleanup must not treat it as abandoned.
+			const report = await runCellEndDriver(DETACHED_CHILD_CELL);
 
-		expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
-		expect(report.aliveAfterSettle).toBe(true);
-	});
+			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(report.aliveAfterSettle).toBe(true);
+		});
 
-	it("Given a cell that awaited its child when the cell settles then nothing is signalled and the value is unchanged", async () => {
-		const report = await runCellEndDriver(AWAITED_CHILD_CELL);
+		it("Given a cell that awaited its child when the cell settles then nothing is signalled and the value is unchanged", async () => {
+			const report = await runCellEndDriver(AWAITED_CHILD_CELL);
 
-		expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
-		expect(report.aliveAfterSettle).toBe(false);
-	});
+			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(report.aliveAfterSettle).toBe(false);
+		});
 
-	// #1697: killing only the tracked child reparented its descendants to init.
-	it("Given a child that forked a grandchild when the cell settles then the whole tree is gone", async () => {
-		const report = await runCellEndDriver(GRANDCHILD_CELL);
+		// #1697: killing only the tracked child reparented its descendants to init.
+		it("Given a child that forked a grandchild when the cell settles then the whole tree is gone", async () => {
+			const report = await runCellEndDriver(GRANDCHILD_CELL);
 
-		expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
-		expect(report.pid).toBeGreaterThan(0);
-		expect(report.grandchildPid).toBeGreaterThan(0);
-		expect(report.aliveAfterSettle).toBe(false);
-		expect(report.grandchildAliveAfterSettle).toBe(false);
-	});
+			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(report.pid).toBeGreaterThan(0);
+			expect(report.grandchildPid).toBeGreaterThan(0);
+			expect(report.aliveAfterSettle).toBe(false);
+			expect(report.grandchildAliveAfterSettle).toBe(false);
+		});
 
-	// #1697: node:child_process children were never tracked at all.
-	it("Given a cell that spawned through node:child_process when the cell settles then the child is not left running", async () => {
-		const report = await runCellEndDriver(NODE_CHILD_PROCESS_CELL);
+		// #1697: node:child_process children were never tracked at all.
+		it("Given a cell that spawned through node:child_process when the cell settles then the child is not left running", async () => {
+			const report = await runCellEndDriver(NODE_CHILD_PROCESS_CELL);
 
-		expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
-		expect(report.pid).toBeGreaterThan(0);
-		expect(report.aliveAfterSettle).toBe(false);
-	});
+			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(report.pid).toBeGreaterThan(0);
+			expect(report.aliveAfterSettle).toBe(false);
+		});
 
-	it("Given a detached node:child_process child when the cell settles then the child is left running", async () => {
-		const report = await runCellEndDriver(NODE_CHILD_PROCESS_DETACHED_CELL);
+		it("Given a detached node:child_process child when the cell settles then the child is left running", async () => {
+			const report = await runCellEndDriver(NODE_CHILD_PROCESS_DETACHED_CELL);
 
-		expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
-		expect(report.aliveAfterSettle).toBe(true);
-	});
-});
+			expect(report.result).toMatchObject({ ok: true, valueRepr: '"done"' });
+			expect(report.aliveAfterSettle).toBe(true);
+		});
+	},
+);
