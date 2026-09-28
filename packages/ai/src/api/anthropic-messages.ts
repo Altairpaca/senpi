@@ -65,7 +65,7 @@ import {
 	type ServerFallbackReceipt,
 } from "../utils/server-fallback-receipt.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { resolveRootObjectSchema } from "../utils/tool-schema-compat.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
@@ -1261,17 +1261,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
 						anthropicProviderDiagnosticFromError,
 					);
-				try {
-					const response = await send(params);
-					return { params, response };
-				} catch (error) {
-					if (isForcedToolChoiceUnsupportedError(error, isForcedAnthropicToolChoice(params.tool_choice))) {
-						params = omitToolChoiceParam(params);
-						const response = await send(params);
-						return { params, response };
-					}
-					throw error;
-				}
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: getAnthropicCompat(model).supportsForcedToolChoice,
+					isForced: isForcedAnthropicToolChoice,
+					send,
+				});
+				return { params: sent.params, response: sent.result };
 			};
 			let requestOutcome: { params: MessageCreateParamsStreaming; response: Response };
 			try {

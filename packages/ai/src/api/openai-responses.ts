@@ -31,14 +31,9 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import {
-	awaitProviderTransport,
-	iterateProviderTransport,
-	openAICompatibleProviderDiagnosticFromError,
-} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -130,6 +125,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
+		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
 		supportsAllowedTools: model.compat?.supportsAllowedTools ?? false,
 	};
 }
@@ -379,23 +375,16 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
-			const createResponsesStream = async (body: MutableResponsesPayload) => {
-				const { data, response } = await awaitProviderTransport(
-					() => client.responses.create(body, requestOptions).withResponse(),
-					openAICompatibleProviderDiagnosticFromError,
-				);
-				return { data: iterateProviderTransport(data, openAICompatibleProviderDiagnosticFromError), response };
-			};
 			const createRequest = async () => {
-				try {
-					return await createResponsesStream(params);
-				} catch (error) {
-					if (isForcedToolChoiceUnsupportedError(error, isForcedOpenAIResponsesToolChoice(params.tool_choice))) {
-						params = omitToolChoiceParam(params);
-						return createResponsesStream(params);
-					}
-					throw error;
-				}
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
+					isForced: isForcedOpenAIResponsesToolChoice,
+					send: (body: MutableResponsesPayload) => client.responses.create(body, requestOptions).withResponse(),
+				});
+				params = sent.params;
+				return sent.result;
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(() => createRequest(), {
 				maxRetries: options?.maxRetries,

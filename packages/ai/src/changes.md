@@ -1,8 +1,31 @@
+## 2026-09-28 - A refused forced tool_choice is retried once and remembered per model; compat can declare it (senpi#2218)
+
+### What changed
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: `sendWithForcedToolChoiceFallback` owns the forced-choice retry for every adapter. It drops a forced `tool_choice` up front when the model declares `supportsForcedToolChoice: false` or refused one earlier in the process; otherwise it retries a classified 400 once without `tool_choice` and, when that retry is accepted and the refusal did not blame thinking, remembers the model (`api`, `provider`, `baseUrl`, `id`) in a process-level set read by `hasRefusedForcedToolChoice` and reset by `clearForcedToolChoiceRefusals`. The auto-only wording pattern now also matches Kiro's `Kiro supports only automatic tool choice or tool_choice:none`.
+- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/anthropic-messages.ts`: `createRequest` sends through `sendWithForcedToolChoiceFallback` instead of an inline try/retry. `openai-responses.ts` calls `client.responses.create(...).withResponse()` directly again (the senpi#2224 transport-diagnostic wrapping is not part of this fix) and `getCompat` defaults `supportsForcedToolChoice` to `true`.
+- `packages/ai/src/types.ts` (`OpenAICompletionsCompat`), `packages/ai/src/openai-responses-compat.ts` (`OpenAIResponsesCompat`): optional `supportsForcedToolChoice`.
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: `ResolvedOpenAICompletionsCompat` carries the optional flag and `getOpenAICompletionsCompat` passes the model's value through.
+
+### Why
+
+- The coding-agent first-turn plan opener forces `tool_choice` to `todo`. Kiro behind an OpenAI-compatible proxy refuses any forced choice with a wording the classifier did not match, so the first turn of every session failed (senpi#2218). Even with a matching wording, every new session paid the refused request again, and a provider known to be auto-only had no way to say so.
+- A refusal that names thinking (`Thinking may not be enabled when tool_choice forces tool use.`) depends on the request's thinking setting, so remembering it would stop forcing the same model with thinking off.
+
+### Why an extension could not handle it
+
+- The refusal is only observable inside the adapter's `createRequest`; an extension sees the payload before it is sent (`before_provider_request`) and cannot retry the rejection or learn from it. The coding-agent todotools read the remembered refusal through the `./utils/*` export.
+
+### Expected merge conflict zones
+
+- LOW: the `createRequest` blocks in `api/openai-completions.ts`, `api/openai-responses.ts`, and `api/anthropic-messages.ts` if upstream restructures request sending.
+- LOW: `OpenAICompletionsCompat` / `OpenAIResponsesCompat` field lists and `getOpenAICompletionsCompat` when upstream adds compat flags.
+
 ## 2026-09-27 - openai-responses falls back without tool_choice when a provider refuses the forced choice (senpi#2224)
 
 ### What changed
 
-- `packages/ai/src/api/openai-responses.ts`: the SSE request path wraps `client.responses.create` in `createRequest`, which retries once without `tool_choice` when `isForcedToolChoiceUnsupportedError` matches and the sent `tool_choice` was forced (anything but `auto`/`none`), mirroring `openai-completions.ts`. The request now goes through `awaitProviderTransport`/`iterateProviderTransport` with `openAICompatibleProviderDiagnosticFromError`, matching the completions adapter's transport wrapping.
+- `packages/ai/src/api/openai-responses.ts`: the SSE request path wraps `client.responses.create` in `createRequest`, which retries once without `tool_choice` when `isForcedToolChoiceUnsupportedError` matches and the sent `tool_choice` was forced (anything but `auto`/`none`), mirroring `openai-completions.ts`. (senpi#2218 moved this retry into the shared `sendWithForcedToolChoiceFallback`.)
 - `packages/ai/src/utils/tool-choice-fallback.ts` `isForcedToolChoiceUnsupportedError`: the wording patterns accept `not currently compatible`/`not currently supported`, and a new pattern matches the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\`` (observed on OmniRoute for `opencode-go/muse-spark-1.3-contributor`, 2026-09-27).
 - `packages/ai/test/openai-responses-tool-choice.test.ts`: retry-without-tool_choice cases for the shared "not supported" wording and the #2224 auto-only wording, plus a no-retry case when `tool_choice` was not forced.
 
@@ -19,7 +42,7 @@
 - LOW: the `requestOptions`/`retryProviderRequest` block in `api/openai-responses.ts` if upstream restructures the SSE request path or adds its own transport wrapping.
 - LOW: the regex list in `utils/tool-choice-fallback.ts` (same zone as the senpi#2121 entry).
 
-
+## 2026-09-27 - Terminal provider errors keep the provider Retry-After; quota exhaustion wording is shared (senpi#2198)
 
 ### What changed
 

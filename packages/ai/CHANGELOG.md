@@ -6,9 +6,14 @@
 
 ### Added
 
+- `openai-completions` and `openai-responses` models accept `compat.supportsForcedToolChoice`; `false` drops a forced `tool_choice` before the request is sent. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
+
 ### Changed
 
 ### Fixed
+
+- `openai-responses` retries once without `tool_choice` when the provider rejects a forced choice with a "not supported"-class 400 (matching `openai-completions`), and the classifier also recognises `not currently supported` and the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\``. ([#2224](https://github.com/code-yeongyu/senpi/issues/2224))
+- A provider that refuses a forced `tool_choice` with only automatic tool choice allowed (Kiro: `Kiro supports only automatic tool choice or tool_choice:none`) gets the request once more without it instead of failing, and a model whose refusal was retried successfully gets no forced `tool_choice` for the rest of the process, on `openai-completions`, `openai-responses`, and `anthropic-messages`. Refusals that blame thinking are retried each time rather than remembered. ([#2218](https://github.com/code-yeongyu/senpi/issues/2218))
 
 ### Removed
 
@@ -50,7 +55,6 @@
 ### Fixed
 
 - A terminal 429 or 503 error from an OpenAI-compatible (or Azure, Google, OpenRouter) provider keeps the provider's `Retry-After` (seconds or HTTP-date) as the `(retry-after-ms: N)` marker, so callers can honour it even when no retry ran. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
-- `openai-responses` retries once without `tool_choice` when the provider rejects a forced choice with a "not supported"-class 400 (matching `openai-completions`), and the classifier also recognises `not currently supported` and the auto-only refusal `only \`"auto"\` is supported for \`tool_choice\``. ([#2224](https://github.com/code-yeongyu/senpi/issues/2224))
 
 ### Removed
 

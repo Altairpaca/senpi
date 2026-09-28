@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel, stream } from "../src/compat.ts";
 import type { Tool } from "../src/types.ts";
+import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
 type MockEvent =
 	| { type: "response.output_text.delta"; delta: string }
@@ -100,6 +101,7 @@ function makeResponsesModel() {
 
 describe("openai-responses tool_choice fallback", () => {
 	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
 		mockState.lastParams = undefined;
 		mockState.calls.length = 0;
 		mockState.createErrors.length = 0;
@@ -164,6 +166,49 @@ describe("openai-responses tool_choice fallback", () => {
 		expect(mockState.calls).toHaveLength(2);
 		expect(recordAt(mockState.calls, 0).tool_choice).toEqual({ type: "function", name: "todo" });
 		expect(recordAt(mockState.calls, 1).tool_choice).toBeUndefined();
+	});
+
+	it("stops forcing a model after a Kiro refusal was retried successfully (senpi#2218)", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(400, "400 Kiro supports only automatic tool choice or tool_choice:none"),
+		);
+		const model = makeResponsesModel();
+		const request = () =>
+			stream(
+				model,
+				{
+					messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }],
+					tools: [{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) }],
+				},
+				{ apiKey: "test", toolChoice: { type: "function", name: "todo" } },
+			).result();
+
+		const first = await request();
+		const second = await request();
+
+		expect([first.stopReason, second.stopReason]).toEqual(["stop", "stop"]);
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			{ type: "function", name: "todo" },
+			undefined,
+			undefined,
+		]);
+	});
+
+	it("never sends a forced choice when compat.supportsForcedToolChoice is false", async () => {
+		const model = { ...makeResponsesModel(), compat: { supportsForcedToolChoice: false } };
+
+		const response = await stream(
+			model,
+			{
+				messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }],
+				tools: [{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) }],
+			},
+			{ apiKey: "test", toolChoice: { type: "function", name: "todo" } },
+		).result();
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(1);
+		expect(recordAt(mockState.calls, 0).tool_choice).toBeUndefined();
 	});
 
 	it("does not retry when tool_choice was not forced", async () => {
