@@ -930,7 +930,7 @@ export class ModelRuntime implements Models {
 		slotAuth: { apiKey?: string; slotName?: string } | undefined,
 		send: (prepared: Awaited<ReturnType<ModelRuntime["prepareRequest"]>>) => AssistantMessageEventStream,
 		context: Context,
-	): AsyncIterable<AssistantMessageEvent> {
+	): Promise<AsyncIterable<AssistantMessageEvent>> {
 		return retryOnceOnRejectedToken(async (rejectedAccess) => {
 			const prepared = await this.prepareRequest(
 				model,

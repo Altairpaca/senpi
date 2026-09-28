@@ -1,8 +1,10 @@
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { isCommittedRotationOutput } from "./rotation-events.ts";
 
+type EventSource = AsyncIterable<AssistantMessageEvent> & { result?: () => Promise<AssistantMessage> };
+
 export type RejectableAttempt = {
-	stream: AsyncIterable<AssistantMessageEvent>;
+	stream: EventSource;
 	/** The stored OAuth access token this attempt authenticated with, when the provider can refuse it. */
 	rejectableAccess?: string;
 	/** HTTP statuses that prove `rejectableAccess` was refused (`OAuthAuth.rejectedTokenStatuses`). */
@@ -27,9 +29,8 @@ async function* markRefusalAfterReexchange(
 	let committed = false;
 	for await (const event of stream) {
 		if (!committed && event.type === "error" && refusesToken(event, statuses)) {
-			const errorMessage = `${event.error.errorMessage ?? "provider stream error"}\n${REFUSED_AFTER_REEXCHANGE}`;
-			yield { ...event, error: { ...event.error, errorMessage } };
-			continue;
+			// The event and the stream's `result()` share this message, so both carry the note.
+			event.error.errorMessage = `${event.error.errorMessage ?? "provider stream error"}\n${REFUSED_AFTER_REEXCHANGE}`;
 		}
 		committed ||= isCommittedRotationOutput(event);
 		yield event;
@@ -42,42 +43,52 @@ async function* markRefusalAfterReexchange(
  * named as rejected so auth resolution re-exchanges it. GitHub Copilot revokes its
  * short-lived tokens server-side while they still look valid (#2297); VS Code does
  * the same drop-and-refetch on 401/403. Pre-commit frames are held back so the
- * caller sees one stream, never a start from an attempt that was replaced.
+ * caller sees one stream, never a start from an attempt that was replaced. A
+ * provider that declares no refusal statuses gets its own stream back untouched,
+ * and `result()` always follows the attempt that ended the request.
  */
-export async function* retryOnceOnRejectedToken(
+export async function retryOnceOnRejectedToken(
 	attempt: (rejectedAccess: string | undefined) => Promise<RejectableAttempt>,
-): AsyncGenerator<AssistantMessageEvent> {
+): Promise<EventSource> {
 	const first = await attempt(undefined);
 	const statuses = first.rejectedTokenStatuses ?? [];
-	if (first.rejectableAccess === undefined || statuses.length === 0) {
-		yield* first.stream;
-		return;
-	}
-	const iterator = first.stream[Symbol.asyncIterator]();
-	const held: AssistantMessageEvent[] = [];
-	try {
-		while (true) {
-			const next = await iterator.next();
-			if (next.done) {
-				yield* held;
-				return;
+	const rejectedAccess = first.rejectableAccess;
+	if (rejectedAccess === undefined || statuses.length === 0) return first.stream;
+
+	let final: EventSource = first.stream;
+	async function* events(): AsyncGenerator<AssistantMessageEvent> {
+		const iterator = first.stream[Symbol.asyncIterator]();
+		const held: AssistantMessageEvent[] = [];
+		try {
+			while (true) {
+				const next = await iterator.next();
+				if (next.done) {
+					yield* held;
+					return;
+				}
+				const event = next.value;
+				if (refusesToken(event, statuses)) {
+					await iterator.return?.(undefined);
+					const retried = await attempt(rejectedAccess);
+					final = retried.stream;
+					yield* markRefusalAfterReexchange(retried.stream, statuses);
+					return;
+				}
+				if (isCommittedRotationOutput(event)) {
+					yield* held;
+					yield event;
+					break;
+				}
+				held.push(event);
 			}
-			const event = next.value;
-			if (refusesToken(event, statuses)) {
-				await iterator.return?.(undefined);
-				const retried = await attempt(first.rejectableAccess);
-				yield* markRefusalAfterReexchange(retried.stream, statuses);
-				return;
-			}
-			if (isCommittedRotationOutput(event)) {
-				yield* held;
-				yield event;
-				break;
-			}
-			held.push(event);
+			yield* { [Symbol.asyncIterator]: () => iterator };
+		} finally {
+			await iterator.return?.(undefined);
 		}
-		yield* { [Symbol.asyncIterator]: () => iterator };
-	} finally {
-		await iterator.return?.(undefined);
 	}
+	const source: EventSource = events();
+	if (typeof first.stream.result === "function") {
+		source.result = () => final.result?.() ?? Promise.reject(new Error("provider stream has no result"));
+	}
+	return source;
 }
