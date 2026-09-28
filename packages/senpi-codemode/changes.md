@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-09-28 - JavaScript kernel interrupt deadlines are injectable (senpi#2275)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts`: `JavaScriptInterruptBounds` (`ackMs`, `graceMs`, `terminateDeadlineMs`) and `DEFAULT_INTERRUPT_BOUNDS`, built from the unchanged production constants (`INTERRUPT_ACK_MS` 500, `JS_INTERRUPT_GRACE_MS` 2000, `WORKER_TERMINATE_DEADLINE_MS` 3000).
+- `packages/senpi-codemode/src/kernels/js/kernel-contract.ts`, `context-manager.ts`, `worker-slot.ts`: optional `interruptBounds` on `JavaScriptKernelOptions`; the kernel passes it to `awaitCooperativeSettlement`, `retireWorker`, and `abandonedWorkerNote`. Absent, every deadline is the production default, so no shipped behavior changes.
+- Tests: `test/js-kernel-interrupt-bun.test.ts` and `test/js-kernel-cell-end-children-bun.test.ts` choose the stop path through the bounds and assert the path taken (abandoned-worker note, `stateRetained`, a fresh worker, the child's recorded `SIGKILL` exit signal) instead of wall-clock budgets.
+
+### Why
+
+- #2275: the Bun process-tree tests asserted elapsed-time budgets and depended on the 500 ms acknowledgement deadline, so on a loaded host the kernel correctly took the blocked-worker path and the cooperative assertions failed on `main`.
+
+### Why an extension could not handle it
+
+- The interrupt deadlines are private to the JavaScript kernel in this package; nothing outside it can choose them.
+
+### Expected merge conflict zones
+
+- LOW: the `#stopActive` settle/abandon branch of `context-manager.ts`, `WorkerSlot.retire`, and the `JavaScriptKernelOptions` interface (the memory lane added fields next to it).
+
 ## 2026-09-28 - JavaScript kernel memory: post-cell and idle collection, large-globals notice, ceiling restart (senpi#2261)
 
 ### What changed
