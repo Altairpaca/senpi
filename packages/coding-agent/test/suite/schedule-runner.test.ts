@@ -32,7 +32,7 @@ import {
 	tombstonePath,
 	writeAtomic,
 } from "../../src/core/extensions/builtin/schedule/store.ts";
-import { nextRecurringDueAt } from "../../src/core/extensions/builtin/schedule/types.ts";
+import { MAX_FAILED_RECORDS_PER_JOB, nextRecurringDueAt } from "../../src/core/extensions/builtin/schedule/types.ts";
 import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 import { holdSessionFile } from "../../src/core/session-holders.ts";
 
@@ -394,6 +394,24 @@ describe("schedule runner", () => {
 		expect((await states(dir)).filter((record) => record.state === "pending").map((record) => record.id)).toEqual([
 			broken.id,
 			later.id,
+		]);
+	});
+
+	it("keeps only the most recent failed records of a recurring job that keeps failing", async () => {
+		const dir = await tempScheduleDir();
+		const job = await createScheduledJob(dir, jobInput({ dueAt: T0, everyMs: 60_000 }), T0);
+		const { deliver } = recordingDelivery({ ok: false, error: "inbox unavailable" });
+
+		for (let slot = 0; slot < MAX_FAILED_RECORDS_PER_JOB + 2; slot += 1) {
+			await pass(dir, { deliver, now: () => T0 + slot * 60_000 + 1 });
+		}
+
+		const failed = (await states(dir)).filter((record) => record.state === "failed");
+		expect(failed.map((record) => record.occurrence).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(
+			Array.from({ length: MAX_FAILED_RECORDS_PER_JOB }, (_, index) => index + 3),
+		);
+		expect((await states(dir)).filter((record) => record.state === "pending").map((record) => record.id)).toEqual([
+			job.id,
 		]);
 	});
 

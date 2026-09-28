@@ -20,7 +20,7 @@ import {
 	tombstonePath,
 	writeAtomic,
 } from "./store.ts";
-import { nextRecurringDueAt, type ScheduledJob } from "./types.ts";
+import { MAX_FAILED_RECORDS_PER_JOB, nextRecurringDueAt, type ScheduledJob } from "./types.ts";
 
 const TOMBSTONE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
@@ -206,6 +206,11 @@ export async function settleOccurrence(
 		const failed = join(dir, "failed", `${job.id}@${occurrence}.json`);
 		await writeAtomic(failed, serialize({ ...job, lastError: outcome.error }));
 		if (await isCancelled(dir, job.id)) await rm(failed, { force: true });
+		// A recurring job that keeps failing must not fill the disk: keep only its newest records.
+		const older = (await occurrenceNumbers(dir, "failed", job.id)).sort((a, b) => b - a);
+		for (const stale of older.slice(MAX_FAILED_RECORDS_PER_JOB)) {
+			await rm(join(dir, "failed", `${job.id}@${stale}.json`), { force: true });
+		}
 	}
 	await rm(join(dir, record), { force: true });
 }

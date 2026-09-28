@@ -22,6 +22,8 @@ export const MAX_JOB_FILE_BYTES = 64 * 1024;
 export const MAX_PENDING_JOBS_PER_SESSION = 50;
 /** Pending jobs the whole agent directory may hold at once. */
 export const MAX_PENDING_JOBS_TOTAL = 1000;
+/** Failed occurrence records kept per job; older ones are removed as new failures arrive. */
+export const MAX_FAILED_RECORDS_PER_JOB = 10;
 
 export interface ScheduledJob {
 	readonly version: typeof SCHEDULED_JOB_VERSION;

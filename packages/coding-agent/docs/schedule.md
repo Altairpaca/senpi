@@ -100,7 +100,7 @@ Use this when something else owns the session, for example a chat bridge that ru
 - Each occurrence is delivered at most once. A runner claims occurrence `n` of a due job by renaming its file from `pending/` to `firing/<id>@<n>~<runner>.json`; when several runners race, exactly one claim succeeds.
 - A recurring job is re-armed at its next slot right after the claim and before the delivery, so a runner crash can lose at most the occurrence in flight, never the schedule. Missed occurrences (no runner was running) collapse into one delivery.
 - If a runner dies while delivering, the next runner finds the occurrence record whose owner is no longer alive and moves it to `failed/` as `abandoned`. It is not retried, because it may already have been delivered. If that runner died before it could re-arm a recurring job, the next runner re-arms it at its next slot.
-- A failed delivery is kept as `failed/<id>@<n>.json` with the error in `lastError`, where `senpi schedule list` shows it; `cancel` removes the job and its failed records, and an in-flight occurrence that fails after the cancel leaves no record.
+- A failed delivery is kept as `failed/<id>@<n>.json` with the error in `lastError`, where `senpi schedule list` shows it (the 10 most recent per job); `cancel` removes the job and its failed records, and an in-flight occurrence that fails after the cancel leaves no record.
 - Cancelling writes a tombstone before removing anything, and every claim and re-arm checks it afterwards, so a cancelled job never comes back.
 - A job file that cannot be parsed, or is larger than 64 KiB, is reported by `list` and `run` and never fired.
 
