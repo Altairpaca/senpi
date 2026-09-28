@@ -73,7 +73,7 @@ On Windows there are no process groups and no gate: the delivery starts before i
 
 ### Hook delivery: `--exec`
 
-With `--exec <command>`, the runner starts the command through the shell and writes one JSON object to its stdin:
+With `--exec <command>`, the runner starts the command through the shell (`/bin/sh -c` on POSIX, `cmd.exe /d /s /c` on Windows, with the command passed verbatim, so quoted paths with spaces work) and writes one JSON object to its stdin:
 
 ```json
 {

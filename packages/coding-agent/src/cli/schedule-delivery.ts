@@ -50,6 +50,8 @@ export interface ProcessLaunch {
 	readonly cwd?: string;
 	readonly env?: NodeJS.ProcessEnv;
 	readonly stdin?: string;
+	/** win32: pass `args` to the process unquoted (a `cmd.exe /s /c "..."` command line). */
+	readonly windowsVerbatimArguments?: boolean;
 }
 
 const STDERR_TAIL_CHARS = 2000;
@@ -98,6 +100,7 @@ export function runDeliveryProcess(
 					env: launch.env,
 					stdio: ["pipe", "ignore", "pipe"],
 					windowsHide: true,
+					windowsVerbatimArguments: launch.windowsVerbatimArguments === true,
 				});
 		let stderr = "";
 		let failure: string | undefined;
@@ -153,9 +156,15 @@ function eventEnv(event: ScheduledPromptEvent): NodeJS.ProcessEnv {
  * environment (the operator chose both the command and the environment the runner starts with).
  */
 export function execHookDelivery(command: string, timeoutMs: number): Delivery {
+	// win32: the command line cmd.exe receives must be the operator's command verbatim inside one pair of
+	// quotes (what Node's `shell: true` builds); default argv quoting would escape its quotes as `\"`.
 	const shell =
 		process.platform === "win32"
-			? { command: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", command] }
+			? {
+					command: process.env.ComSpec ?? "cmd.exe",
+					args: ["/d", "/s", "/c", `"${command}"`],
+					windowsVerbatimArguments: true,
+				}
 			: { command: "/bin/sh", args: ["-c", command] };
 	return (event, context) =>
 		runDeliveryProcess(
