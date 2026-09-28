@@ -229,6 +229,8 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
+import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
+import { findUnknownCommand } from "./unknown-command.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -807,6 +809,11 @@ export interface PromptOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
+	/**
+	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
+	 * interactive or RPC input is rejected with `UnknownCommandError`.
+	 */
+	unknownCommandAsText?: boolean;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
 	/** Internal hook used by the TUI to distinguish handled input from owned prompt work. */
@@ -4049,6 +4056,13 @@ export class AgentSession {
 				expandedText = this._expandSkillCommand(expandedText);
 				const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 				expandedText = templateExpansion.text;
+				if (
+					expandedText === currentText &&
+					options?.source !== "extension" &&
+					options?.unknownCommandAsText !== true
+				) {
+					this._rejectUnknownCommand(currentText);
+				}
 				if (templateExpansion.template) {
 					pendingCommandInvocation = {
 						name: templateExpansion.template.name,
@@ -4346,6 +4360,22 @@ export class AgentSession {
 			});
 			return true;
 		}
+	}
+
+	/**
+	 * Throw `UnknownCommandError` when `text` is command-shaped and no extension command, prompt
+	 * template, or loaded skill resolves it. Runs after input transforms and expansion, so extension
+	 * rewrites and expanded commands never reach here as unknown.
+	 */
+	private _rejectUnknownCommand(text: string): void {
+		const promptCommands = new Set<string>([
+			...this._extensionRunner.getRegisteredCommands().map((command) => command.invocationName),
+			...this.promptTemplates.map((template) => template.name),
+			...this.resourceLoader.getSkills().skills.map((skill) => `skill:${skill.name}`),
+		]);
+		const interactiveCommands = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+		const rejection = findUnknownCommand(text, { promptCommands, interactiveCommands });
+		if (rejection) throw rejection;
 	}
 
 	/**
