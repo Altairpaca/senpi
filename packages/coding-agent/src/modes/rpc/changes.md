@@ -6,6 +6,7 @@
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `beginDrain` arms the drain timer BEFORE the first pass, and `sweepDrain` catches a pass that fails as a whole (for example `list()` throwing), so the timer retries it and a re-entered drain (grace expiry, a second `SIGUSR1`) never throws. A gone session ends with `session_closed { reason: "session_dir_removed" }` and no `sessionPath`, and releases its connections like a parked one.
 - `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `drainForHandoff` starts the drain in a `finally` after the announcement, so a failed announcement still drains and a drain failure is no longer logged as `handoff announcement failed`.
 - `packages/coding-agent/src/modes/rpc/session-worker.ts`: the worker's reservation and prepare paths use `canonicalSessionPath` instead of a local `canonicalPath` whose `realpathSync(dirname(path))` threw for a missing directory, so the worker keys a file exactly as the host does.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `session_dir_removed` reason documents that a handoff drain also sends it, instead of parking with a path nothing can reopen.
 - `test/suite/regressions/2285-drain-sweep-isolation.test.ts`, `test/suite/regressions/2285-drain-dir-removed-host.test.ts` (new).
 
 ### Why
@@ -21,6 +22,7 @@ The drain runs in the host's router before and after any session's extensions ex
 - `session-command-router.ts`: `beginDrain`, `sweepDrain`, and `evictIdleSession`'s handoff branch.
 - `multi-session-host.ts`: `drainForHandoff`.
 - `session-worker.ts`: the write-reservation install and the prepare path.
+- `rpc-types.ts`: the `RpcSessionClosedReason` doc comment.
 
 ## 2026-09-28 - Exact-pid collection for children whose thread is gone (senpi#1962)
 
