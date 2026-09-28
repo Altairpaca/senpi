@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The RPC host supervisor no longer loads the CLI parser or the provider model catalog, which it never uses. Each supervisor process now uses about 12 MB less physical memory; hosts, sessions and the supervisor's behaviour are unchanged. This matters when one host runs per session ([code-yeongyu/oh-my-openagent#9110](https://github.com/code-yeongyu/oh-my-openagent/pull/9110)).
+
 ### Fixed
 
 - The Devin SWE-2 prompt preset now matches exactly the lanes Devin serves, `swe-2-medium`, `swe-2-high` and `swe-2-max`. `devin/swe-2-medium` previously got no SWE-2 preset, while the unserved `swe-2-low` and `swe-2-high-lite` ids did. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
