@@ -19,6 +19,7 @@ export const SDK_TO_PI_TOOL_NAME: Readonly<Record<string, string>> = {
  */
 export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
 	read: "Read",
+	bash: "Bash",
 	grep: "Grep",
 	find: "Glob",
 	glob: "Glob",
