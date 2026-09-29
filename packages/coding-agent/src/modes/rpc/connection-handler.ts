@@ -23,7 +23,7 @@ import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession, PromptDisposition } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import { buildLoginProviderInfos } from "../../core/auth-providers.ts";
+import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
@@ -1586,11 +1586,12 @@ export function createRpcConnectionHandler(
 				const modelRegistry = session.modelRegistry;
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
+				const apiKeyRows = new Set(apiKeyInfos.map((info) => info.id));
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => ({
 					id: info.id,
 					name: info.name,
 					authType: info.authType,
-					status: modelRegistry.getProviderAuthStatus(info.id),
+					status: authMethodStatus(modelRegistry, info, apiKeyRows.has(info.id)),
 				}));
 				return success(id, "get_auth_providers", { providers });
 			}

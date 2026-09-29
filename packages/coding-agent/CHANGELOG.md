@@ -36,6 +36,8 @@
 
 - A transient `forbidden` / `Request not allowed` rejection from a Claude subscription is retried on the same model before any fallback. A fallback target that answers with a billing error (e.g. `credit balance is too low`) no longer pins the session: that provider's remaining rungs are skipped for its cooldown, and when the chain ends on it the next turn returns to the original model with a notice saying why. Billing on the original model still pins as before. ([#2376](https://github.com/code-yeongyu/senpi/issues/2376))
 
+- RPC `get_auth_providers` gives each login method row its own status: a stored OAuth login no longer also marks the provider's API-key row connected, and vice versa ([#2384](https://github.com/code-yeongyu/senpi/issues/2384)).
+
 - A gateway delivery whose transcript entry the session file refused (`EACCES`, `ENOSPC`) no longer blocks every later delivery to that session. It used to stay pending forever, so the next delivery was queued behind a turn that never came. It is now settled as failed with the error (`listAdmittedDeliveries().failed`), later deliveries start and are saved as soon as the file is writable, and the failed one is accepted again once the run that refused it is over and the file is writable, so the model sees it once, as the file does. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
 - A session whose first save failed part-way (a full disk) recovers when space returns. The partly written file used to stay behind, so every later save failed with `EEXIST` and the turns kept only in memory were never saved; the file is now removed, and the next save writes everything the session holds. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))

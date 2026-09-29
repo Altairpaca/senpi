@@ -1,3 +1,23 @@
+## 2026-09-29 - `get_auth_providers`: each login method row carries its own status
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-providers.ts`: new `authMethodStatus(modelRegistry, info, providerHasApiKeyRow)`. A stored credential counts only for the row of its own type (`oauth` or `api_key`); every non-stored source (runtime `--api-key`, environment, models.json, fallback) is a key and counts for the provider's `api_key` row, or for its only row when it has no `api_key` row.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` builds each row's `status` with `authMethodStatus` instead of the provider-level `getProviderAuthStatus(id)`.
+- Tests: `test/suite/rpc-auth-and-connection-handler.test.ts` "gives each auth method row of a provider its own status" (stored OAuth lights only the OAuth row; a key saved through `login_api_key` lights only the API-key row).
+
+### Why
+
+A provider listed with both an OAuth and an API-key login row got the same provider-level status on both, so a stored Claude subscription login also read as a connected API key in RPC clients (#2384; omo-desktop-app#1315, DESKTOP-30). Clients must not read `auth.json` to tell the two apart.
+
+### Why an extension could not handle it
+
+`get_auth_providers` is answered by the RPC router from the registry; no extension hook shapes its rows.
+
+### Expected merge conflict zones
+
+- the `get_auth_providers` case in `connection-handler.ts`; the tail of `core/auth-providers.ts`.
+
 ## 2026-09-29 - `open_session.promptSurface`: per-session prompt surface (senpi#2377)
 
 ### What changed
