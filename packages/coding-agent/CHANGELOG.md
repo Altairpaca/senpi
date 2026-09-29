@@ -38,6 +38,8 @@
 
 - RPC `get_auth_providers` gives each login method row its own status: a stored OAuth login no longer also marks the provider's API-key row connected, and vice versa, and `login_api_key` / `logout` answer only after the status reflects the change ([#2384](https://github.com/code-yeongyu/senpi/issues/2384)).
 
+- Fixed the prompt-cache keep-alive never arming in real sessions and pinging with a different tool list than the turn it keeps warm ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))
+
 ### Removed
 
 ## [2026.9.29-4] - 2026-09-29
