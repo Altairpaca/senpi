@@ -46,6 +46,12 @@ it("answers a uiRequestId answer to a question with the frame id, once, and refu
 		const asked = client.wait((r) => r.type === "extension_ui_request" && r.method === "question", WAIT_MS);
 		const prompt = client.request({ type: "prompt", sessionId, message: "/ask-question" });
 		const question = await asked;
+		if (question.id === undefined) throw new Error("question request without an id");
+
+		// The legacy value frame (id = request id) is no answer to a question: refused under that id, still pending.
+		const legacy = client.wait(isReply(question.id), WAIT_MS);
+		client.send({ type: "extension_ui_response", sessionId, id: question.id, value: "yes" });
+		expect(await legacy).toMatchObject({ id: question.id, success: false, error: "question_incomplete" });
 
 		const replied = client.wait(isReply("answer-1"), WAIT_MS);
 		const noticed = client.wait(isNotice("question:"), WAIT_MS);
@@ -81,7 +87,7 @@ it("answers a uiRequestId answer to a question with the frame id, once, and refu
 		expect(await unknown).toMatchObject({ id: "answer-3", success: false, error: "unknown_extension_ui_request" });
 
 		expect(client.records.filter((r) => r.type === "response" && r.command === "extension_ui_response")).toHaveLength(
-			3,
+			4,
 		);
 		expect(client.records.filter(isNotice("question:"))).toHaveLength(1);
 	} finally {

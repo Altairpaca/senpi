@@ -75,6 +75,19 @@ it("keeps the short form: id alone names the question and is answered under that
 	]);
 });
 
+it("answers the legacy value frame (id = question id) as before: invalid_response under that id, question still pending", async () => {
+	const { answer, answered } = await terminalAsking("ask-4");
+
+	expect(await answer({ id: "ask-4", value: "yes" })).toEqual({
+		id: "ask-4",
+		type: "response",
+		command: "extension_ui_response",
+		success: false,
+		error: "invalid_response",
+	});
+	expect(answered).toEqual([]);
+});
+
 it("refuses a malformed answer under the frame id and leaves the question pending", async () => {
 	const { answer, answered } = await terminalAsking("ask-3");
 
