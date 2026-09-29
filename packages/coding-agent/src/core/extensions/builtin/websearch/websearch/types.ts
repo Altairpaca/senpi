@@ -39,12 +39,14 @@ export interface SearchProviderConfig {
 export interface SearchProviderEntry extends SearchProviderConfig {
 	priority?: number;
 	weight?: number;
+	fallbackModel?: string;
 }
 
 export interface WebsearchConfig {
 	strategy: RoutingStrategy;
 	fallback: boolean;
 	auto: boolean;
+	nativeModel?: string;
 	providers: SearchProviderEntry[];
 }
 
@@ -83,6 +85,7 @@ export interface SearchResultItem {
 export interface SearchDetails {
 	provider: SearchProvider;
 	entryId?: string;
+	model?: string;
 	query: string;
 	results: SearchResultItem[];
 	durationMs: number;
@@ -124,6 +127,7 @@ export type SearchRenderDetails = SearchDetails | SearchProgressDetails | Search
 export interface SearchAttempt {
 	provider: SearchProvider;
 	entryId?: string;
+	model?: string;
 	durationMs: number;
 	resultsCount: number;
 	error?: string;
