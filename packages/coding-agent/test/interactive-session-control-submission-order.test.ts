@@ -350,12 +350,10 @@ describe("manual continue", () => {
 		await firstTurn;
 		await harness.session.waitForIdle();
 
-		// Unsubscribe after the emit: removing a listener while `agent_start` is being emitted
-		// would make the session skip the listener registered after it.
 		const started = new Promise<void>((resolve) => {
 			const unsubscribe = harness.session.subscribe((event) => {
 				if (event.type !== "agent_start") return;
-				queueMicrotask(unsubscribe);
+				unsubscribe();
 				resolve();
 			});
 		});

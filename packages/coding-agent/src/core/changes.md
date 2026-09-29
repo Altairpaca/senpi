@@ -18,6 +18,24 @@
 
 - LOW: the body of `_rewriteFile` plus the new `_serializedFileEntries` generator right after it, and one import line in `session-manager.ts`.
 
+## 2026-09-29 - A listener that unsubscribes during an emit no longer hides that event from the next listener
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_emit` iterates a copy of `_eventListeners`. `unsubscribe()` splices the live array, so a listener that removed itself inside an emit shifted the next listener into the slot the loop had already passed, and that listener never saw the event. Every listener registered when the emit starts now receives it.
+
+### Why
+
+- A self-removing `agent_start` or `agent_idle` listener placed just before the control endpoint's subscription swallowed the endpoint's idle wake (a held delivery waited for the next edge), and one placed before a manual continue's listener pushed `.` acceptance back to the end of the turn (session gateway, todo 27). `ExternalAdmission`'s listener `Set`s and the control feed's `Map` are unaffected: deleting the current entry of a `Set` or `Map` during `for...of` does not skip the next one.
+
+### Why an extension could not handle it
+
+- The listener list and its emit loop are private to `AgentSession`; the skipped listener is the one that cannot see the event.
+
+### Expected merge conflict zones
+
+- LOW: the loop header in `_emit`.
+
 ## 2026-09-29 - `SessionManager.appendCustomEntryOrNothing`: a custom entry on disk or not at all
 
 ### What changed

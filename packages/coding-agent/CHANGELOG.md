@@ -93,6 +93,8 @@
 
 - Fixed missing `initialModelProvenance` in `session_start` events for explicit and scoped CLI model selection ([#1560](https://github.com/code-yeongyu/senpi/issues/1560)).
 
+- A session event listener no longer misses an event because the listener registered just before it unsubscribed while that event was being delivered. `AgentSession.subscribe()` listeners each receive every event emitted while they are registered, so a terminal session's control endpoint no longer misses its idle wake that way. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
 ### Removed
 
 ## [2026.9.29] - 2026-09-29

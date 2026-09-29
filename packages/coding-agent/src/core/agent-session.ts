@@ -1674,7 +1674,7 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
-		for (const l of this._eventListeners) {
+		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
 	}
