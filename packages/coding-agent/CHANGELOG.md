@@ -10,7 +10,7 @@
 
 ### Changed
 
-- Hosted web search no longer runs on your top-tier session model when a cheaper model of the same provider is available on the same endpoint: Claude routes use `claude-haiku-4-5`, OpenAI Responses routes `gpt-5.6-luna`, xAI `grok-4.3`, DeepSeek `deepseek-v4-flash`, and only when the model list shows that model with a lower price than the session model. If it fails, the search retries on the session model. Set `"nativeModel": "session"` in `websearch.json` to keep the old behavior. The routing attempts line and `/websearch status` now name the model that served each search. ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
+- New default: hosted web search now runs on the provider's cheaper search model, on the same login and endpoint as your session, whenever your model list shows that model at a lower price than the session model (Claude routes: `claude-haiku-4-5`; OpenAI Responses routes: `gpt-5.6-luna`; xAI: `grok-4.3`; DeepSeek: `deepseek-v4-flash`). Before, every hosted search ran on the session model itself. If the cheaper model fails or finds nothing, the same search retries on the session model. To restore the old behavior, set `"nativeModel": "session"` in `websearch.json`. The routing attempts line and `/websearch status` now name the model that served each search. ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
 
 ### Fixed
 

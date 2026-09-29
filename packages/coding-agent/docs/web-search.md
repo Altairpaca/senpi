@@ -36,7 +36,25 @@ A search sub-request only has to find URLs, so it does not need the session's to
 - If the chosen model fails (an HTTP error such as an unknown model, or no search results), the same search is retried on the session model before routing moves on to the next provider. This retry happens even with `"fallback": false`, because it stays on the same route.
 - `"nativeModel": "session"` always uses the session model.
 
-Without `nativeModel`, senpi uses a known cheaper search model of the same provider when your model list shows it on the session's route **and** its listed price is lower than the session model's: `claude-haiku-4-5` for Claude routes, `gpt-5.6-luna` for OpenAI Responses routes, `grok-4.3` for xAI, and `deepseek-v4-flash` for DeepSeek. When no such model is available, or prices are not listed (for example a custom provider whose models have zero cost), the session model is used as before. Either way a failure retries on the session model.
+### Default search model
+
+Without `nativeModel`, senpi uses the provider's cheaper search model from this table:
+
+| Session route (native mapping) | Default search model |
+| --- | --- |
+| Anthropic Messages (Claude models, first-party or compatible endpoint) | `claude-haiku-4-5` (or `claude-haiku-4.5` where the provider spells it that way) |
+| OpenAI Responses (GPT-5 models, first-party or compatible endpoint) | `gpt-5.6-luna` |
+| xAI (Grok models) | `grok-4.3` |
+| DeepSeek (`deepseek-v4-*` models) | `deepseek-v4-flash` |
+| Perplexity, Z.AI, Kimi Code, OpenRouter | none: the session model is used |
+
+The default model is used only when all of these hold:
+
+- your model list includes it on the **same provider and endpoint** as the session model, so the search uses the same login;
+- its listed price is no higher than the session model's for input and output tokens, and lower for at least one of them;
+- it is not the session model itself.
+
+Otherwise, including when prices are not listed (for example a custom provider whose models have zero cost), the session model is used as before. Either way a failed or empty search retries on the session model. `"nativeModel": "session"` turns the default off.
 
 The routing attempts line of each result names the model behind every attempt, for example:
 
