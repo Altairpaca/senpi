@@ -3414,13 +3414,13 @@ Present one or more questions to the user. Requires the `question` client capabi
 }
 ```
 
-Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: unanswered question ids are reported back to the model. Send `cancelled: true` to dismiss.
+Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: the model is told which questions went unanswered, by header. Send `cancelled: true` to dismiss.
 
 A multi-session host and a terminal control endpoint settle a `question` answer by one rule, so the same frame reaches the model as the same message on either surface:
 
 - `cancelled: true` dismisses the question.
 - Otherwise `answers` and `comment` are read; a `value` or `confirmed` in the same frame belongs to the other dialog methods and is ignored.
-- A non-blank `comment` settles it `comment-submitted`: the model receives `The user responded: <comment>`, then any answered questions and the unanswered ids. A frame that carries its text only as `comment` with `answers: {}` is a complete answer.
+- A non-blank `comment` settles it `comment-submitted`: the model receives `The user responded: <comment>`, then any answered questions and the headers of the unanswered ones (`Unanswered: <header>, ...`). A frame that carries its text only as `comment` with `answers: {}` is a complete answer.
 - Without a comment, any entry in `answers` settles it `answered`.
 - Neither a non-blank comment nor an answer is refused `question_incomplete`, and the question stays pending.
 

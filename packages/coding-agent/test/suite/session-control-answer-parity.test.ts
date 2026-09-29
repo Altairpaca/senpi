@@ -42,27 +42,29 @@ interface Outcome {
 	readonly pending: boolean;
 }
 
+type AskedQuestions = ReadonlyArray<{
+	readonly header: string;
+	readonly question: string;
+	readonly multiSelect: boolean;
+}>;
+
 async function askAsync(
 	delivery: AskUserDelivery,
 	ctx: ExtensionContext,
+	questions: AskedQuestions,
 ): Promise<{ readonly settled: Promise<QuestionResponse> }> {
-	await delivery.tool.execute(
-		REQUEST_ID,
-		{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
-		undefined,
-		undefined,
-		ctx,
-	);
+	await delivery.tool.execute(REQUEST_ID, { questions, waitForAnswer: false }, undefined, undefined, ctx);
 	return { settled: delivery.settled(ctx, REQUEST_ID) };
 }
 
-async function answerOnHost(frame: Frame): Promise<Outcome> {
+async function answerOnHost(frame: Frame, questions: AskedQuestions = ASYNC_QUESTIONS): Promise<Outcome> {
 	const delivery = await createAskUserDelivery();
 	deliveries.push(delivery);
 	const bridge = new ConnectionQuestionBridge(() => {});
 	const { settled } = await askAsync(
 		delivery,
 		delivery.context((request, opts) => bridge.ask(request, opts)),
+		questions,
 	);
 	const uiRequestId = bridge.pendingQuestions()[0]?.id;
 	if (uiRequestId === undefined) throw new Error("the host bridge has no pending question");
@@ -77,11 +79,11 @@ async function answerOnHost(frame: Frame): Promise<Outcome> {
 	return { reply, delivered: delivery.deliveries.map((entry) => entry.content), pending };
 }
 
-async function answerOnTerminal(frame: Frame): Promise<Outcome> {
+async function answerOnTerminal(frame: Frame, questions: AskedQuestions = ASYNC_QUESTIONS): Promise<Outcome> {
 	const delivery = await createAskUserDelivery();
 	deliveries.push(delivery);
 	const pending = new Map<string, { request: QuestionRequest; finish: (response: QuestionResponse) => void }>();
-	const questions: Pick<TuiControlSurface, "pendingQuestionIds" | "pendingQuestion" | "answerQuestion"> = {
+	const surface: Pick<TuiControlSurface, "pendingQuestionIds" | "pendingQuestion" | "answerQuestion"> = {
 		pendingQuestionIds: () => [...pending.keys()],
 		pendingQuestion: (requestId) => pending.get(requestId)?.request,
 		answerQuestion: (requestId, response) => {
@@ -90,7 +92,7 @@ async function answerOnTerminal(frame: Frame): Promise<Outcome> {
 			return state !== undefined;
 		},
 	};
-	const fixture = await startEndpoint({ harness: delivery.harness, questions });
+	const fixture = await startEndpoint({ harness: delivery.harness, questions: surface });
 	endpoints.push(fixture);
 	const { settled } = await askAsync(
 		delivery,
@@ -106,6 +108,7 @@ async function answerOnTerminal(frame: Frame): Promise<Outcome> {
 					});
 				}),
 		),
+		questions,
 	);
 	const reply = await controlRequest(fixture.socket, frame(REQUEST_ID));
 	if (reply.kind !== "answered") throw new Error("the terminal control socket closed without a reply");
@@ -210,4 +213,54 @@ describe("one extension_ui_response frame, host and terminal", () => {
 			expect(outcome.pending).toBe(true);
 		}
 	});
+});
+
+const THREE_QUESTIONS: AskedQuestions = [
+	{ header: "Library", question: "Which library?", multiSelect: false },
+	{ header: "Cache", question: "Which cache?", multiSelect: false },
+	{ header: "Deploy", question: "When to deploy?", multiSelect: false },
+];
+
+const MULTI: ReadonlyArray<{ readonly name: string; readonly body: Frame; readonly model: readonly string[] }> = [
+	{
+		name: "a partial answer: one selected, one blank entry, one text-only",
+		body: (uiRequestId) => ({
+			type: "extension_ui_response",
+			id: "answer-1",
+			uiRequestId,
+			answers: { q1: { selected: ["OAuth"] }, q2: { selected: [] }, q3: { selected: [], text: "nightly" } },
+		}),
+		model: ["[Answer to question ask-1]\nLibrary: OAuth\nDeploy: nightly\nUnanswered: Cache"],
+	},
+	{
+		name: "the combined text frame with confirmed: false",
+		body: (uiRequestId) => ({
+			type: "extension_ui_response",
+			id: "answer-1",
+			uiRequestId,
+			...combined("ship it"),
+			confirmed: false,
+		}),
+		model: ["[Answer to question ask-1]\nThe user responded: ship it\nUnanswered: Library, Cache, Deploy"],
+	},
+	{
+		name: "a cancel",
+		body: (uiRequestId) => ({ type: "extension_ui_response", id: "answer-1", uiRequestId, cancelled: true }),
+		model: [],
+	},
+];
+
+describe("one extension_ui_response frame to a three-question request, host and terminal", () => {
+	for (const { name, body, model } of MULTI) {
+		it(`settles ${name} identically, with the unanswered headers`, async () => {
+			const host = await answerOnHost(body, THREE_QUESTIONS);
+			const terminal = await answerOnTerminal(body, THREE_QUESTIONS);
+
+			for (const outcome of [host, terminal]) {
+				expect(outcome.reply).toMatchObject({ id: "answer-1", command: "extension_ui_response", success: true });
+				expect(outcome.delivered).toEqual(model);
+				expect(outcome.pending).toBe(false);
+			}
+		});
+	}
 });
