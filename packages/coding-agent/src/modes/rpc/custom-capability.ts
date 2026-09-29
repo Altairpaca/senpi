@@ -70,6 +70,13 @@ export const WARM_CAPABILITY = "warm";
 export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
 
 /**
+ * HOST capability: this host honors `open_session.promptSurface`, building each session's prompt for
+ * the surface its opener renders on (`terminal` | `app`) instead of only the process-wide
+ * `SENPI_PROMPT_SURFACE`. A later open that names another surface rebuilds that session's prompt.
+ */
+export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
+
+/**
  * Env var carrying client capabilities to a single-connection stdio RPC host
  * (comma-separated). A launcher may set it from a client handshake; a plain
  * stdio client leaves it unset and sees byte-identical default behavior.

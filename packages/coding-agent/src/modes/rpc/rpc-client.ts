@@ -11,6 +11,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
@@ -412,6 +413,8 @@ export class RpcClient {
 		retain_on_disconnect?: boolean;
 		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
 		auto_title?: boolean;
+		/** Where this session's replies render; needs the host's `prompt_surface`. */
+		promptSurface?: PromptSurface;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;

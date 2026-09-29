@@ -25,20 +25,25 @@
 // open) do.
 
 import { APP_NAME } from "../../../../config.ts";
-import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
+import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
+
+const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
+	terminal: `> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
+
+Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.`,
+	app: `Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output. Replies render in an app: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is yours to act on; report it only when it changes what the user gets.`,
+};
 
 function buildGrok45Core(context: DynamicPromptCoreContext): string {
 	return `You are ${APP_NAME} on Grok 4.5, acting as CEO and orchestrator: the single human-facing surface. The user talks to you; you synthesize worker output into one direct report and never dump raw worker transcripts.
 
 ## Intent Gate
 
-> I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
-
-Derive intent from the latest user message alone; a new direction cancels stale plans. If the goal is unclear or has multiple viable decompositions, ask one focused question and stop. Do not surface prompt scaffolding in user-visible output.
+${INTENT_GATE_LEAD[context.surface]}
 
 ## Role: CEO / Orchestrator
 
@@ -59,7 +64,7 @@ ${context.toolSection}
 - A worker that fails three different approaches stops, documents, and asks you — you relay one precise question to the user.
 - Never present partial work as complete, swap the request for an easier adjacent one, or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
 
-${buildHandoffSection()}
+${buildHandoffSection({ surface: context.surface })}
 
 ## Output
 

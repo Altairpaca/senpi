@@ -1,3 +1,42 @@
+## 2026-09-29 - The prompt surface is a per-session property (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionConfig.promptSurface?: PromptSurface`; `_rebuildSystemPrompt` sets `surface: this._promptSurface ?? resolvePromptSurface(process.env)`, so a session built with a surface keeps it whatever the host process env says. New `setPromptSurface(surface)` rebuilds the base prompt (through `_applyToolDeclarations`) and clears the per-turn override; the next turn's `before_agent_start` hands presets the new surface.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.promptSurface?`; `_launchProfile` is no longer readonly, and `setPromptSurface(surface)` stores it on the launch profile (so `new_session` / `switch_session` / `fork` replacements keep it) and forwards it to the session.
+- `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/agent-session-services.ts`: `promptSurface?` passes through `createAgentSession` / `createAgentSessionFromServices` to the session config.
+
+### Why
+
+- A shared RPC host serves several clients from one process; a process-wide env var could not give the OmO Desktop (an app surface) and a terminal client different prompts on the same host. The surface now travels with each session's launch profile.
+
+### Why an extension could not handle it
+
+- The base prompt options and the runtime launch profile are assembled in core before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionConfig` tail and the constructor's first line in `agent-session.ts`; `AgentSessionLaunchProfile` and the `_launchProfile` field in `agent-session-runtime.ts`; the `createAgentSession` options tail in `sdk.ts` and the `createAgentSessionFromServices` call in `agent-session-services.ts`.
+
+## 2026-09-29 - The session reads SENPI_PROMPT_SURFACE into its system-prompt options (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` sets `surface: resolvePromptSurface(process.env)` on `_baseSystemPromptOptions`, the one place the base prompt options are assembled; the dynamic prompt and (through `systemPromptOptions`) the prompt-preset extension read it from there.
+- `packages/coding-agent/src/core/system-prompt.ts`: `BuildSystemPromptOptions.surface?: PromptSurface`, so extensions see the surface on `systemPromptOptions` / `ctx.getSystemPromptOptions()`. `buildSystemPrompt` ignores it.
+
+### Why
+
+- An app host (the OmO Desktop) needs prompts without the terminal routing line. The environment is read once at the option boundary rather than inside section builders, which stay pure.
+
+### Why an extension could not handle it
+
+- The base prompt options are assembled in the session before `before_agent_start`; the fallback dynamic prompt is built there, not in an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `_baseSystemPromptOptions` literal in `_rebuildSystemPrompt` and the dynamic-prompt import in `agent-session.ts`; the `BuildSystemPromptOptions` interface tail in `system-prompt.ts`.
+
 ## 2026-09-29 - A billing-dead fallback target no longer pins or strands the session (senpi#2376)
 
 ### What changed
