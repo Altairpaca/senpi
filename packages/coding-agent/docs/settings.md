@@ -641,7 +641,8 @@ The per-model `modelServiceTiers` memory is not part of that resolution: it appl
 models only, through fast mode. It acts as the session-start default for `/fast` (a remembered
 `"priority"` starts the session fast) and as an explicit `"auto"` opt-out of a catalog-inherited
 priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin the memory has no
-effect, because the pin outranks it.
+effect, because the pin outranks it. `ultrafast` is not a remembered value: a stored `ultrafast` is
+ignored. Select Ultrafast with a decorator, a `models.json` `serviceTier`, or `openai.serviceTier`.
 
 #### GPT-6 Astra Ultrafast
 

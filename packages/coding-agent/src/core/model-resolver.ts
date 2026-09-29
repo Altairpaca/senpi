@@ -383,9 +383,41 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 }
 
 const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority", "ultrafast"];
+const ULTRAFAST_DOCUMENTED_PROVIDERS = new Set(["openai", "chatgpt-subscription"]);
 
 function isServiceTier(value: string): value is ServiceTier {
 	return (SERVICE_TIER_VALUES as readonly string[]).includes(value);
+}
+
+/**
+ * Advisory for an Ultrafast selection OpenAI has not documented. The selection is kept:
+ * the provider may reject it or serve another tier, and that is reported rather than refused.
+ * Returns undefined for GPT-6 Astra and for providers other than OpenAI and ChatGPT Subscription.
+ */
+function ultrafastSelectionWarning(
+	model: { provider: string; id: string },
+	serviceTier: ServiceTier | undefined,
+): string | undefined {
+	if (serviceTier !== "ultrafast") return undefined;
+	if (!ULTRAFAST_DOCUMENTED_PROVIDERS.has(model.provider)) return undefined;
+	if (model.id === "gpt-6-astra") return undefined;
+	return `Ultrafast is documented for GPT-6 Astra only; ${model.provider}/${model.id} may reject or ignore it`;
+}
+
+/** Invalid-decorator warnings discard the decorators parsed with them. An Ultrafast advisory does not. */
+function dropsParsedDecorators(warning: string | undefined): boolean {
+	return warning?.startsWith("Invalid thinking level") ?? false;
+}
+
+function pushUltrafastAdvisory(
+	diagnostics: ModelScopeDiagnostic[],
+	pattern: string,
+	model: { provider: string; id: string },
+	serviceTier: ServiceTier | undefined,
+): void {
+	const message = ultrafastSelectionWarning(model, serviceTier);
+	if (!message) return;
+	diagnostics.push({ type: "warning", code: "ultrafast-undocumented", message, pattern });
 }
 
 /**
@@ -440,7 +472,7 @@ export function parseModelPattern(
 	if (isValidThinkingLevel(suffix)) {
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
-			const thinkingLevel = result.warning ? undefined : (result.thinkingLevel ?? suffix);
+			const thinkingLevel = dropsParsedDecorators(result.warning) ? undefined : (result.thinkingLevel ?? suffix);
 			return {
 				model: result.model,
 				thinkingLevel,
@@ -453,12 +485,13 @@ export function parseModelPattern(
 	} else if (isServiceTier(suffix)) {
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
+			const serviceTier = dropsParsedDecorators(result.warning) ? undefined : (result.serviceTier ?? suffix);
 			return {
 				model: result.model,
 				thinkingLevel: result.thinkingLevel,
 				thinkingSelection: result.thinkingSelection,
-				serviceTier: result.warning ? undefined : (result.serviceTier ?? suffix),
-				warning: result.warning,
+				serviceTier,
+				warning: result.warning ?? ultrafastSelectionWarning(result.model, serviceTier),
 			};
 		}
 		return result;
@@ -495,7 +528,7 @@ export function parseModelPattern(
  */
 export interface ModelScopeDiagnostic {
 	type: "warning";
-	code: "no-match" | "invalid-thinking-level";
+	code: "no-match" | "invalid-thinking-level" | "ultrafast-undocumented";
 	message: string;
 	pattern: string;
 }
@@ -563,6 +596,7 @@ export function resolveModelScopeFromModels(
 			if (exactMatch) {
 				const thinkingSelection = thinkingLevel ? { level: thinkingLevel, source: "explicit" as const } : undefined;
 				const owned = addScoped({ model: exactMatch, thinkingLevel, thinkingSelection, serviceTier });
+				pushUltrafastAdvisory(diagnostics, pattern, exactMatch, serviceTier);
 				patternResolutions.push({
 					pattern,
 					ownedIds: owned ? [owned] : [],
@@ -630,6 +664,7 @@ export function resolveModelScopeFromModels(
 					}
 				}
 				const owned = addScoped({ model, thinkingLevel: projectedLevel, thinkingSelection, serviceTier });
+				pushUltrafastAdvisory(diagnostics, pattern, model, serviceTier);
 				if (owned) ownedIds.push(owned);
 			}
 			patternResolutions.push({
@@ -647,7 +682,17 @@ export function resolveModelScopeFromModels(
 			pattern,
 			availableModels,
 		);
-		if (warning) diagnostics.push({ type: "warning", code: "invalid-thinking-level", message: warning, pattern });
+		if (warning) {
+			diagnostics.push({
+				type: "warning",
+				code:
+					model && warning === ultrafastSelectionWarning(model, serviceTier)
+						? "ultrafast-undocumented"
+						: "invalid-thinking-level",
+				message: warning,
+				pattern,
+			});
+		}
 		if (!model) {
 			diagnostics.push({
 				type: "warning",

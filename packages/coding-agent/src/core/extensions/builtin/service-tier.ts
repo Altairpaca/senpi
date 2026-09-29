@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ModelRegistry } from "../../model-registry.ts";
-import { SettingsManager } from "../../settings-manager.ts";
+import { type ModelServiceTier, SettingsManager } from "../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ServiceTier } from "../types.ts";
 
 export type { ServiceTier };
@@ -164,7 +164,7 @@ export async function applyFastMode(ctx: FastModeContext, enabled: boolean): Pro
 
 	const settingsManager = SettingsManager.create(ctx.cwd, ctx.agentDir, { projectTrusted: ctx.isProjectTrusted() });
 	const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, model);
-	const tier: ServiceTier = enabled ? PRIORITY_TIER : "auto";
+	const tier: ModelServiceTier = enabled ? "priority" : "auto";
 	settingsManager.setModelServiceTier(memoryModel.provider, memoryModel.id, tier);
 	await settingsManager.flush();
 

@@ -1096,8 +1096,9 @@ function getServiceTierCostMultiplier(
 ): number {
 	switch (serviceTier) {
 		case "ultrafast":
-			// GPT-6 Astra Ultrafast is 6x Standard for all token classes and context tiers.
-			return 6;
+			// OpenAI publishes an Ultrafast price for GPT-6 Astra only: 6x Standard on every
+			// token class and context tier. Any other model keeps its base rate.
+			return model.id === "gpt-6-astra" ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":

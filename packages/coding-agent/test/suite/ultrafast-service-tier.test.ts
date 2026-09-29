@@ -49,12 +49,34 @@ describe("Ultrafast service-tier selection", () => {
 		for (const effort of EFFORTS) expect(model.thinkingLevelMap?.[effort]).toBe(effort);
 	});
 
-	it("round-trips ultrafast through global settings and model memory", async () => {
-		const manager = SettingsManager.inMemory({ openai: { serviceTier: "ultrafast" } });
+	it("round-trips ultrafast on the OpenAI setting and drops it from model memory", async () => {
+		const manager = SettingsManager.inMemory({
+			openai: { serviceTier: "ultrafast" },
+			modelServiceTiers: { [`${PROVIDER}/${MODEL}`]: "ultrafast" },
+		} as unknown as Parameters<typeof SettingsManager.inMemory>[0]);
 		expect(manager.getOpenAIServiceTier()).toBe("ultrafast");
-		manager.setModelServiceTier(PROVIDER, MODEL, "ultrafast");
+		expect(manager.getModelServiceTier(PROVIDER, MODEL)).toBeUndefined();
+		manager.setModelServiceTier(PROVIDER, MODEL, "priority");
 		await manager.flush();
-		expect(manager.getModelServiceTier(PROVIDER, MODEL)).toBe("ultrafast");
+		expect(manager.getModelServiceTier(PROVIDER, MODEL)).toBe("priority");
+	});
+
+	it("warns for a glob that pairs ultrafast with a non-Astra model and still scopes it", () => {
+		const openaiAstra = getModel("openai", MODEL);
+		const sol = getModel("openai", "gpt-6.1-sol");
+		const scope = resolveModelScopeFromModels(["openai/gpt-6*:ultrafast"], [openaiAstra, sol]);
+		expect(scope.scopedModels.map((entry) => [entry.model.id, entry.serviceTier])).toEqual([
+			[MODEL, "ultrafast"],
+			["gpt-6.1-sol", "ultrafast"],
+		]);
+		expect(scope.diagnostics).toEqual([
+			{
+				type: "warning",
+				code: "ultrafast-undocumented",
+				message: "Ultrafast is documented for GPT-6 Astra only; openai/gpt-6.1-sol may reject or ignore it",
+				pattern: "openai/gpt-6*:ultrafast",
+			},
+		]);
 	});
 
 	it("keeps an Ultrafast model pin above remembered priority and the /fast toggle", async () => {

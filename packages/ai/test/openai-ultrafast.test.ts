@@ -88,6 +88,30 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast", (prov
 	});
 });
 
+describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price scope", (provider) => {
+	it("keeps gpt-6.1-sol at its base rate when ultrafast is requested", async () => {
+		const run = (serviceTier?: "ultrafast") => {
+			const options = {
+				apiKey: token,
+				transport: "sse" as const,
+				serviceTier,
+				fetch: async () => completion(serviceTier ?? "default"),
+			};
+			return provider === "openai"
+				? streamResponses(getModel("openai", "gpt-6.1-sol"), context, options).result()
+				: streamCodex(getModel("chatgpt-subscription", "gpt-6.1-sol"), context, options).result();
+		};
+		const base = await run();
+		const ultrafast = await run("ultrafast");
+		expect(base.stopReason).toBe("stop");
+		expect(ultrafast.stopReason).toBe("stop");
+		expect(base.usage.cost.total).toBeGreaterThan(0);
+		for (const key of ["input", "output", "cacheRead", "cacheWrite", "total"] as const) {
+			expect(ultrafast.usage.cost[key]).toBeCloseTo(base.usage.cost[key]);
+		}
+	});
+});
+
 describe("Ultrafast WebSocket continuations", () => {
 	it.each(EFFORTS)("keeps %s effort and resets the chain when entering or leaving Ultrafast", async (effort) => {
 		const bodies: Array<{

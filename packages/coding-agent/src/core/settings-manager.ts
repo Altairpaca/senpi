@@ -101,8 +101,12 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
 
-/** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
-export type ModelServiceTier = "auto" | "flex" | "priority" | "ultrafast";
+/**
+ * Service tier remembered per model for `/fast`. "auto" is an explicit opt-out of an
+ * inherited priority tier. Ultrafast is an explicit selection, not a remembered tier:
+ * a stored "ultrafast" is dropped on read and never sent.
+ */
+export type ModelServiceTier = "auto" | "flex" | "priority";
 
 const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
 	"off",
@@ -114,12 +118,7 @@ const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
 	"max",
 ]);
 
-const MODEL_SERVICE_TIER_VALUES: ReadonlySet<string> = new Set<ModelServiceTier>([
-	"auto",
-	"flex",
-	"priority",
-	"ultrafast",
-]);
+const MODEL_SERVICE_TIER_VALUES: ReadonlySet<string> = new Set<ModelServiceTier>(["auto", "flex", "priority"]);
 
 /** Opaque per-model memory key. Ids may contain `/` and `:`, so keys are never split back apart. */
 function modelMemoryKey(provider: string, modelId: string): string {

@@ -6,11 +6,13 @@
 
 ### Added
 
-- Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
+- Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. Selecting Ultrafast on any other OpenAI or ChatGPT Subscription model warns that the tier is documented for GPT-6 Astra only, and the request is still sent. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
 
 ### Changed
 
 ### Fixed
+
+- `--model` and `--models` now honor a service-tier decorator (`:priority`, `:flex`, `:auto`). Previously the decorator was parsed and then dropped before the session was created, so an explicit `:priority` was sent and billed as Standard. ([#2412](https://github.com/code-yeongyu/senpi/issues/2412))
 
 ### Removed
 
