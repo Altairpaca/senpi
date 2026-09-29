@@ -6,9 +6,15 @@
 
 ### Added
 
+- Claude Sonnet 5.5 (`claude-sonnet-5-5`) is in the catalog for `anthropic` (1M context, 128k output, $2 / $10 per MTok, cache reads $0.20, effort low through max) and for Bedrock (`global.anthropic.claude-sonnet-5-5`), OpenRouter, Vercel AI Gateway, Venice and OpenCode. Like Claude Opus 5.5 it runs adaptive thinking only, so a thinking-off turn pins `effort: low` instead of sending `thinking.type=disabled`, and `tool_choice` `any` / `tool` are never sent to it. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
 ### Changed
 
+- Anthropic OAuth requests identify as the latest published Claude Code instead of a version fixed at build time: the bundled floor is now 2.1.284 (Claude Sonnet 5.5 needs it), and the host refreshes the version in the background from Anthropic's `latest` release channel and the `@anthropic-ai/claude-code` npm dist-tag at most every six hours, cached under the agent directory. No request waits on the lookup and an offline host advertises the floor. `PI_CLAUDE_CODE_VERSION=X.Y.Z` pins the advertised version. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
 ### Fixed
+
+- A `claude_code_version_too_old` rejection on an Anthropic OAuth request now raises the advertised version to the one Anthropic names and retries the request once, so a model released after the last senpi build works the first time it is asked for. If the retry still fails, the error names the version senpi advertised and how to pin a newer one. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
 
 ### Removed
 
