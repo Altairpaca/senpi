@@ -17,6 +17,27 @@ The release decision and its answer are the router's.
 
 - `releaseSession` / `claimAndRelease` in `session-release.ts`.
 
+## 2026-09-29 - `extension_ui_response`: every settled answer is replied to under the frame's own `id`; `uiRequestId` names the request
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/extension-ui-response.ts` (new): `answeredUiRequestId` (the request a response answers: `uiRequestId`, else `id`) and `settleExtensionUiResponse`, which settles one response against the connection's question bridge and dialog map and returns its reply keyed by the frame `id`: `success: true` when it resolved a request, `success: false` with `question_incomplete` / `question_already_resolved` / `unknown_extension_ui_request` otherwise. An unrouted (stdio) connection still ignores a response that matches none of its requests.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `extension_ui_response` branch of `handleInputLine` delegates to `settleExtensionUiResponse` and writes its reply. Before, a resolved answer got no reply at all and a routed unmatched one was refused with no `id`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: every `RpcExtensionUIResponse` member gains optional `uiRequestId`.
+- Tests: `test/suite/rpc-extension-ui-response-reply.test.ts` (new, real in-process host): a `uiRequestId` answer to a `question` is replied to under the frame id and resolves once, a replay is `question_already_resolved` and an unknown request `unknown_extension_ui_request`, both under their frame ids; the short form (`id` = request id) on an `input` dialog resolves once and is replied to under that id.
+
+### Why
+
+senpi#2372: a client that answers on its own connection and waits for the reply (the RPC contract everywhere else) could not tell a delivered answer from a lost one on a host, and a terminal control endpoint replied to the same frame. A client that correlates by its own frame id also had no field to name the request in.
+
+### Why an extension could not handle it
+
+The reply to an inbound RPC record is the connection handler's.
+
+### Expected merge conflict zones
+
+- The `extension_ui_response` branch of `handleInputLine` in `connection-handler.ts`; `RpcExtensionUIResponse` in `rpc-types.ts`.
+
 ## 2026-09-29 - `release_session`: a failed hand-over answers `release_failed` and leaves the session hosted
 
 ### What changed
