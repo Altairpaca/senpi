@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Opening a session saved by an older senpi version no longer risks losing it. Opening such a session rewrites the file in the current format, and that rewrite used to overwrite the file in place, so a full disk or an I/O error part-way through left the transcript truncated. The rewrite now writes a complete copy next to the file and swaps it in only once it is on disk; if writing fails, the original session stays exactly as it was and the error is reported.
+
 ### Removed
 
 - Interactive sessions can no longer join a shared RPC host: every interactive launch runs on its own local runtime. The `experimental.sharedHost` setting and the `SENPI_ENABLE_SHARED_HOST` / `SENPI_DISABLE_SHARED_HOST` environment variables (any brand prefix) are gone and are ignored if set, with no notice. On first load, `experimental.sharedHost` is removed from the global settings file; nothing else in the file changes, except that a global `settings.jsonc` loses its comments in that one rewrite. A project `.senpi/settings.json` is never rewritten; the key is ignored there. The TUI's shared-host client (the remote session proxy, its reconnect loop and host-rendered extension dialogs) is removed with it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))

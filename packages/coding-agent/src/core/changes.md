@@ -1,3 +1,23 @@
+## 2026-09-29 - Session file rewrites are atomic, so a failed migration keeps the original
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_rewriteFile` no longer opens the session file with `"w"` and writes it in place; it hands the serialized entries (a lazy generator, `_serializedFileEntries`, so resident strings are materialized one entry at a time as before) to `replaceFileAtomically`. Every caller keeps its behavior: the version migration on open (`setSessionFile`, `_loadEntries`), the empty-file header write, the caller-id create, and `createBranchedSession`.
+- `packages/coding-agent/src/core/session-file-replace.ts` (new, fork-only): `replaceFileAtomically(path, chunks)` writes a hidden temp file in the target's directory (`.<name>.<uuid>.tmp`, invisible to `.jsonl` discovery), applies the existing file's mode, fsyncs it, renames it over the target (libuv uses `MOVEFILE_REPLACE_EXISTING` on Windows), then fsyncs the directory (skipped on Windows; `EINVAL`/`ENOTSUP`/`EOPNOTSUPP`/`EISDIR` from a filesystem without directory fsync are tolerated because the rename already happened). A symlinked session file keeps its link: the replacement lands on the resolved file. On a failure before the rename the temp file is removed and the error is rethrown; if the removal also fails both errors surface as one `AggregateError`. When the directory refuses the temp file (`EACCES`/`EPERM`/`EROFS` on its exclusive open), the file is rewritten in place exactly as before, so a writable session file in a read-only directory still migrates on open.
+- `packages/coding-agent/test/suite/no-sync-in-session-path.ledger.json`: the transcript-rewrite `writeFileSync` entry moves from `session-manager.ts _rewriteFile` to `session-file-replace.ts writeDurably` (same count), plus one entry for the read-only-directory fallback `rewriteInPlace`.
+
+### Why
+
+- Opening an old-version session runs the version migration, which rewrote the whole transcript in place. An `ENOSPC` or `EIO` part-way through truncated the user's existing transcript (found by the session-gateway todo-25 gate review, note N3). Every other session write is an append; this was the one path that could destroy history that was already on disk.
+
+### Why an extension could not handle it
+
+- The rewrite runs inside `SessionManager` construction and branching, before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the body of `_rewriteFile` plus the new `_serializedFileEntries` generator right after it, and one import line in `session-manager.ts`.
+
 ## 2026-09-29 - A rejected request re-asks the compaction owner before its retry (senpi#2329)
 
 ### What changed
