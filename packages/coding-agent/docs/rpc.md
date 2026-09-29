@@ -941,16 +941,83 @@ What the host does enforce are lifecycle windows, and they only ever return memo
 Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
 so they hold even for embedders and hand-started hosts that have no supervisor.
 
+### Interactive sessions expose a control endpoint
+
+An interactive terminal session is its own process with its own local session; nothing joins it to a host. Another
+local session reaches it only through a control endpoint, and only when an extension of that terminal registers
+one with `pi.session.registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` (see
+[pi.session](extensions.md#pisession)). OmO's thread component registers one at startup; a plain `senpi` with no
+registrant opens no socket and writes no registry directory.
+
+- **Platform.** POSIX terminals only. On win32 the registration answers
+  `{ status: "unsupported", reason: "unsupported_platform" }` and registers nothing. On a multi-session host the
+  same call binds nothing - the host's public socket is the endpoint - see "Waking a host session (`wake`)".
+- **Socket and auth.** The endpoint listens on `<agentDir>/rpc/tui/t-<16hex>.sock` (16 hex of the SHA-256 of a
+  fresh instance id). When that path is longer than a Unix socket path allows, it moves to
+  `/tmp/senpi-rpc-<8hex>/tui/`, which must be a private directory of this user. The directory is 0700 and the
+  socket 0600. A 32-byte secret is written 0600 beside the socket, and every connection must send it first, the
+  handshake every RPC socket shares; a wrong secret is disconnected before a line is read. After that it is
+  ordinary RPC framing: one LF-terminated JSON object per request, one response carrying its `id`.
+- **Registration order.** Registering first writes the session header (so the session id is durable), reaps dead
+  `tui` endpoints (`senpi host gc` scoped to `kinds: ["tui"]`), binds the socket and only then writes the
+  registry directory under the ensure lock, generation record before `endpoint.json`. A listed endpoint is one
+  that answers; a failed step undoes the earlier ones and answers `{ status: "failed", reason }`.
+- **`endpoint_kind`.** The registry record is `{ layout: 2, registry_version: 1, endpoint_kind: "tui", socket,
+  created_at }` (see "Daemon state directory (layout 2)"). `senpi host status --all` lists the terminal with
+  `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
+  the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
+  before connecting, because a terminal endpoint is owned by its terminal process.
+- **Commands.** The command set is read-mostly. Anything not listed below is answered `unsupported` as data. No
+  command can prompt, steer, queue a follow-up, open a session, run a command or change a model.
+  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0` and the endpoint's
+    `instanceId`.
+  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
+  - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
+    `editor_has_draft` and `state_version`.
+  - `get_messages`.
+  - `set_session_name { name }`: a blank name is refused.
+  - `subscribe { cursor? }`: a feed of `session_control_event { seq, kind, data }` records, where `kind` is
+    `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
+    session went idle, with `turn_epoch`). Resubscribing with the last `seq` replays what the 256-record ring
+    still holds after it.
+  - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
+  - `extension_ui_response`: answers only a question this session asked and still waits on
+    (`unknown_request` / `invalid_response` otherwise).
+  - `prompt`, `steer` and `follow_up` are `unsupported`.
+- **Admission.** A message from another session enters only through the registrant's drain, which calls
+  `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
+  decides and acts:
+  - `started`: the session was idle, and the delivery starts a turn.
+  - `queued`: the session is mid-turn and `deliverAs: "followUp"`; the delivery goes on the follow-up queue once.
+  - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
+    queue once.
+  - `turn_conflict`: the epoch is stale, or a steer names none.
+  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
+    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `already_admitted`: this process already holds or already wrote that `delivery_id`.
+
+  The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
+  carry the `delivery_id`. `listAdmittedDeliveries()` reports `pending` (held by the runtime) and `emitted`
+  (entry written) for the life of the process.
+- **Wake.** The drain runs on edges only, never on a timer, as the extension event `session_control_wake`. The
+  edges are: the session went idle (`idle`), the user's last submission reached the runtime (`submission`),
+  the editor was cleared without a submission (`draft_cleared`), a `wake` command (`command`), an entry created
+  or deleted in `inboxDir` (`inbox`), an admitted delivery reaching the transcript (`emitted`), and the
+  terminal continuing after a stop (`continue`). One pass runs at a time; edges that arrive during a pass merge
+  into exactly one more pass. A first `inbox` pass runs right after registration.
+- **Exit.** A clean exit unregisters the endpoint. A session whose file holds only its header is deleted, unless
+  `isSessionReferenced()` answers `true`.
+
+A session that lives on a multi-session host is taken over by a terminal with `release_session` (see "Handing a
+session over (`release_session`)"); a terminal's own session is never handed over through its endpoint.
+
 ### Endpoint kinds: hosts and terminals
 
 An agent directory's endpoint registry (`rpc-host-daemon/<16hex>/endpoint.json`) names two kinds of endpoint.
 `rpc_host` is a multi-session host, everything in this section. `tui` is ONE interactive terminal whose extension
-registered a control endpoint (`pi.session.registerControlEndpoint`): a socket `rpc/tui/t-<16hex>.sock` that
-authenticates every connection with the 32-byte secret beside it and answers a read-mostly command set
-(`get_protocol_info` with `mode: "tui"`, `list_sessions` with exactly one row, `get_state`, `get_messages`,
-`set_session_name`, `subscribe`, `wake`, `extension_ui_response`; anything else is `unsupported` as data). Both
-kinds appear in `senpi host status --all` and are reaped by `senpi host gc` on the same evidence; only a host is
-ever ensured, handed off, drained or stopped (see "The `senpi host` command").
+registered a control endpoint (see "Interactive sessions expose a control endpoint" above). Both kinds appear in
+`senpi host status --all` and are reaped by `senpi host gc` on the same evidence; only a host is ever ensured,
+handed off, drained or stopped (see "The `senpi host` command").
 
 ### Waking a host session (`wake`)
 

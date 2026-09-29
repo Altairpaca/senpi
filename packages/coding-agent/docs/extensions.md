@@ -511,6 +511,22 @@ do not emit them either. These extension events are distinct from the RPC wire
 `session_parked` record used when idle eviction or generation handoff releases a
 retained runtime.
 
+#### session_control_wake
+
+Fires when a control endpoint registered with [`pi.session.registerControlEndpoint`](#pisession) may have inbox
+work: `reason` is the edge a held delivery cares about most, `reasons` lists every edge the pass covers, and
+`delivery_ids` is present only for a `wake` command that named some. Edges: `idle`, `submission` (the user's last
+submission reached the runtime), `draft_cleared`, `command` (a `wake` over the endpoint), `inbox` (an entry
+created or deleted in `inboxDir`), `emitted` (an admitted delivery reached the transcript) and `continue` (the
+terminal continued after a stop). The event runs just before the registrant's `drain` on the same pass; one pass
+runs at a time, and edges during a pass merge into one more.
+
+```typescript
+pi.on("session_control_wake", (event) => {
+  if (event.reasons.includes("submission")) retryHeldDeliveries();
+});
+```
+
 #### session_before_switch
 
 Fired before starting a new session (`/new`) or switching sessions (`/resume`).
@@ -1626,6 +1642,37 @@ or any other host decision, and it is republished only on `list_sessions { inclu
 enforced at the RPC boundary (at most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most 32 KiB
 of JSON in total), so an extension receives an already-validated map. Both values are frozen for the session's life;
 there is no setter. See [Session kind and context](rpc.md#session-kind-and-context-open_session) for the wire side.
+
+### pi.session
+
+The session's control surface: how a message another local session sent is admitted into this one, and how the
+session is exposed to those senders. Nothing here keeps a queue of its own; an admitted delivery waits in the
+runtime's steering or follow-up queue like the user's queued input. The protocol side is
+[Interactive sessions expose a control endpoint](rpc.md#interactive-sessions-expose-a-control-endpoint).
+
+| Method | Returns | Behaviour |
+|---|---|---|
+| `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. |
+| `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted`. The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). |
+| `listAdmittedDeliveries()` | `{ pending, emitted }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written. |
+| `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
+
+```typescript
+export default function ({ pi }) {
+  pi.on("session_start", async () => {
+    await pi.session.registerControlEndpoint({
+      inboxDir: inboxPath,
+      drain: async () => ({
+        admitted: readInbox().map((d) => ({
+          delivery_id: d.id,
+          kind: pi.session.admitExternalMessage({ delivery_id: d.id, text: d.text, deliverAs: "followUp" }).kind,
+        })),
+      }),
+    });
+  });
+}
+```
 
 ### pi.on(event, handler)
 

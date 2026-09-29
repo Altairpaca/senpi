@@ -40,7 +40,10 @@ host-launch-spec.ts       `--launch-spec` parse + trust proof; host-daemon-env.t
 host-runner.ts            The `senpi host` requests -> { payload, exitCode }
 host-status.ts, host-process-metrics.ts   status report: identity, sessions, generations, tree
 host-status-rows.ts       status detail: listed session rows, reservations/ claim rows
-host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dirs, report without pruning
+host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dirs (`endpoint_kind` rpc_host | tui), report without pruning
+host-endpoint-liveness.ts `classifyEndpointLiveness`: routable | live_unresponsive | dead; per-kind probe budget (tui 1.5 s)
+tui-socket.ts             Terminal control socket name `t-<16hex>.sock`; a client sends the secret first on every platform
+rpc-session-state.ts      `buildRpcSessionState`: the one wire projection of a session (RPC `get_state`, `open_session`, TUI endpoint)
 host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit
 host-lifecycle-policy.ts  Cold-start / idle-exit policy resolution + the pure IdleExitDecider
