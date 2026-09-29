@@ -1,3 +1,21 @@
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: add `ultrafast` to the public ServiceTier type.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: extension contexts and provider registrations must describe the native tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: an extension cannot widen the host's public extension contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: ServiceTier union.
+
 # Core Extensions Changes
 
 ## 2026-09-29 - `listAdmittedDeliveries()` reports deliveries the session file refused

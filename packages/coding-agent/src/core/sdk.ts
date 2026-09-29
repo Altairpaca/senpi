@@ -73,6 +73,8 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Provenance for a pre-resolved CLI/scoped/legacy selector. */
 	thinkingSelection?: ThinkingSelection;
+	/** Explicit service tier for the initial model, such as a CLI model decorator. */
+	serviceTier?: ServiceTier;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{
 		model: Model<any>;
@@ -532,6 +534,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const session = new AgentSession({
 		agent,
+		serviceTier: options.serviceTier,
 		sessionManager,
 		settingsManager,
 		cwd,

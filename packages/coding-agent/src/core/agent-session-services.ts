@@ -66,6 +66,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	initialModelProvenance?: CreateAgentSessionOptions["initialModelProvenance"];
 	thinkingLevel?: ThinkingLevel;
 	thinkingSelection?: ThinkingSelection;
+	serviceTier?: ServiceTier;
 	scopedModels?: Array<{
 		model: Model<any>;
 		thinkingLevel?: ThinkingLevel;
@@ -258,6 +259,7 @@ export async function createAgentSessionFromServices(
 		initialModelProvenance: options.initialModelProvenance,
 		thinkingLevel: options.thinkingLevel,
 		thinkingSelection: options.thinkingSelection,
+		serviceTier: options.serviceTier,
 		scopedModels: options.scopedModels,
 		favoriteModels: options.favoriteModels,
 		tools: options.tools,

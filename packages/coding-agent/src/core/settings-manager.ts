@@ -102,7 +102,7 @@ export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
 
 /** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
-export type ModelServiceTier = "auto" | "flex" | "priority";
+export type ModelServiceTier = "auto" | "flex" | "priority" | "ultrafast";
 
 const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
 	"off",
@@ -114,7 +114,12 @@ const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
 	"max",
 ]);
 
-const MODEL_SERVICE_TIER_VALUES: ReadonlySet<string> = new Set<ModelServiceTier>(["auto", "flex", "priority"]);
+const MODEL_SERVICE_TIER_VALUES: ReadonlySet<string> = new Set<ModelServiceTier>([
+	"auto",
+	"flex",
+	"priority",
+	"ultrafast",
+]);
 
 /** Opaque per-model memory key. Ids may contain `/` and `:`, so keys are never split back apart. */
 function modelMemoryKey(provider: string, modelId: string): string {

@@ -407,7 +407,7 @@ export interface SimpleStreamOptions extends StreamOptions {
 }
 
 /** Tier preferences a caller can express; providers map `"auto"` to their default lane. */
-export type ServiceTierPreference = "auto" | "flex" | "priority";
+export type ServiceTierPreference = "auto" | "flex" | "priority" | "ultrafast";
 
 // Generic StreamFunction with typed options.
 //

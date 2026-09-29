@@ -29,7 +29,7 @@ export type ResolvedRequestAuth =
 			extraBody?: Record<string, unknown>;
 			baseUrl?: string;
 			upstreamModelId?: string;
-			serviceTier?: "auto" | "flex" | "priority";
+			serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 			env?: Record<string, string>;
 	  }
 	| { ok: false; error: string };
@@ -104,7 +104,7 @@ export class ModelRegistry {
 		return this.runtime.getCompatibilityRequestConfig(model).upstreamModelId;
 	}
 
-	getServiceTier(model: Model<Api>): "auto" | "flex" | "priority" | undefined {
+	getServiceTier(model: Model<Api>): "auto" | "flex" | "priority" | "ultrafast" | undefined {
 		return this.runtime.getCompatibilityRequestConfig(model).serviceTier;
 	}
 

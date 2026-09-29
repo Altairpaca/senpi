@@ -1,3 +1,21 @@
+## 2026-09-29 - Carry model tier decorators into session startup (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: retain the service tier from --model and --models through buildSessionOptions and the CLI runtime factory.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: the real CLI discarded the parsed tier even though model resolution preserved it, so an Astra Ultrafast command silently ran without that tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: this host startup boundary discarded the selection before extension contexts were created.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: initial session options and construction/forwarding calls.
+
 ## 2026-09-29 - The CLI runtime factory passes the launch profile's prompt surface (senpi#2377)
 
 ### What changed

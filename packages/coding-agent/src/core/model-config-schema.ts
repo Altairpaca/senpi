@@ -182,7 +182,9 @@ const ModelDefinitionSchema = Type.Object({
 	id: Type.String({ minLength: 1 }),
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	upstreamModelId: Type.Optional(Type.String({ minLength: 1 })),
-	serviceTier: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("flex"), Type.Literal("priority")])),
+	serviceTier: Type.Optional(
+		Type.Union([Type.Literal("auto"), Type.Literal("flex"), Type.Literal("priority"), Type.Literal("ultrafast")]),
+	),
 	promptPreset: Type.Optional(Type.String({ minLength: 1 })),
 	recoverTextToolCalls: Type.Optional(Type.Boolean()),
 	api: Type.Optional(Type.String({ minLength: 1 })),

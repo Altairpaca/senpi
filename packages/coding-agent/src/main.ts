@@ -693,6 +693,7 @@ function buildSessionOptions(
 		}
 		if (resolved.model) {
 			options.model = resolved.model;
+			options.serviceTier = resolved.serviceTier;
 			options.initialModelProvenance = "cli";
 			// Allow "--model <pattern>:<thinking>" as a shorthand.
 			// Explicit --thinking still takes precedence (applied later).
@@ -744,6 +745,7 @@ function buildSessionOptions(
 			model: sm.model,
 			thinkingLevel: sm.thinkingLevel,
 			thinkingSelection: sm.thinkingSelection,
+			serviceTier: sm.serviceTier,
 		}));
 	}
 
@@ -1017,6 +1019,7 @@ export function createCliRuntimeFactory(
 			initialModelProvenance: sessionOptions.initialModelProvenance,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			thinkingSelection: sessionOptions.thinkingSelection,
+			serviceTier: sessionOptions.serviceTier,
 			scopedModels: sessionOptions.scopedModels,
 			tools: sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,

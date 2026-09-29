@@ -371,7 +371,7 @@ For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cool
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `openai.serviceTier` | string | - | Injects OpenAI Responses `service_tier`: `"auto"`, `"flex"`, or `"priority"` |
+| `openai.serviceTier` | string | - | Injects OpenAI Responses `service_tier`: `"auto"`, `"flex"`, `"priority"`, or `"ultrafast"` |
 
 ```json
 {
@@ -611,10 +611,11 @@ provider/model-id                  # bare pattern
 provider/model-id:high             # pin reasoning to high
 provider/model-id:priority         # pin service tier to priority
 provider/model-id:priority:high    # pin both tier and level
+chatgpt-subscription/gpt-6-astra:xhigh:ultrafast # Astra Ultrafast
 claude-*:xhigh                     # glob with level pin
 ```
 
-Decorators survive favorite toggling. A `:level` pin takes precedence over the per-model memory for reasoning, and a `:priority` pin takes precedence for the service tier. Under a pin, `/fast off` notifies that fast mode is fixed by the active model selection.
+Decorators survive favorite toggling. A `:level` pin takes precedence over the per-model memory for reasoning, and a `:priority` pin takes precedence for the service tier. Under a priority pin, `/fast off` notifies that fast mode is fixed by the active model selection. An `:ultrafast` pin takes precedence over remembered Fast mode; `/fast on` and `/fast off` leave that pin in place.
 
 #### Thinking level precedence
 
@@ -632,8 +633,8 @@ The resolved level is always clamped to what the model actually supports.
 
 The service tier on outgoing requests is resolved as:
 
-1. A scoped/favorite `:priority` pin
-2. The model catalog's `compat.serviceTier`
+1. A scoped/favorite service-tier pin (such as `:priority` or `:ultrafast`)
+2. The model catalog's `serviceTier`
 3. `openai.serviceTier` (the global OpenAI setting)
 
 The per-model `modelServiceTiers` memory is not part of that resolution: it applies to ChatGPT Subscription
@@ -641,6 +642,21 @@ models only, through fast mode. It acts as the session-start default for `/fast`
 `"priority"` starts the session fast) and as an explicit `"auto"` opt-out of a catalog-inherited
 priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin the memory has no
 effect, because the pin outranks it.
+
+#### GPT-6 Astra Ultrafast
+
+Select Ultrafast independently of reasoning effort on either first-party lane:
+
+```bash
+senpi --model chatgpt-subscription/gpt-6-astra:xhigh:ultrafast
+senpi --model openai/gpt-6-astra:ultrafast:max
+```
+
+Astra supports `low`, `medium`, `high`, `xhigh`, and `max` with Ultrafast. The two decorators can appear in either order and work in `favoriteModels` and `--models` patterns too. A custom model entry can instead set `serviceTier: "ultrafast"` in `models.json`; keep its cost at Standard rates, since the adapter applies the Ultrafast multiplier. Astra Ultrafast costs 6x Standard, including cached input and long-context rates.
+
+This is an explicit request preference; availability is determined by the provider and account. Use it with GPT-6 Astra on OpenAI or ChatGPT Subscription. It does not imply support on other models or gateways. `/fast` remains the Priority toggle. Switching between Ultrafast and another tier starts a fresh WebSocket response chain while retaining the conversation.
+
+See OpenAI's [Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode) and [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra).
 
 ### Markdown
 

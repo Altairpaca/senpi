@@ -290,7 +290,7 @@ function formatOpenAIResponsesError(error: unknown): string {
 export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
@@ -1092,9 +1092,12 @@ function buildWebSocketHeaders(
 
 function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	switch (serviceTier) {
+		case "ultrafast":
+			// GPT-6 Astra Ultrafast is 6x Standard for all token classes and context tiers.
+			return 6;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -1107,7 +1110,7 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 	model: Pick<Model<"openai-responses">, "id">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);

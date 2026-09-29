@@ -1,3 +1,21 @@
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: preserve Ultrafast model pins at session start, model switch, request composition, and /fast on/off.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: Priority memory and the existing Fast toggle must not override a selected Ultrafast tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is implemented within the existing service-tier builtin, using its current host capabilities.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: applyFastMode and session_start/model_select/before_provider_request handlers.
+
 ## 2026-09-30 - Hook trust reads no longer create the project config folder (senpi#2386)
 
 ### What changed

@@ -1,3 +1,25 @@
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: accept `ultrafast` in shared request and model service-tier types.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: forward Ultrafast through simple and full Responses options and apply Astra's 6x Standard pricing; retain the Codex default-echo fallback.
+
+### Why
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: the typed public API must accept the tier before callers can select it.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: Astra Ultrafast needs the native request path and correct costs at every effort and context size.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: extensions cannot widen the exported request/model contracts.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: the adapters own request composition, shared response typing, and token accounting.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: service-tier type unions.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: request/response service-tier types and pricing switches.
+
 ## 2026-09-30 - GPT-6.1 Sol id inference: xhigh/max on, off vetoed for map-less rows (senpi#2390)
 
 ### What changed

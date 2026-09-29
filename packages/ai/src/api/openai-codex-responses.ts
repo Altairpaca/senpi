@@ -105,7 +105,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 export interface OpenAICodexResponsesOptions extends StreamOptions {
 	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: CodexReasoningSummaryInput;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	textVerbosity?: "low" | "medium" | "high";
 	toolChoice?: "auto" | "none" | "required";
 }
@@ -124,7 +124,7 @@ interface RequestBody {
 	parallel_tool_calls?: boolean;
 	temperature?: number;
 	reasoning?: ReturnType<typeof buildCodexReasoning>;
-	service_tier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
+	service_tier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
@@ -638,9 +638,12 @@ function buildRequestBody(
 
 function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-codex-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	switch (serviceTier) {
+		case "ultrafast":
+			// GPT-6 Astra Ultrafast is 6x Standard for all token classes and context tiers.
+			return 6;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -653,7 +656,7 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 	model: Pick<Model<"openai-codex-responses">, "id">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
@@ -667,12 +670,15 @@ function applyServiceTierPricing(
 }
 
 function resolveCodexServiceTier(
-	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
-	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
-): ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined {
+	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
+	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
+): ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined {
 	if (
 		responseServiceTier === "default" &&
-		(requestServiceTier === "flex" || requestServiceTier === "priority" || requestServiceTier === "fast")
+		(requestServiceTier === "flex" ||
+			requestServiceTier === "priority" ||
+			requestServiceTier === "fast" ||
+			requestServiceTier === "ultrafast")
 	) {
 		return requestServiceTier;
 	}

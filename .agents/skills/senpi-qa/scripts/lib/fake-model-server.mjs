@@ -15,6 +15,7 @@
  */
 
 import { createServer } from "node:http";
+import { zstdDecompressSync } from "node:zlib";
 import { pathToFileURL } from "node:url";
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] || "").href;
@@ -40,7 +41,8 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 		const chunks = [];
 		req.on("data", (c) => chunks.push(c));
 		req.on("end", () => {
-			const raw = Buffer.concat(chunks).toString("utf8");
+			const bytes = Buffer.concat(chunks);
+			const raw = (req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(bytes) : bytes).toString("utf8");
 			let body = {};
 			try {
 				body = raw ? JSON.parse(raw) : {};

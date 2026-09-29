@@ -147,6 +147,12 @@ export async function applyFastMode(ctx: FastModeContext, enabled: boolean): Pro
 		return { enabled: false, applied: false, recordedTier: "auto", message };
 	}
 
+	if (ctx.serviceTier === "ultrafast") {
+		const message = "Service tier is fixed to ultrafast by the active model selection.";
+		ctx.notify(message, "info");
+		return { enabled: false, applied: false, recordedTier: "ultrafast", message };
+	}
+
 	if (!enabled && hasPriorityPin(ctx, model)) {
 		// The pin outranks the memory, so writing "auto" here would be a silent no-op on the wire.
 		const message = "Fast mode is fixed by the active model selection's priority tier.";
@@ -258,9 +264,10 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		}
 
 		sessionFastMode =
-			baseModel !== undefined ||
-			remembered === PRIORITY_TIER ||
-			(remembered === undefined && ctx.serviceTier === PRIORITY_TIER);
+			ctx.serviceTier !== "ultrafast" &&
+			(baseModel !== undefined ||
+				remembered === PRIORITY_TIER ||
+				(remembered === undefined && ctx.serviceTier === PRIORITY_TIER));
 		pi.setSessionFastMode(sessionFastMode);
 		const memoryModel = resolveServiceTierMemoryModel(ctx.modelRegistry, model);
 		liveMemoryKey = `${memoryModel.provider}/${memoryModel.id}`;
@@ -283,11 +290,11 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		// there, but the session flag kept `isFastModeActive()` (and with it the RPC `fastMode` and the
 		// lightning indicator) claiming fast for a model that can never be served at that tier.
 		//
-		// Codex -> Codex is deliberately untouched: fast mode is a SESSION intent that survives a
+		// Except for an explicit Ultrafast selection, Codex -> Codex keeps the SESSION intent across a
 		// mid-session Codex switch (see service-tier-extension.test.ts "keeps session fast mode on
 		// across a mid-session switch to another Codex model"), and an incoming model's remembered
 		// "auto" is honored on the wire by `liveMemoryTier` below, not by clearing the flag here.
-		if (sessionFastMode && event.model.api !== OPENAI_CODEX_RESPONSES_API) {
+		if (sessionFastMode && (event.model.api !== OPENAI_CODEX_RESPONSES_API || ctx.serviceTier === "ultrafast")) {
 			sessionFastMode = false;
 			pi.setSessionFastMode(false);
 			return;
@@ -337,7 +344,9 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 
 	pi.on("before_provider_request", (event, ctx) => {
 		let effectiveServiceTier: ServiceTier | undefined;
-		if (ctx.model?.api === OPENAI_CODEX_RESPONSES_API) {
+		if (ctx.serviceTier === "ultrafast") {
+			effectiveServiceTier = ctx.serviceTier;
+		} else if (ctx.model?.api === OPENAI_CODEX_RESPONSES_API) {
 			if (sessionFastMode) {
 				effectiveServiceTier = PRIORITY_TIER;
 			} else {

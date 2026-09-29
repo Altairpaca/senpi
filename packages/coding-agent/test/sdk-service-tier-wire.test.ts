@@ -57,6 +57,7 @@ describe("createAgentSession request service tier without extensions", () => {
 			models: { readonly base: Model<Api>; readonly fast: Model<Api> },
 			captured: Captured,
 		) => Promise<void>,
+		serviceTier?: ServiceTier,
 	): Promise<void> {
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
 		await authStorage.modify(PROVIDER, async () => ({ type: "api_key", key: "test-api-key" }));
@@ -95,6 +96,7 @@ describe("createAgentSession request service tier without extensions", () => {
 			cwd,
 			agentDir,
 			model: base,
+			serviceTier,
 			modelRuntime: getModelRuntime(modelRegistry),
 			settingsManager: SettingsManager.inMemory({}),
 			sessionManager: SessionManager.inMemory(cwd),
@@ -118,6 +120,22 @@ describe("createAgentSession request service tier without extensions", () => {
 		await stream.result();
 		return captured.options?.serviceTier;
 	}
+
+	it.each(["openai-responses", "openai-codex-responses"] as const)(
+		"sends an initial Ultrafast tier on %s",
+		async (api) => {
+			await withSession(
+				api,
+				async (session, models, captured) => {
+					expect(session.serviceTier).toBe("ultrafast");
+					session.setSessionFastMode(true);
+					expect(session.isFastModeActive()).toBe(false);
+					expect(await requestTier(session, models.base, captured)).toBe("ultrafast");
+				},
+				"ultrafast",
+			);
+		},
+	);
 
 	it("sends the catalog priority tier of a -fast variant selected on an extension-less session", async () => {
 		await withSession("openai-codex-responses", async (session, models, captured) => {

@@ -45,7 +45,7 @@ export interface Model<TApi extends Api> {
 	 */
 	upstreamModelId?: string;
 	/** Service tier requested by default for this model (for example `-fast` variants). */
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	/** Whether to recover supported text-encoded tool calls from assistant text. */
 	recoverTextToolCalls?: boolean;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */

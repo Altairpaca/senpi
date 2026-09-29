@@ -78,7 +78,7 @@ describe("service-tier decorators", () => {
 	});
 
 	test("all tier values parse", () => {
-		for (const tier of ["auto", "flex", "priority"] as const) {
+		for (const tier of ["auto", "flex", "priority", "ultrafast"] as const) {
 			const result = parseModelPattern(`gpt-5.5:${tier}`, registryModels);
 			expect(result.model?.id).toBe("gpt-5.5");
 			expect(result.serviceTier).toBe(tier);

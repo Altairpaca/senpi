@@ -382,7 +382,7 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	};
 }
 
-const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority"];
+const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority", "ultrafast"];
 
 function isServiceTier(value: string): value is ServiceTier {
 	return (SERVICE_TIER_VALUES as readonly string[]).includes(value);

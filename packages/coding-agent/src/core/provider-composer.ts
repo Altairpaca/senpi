@@ -72,7 +72,7 @@ export interface ProviderConfigInput {
 		id: string;
 		name: string;
 		upstreamModelId?: string;
-		serviceTier?: "auto" | "flex" | "priority";
+		serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 		promptPreset?: string;
 		recoverTextToolCalls?: boolean;
 		api?: Api;
@@ -563,7 +563,7 @@ export function resolveConfiguredModelHeaders(
 export interface CompatibilityRequestConfig {
 	extraBody?: Record<string, unknown>;
 	upstreamModelId?: string;
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	authHeader: boolean;
 }
 
