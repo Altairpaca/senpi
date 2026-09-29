@@ -27,8 +27,6 @@
 - MEDIUM: `performSearch` in `websearch/search.ts` (the per-route loop now calls `searchRoute`) and `formatSearchText`.
 - LOW: the `buildNativeEntries` signature and its active-entry push in `websearch/native.ts`; the `NativeModelInfo` fields; `configFromObject` and `loadWebsearchConfig` in `websearch/config.ts`; the status handler in `index.ts`. Re-vendoring must carry `route-attempts.ts` and `search-model.ts`, or restore `providerEntryLabel` in `search.ts`.
 
-||||||| 2c578c8a2f
-
 ## 2026-09-29 - Answer-text URLs are not search sources (senpi#2337)
 
 ### What changed
