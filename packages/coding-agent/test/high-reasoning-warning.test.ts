@@ -26,6 +26,8 @@ const NON_SOL_MODEL_IDS = [
 	"gpt-6-solaris",
 	"gpt-6.1-solaris",
 	"gpt-6.1",
+	"gpt-61",
+	"gpt-611-sol",
 	"gpt-5.6-luna",
 	"gpt-5.6-luna-fast",
 	"gpt-5.6-terra",
@@ -54,6 +56,7 @@ const GPT6_SOL_MODEL_IDS = [
 	"gpt-6.1-sol-fast",
 	"openai/gpt-6.1-sol",
 	"openai/gpt-6.1-sol-pro",
+	"openai-gpt-61-sol",
 ];
 
 describe("high-reasoning-warning", () => {

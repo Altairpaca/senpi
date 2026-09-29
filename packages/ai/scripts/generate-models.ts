@@ -448,14 +448,22 @@ const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new
 ]);
 const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
 // Every GPT-6 tier id, in the order a prefixed or suffixed id is matched (gpt-6-astra-fast,
-// openai/gpt-6-sol, openai-gpt-6-luna, openai/gpt-6.1-sol). Bare "gpt-6" and "gpt-6.1" stay out so
-// an unknown sibling is not stamped with a tier it does not have.
+// openai/gpt-6-sol, openai-gpt-6-luna, openai/gpt-6.1-sol). Venice drops the point-release dot
+// (openai-gpt-61-sol, as it does for openai-gpt-56-sol), so the dotless marker is listed too.
+// Bare "gpt-6" and "gpt-6.1" stay out so an unknown sibling is not stamped with a tier it
+// does not have.
 const GPT_6_FAMILY_DEFAULT_CONTEXT_WINDOWS: ReadonlyArray<readonly [marker: string, contextWindow: number]> = [
 	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6.1-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
+	["gpt-61-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-luna", GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW],
 ];
+
+/** GPT-6.1 Sol under either id spelling: `gpt-6.1-sol` or Venice's dotless `gpt-61-sol`. */
+function isGpt61SolId(modelId: string): boolean {
+	return modelId.includes("gpt-6.1-sol") || modelId.includes("gpt-61-sol");
+}
 
 function gpt6FamilyDefaultContextWindow(modelId: string): number | undefined {
 	return GPT_6_FAMILY_DEFAULT_CONTEXT_WINDOWS.find(([marker]) => modelId.includes(marker))?.[1];
@@ -1162,7 +1170,7 @@ function applyGpt6ThinkingLevels(model: Model<Api>): void {
 		xhigh: "xhigh",
 		max: "max",
 	});
-	if (model.id.includes("gpt-6-astra") || model.id.includes("gpt-6.1-sol")) {
+	if (model.id.includes("gpt-6-astra") || isGpt61SolId(model.id)) {
 		mergeThinkingLevelMap(model, { off: null });
 	}
 }
