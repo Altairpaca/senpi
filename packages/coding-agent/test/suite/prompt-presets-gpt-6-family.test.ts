@@ -27,8 +27,9 @@ const AUTO: PromptPresetSettings = { promptPreset: "auto" };
 
 function hasGpt6SolOrLunaCatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
-	// Keep in sync with presets.ts hasGpt6FamilySignal: the optional point release covers gpt-6.1-sol.
-	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+)?[._-](?:sol|luna)(?:$|[/@:._-])/.test(searchable);
+	// Keep in sync with presets.ts hasGpt6FamilySignal: the optional point release covers gpt-6.1-sol
+	// and Venice's dotless gpt-61-sol.
+	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)?[._-](?:sol|luna)(?:$|[/@:._-])/.test(searchable);
 }
 
 function getGpt6SolAndLunaCatalogModels(): Model<Api>[] {
@@ -47,6 +48,7 @@ describe("GPT-6 Sol / 6.1 Sol / Luna prompt preset", () => {
 		{ id: "gpt-6.1-sol-fast", provider: "chatgpt-subscription", api: "openai-codex-responses" as const },
 		{ id: "openai/gpt-6.1-sol", provider: "openrouter", api: "openai-completions" as const },
 		{ id: "openai/gpt-6.1-sol-fast", provider: "vercel-ai-gateway", api: "anthropic-messages" as const },
+		{ id: "openai-gpt-61-sol", provider: "venice", api: "openai-completions" as const },
 		{ id: "GPT-6.1-Sol", provider: "custom", api: "openai-responses" as const },
 		{ id: "gpt-6-luna", provider: "openai", api: "openai-responses" as const },
 		{ id: "gpt-6-sol-fast", provider: "openai", api: "openai-responses" as const },
@@ -117,12 +119,19 @@ describe("GPT-6 Sol / 6.1 Sol / Luna prompt preset", () => {
 		},
 	);
 
-	it.each(["gpt-6", "gpt-6-mini", "gpt-6.1", "gpt-6-solaris", "gpt-6-lunar", "solar-pro", "luna-1"])(
-		"does not route %s to the GPT-6 family preset",
-		(modelId) => {
-			expect(resolvePresetName(createModel(modelId), AUTO) === "gpt-6-astra").toBe(false);
-		},
-	);
+	it.each([
+		"gpt-6",
+		"gpt-6-mini",
+		"gpt-6.1",
+		"gpt-61",
+		"gpt-611-sol",
+		"gpt-6-solaris",
+		"gpt-6-lunar",
+		"solar-pro",
+		"luna-1",
+	])("does not route %s to the GPT-6 family preset", (modelId) => {
+		expect(resolvePresetName(createModel(modelId), AUTO) === "gpt-6-astra").toBe(false);
+	});
 
 	it.each(["openai-responses", "azure-openai-responses", "openai-codex-responses"] as const)(
 		"keeps the preset and the apply_patch gate in agreement on %s for Sol and Luna",

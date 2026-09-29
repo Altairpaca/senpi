@@ -54,11 +54,13 @@ function normalizeModelId(modelId: string): string {
 // because settings.json already pins it. Id shapes verified against the OpenAI model
 // pages, codex's models.json, models.dev, OpenRouter, Vercel and Bedrock's catalog:
 // gpt-6-sol, gpt-6.1-sol, gpt-6.1-sol-fast, gpt-6-luna-fast, dated snapshots,
-// openai/gpt-6-sol, openai/gpt-6.1-sol, openai-gpt-6-luna, global.openai.gpt-6-astra, and
+// openai/gpt-6-sol, openai/gpt-6.1-sol, openai-gpt-6-luna, global.openai.gpt-6-astra, Venice's
+// dotless openai-gpt-61-sol (it spells every point release that way: openai-gpt-56-sol), and
 // the display names "GPT-6 Sol" / "GPT-6.1 Sol" / "GPT-6 Luna". Bare "gpt-6", "gpt-6.1",
-// "gpt-6-mini" and a lone tier word stay out: an unknown sibling deserves its own decision.
+// "gpt-61", "gpt-6-mini" and a lone tier word stay out: an unknown sibling deserves its own
+// decision, and the dotless form is accepted only with a single digit right after the 6.
 function hasGpt6FamilySignal(value: string): boolean {
-	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+)?[._-](?:astra|sol|luna)(?:$|[/@:._-])/.test(normalizeModelId(value));
+	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)?[._-](?:astra|sol|luna)(?:$|[/@:._-])/.test(normalizeModelId(value));
 }
 
 function isGpt6FamilyModel(model: ModelWithPromptPresetMetadata): boolean {
