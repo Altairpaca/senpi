@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Native OpenAI Responses requests no longer fail every turn with `Tool choice 'web_search' not found in 'tools' parameter.` when hosted web search replaces the `web_search` function tool ([#2234](https://github.com/code-yeongyu/senpi/issues/2234)).
+
 - Fixed Bedrock Converse requests rejecting tool schemas with root `anyOf`, `oneOf`, `allOf`, or a missing object type, while preserving parameter alternatives and strict sampling ([#1947](https://github.com/code-yeongyu/senpi/issues/1947)).
 
 - Rejected OpenAI Responses WebSocket requests now show the provider's HTTP status and error message instead of `Error Code undefined: undefined` ([#2235](https://github.com/code-yeongyu/senpi/issues/2235)).
