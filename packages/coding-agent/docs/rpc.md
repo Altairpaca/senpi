@@ -978,9 +978,20 @@ every attachment, disposes the runtime, releases the path reservation (in-proces
 in `reservations/`) and answers `{ released: true, session_path, attachments }`. From then on `list_sessions`
 no longer lists it and the handle answers `unknown_session`.
 
-- While a turn runs it is refused with `turn_active`; with `interrupt: true` the turn is aborted first and the
-  entry records `interrupted: true`. A refused release changes nothing: the turn completes and the host keeps
-  the path.
+- It hands over only a QUIET session: no agent run, no `prompt` still in preflight (its command already answered,
+  its run not started), no admitted delivery not yet written, no bash, compaction or barrier-held session work
+  (the fields the handoff park judges by), and no other request for that session in flight on any connection.
+  Otherwise it is refused, changing nothing: `turn_active` when a turn is running or about to start (`busy`
+  contains `turn`, `prompt` or `delivery`), `session_busy` for other work (`bash`, `compaction`, `session_work`,
+  `activity`, `request`); `errorData { attachments, busy: [...] }` names every signal. The refused work runs to
+  its end on the host, which keeps the path.
+- With `interrupt: true` a busy session's run and any bash are aborted (a turn that a pending prompt or delivery
+  starts meanwhile is aborted too); the release waits up to 10 s for the run to go idle, for the other requests
+  and prompts to settle - the cancelled bash is recorded then, before the release - and checks again. Still busy
+  answers the same refusal with `errorData.interrupted: true`; otherwise the entry records `interrupted: true`.
+- The final check and the close claim run in one synchronous step: a command for the session routed after it
+  finds the session closing (`session_closing`), and work started before it is seen by the check. Nothing is
+  written to the file after `session_released`.
 - While clients are attached (`attachments > 0` - e.g. a Desktop thread) it is refused with `attached` and
   `errorData { attachments }`; with `force: true` those clients receive
   `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written
@@ -1181,7 +1192,8 @@ In the response `error` field, machine-matchable:
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
 - `host_draining` (`open_session` or `release_session` on a connection whose generation is parking for a handoff; the successor already owns the public path, so re-resolve it and open or release there rather than retrying this connection)
-- `turn_active` (`release_session` while the session runs a turn, without `interrupt: true`; `errorData { attachments }`)
+- `turn_active` (`release_session` while a turn runs or is about to start - a prompt in preflight, an admitted delivery not yet written - without `interrupt: true`; `errorData { attachments, busy }`)
+- `session_busy` (`release_session` while other session work runs - bash, compaction, barrier-held work, another request for the session - without `interrupt: true`; `errorData { attachments, busy }`)
 - `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)
 - `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
@@ -2346,7 +2358,7 @@ Response:
 }
 ```
 
-Refusals carry `error` = `turn_active` (pass `"interrupt": true` to abort the turn first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `host_draining`, `session_closing` or `unknown_session`.
+Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `host_draining`, `session_closing` or `unknown_session`.
 
 ### Commands
 

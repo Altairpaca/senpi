@@ -261,8 +261,13 @@ export const RPC_ERROR_EMPTY_TEXT = "empty";
 export const RPC_ERROR_STALE_LEAF = "stale_leaf";
 /** `prompt` text was command-shaped but no command handles it; mirrors `UnknownCommandError`. */
 export const RPC_ERROR_UNKNOWN_COMMAND = "unknown_command";
-/** `release_session` while the session runs a turn, without `interrupt: true`. */
+/**
+ * `release_session` while a turn runs or is about to start (a prompt in preflight, an admitted delivery
+ * not yet written), without `interrupt: true`; `errorData.busy` names the signals.
+ */
 export const RPC_ERROR_TURN_ACTIVE = "turn_active";
+/** `release_session` while other session work runs (bash, compaction, another request for the session); `errorData.busy` names it. */
+export const RPC_ERROR_SESSION_BUSY = "session_busy";
 /** `release_session` while clients are attached, without `force: true`; `errorData.attachments` names how many. */
 export const RPC_ERROR_ATTACHED = "attached";
 /** `release_session` with a `reason` other than `takeover`. */
@@ -297,6 +302,7 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_UNKNOWN_COMMAND
 	| typeof RPC_ERROR_STALE_LEAF
 	| typeof RPC_ERROR_TURN_ACTIVE
+	| typeof RPC_ERROR_SESSION_BUSY
 	| typeof RPC_ERROR_ATTACHED
 	| typeof RPC_ERROR_INVALID_RELEASE_REASON
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED

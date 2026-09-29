@@ -136,6 +136,11 @@ export interface RpcConnectionHandler {
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
 	/**
+	 * `prompt` calls this handler started that have not settled. The command answers before the
+	 * prompt's preflight ends, so this is the only record of a prompt that has not started its run yet.
+	 */
+	pendingPrompts(): readonly Promise<unknown>[];
+	/**
 	 * True once an extension requested shutdown via the shutdown handler. The
 	 * host polls this after each command and decides how to tear down.
 	 */
@@ -255,6 +260,7 @@ export function createRpcConnectionHandler(
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
 	let sessionControl: HostSessionControl | undefined;
+	const promptCalls = new Set<Promise<unknown>>();
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let unsubscribeLoadedSurfaces: (() => void) | undefined;
@@ -937,7 +943,7 @@ export function createRpcConnectionHandler(
 				// strictly before preflightResult(true), so the success frame carries the final value.
 				let preflightSucceeded = false;
 				let disposition: PromptDisposition | undefined;
-				void session
+				const promptCall = session
 					.prompt(command.message, {
 						images: command.images,
 						streamingBehavior: command.streamingBehavior,
@@ -971,6 +977,8 @@ export function createRpcConnectionHandler(
 						}
 						output(error(id, "prompt", e.message));
 					});
+				promptCalls.add(promptCall);
+				void promptCall.finally(() => promptCalls.delete(promptCall));
 				return undefined;
 			}
 
@@ -1745,6 +1753,9 @@ export function createRpcConnectionHandler(
 		async handleInputLine(line: string) {
 			await ready;
 			await handleInputLine(line);
+		},
+		pendingPrompts() {
+			return [...promptCalls];
 		},
 		isShutdownRequested() {
 			return shutdownRequested;

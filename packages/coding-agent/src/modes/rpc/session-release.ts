@@ -9,18 +9,26 @@
  * records which host let go of it and when. Clients still attached (only with `force`) receive
  * `session_closed { reason: "released" }`, which tells them NOT to reopen the path here.
  *
- * Refused, with nothing changed, while a turn runs (`turn_active`, unless `interrupt`: the turn is
- * aborted first), while clients are attached (`attached`, unless `force`), and for a session this
- * host cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or the session has
- * no file). From the last check to the close claim nothing awaits, so no command can start a turn or
- * attach in between.
+ * A session is released only when it is QUIET: no agent run, no prompt still in preflight, no admitted
+ * delivery waiting to be written, no bash, compaction or barrier-held session work (the fields the
+ * handoff park judges by), and no other request for the session in flight on any connection. Anything
+ * else would write the file after the new writer took it. Busy is refused with nothing changed -
+ * `turn_active` when a turn is running or about to start, `session_busy` for other work, both naming
+ * the signals in `errorData.busy` - unless `interrupt` is set: then the run and any bash are aborted,
+ * the release waits (bounded) for the run to go idle and for the other requests and prompts to
+ * settle, and checks again. The last check and the close claim run in one synchronous step, so a
+ * command routed after it finds the session closing, and work started before it is seen by it.
+ * Also refused while clients are attached (`attached`, unless `force`) and for a session this host
+ * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
 	RPC_ERROR_HOST_DRAINING,
 	RPC_ERROR_INVALID_RELEASE_REASON,
 	RPC_ERROR_RELEASE_UNSUPPORTED,
+	RPC_ERROR_SESSION_BUSY,
 	RPC_ERROR_SESSION_CLOSING,
 	RPC_ERROR_TURN_ACTIVE,
 	type RpcCommand,
@@ -31,15 +39,33 @@ import type { RpcSessionEntry } from "./session-registry.ts";
 /** `customType` of the transcript entry a release appends. */
 export const SESSION_RELEASED_ENTRY_TYPE = "session_released";
 
+/** How long an `interrupt` release waits for the aborted work to settle before it re-checks. */
+export const RELEASE_SETTLE_MS = 10_000;
+
 export type ReleaseSessionCommand = Extract<RpcCommand, { type: "release_session" }>;
 
-/** What the router lends a release: its lookup, its state, and the teardown it runs for a park. */
+export type ReleaseBusySignal =
+	| "turn"
+	| "prompt"
+	| "delivery"
+	| "bash"
+	| "compaction"
+	| "session_work"
+	| "activity"
+	| "request";
+
+/** What the router lends a release: its lookup, its request accounting, and the park teardown. */
 export interface SessionReleasePort {
 	readonly draining: () => boolean;
 	readonly hostInstance: string | undefined;
 	/** The live entry, or a throw carrying the wire code (`unknown_session`, `session_closing`). */
 	lookup(sessionId: string): RpcSessionEntry;
 	code(cause: unknown): string;
+	/** Requests for the session in flight on any connection, the release itself not counted. */
+	otherRequests(sessionId: string): number;
+	otherRequestsSettled(sessionId: string): Promise<void>;
+	/** `prompt` calls the session's binding started that have not settled, preflight included. */
+	pendingPrompts(sessionId: string): readonly Promise<unknown>[];
 	/**
 	 * Claims every attachment and tears the session down, sealing it as released. Its claim is taken
 	 * before its first await. `false` when another close already owns the entry.
@@ -60,14 +86,18 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	if (port.draining()) return refuse(RPC_ERROR_HOST_DRAINING);
 	const first = releasable(port, command);
 	if (!("session" in first)) return first;
-	const interrupted = first.session.isStreaming;
+	const busy = busySignals(port, command.sessionId, first.session);
+	const interrupted = busy.length > 0;
 	if (interrupted) {
-		if (command.interrupt !== true) return refuse(RPC_ERROR_TURN_ACTIVE, { attachments: first.attachments });
-		await first.session.abort();
+		if (command.interrupt !== true) return refuse(busyCode(busy), { attachments: first.attachments, busy });
+		await interruptAndSettle(port, command.sessionId, first.session);
 	}
 	const ready = releasable(port, command);
 	if (!("session" in ready)) return ready;
-	if (ready.session.isStreaming) return refuse(RPC_ERROR_TURN_ACTIVE, { attachments: ready.attachments });
+	const stillBusy = busySignals(port, command.sessionId, ready.session);
+	if (stillBusy.length > 0) {
+		return refuse(busyCode(stillBusy), { attachments: ready.attachments, busy: stillBusy, interrupted });
+	}
 	const manager = ready.session.sessionManager;
 	manager.persistHeaderNow();
 	manager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
@@ -85,6 +115,52 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		success: true,
 		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments },
 	};
+}
+
+function busySignals(port: SessionReleasePort, sessionId: string, session: AgentSession): ReleaseBusySignal[] {
+	const activity = session.activitySnapshot;
+	const signals: ReleaseBusySignal[] = [];
+	if (activity.isStreaming) signals.push("turn");
+	if (port.pendingPrompts(sessionId).length > 0) signals.push("prompt");
+	if (session.externalAdmission.list().pending.length > 0) signals.push("delivery");
+	if (activity.isBashRunning) signals.push("bash");
+	if (activity.isCompacting) signals.push("compaction");
+	if (activity.hasSessionWork) signals.push("session_work");
+	// The handoff park's predicate decides; a source added to it later is not missed here.
+	if (signals.length === 0 && isHandoffBusy(activity)) signals.push("activity");
+	if (port.otherRequests(sessionId) > 0) signals.push("request");
+	return signals;
+}
+
+function busyCode(signals: readonly ReleaseBusySignal[]): string {
+	return signals.some((signal) => signal === "turn" || signal === "prompt" || signal === "delivery")
+		? RPC_ERROR_TURN_ACTIVE
+		: RPC_ERROR_SESSION_BUSY;
+}
+
+async function interruptAndSettle(port: SessionReleasePort, sessionId: string, session: AgentSession): Promise<void> {
+	session.abortBash();
+	// A prompt still in preflight, or an admitted delivery, may start its run after the abort below.
+	const stopStarts = session.subscribe((event) => {
+		if (event.type === "agent_start") void session.abort();
+	});
+	let deadline: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<void>((resolve) => {
+		deadline = setTimeout(resolve, RELEASE_SETTLE_MS);
+	});
+	try {
+		await Promise.race([
+			Promise.allSettled([
+				session.abort().then(() => session.waitForIdle()),
+				port.otherRequestsSettled(sessionId),
+				...port.pendingPrompts(sessionId),
+			]),
+			expired,
+		]);
+	} finally {
+		clearTimeout(deadline);
+		stopStarts();
+	}
 }
 
 function releasable(port: SessionReleasePort, command: ReleaseSessionCommand): Releasable | RpcResponse {
