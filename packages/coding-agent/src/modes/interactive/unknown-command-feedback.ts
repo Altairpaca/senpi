@@ -6,31 +6,9 @@ export function submitsCommandAsText(text: string, details: EditorSubmitDetails 
 	return text.startsWith("/") && details !== undefined && /^\s/.test(details.rawText);
 }
 
-/**
- * Remembers the text of the last refused unknown command, so submitting that same text again is the
- * user's deliberate confirmation to send it as a message. Any other submission, or Esc, forgets it.
- */
-export class UnknownCommandConfirmation {
-	private refusedText: string | undefined;
-
-	arm(text: string): void {
-		this.refusedText = text;
-	}
-
-	disarm(): void {
-		this.refusedText = undefined;
-	}
-
-	confirms(text: string): boolean {
-		const confirmed = this.refusedText === text;
-		this.refusedText = undefined;
-		return confirmed;
-	}
-}
-
 export interface UnknownCommandFeedbackTarget {
 	readonly editor: { getText(): string; setText(text: string): void };
-	readonly confirmation: UnknownCommandConfirmation;
+	armConfirmation(text: string): void;
 	readonly confirmHint: string;
 	showWarning(message: string): void;
 }
@@ -47,7 +25,7 @@ export function reportUnknownCommand(
 ): boolean {
 	if (!(error instanceof UnknownCommandError)) return false;
 	if (target.editor.getText().trim() === "") target.editor.setText(submittedText);
-	target.confirmation.arm(submittedText);
+	target.armConfirmation(submittedText);
 	target.showWarning(`${error.message}\n${target.confirmHint}`);
 	return true;
 }

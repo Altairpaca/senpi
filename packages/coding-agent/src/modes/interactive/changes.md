@@ -39,7 +39,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the submit handler and `handleFollowUp` send a submission as text (`unknownCommandAsText`) when it repeats the text of the last refused unknown command; the default editor's `onEscape` forgets that refusal first. `reportUnknownCommandRejection` adds a line built from the configured `tui.input.submit` and `app.interrupt` keys ("Enter again sends it as a message; Esc keeps editing.", without the Esc part while the agent is streaming, where Esc interrupts).
-- `packages/coding-agent/src/modes/interactive/unknown-command-feedback.ts` (fork-only): `UnknownCommandConfirmation` remembers the refused text; `reportUnknownCommand` arms it and appends the confirm hint.
+- `packages/coding-agent/src/modes/interactive/unknown-command-feedback.ts` (fork-only): `reportUnknownCommand` arms the confirmation through the target's `armConfirmation` and appends the confirm hint. The refused text lives in the plain `refusedUnknownCommandText` field, read and cleared by the static `confirmsRefusedUnknownCommand`, so handlers driven on hand-built test contexts keep working.
 
 ### Why
 

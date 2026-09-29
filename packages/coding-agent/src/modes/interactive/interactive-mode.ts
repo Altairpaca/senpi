@@ -288,7 +288,7 @@ import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
-import { reportUnknownCommand, submitsCommandAsText, UnknownCommandConfirmation } from "./unknown-command-feedback.ts";
+import { reportUnknownCommand, submitsCommandAsText } from "./unknown-command-feedback.ts";
 import { formatDisplayVersion } from "./version-label.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
@@ -898,6 +898,12 @@ function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => C
 }
 
 export class InteractiveMode {
+	private static confirmsRefusedUnknownCommand(host: InteractiveMode, text: string): boolean {
+		const confirmed = host.refusedUnknownCommandText === text;
+		host.refusedUnknownCommandText = undefined;
+		return confirmed;
+	}
+
 	private static restoreCompactionEscapeOverride(host: InteractiveMode): void {
 		if (!host.compactionEscapeOverrideActive) return;
 		host.defaultEditor.onEscape = host.autoCompactionEscapeHandler;
@@ -984,7 +990,8 @@ export class InteractiveMode {
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
-	private readonly unknownCommandConfirmation = new UnknownCommandConfirmation();
+	/** The last refused unknown-command text; submitting it again unchanged sends it as a message. */
+	private refusedUnknownCommandText: string | undefined;
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
@@ -4534,7 +4541,7 @@ export class InteractiveMode {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
-			this.unknownCommandConfirmation.disarm();
+			this.refusedUnknownCommandText = undefined;
 			if (this.session.isStreaming || this.session.retryAttempt > 0) {
 				void this.abortAndFireQueuedMessages().catch((error) =>
 					this.showError(error instanceof Error ? error.message : String(error)),
@@ -4812,7 +4819,7 @@ export class InteractiveMode {
 				this.lastEditorText = "";
 				text = text.trim();
 				const unknownCommandAsText =
-					this.unknownCommandConfirmation.confirms(text) || submitsCommandAsText(text, details);
+					InteractiveMode.confirmsRefusedUnknownCommand(this, text) || submitsCommandAsText(text, details);
 				if (!text) {
 					// Enter on an empty editor opens the pending async question; it needs
 					// no chord, so it works under every terminal and keymap.
@@ -6767,7 +6774,7 @@ export class InteractiveMode {
 				this.queueCompactionSubmission(
 					text,
 					"followUp",
-					this.unknownCommandConfirmation.confirms(text) || unknownCommandAsText,
+					InteractiveMode.confirmsRefusedUnknownCommand(this, text) || unknownCommandAsText,
 				);
 			}
 			return;
@@ -6793,7 +6800,7 @@ export class InteractiveMode {
 				return;
 			}
 			const pendingEchoId = this.beginUserEcho(text, images);
-			const followUpAsText = this.unknownCommandConfirmation.confirms(text) || unknownCommandAsText;
+			const followUpAsText = InteractiveMode.confirmsRefusedUnknownCommand(this, text) || unknownCommandAsText;
 			try {
 				await this.session.prompt(text, {
 					streamingBehavior: "followUp",
@@ -7209,7 +7216,9 @@ export class InteractiveMode {
 		const sendAgain = `${keyDisplayText("tui.input.submit")} again sends it as a message`;
 		return reportUnknownCommand(error, submittedText, {
 			editor: this.editor,
-			confirmation: this.unknownCommandConfirmation,
+			armConfirmation: (text) => {
+				this.refusedUnknownCommandText = text;
+			},
 			confirmHint: this.session.isStreaming
 				? `${sendAgain}.`
 				: `${sendAgain}; ${keyDisplayText("app.interrupt")} keeps editing.`,

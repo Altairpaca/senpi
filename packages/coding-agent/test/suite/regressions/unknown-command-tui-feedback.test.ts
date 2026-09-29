@@ -2,7 +2,6 @@ import type { EditorSubmitDetails } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { UnknownCommandError } from "../../../src/core/unknown-command.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
-import { UnknownCommandConfirmation } from "../../../src/modes/interactive/unknown-command-feedback.ts";
 
 vi.mock("../../../src/utils/version-check.ts", () => ({
 	checkForNewPiVersion: vi.fn(async () => undefined),
@@ -37,7 +36,7 @@ type SubmitContext = {
 	takeSubmissionImages(text: string): unknown[];
 	beginUserEcho(text: string): string | undefined;
 	optimisticUserEchoes: { promptOptions(): object; reject: ReturnType<typeof vi.fn> };
-	unknownCommandConfirmation: UnknownCommandConfirmation;
+	refusedUnknownCommandText?: string | undefined;
 	reportUnknownCommandRejection?: (error: unknown, text: string) => boolean;
 };
 
@@ -82,7 +81,6 @@ function createContext(options: { streaming: boolean; prompt?: () => Promise<voi
 		takeSubmissionImages: () => [],
 		beginUserEcho: () => "echo-1",
 		optimisticUserEchoes: { promptOptions: () => ({}), reject: vi.fn() },
-		unknownCommandConfirmation: new UnknownCommandConfirmation(),
 	};
 	context.reportUnknownCommandRejection = (error, text) =>
 		prototype.reportUnknownCommandRejection.call(context, error, text);
@@ -189,7 +187,7 @@ describe("unknown command feedback in the interactive editor", () => {
 		await context.defaultEditor.onSubmit?.("/ulw-exec plan", { rawText: "/ulw-exec plan" });
 
 		prototype.reportUnknownCommandRejection.call(context, rejection, "/ulw-exec plan");
-		context.unknownCommandConfirmation.disarm();
+		context.refusedUnknownCommandText = undefined;
 		await context.defaultEditor.onSubmit?.("/ulw-exec plan", { rawText: "/ulw-exec plan" });
 
 		expect(context.pendingUserInputs.map((input) => input.unknownCommandAsText)).toEqual([
