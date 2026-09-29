@@ -755,6 +755,9 @@ visible `I read this as ...` routing line, and tells the agent that tool and hoo
 language-server availability, internal notices) is for it to act on, not to report unless it changes the result.
 `chat` (a chat bridge that posts each reply to people in a conversation) takes every `app` rule and also drops the
 handoff block and todo/ledger lines: the reply is the answer itself, and the todo tool emits no "Handoff due" cue.
+As a backstop, the `chat-reply-scrub` builtin removes a leading routing line, a handoff block and todo-ledger lines
+from each finalized assistant message on `chat` before it is emitted or persisted; streamed `message_update` deltas are
+not rewritten.
 
 A multi-session host decides the surface per session: `open_session.promptSurface: "terminal" | "app" | "chat"` builds that
 session's prompt for the named surface, so one host serves a terminal client and an app client at once. An omitted field
