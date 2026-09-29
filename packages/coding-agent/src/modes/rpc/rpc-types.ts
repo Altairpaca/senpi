@@ -395,6 +395,7 @@ export interface RpcAuthStatus {
 		| "models_json_headers"
 		| "extension_headers";
 	label?: string;
+	ambient?: true;
 }
 
 /** Account-slot metadata safe to send to desktop clients. */
