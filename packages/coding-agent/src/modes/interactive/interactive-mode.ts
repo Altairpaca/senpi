@@ -70,6 +70,7 @@ import {
 	getShareViewerUrl,
 } from "../../config.ts";
 import {
+	type AgentSession,
 	type AgentSessionEvent,
 	type AssistantEditResult,
 	parseSkillBlock,
@@ -228,7 +229,6 @@ import { expandEditorSubmission, expandSubmittedText, transferEditorContent } fr
 import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
 import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
-import type { InteractiveSession } from "./interactive-host-runtime.ts";
 import {
 	prepareInteractiveStderrCapture,
 	restoreInteractiveStderr,
@@ -820,59 +820,10 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 }
 
-/** Extension UI request forwarded from the shared interactive host. */
-type HostUiRequest = {
-	id: string;
-	method: string;
-	title?: string;
-	options?: string[];
-	message?: string;
-	prefill?: string;
-	placeholder?: string;
-	statusKey?: string;
-	statusText?: string;
-	widgetKey?: string;
-	widgetLines?: string[];
-	widgetPlacement?: "aboveEditor" | "belowEditor";
-	extensionName?: string;
-	text?: string;
-	requestId?: string;
-	toolCallId?: string;
-	waitForAnswer?: boolean;
-	questions?: QuestionRequest["questions"];
-	timeout?: number;
-	askedAtMs?: number;
-	deadlineAtMs?: number;
-	remainingMs?: number;
-};
-
-type HostUiResponse =
-	| { type: "extension_ui_response"; id: string; value: string }
-	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true }
-	| { type: "extension_ui_response"; id: string; answers: QuestionResponse["answers"]; comment?: string };
-
-/**
- * Optional runtime capability: only the shared interactive host proxies extension
- * UI requests back to this mode. The classic local runtime does not implement it.
- */
-type HostUiCapableRuntime = {
-	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
-	setClientInfo?(width: number): void;
-	/** Draft updates for an open host-side `question` request (debounced by the caller). */
-	sendHostUiProgress?(record: {
-		type: "extension_ui_progress";
-		id: string;
-		answers?: QuestionResponse["answers"];
-		comment?: string;
-	}): void;
-};
-
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
 	onProgress?: (draft: QuestionDraft) => void;
 	getDeadlineAtMs?: () => number;
 	initialDraft?: QuestionDraft;
-	notifyArrival?: boolean;
 };
 
 /** A waitForAnswer=false question parked behind the collapsed editor widget. */
@@ -887,15 +838,6 @@ type AsyncQuestionState = {
 	draft: QuestionDraft;
 	finish: (response: QuestionResponse) => void;
 };
-
-function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => Component) | undefined {
-	if (lines === undefined) return undefined;
-	return () => {
-		const container = new Container();
-		for (const line of lines) container.addChild(new Text(line, 1, 0));
-		return container;
-	};
-}
 
 export class InteractiveMode {
 	private static confirmsRefusedUnknownCommand(host: InteractiveMode, text: string): boolean {
@@ -1086,7 +1028,6 @@ export class InteractiveMode {
 	private shownQuestionId: string | undefined;
 	private questionSurface: "collapsed" | "list" | "expanded" = "collapsed";
 	private composerDestination: { kind: "chat" } | { kind: "answer"; requestId: string } = { kind: "chat" };
-	private readonly questionArrivalEpochMs = Date.now();
 	private blockingQuestionHeader: string | undefined;
 	private wantsMouseLease = false;
 	private releaseMouseLease?: () => void;
@@ -1126,9 +1067,7 @@ export class InteractiveMode {
 	private themeController: InteractiveThemeController;
 
 	// Convenience accessors
-	// The session may be the local AgentSession or the shared-host RPC proxy; the
-	// four reads widened on InteractiveSession must be awaited at every call site.
-	private get session(): InteractiveSession {
+	private get session(): AgentSession {
 		return this.runtimeHost?.session;
 	}
 	private get sessionManager() {
@@ -1153,10 +1092,6 @@ export class InteractiveMode {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			await this.themeController.applyFromSettings();
 		});
-		// Host-driven extension UI only exists on the shared-host lane; the classic
-		// local runtime renders extension UI in-process and has no such hook.
-		const hostUiRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
-		hostUiRuntime.setHostUiHandler?.((request) => this.handleHostUiRequest(request as HostUiRequest));
 		this.version = DISPLAY_VERSION;
 		this.renderer = createInteractiveTui({
 			tuiMode,
@@ -1343,8 +1278,7 @@ export class InteractiveMode {
 		const thinkingCommand = slashCommands.find((command) => command.name === "thinking");
 		if (thinkingCommand) {
 			thinkingCommand.getArgumentCompletions = async (prefix: string): Promise<AutocompleteItem[] | null> => {
-				// Awaited at the boundary: the shared-host proxy answers this over RPC.
-				const levels = await this.session.getAvailableThinkingLevels();
+				const levels = this.session.getAvailableThinkingLevels();
 				return createFuzzyAutocompleteItems(
 					levels,
 					prefix,
@@ -1634,7 +1568,6 @@ export class InteractiveMode {
 			throw error;
 		}
 		this.isInitialized = true;
-		(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
 		time("componentTree+uiStart", "tui");
 
 		await this.themeController.applyFromSettings();
@@ -2944,127 +2877,6 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleHostUiRequest(request: HostUiRequest): Promise<HostUiResponse | undefined> {
-		switch (request.method) {
-			case "select": {
-				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-					this.showExtensionSelector(request.title ?? "", request.options ?? []),
-				);
-				return value === undefined
-					? { type: "extension_ui_response", id: request.id, cancelled: true }
-					: { type: "extension_ui_response", id: request.id, value };
-			}
-			case "confirm":
-				return {
-					type: "extension_ui_response",
-					id: request.id,
-					confirmed: await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-						this.showExtensionConfirm(request.title ?? "", request.message ?? ""),
-					),
-				};
-			case "input": {
-				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-					this.showExtensionInput(request.title ?? "", request.placeholder),
-				);
-				return value === undefined
-					? { type: "extension_ui_response", id: request.id, cancelled: true }
-					: { type: "extension_ui_response", id: request.id, value };
-			}
-			case "editor": {
-				const value = await this.withBlockedHostDialog(request.id, request.title ?? "", () =>
-					this.showExtensionEditor(request.title ?? "", request.prefill),
-				);
-				return value === undefined
-					? { type: "extension_ui_response", id: request.id, cancelled: true }
-					: { type: "extension_ui_response", id: request.id, value };
-			}
-			case "question": {
-				const questions = request.questions ?? [];
-				if (questions.length === 0) {
-					return { type: "extension_ui_response", id: request.id, cancelled: true };
-				}
-				const remainingMs =
-					request.remainingMs !== undefined && request.remainingMs > 0 ? request.remainingMs : request.timeout;
-				const hostRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
-				let progressTimer: ReturnType<typeof setTimeout> | undefined;
-				let lastDraft: { answers?: QuestionResponse["answers"]; comment?: string } | undefined;
-				const waitForAnswer = request.waitForAnswer ?? true;
-				// Async questions collapse into the editor widget; the host delivers the answer.
-				const show = waitForAnswer ? this.showQuestionOverlay : this.showAsyncQuestion;
-				const response = await show.call(
-					this,
-					{
-						requestId: request.requestId ?? "",
-						questions,
-						waitForAnswer,
-						timeoutMs: request.timeout ?? 0,
-					},
-					{
-						timeout: remainingMs,
-						notifyArrival: request.askedAtMs === undefined || request.askedAtMs >= this.questionArrivalEpochMs,
-						onProgress: (draft) => {
-							lastDraft = draft;
-							if (progressTimer !== undefined) return;
-							progressTimer = setTimeout(() => {
-								progressTimer = undefined;
-								hostRuntime.sendHostUiProgress?.({
-									type: "extension_ui_progress",
-									id: request.id,
-									...(lastDraft?.answers !== undefined ? { answers: lastDraft.answers } : {}),
-									...(lastDraft?.comment !== undefined ? { comment: lastDraft.comment } : {}),
-								});
-							}, 1_000);
-						},
-					},
-				);
-				if (progressTimer !== undefined) clearTimeout(progressTimer);
-				if (response.status === "cancelled") {
-					return { type: "extension_ui_response", id: request.id, cancelled: true };
-				}
-				// The host owns the idle timer; a locally expired countdown sends nothing.
-				if (response.status === "timed_out") return undefined;
-				return {
-					type: "extension_ui_response",
-					id: request.id,
-					answers: response.answers,
-					...(response.comment !== undefined ? { comment: response.comment } : {}),
-				};
-			}
-			case "notify":
-				this.showExtensionNotify(request.message ?? "");
-				return undefined;
-			case "setStatus":
-				this.setExtensionStatus(request.statusKey ?? "", request.statusText);
-				return undefined;
-			case "setTitle":
-				this.extensionTerminalTitle = request.title ?? "";
-				this.applyTerminalTitle();
-				return undefined;
-			case "set_editor_text":
-				this.editor.setText(request.text ?? "");
-				return undefined;
-			case "setWidget":
-				this.setExtensionWidget(request.widgetKey ?? "", request.widgetLines, {
-					placement: request.widgetPlacement,
-				});
-				return undefined;
-			case "setHeader":
-				this.setExtensionHeader(linesFactory(request.widgetLines));
-				return undefined;
-			case "setFooter":
-				this.setExtensionFooter(linesFactory(request.widgetLines));
-				return undefined;
-			case "custom_unsupported":
-				this.showExtensionNotify(
-					`${request.extensionName ?? "This extension"} requires the classic TUI; its component widget cannot be rendered in the shared host.`,
-					"warning",
-				);
-				return undefined;
-			default:
-				return undefined;
-		}
-	}
-
 	/**
 	 * Set extension status text in the footer.
 	 */
@@ -3969,8 +3781,7 @@ export class InteractiveMode {
 
 			this.blockingQuestionHeader = request.questions[0]?.header;
 			this.applyTerminalTitle();
-			if (opts?.notifyArrival !== false && this.settingsManager.getAskUserSettings().bell)
-				this.ui.terminal.write("\x07");
+			if (this.settingsManager.getAskUserSettings().bell) this.ui.terminal.write("\x07");
 			this.workingMessage = "Waiting for your answer";
 			this.updateWorkingIndicatorMessage();
 			this.askUserQuestion = new AskUserQuestionComponent(request, (response) => finish(response), {
@@ -4050,8 +3861,7 @@ export class InteractiveMode {
 		this.pendingQuestions.set(request.requestId, state);
 		this.pendingOrder.push(request.requestId);
 		this.shownQuestionId ??= request.requestId;
-		if (opts?.notifyArrival !== false && this.settingsManager.getAskUserSettings().bell)
-			this.ui.terminal.write("\x07");
+		if (this.settingsManager.getAskUserSettings().bell) this.ui.terminal.write("\x07");
 		opts?.signal?.addEventListener("abort", onAbort, { once: true });
 		this.refreshAsyncWidget();
 		return completion.promise;
@@ -5611,8 +5421,7 @@ export class InteractiveMode {
 			}
 
 			case "model_changed":
-				// Shared-host/other-client model switches arrive as model_changed wire
-				// events; the new model must not inherit the previous model's
+				// The new model must not inherit the previous model's
 				// SDK-delegation episode (post-#1188 core emits no repeat rejection to
 				// self-heal a stale marker).
 				this.externalOwnerCompactionNoticeShown = false;
@@ -6647,14 +6456,6 @@ export class InteractiveMode {
 			signals.push("SIGHUP");
 		}
 
-		if (process.platform !== "win32") {
-			const resizeHandler = () => {
-				(this.runtimeHost as Partial<HostUiCapableRuntime> | undefined)?.setClientInfo?.(this.ui.terminal.columns);
-			};
-			process.on("SIGWINCH", resizeHandler);
-			this.signalCleanupHandlers.push(() => process.off("SIGWINCH", resizeHandler));
-		}
-
 		for (const signal of signals) {
 			const handler = () => {
 				// SIGHUP no longer hard-exits: graceful shutdown emits session_shutdown
@@ -6854,11 +6655,9 @@ export class InteractiveMode {
 	}
 
 	private async cycleThinkingLevel(): Promise<void> {
-		// The shared-host proxy answers this over RPC. The level itself is rendered
-		// from the thinking_level_changed event (single path for local and remote,
-		// and for changes made by OTHER attached clients); the awaited value only
-		// distinguishes "model does not support thinking".
-		const newLevel = await this.session.cycleThinkingLevel();
+		// The level itself is rendered from the thinking_level_changed event; the
+		// returned value only distinguishes "model does not support thinking".
+		const newLevel = this.session.cycleThinkingLevel();
 		if (newLevel === undefined) {
 			this.showStatus("Current model does not support thinking");
 		}
@@ -7484,8 +7283,7 @@ export class InteractiveMode {
 	}
 
 	private async showSettingsSelector(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const availableThinkingLevels = await this.session.getAvailableThinkingLevels();
+		const availableThinkingLevels = this.session.getAvailableThinkingLevels();
 		this.showSelector((done) => {
 			let selector: SettingsSelectorComponent | undefined;
 			selector = new SettingsSelectorComponent(
@@ -7752,8 +7550,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const availableLevels = await this.session.getAvailableThinkingLevels();
+		const availableLevels = this.session.getAvailableThinkingLevels();
 		const normalized = searchTerm.trim().toLowerCase();
 		const level = availableLevels.find((candidate) => candidate.toLowerCase() === normalized);
 		if (!level) {
@@ -7781,8 +7578,7 @@ export class InteractiveMode {
 	}
 
 	private async showThinkingSelector(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const availableLevels = await this.session.getAvailableThinkingLevels();
+		const availableLevels = this.session.getAvailableThinkingLevels();
 		this.showSelector((done) => {
 			const selectLevel = (level: ThinkingLevel, persist: boolean) => {
 				this.selectThinkingLevel(level, persist);
@@ -8232,8 +8028,7 @@ export class InteractiveMode {
 	}
 
 	private async showUserMessageSelector(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const userMessages = await this.session.getUserMessagesForForking();
+		const userMessages = this.session.getUserMessagesForForking();
 
 		if (userMessages.length === 0) {
 			this.showStatus("No messages to fork from");
@@ -9541,8 +9336,7 @@ export class InteractiveMode {
 	}
 
 	private async handleSessionCommand(): Promise<void> {
-		// Awaited at the boundary: the shared-host proxy answers this over RPC.
-		const stats = await this.session.getSessionStats();
+		const stats = this.session.getSessionStats();
 		const sessionName = this.session.sessionName;
 		const entries = this.sessionManager.getEntries();
 		const cacheWaste = computeCacheWaste(entries, this.session.modelRuntime);

@@ -48,10 +48,6 @@ const DEFERRED_SPECIFIERS = [
 const FORBIDDEN_SUBGRAPHS = [
 	{ pattern: /\/dist\/modes\/rpc\/multi-session-host\.js$/u, owner: "--mode rpc --multi-session" },
 	{ pattern: /\/dist\/package-manager-cli\.js$/u, owner: "the package-manager commands" },
-	{
-		pattern: /\/dist\/modes\/interactive\/interactive-host-runtime\.js$/u,
-		owner: "nothing: interactive launches no longer join a shared host",
-	},
 ] as const;
 
 const APP_SERVER_SUBGRAPH = /\/dist\/modes\/app-server\//u;
