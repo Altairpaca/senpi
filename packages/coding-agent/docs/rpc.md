@@ -1068,7 +1068,8 @@ no longer lists it and the handle answers `unknown_session`.
   `interrupt`) lists what the interrupt took out of the queues: `deliveries` are the ids of admitted deliveries
   that were never written - they are no longer in the session's ledger and not on disk, so their sender delivers
   them again to the next owner - and `user_messages` is the user's queued steer and follow-up text in enqueue
-  order, which the caller puts back into the next editor (`omo daemon adopt` does).
+  order. The host only hands them back; what the adopting client does with them is its own decision (for example,
+  resubmit them in order as queued prompts).
 - The final check, closing external admission and the close claim run in one synchronous step: a command for the
   session routed after it finds the session closing (`session_closing`); a drain pass still running admits
   nothing more (`pi.session.admitExternalMessage` throws, the delivery stays with its sender); and work started
@@ -2451,7 +2452,7 @@ Response:
 }
 ```
 
-`dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner and restore `user_messages` into its editor.
+`dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner, and hand `user_messages` to the adopting client, which decides what to do with them (for example, resubmit them in order as queued prompts).
 
 Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
 

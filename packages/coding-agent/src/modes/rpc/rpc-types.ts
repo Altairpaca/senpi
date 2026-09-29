@@ -635,7 +635,7 @@ export type RpcResponse =
 			/**
 			 * `attachments`: clients that were still attached (non-zero only with `force`). `dropped`: what an
 			 * `interrupt` took out of the queues - delivery ids their sender must redeliver to the next owner,
-			 * and the user's queued steer/follow-up text in enqueue order, to put back into the next editor.
+			 * and the user's queued steer/follow-up text in enqueue order, for the adopting client to handle.
 			 */
 			data: {
 				released: true;
