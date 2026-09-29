@@ -116,6 +116,7 @@ export function streamAnthropicSubscription(
 						kind: "disabled",
 						reason: providerSettings.resumeMode === "off" ? "resume_mode_off" : "registry_miss",
 					},
+					options.sessionId,
 					recordContinuity,
 				);
 			}
