@@ -1,3 +1,21 @@
+## 2026-09-29 - Together's default model is Kimi K3 (senpi#2321)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.together` moves from `moonshotai/Kimi-K2.6` to `moonshotai/Kimi-K3`.
+
+### Why
+
+- models.dev retired Together's Kimi K2.6 and K2.7 Code rows in the 2026-09-29 catalog regeneration (`packages/ai/changes.md`), so `test/model-resolver.test.ts` ("every bundled provider default resolves in its catalog") failed on the old default. Kimi K3 is the Moonshot model Together still lists. Hugging Face and Baseten keep K2.6.
+
+### Why an extension could not handle it
+
+- Bundled provider defaults.
+
+### Expected merge conflict zones
+
+- LOW: one line in `defaultModelPerProvider`.
+
 ## 2026-09-29 - The model runtime installs the Claude Code version cache (senpi#2321)
 
 ### What changed
