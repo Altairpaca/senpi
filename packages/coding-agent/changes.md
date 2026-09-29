@@ -8,6 +8,14 @@
 
 - The published package now installs its dependencies from the registry like any other package; see `scripts/changes.md`.
 
+### Why an extension could not handle it
+
+- Package manifest and publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` block and `scripts` of `packages/coding-agent/package.json`.
+
 ## 2026-09-29 - claude-agent-sdk 0.3.284 (senpi#2321)
 
 ### What changed

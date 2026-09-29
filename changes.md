@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## Publish the real @code-yeongyu/senpi manifest, senpi#2360 (2026-09-29)
+
+### What changed
+
+- `package.json`: `check` no longer runs `check:shrinkwrap`; the `check:shrinkwrap` and `shrinkwrap:coding-agent` scripts are removed and `refresh-lock` no longer regenerates `publish-deps.lock.json`.
+
+### Why
+
+- The published senpi package declares its real dependencies now, so the publish-staging manifest that the shrinkwrap generator produced has no consumer (see `scripts/changes.md`).
+
+### Why an extension could not handle it
+
+- Repository scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `check` chain and `refresh-lock` in the root `package.json` `scripts` block.
+
 ## bun.lock workspace ranges follow the manifests after a release, senpi#2352 (2026-09-29)
 
 ### What changed
