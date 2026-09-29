@@ -307,7 +307,8 @@ directory can never read each other's state:
 <agentDir>/rpc-host-daemon/                    flat directory (shared; also a legacy host's own state)
   layout.json                                  { "layout": 2, "dir": "<sha256(canonical socket)[:16]>" }
   <sha256(canonical socket)[:16]>/             0700
-    endpoint.json                              { layout: 2, socket, created_at } - durable identity
+    endpoint.json                              { layout: 2, registry_version: 1, endpoint_kind, socket,
+                                                 created_at } - durable identity
     host.pid                                   POINTER: { layout, instance_id, generation_dir, writer }
     settings.json                              what the supervisor reads at boot
     daemon.lock  stderr.log
@@ -347,7 +348,10 @@ and starts no host in that case.
 is the hash of that spelling's canonical form). It is
 written `0600` when the directory is created and re-asserted under the ensure lock. It is written whole to a
 temporary name and linked into place, so no reader ever sees half a file, and a valid one is never rewritten, so
-`created_at` is the endpoint's first ensure. Under the lock the ensure does replace a file that does not name a
+`created_at` is the endpoint's first ensure. `endpoint_kind` is `rpc_host` for a multi-session host and `tui`
+for an interactive terminal's control endpoint; the first writer's kind stands like the rest of the record. A
+record written before `registry_version`/`endpoint_kind` existed (`{ layout, socket, created_at }`) reads as
+`rpc_host` and is never rewritten to add them. Under the lock the ensure does replace a file that does not name a
 socket hashing to this directory (torn by a crash of an older build, or foreign): left alone, such a file would
 leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
@@ -464,7 +468,15 @@ which prints the bare socket path).
   `{ endpoints: [<status row>, ...] }`, each row the single-socket report above plus `dir` (the endpoint's
   daemon directory) and `identity` (what named its socket: `endpoint` = `endpoint.json`, `settings` = the
   boot `settings.json`, `generation-settings` = a generation's own `settings.json`; each accepted only when
-  that socket hashes to the directory it was found in). A directory none of them names is still listed with
+  that socket hashes to the directory it was found in), `endpoint_kind` (`rpc_host` | `tui`, from
+  `endpoint.json`; `rpc_host` for a legacy record or any other source), `alive` and `reason`. `alive` is `true`
+  exactly when the endpoint is routable - it answered `get_protocol_info` with an instance its directory
+  recorded under `generations/` - and `reason` is then `null`; otherwise `reason` is `live_unresponsive`
+  (a recorded process is still running, or something answered that the directory did not record: a
+  suspended terminal, a host past its budget) or `dead` (nothing answered and every recorded process is
+  gone, or its pid now names a process with another start time - the same test `gc` applies to
+  generations). A `tui` row is probed for at most 1.5 s whatever budget the hosts get, so a stopped
+  terminal is reported `live_unresponsive` without stalling the listing. A directory none of them names is still listed with
   `socket: null` and `identity: "unknown"`, built from the directory alone - the ensure lock is keyed by a
   longer hash of the socket's transport address and cannot be rebuilt from the 16-hex name, so it can be
   shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
@@ -499,6 +511,11 @@ which prints the bare socket path).
   An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
   its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
   An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.
+  The library call `gcHostEndpoints(agentDir, { kinds: ["tui"] })` narrows a run to endpoints of those
+  `endpoint_kind`s (a terminal reaping dead `tui` endpoints at its own startup): every other endpoint, and
+  the legacy flat directory unless `rpc_host` is listed, is neither judged nor reported, and the ones it
+  judges face the same three-part evidence. `classifyEndpointLiveness(entry)` returns the `alive`/`reason`
+  verdict above for one `listHostEndpoints` entry, probing it once under its kind's budget; it reads only.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
   overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no

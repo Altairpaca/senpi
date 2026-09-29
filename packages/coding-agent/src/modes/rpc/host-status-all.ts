@@ -8,9 +8,15 @@
  * looking. A directory that names no socket still gets a row (`socket: null`), built from the
  * directory alone, because it is exactly what an operator asking "what is on this machine" needs to
  * see.
+ *
+ * Every row carries the endpoint's `endpoint_kind` and the liveness verdict (`host-endpoint-liveness.ts`)
+ * as `alive` (routable) plus `reason` when it is not. A `tui` row is read under TUI_PROBE_TIMEOUT_MS
+ * whatever budget the caller grants the hosts, so one suspended terminal costs the listing 1.5 s,
+ * not 10.
  */
 import { readHostCrashRecords } from "./host-crash-record.ts";
-import { hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
+import { type EndpointKind, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
+import { type EndpointLiveness, endpointProbeTimeoutMs, judgeEndpointLiveness } from "./host-endpoint-liveness.ts";
 import { type HostEndpointEntry, type HostEndpointIdentitySource, listHostEndpoints } from "./host-endpoints.ts";
 import { readGenerationRows } from "./host-generations.ts";
 import { type HostStatusReport, readHostStatus } from "./host-status.ts";
@@ -20,6 +26,11 @@ export interface HostEndpointStatus extends Omit<HostStatusReport, "socket"> {
 	readonly socket: string | null;
 	readonly dir: string;
 	readonly identity: HostEndpointIdentitySource;
+	readonly endpoint_kind: EndpointKind;
+	/** `true` exactly when the endpoint is routable: it answered with an instance its directory recorded. */
+	readonly alive: boolean;
+	/** Why a row is not alive: still running but not answering, or provably gone. `null` when alive. */
+	readonly reason: Exclude<EndpointLiveness, "routable"> | null;
 }
 
 /**
@@ -32,7 +43,7 @@ export const STATUS_ALL_MAX_IN_FLIGHT = 64;
 interface StatusAllOptions {
 	readonly agentDir: string;
 	readonly includeWorkers: boolean;
-	/** Budget for each read of each endpoint's socket, default 10 s (`readHostStatus`). */
+	/** Budget for each read of each host endpoint's socket, default 10 s (`readHostStatus`); `tui` rows never exceed 1.5 s. */
 	readonly timeoutMs?: number;
 	/** Replaces the per-endpoint read; tests observe how many run at once. */
 	readonly _test?: { readonly readEndpoint?: (endpoint: HostEndpointEntry) => Promise<HostEndpointStatus> };
@@ -59,13 +70,22 @@ export async function readAllHostStatus(options: StatusAllOptions): Promise<read
 }
 
 async function endpointStatus(endpoint: HostEndpointEntry, options: StatusAllOptions): Promise<HostEndpointStatus> {
-	const located = { dir: endpoint.dir, identity: endpoint.identity };
-	if (endpoint.socket === null) return { ...(await unaddressableStatus(endpoint.dir)), socket: null, ...located };
+	const located = { dir: endpoint.dir, identity: endpoint.identity, endpoint_kind: endpoint.endpoint_kind };
+	const paths = hostDaemonDirectoryPaths(endpoint.dir);
+	if (endpoint.socket === null) {
+		const verdict = livenessFields(await judgeEndpointLiveness(paths, undefined));
+		return { ...(await unaddressableStatus(endpoint.dir)), socket: null, ...located, ...verdict };
+	}
 	const report = await readHostStatus(
 		{ socket: endpoint.socket, agentDir: options.agentDir, includeWorkers: options.includeWorkers },
-		{ prune: false, ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) },
+		{ prune: false, timeoutMs: endpointProbeTimeoutMs(endpoint.endpoint_kind, options.timeoutMs) },
 	);
-	return { ...report, ...located };
+	const verdict = await judgeEndpointLiveness(paths, report.reachable ? report.instanceId : undefined);
+	return { ...report, ...located, ...livenessFields(verdict) };
+}
+
+function livenessFields(verdict: EndpointLiveness): Pick<HostEndpointStatus, "alive" | "reason"> {
+	return verdict === "routable" ? { alive: true, reason: null } : { alive: false, reason: verdict };
 }
 
 async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, "socket">> {

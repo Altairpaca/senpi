@@ -1,3 +1,28 @@
+## 2026-09-29 - One endpoint registry: `endpoint_kind` in `endpoint.json`, kind-aware status probes, a liveness verdict, a `kinds` gc filter
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: the `endpoint.json` schema grows additively to `{ layout: 2, registry_version: 1, endpoint_kind: "rpc_host" | "tui", socket, created_at }` (`ENDPOINT_REGISTRY_VERSION`, `EndpointKind`). `ensureEndpointIdentity(paths, socket, { repair?, kind? })` writes the kind (default `rpc_host`) into the same record; the write itself (temporary file + `link()`, first writer wins, `repair` only under the ensure lock) is unchanged, so a later ensure never turns a `tui` record into a host's. `createDaemonDirectories(paths, { kind? })` is what a `tui` registrant calls.
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `HostEndpointEntry` gains `endpoint_kind`, read from `endpoint.json`; a legacy `{ layout, socket, created_at }` record, the `settings.json` sources and an unaddressable directory read as `rpc_host`. Nothing is rewritten on read.
+- `packages/coding-agent/src/modes/rpc/host-endpoint-liveness.ts` (new): `classifyEndpointLiveness(entry, { timeoutMs? })` -> `"routable" | "live_unresponsive" | "dead"`. Routable only when `get_protocol_info` answers with an instance id recorded under `generations/`; dead only when nothing answered and no recorded generation is live by the existing pid + `processStartTime` test (`anyGenerationLive`, the same test `host gc` applies); everything else live_unresponsive. `judgeEndpointLiveness(paths, answered)` is the same verdict for a reader that already probed. `TUI_PROBE_TIMEOUT_MS` (1500) and `endpointProbeTimeoutMs(kind, requested?)`: a `tui` endpoint never gets more than 1.5 s, a host keeps the 10 s default.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: every `status --all` row (`HostEndpointStatus`) gains `endpoint_kind`, `alive` (routable) and `reason` (`live_unresponsive` | `dead` | `null`). A `tui` row is read under `endpointProbeTimeoutMs("tui", timeoutMs)`, so one silent terminal costs the listing 1.5 s and is reported `reachable: false, alive: false, reason: "live_unresponsive"`. Still `prune: false`: the listing removes nothing.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `HostGcOptions.kinds` - `gcHostEndpoints(agentDir, { kinds: ["tui"] })` judges and reports only endpoints of those kinds (the legacy flat directory only when `rpc_host` is listed); each judged endpoint still goes through the three-part evidence inside its ensure lock.
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `anyGenerationLive` is exported (unchanged) for the liveness verdict.
+- `test/suite/rpc-endpoint-registry.test.ts`, `test/suite/rpc-host-endpoint-liveness.test.ts` and their `rpc-endpoint-registry-fixtures.ts` (new); the `endpoint.json` shape assertions in `rpc-host-endpoint-identity*.test.ts`, `rpc-host-daemon-dir.test.ts`, `rpc-host-status-all.test.ts` and `suite/host-cli.test.ts` are extended with the new fields.
+
+### Why
+
+Standalone TUI sessions are about to publish control endpoints (session gateway, IS-7): the same `<agentDir>/rpc-host-daemon/<16hex>/` registry must list them beside the `p-*`/`i-*` shards and the legacy socket, so every reader (`host status --all`, omo, the Desktop, thread tools) enumerates one list. A client must tell a TUI from a host (lifecycle commands refuse TUIs), a suspended terminal (`^Z`) must not stall a listing for 10 s nor be reaped, and a TUI must be able to reap dead TUI endpoints at startup without judging host directories it did not start.
+
+### Why an extension could not handle it
+
+The registry, its reader and `host gc` are the RPC host's own on-disk state and CLI; no extension hook sees them.
+
+### Expected merge conflict zones
+
+- `ensureEndpointIdentity`'s record literal and `createDaemonDirectories`' signature in `host-daemon-paths.ts`.
+- `identifyEndpoint` in `host-endpoints.ts`, `endpointStatus` in `host-status-all.ts`, the head of `gcHostEndpoints` in `host-gc.ts`.
+
 ## 2026-09-29 - Auth status mirrors `ambient` (senpi#2327)
 
 ### What changed

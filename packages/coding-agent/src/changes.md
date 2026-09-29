@@ -20,6 +20,24 @@
 
 - MEDIUM: the final `cli-main` import in `cli.ts`; LOW: `getPackageDir()` call sites in `config.ts` near `detectInstallMethod`, `getInferredNpmInstall`, the pnpm global-root regexes and the self-update checks; the Windows quarantine call in `main.ts`; `getActiveManagedInstallRoot` and `prepareWindowsNpmSelfUpdate` in `package-manager-cli.ts`.
 
+## 2026-09-29 - The endpoint registry helpers are public (session gateway)
+
+### What changed
+
+- `packages/coding-agent/src/modes/index.ts` and `packages/coding-agent/src/index.ts`: export `classifyEndpointLiveness`, `EndpointLiveness`, `endpointProbeTimeoutMs`, `TUI_PROBE_TIMEOUT_MS`, `ENDPOINT_REGISTRY_VERSION`, `EndpointKind`, `listHostEndpoints`, `HostEndpointEntry`, `HostEndpointIdentitySource`, `gcHostEndpoints`, `HostGcOptions`, `HostGcResult`, `readAllHostStatus` and `HostEndpointStatus`. See `src/modes/rpc/changes.md` (2026-09-29).
+
+### Why
+
+- omo and the Desktop read the one endpoint registry (`endpoint_kind`, liveness verdict, `tui`-only gc) through the library as well as through `senpi host status --all`.
+
+### Why an extension could not handle it
+
+- Package exports are the package's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the `./modes/index.ts` export block in `src/index.ts` and the rpc export block in `src/modes/index.ts`.
+
 ## 2026-09-29 - Edits made in ~/.pi/agent after its copy are reported and importable (omo#9173)
 
 ### What changed
