@@ -763,7 +763,7 @@ over a launch-profile flag:
 senpi --mode rpc --multi-session --auto-title-sessions
 ```
 
-Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is byte-identical to today. Mode is fixed at process start; there is no runtime transition.
+Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is unchanged except that `get_protocol_info` is answered and a resolved `extension_ui_response` is acknowledged under its frame `id` (see [Extension UI Responses](#extension-ui-responses-stdin)). Mode is fixed at process start; there is no runtime transition.
 
 ### Session replacement
 
