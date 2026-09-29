@@ -5527,7 +5527,10 @@ export class InteractiveMode {
 				this.showNoticeBox({
 					title: `⇄ Reverted to ${event.to}`,
 					tone: "accent",
-					why: "The original model is back after its cooldown lapsed.",
+					why:
+						event.cause === "fallback-unusable"
+							? `${event.from} cannot serve right now (its account hit a billing or usage limit), so the session is back on the original model.`
+							: "The original model is back after its cooldown lapsed.",
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;

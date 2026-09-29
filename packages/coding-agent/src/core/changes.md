@@ -1,3 +1,27 @@
+## 2026-09-29 - A billing-dead fallback target no longer pins or strands the session (senpi#2376)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts` (fork-only): a `billing` switch pins the episode only when the failure hit the chain's original model or that model's whole account; billing on a fallback target from another account leaves the episode revertable. `maybeRestorePrimary` returns to the original at a turn boundary when the current fallback is known unusable and the original is not, ahead of the original's cooldown and the `never` policy, and emits `retry_fallback_reverted` with `cause: "fallback-unusable"`. `tryFallback` and `noteHealthFailure` record what cannot serve; the candidate scan tries every spent provider's entries last for the life of that record instead of for one hop.
+- `packages/coding-agent/src/core/retry-fallback/pin.ts` (fork-only, new): `pinAfterSwitch` holds the pin-provenance rule `applyCandidate` applies (refusal pins; billing pins only when it hit the original or the original's account).
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts` (fork-only, new): `UnusableEntries` records an account-scoped usage limit or billing failure per provider and a model-scoped one per entry, on the session's selector cooldowns under namespaced keys; a manual model change clears it for that model.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts` (fork-only): `CandidateFilters.spentProvider` becomes the predicate `isProviderSpent`; the second, spent-provider-permitting pass runs only when the first pass skipped a spent provider.
+- `packages/coding-agent/src/core/retry-fallback/controller-types.ts` (fork-only): `FallbackRevertCause` and the optional `cause` on `retry_fallback_reverted`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts` (fork-only): a reason-less `forbidden` rejection cools a selector for 60 s instead of the 5-minute default.
+- `packages/coding-agent/src/core/agent-session.ts`: the `retry_fallback_reverted` member of `AgentSessionEvent` carries the optional `cause`.
+
+### Why
+
+- Incident 2026-09-29: a transient subscription `forbidden` hopped the shipped `claude-opus-5-5` ladder onto an API-key provider with no credit. Its `credit balance is too low` answer pinned the whole episode as billing, so the session never returned to the original after the rejection stopped, and the same dead provider was retried on every rung because the account-limit skip lasted one hop. Sessions stayed on the dead provider until switched back by hand.
+
+### Why an extension could not handle it
+
+- Fallback pinning, revert and candidate selection live in the core retry controller that `agent-session.ts` drives between turns; no hook sees or can veto them.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_reverted` line of the `AgentSessionEvent` union in `packages/coding-agent/src/core/agent-session.ts`.
+
 ## 2026-09-29 - Legacy `.pi` project resources follow project trust
 
 ### What changed
