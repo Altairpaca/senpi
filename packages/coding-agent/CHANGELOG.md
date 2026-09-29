@@ -6,7 +6,11 @@
 
 ### Added
 
+- Claude Sonnet 5.5 gets its own system prompt preset, `claude-sonnet-5-5`, selected automatically for every Sonnet 5.5 id (`claude-sonnet-5-5`, `claude-sonnet-5.5`, Bedrock and Vertex spellings) and available as `promptPreset: "claude-sonnet-5-5"`. It is the Opus 5.5 core with the deltas Anthropic's Sonnet 5.5 guide documents for coding agents: it keeps working instead of pausing to confirm a plan, asking a question it could answer itself, or stopping after one part of a multipart task; it adds tests, docs or supporting files only where asked or where the repository keeps them and mentions the rest at the end; and before reporting a change done it runs a real check that exercises it, installing missing declared dependencies with the project's own package manager rather than skipping the check. Sonnet 5 stays on the default prompt. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
 ### Changed
+
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.284, the first release that knows Claude Sonnet 5.5: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.280 to 0.3.284. The engine's own Anthropic OAuth requests now advertise the latest published Claude Code (refreshed in the background, floor 2.1.284) instead of a build-time constant, and `PI_CLAUDE_CODE_VERSION=X.Y.Z` pins it. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
 
 ### Fixed
 
