@@ -81,7 +81,7 @@ media even if it names the capability. `get_media` is answered in both modes.
 
 ## Multi-session mode (D1 wire protocol)
 
-Multi-session mode lets one `senpi --mode rpc` process serve several independent conversations concurrently over the same stdio JSONL stream. Classic single-session mode is byte-identical to today; the only additive classic-mode behavior is that `get_protocol_info` is answered.
+Multi-session mode lets one `senpi --mode rpc` process serve several independent conversations concurrently over the same stdio JSONL stream. Classic single-session mode is unchanged except for two additive behaviors: `get_protocol_info` is answered, and a resolved `extension_ui_response` is acknowledged under its frame `id` (see [Extension UI Responses](#extension-ui-responses-stdin)).
 
 ### Starting multi-session mode
 
@@ -763,7 +763,7 @@ over a launch-profile flag:
 senpi --mode rpc --multi-session --auto-title-sessions
 ```
 
-Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is byte-identical to today. Mode is fixed at process start; there is no runtime transition.
+Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is unchanged except that `get_protocol_info` is answered and a resolved `extension_ui_response` is acknowledged under its frame `id` (see [Extension UI Responses](#extension-ui-responses-stdin)). Mode is fixed at process start; there is no runtime transition.
 
 ### Session replacement
 
