@@ -1599,28 +1599,6 @@ export class SessionManager {
 		return entry.id;
 	}
 
-	/**
-	 * `appendCustomEntry` for an entry that must reach the file or not exist: when writing it throws, the
-	 * entry is taken back out and the leaf returns to its parent before the error propagates, so no later
-	 * entry chains onto one the file never received.
-	 */
-	appendCustomEntryOrNothing(customType: string, data?: unknown): string {
-		const previousLeafId = this.leafId;
-		const count = this.fileEntries.length;
-		try {
-			return this.appendCustomEntry(customType, data);
-		} catch (error) {
-			for (const retracted of this.fileEntries.splice(count)) {
-				this.byId.delete(retracted.id);
-				this.entryOrdersById.delete(retracted.id);
-				this.fullEntryCount--;
-			}
-			this.leafId = previousLeafId;
-			this.mutationCount++;
-			throw error;
-		}
-	}
-
 	/** Append a session info entry (e.g., display name). Returns entry id. */
 	appendSessionInfo(name: string): string {
 		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
