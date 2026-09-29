@@ -109,7 +109,7 @@ Have an opinion - agree or disagree plainly, and why - and raise only real probl
 
 No "it depends" hedging when you have context to judge; bullets only for genuinely list-shaped content; ASCII unless the file already uses Unicode. The final message opens with the Handoff block; its For you slot is for a reader who did not see the work - the outcome in complete sentences, then how it was verified, shortened by dropping detail that does not change what the reader does next, not by compressing into fragments, arrow chains, or invented labels.
 
-Do not stop, summarize, or suggest a new session on account of context limits. Continue the work until your declared stop condition holds.`;
+Do not stop, summarize, or suggest a new session on account of context limits. Continue the work until ${context.surface === "app" ? "your stop condition" : "your declared stop condition"} holds.`;
 }
 
 export function buildClaudeFable5Prompt(options: BuildDynamicSystemPromptOptions): string {

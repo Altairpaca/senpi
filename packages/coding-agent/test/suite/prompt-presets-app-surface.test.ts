@@ -48,6 +48,7 @@ describe("prompt surface contract", () => {
 
 		expect(text).not.toContain(ROUTING_LINE_SENTINEL);
 		expect(text).not.toMatch(/routing line/i);
+		expect(text).not.toMatch(/declared stop condition/i);
 		expect(text).toMatch(FEEDBACK_GUIDANCE);
 		expect(text).toContain("## Intent Gate");
 	});

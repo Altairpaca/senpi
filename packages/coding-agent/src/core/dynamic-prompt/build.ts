@@ -105,7 +105,7 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 				"",
 				buildHandoffSection({ surface }),
 				"",
-				buildStyleSection(),
+				buildStyleSection({ surface }),
 			];
 
 	const tuning = options.tuningSection?.trim();

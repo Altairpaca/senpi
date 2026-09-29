@@ -236,7 +236,7 @@ Your STOP GOAL - the turn is over the moment ALL of these hold:
 - Behavioral work passed the Manual QA Gate this turn.
 - The final message is delivered as specified in Output.
 
-Until the stop goal holds, keep going - through failed tool calls, long turns, and the temptation to hand back a draft. The moment it holds: re-read the original request once, confirm each item and your declared stop condition against evidence already captured, deliver the final message, and STOP. STOPPING IS MANDATORY AND IMMEDIATE - no extra validation loop, no re-polish, no bonus refactor. Every action past the stop goal is a defect, not diligence.
+Until the stop goal holds, keep going - through failed tool calls, long turns, and the temptation to hand back a draft. The moment it holds: re-read the original request once, confirm each item and ${context.surface === "app" ? "your stop condition" : "your declared stop condition"} against evidence already captured, deliver the final message, and STOP. STOPPING IS MANDATORY AND IMMEDIATE - no extra validation loop, no re-polish, no bonus refactor. Every action past the stop goal is a defect, not diligence.
 
 ${buildFileOperationsTuning({ toolNames: context.tools.map((tool) => tool.name) })}`;
 }
