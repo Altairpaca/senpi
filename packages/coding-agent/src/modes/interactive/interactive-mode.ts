@@ -4887,23 +4887,31 @@ export class InteractiveMode {
 				// behavior here applies only to ordinary text, prompt template expansion,
 				// and queueing.
 				if (this.session.isStreaming) {
+					const ticket = this.sessionControlHost?.claimHandoff();
 					// Resolve BEFORE setText(""): the editor's prune chain fires
 					// onImageMarkersChanged([]) and destroys pendingImages.
 					const images = preResolvedImages ?? this.takeSubmissionImages(text);
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
 					const pendingEchoId = this.beginUserEcho(text, images);
+					const echoOptions = this.optimisticUserEchoes.promptOptions(pendingEchoId);
 					try {
 						await this.session.prompt(text, {
 							streamingBehavior: "steer",
 							...(images.length > 0 ? { images } : {}),
 							...(unknownCommandAsText ? { unknownCommandAsText } : {}),
-							...this.optimisticUserEchoes.promptOptions(pendingEchoId),
+							...echoOptions,
+							promptDisposition: (disposition) => {
+								echoOptions.promptDisposition(disposition);
+								ticket?.release();
+							},
 						});
 					} catch (error) {
 						this.optimisticUserEchoes.reject(pendingEchoId);
 						if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, text)) return;
 						throw error;
+					} finally {
+						ticket?.release();
 					}
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();

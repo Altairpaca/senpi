@@ -9,20 +9,22 @@
  * claim it.
  *
  * A delivery never runs ahead of input the user already submitted. Every submission opens a
- * ticket, and admission is held while any ticket is open. Text for the main loop hands its ticket
- * over with the buffered input (`claimHandoff`), and it is released only when the runtime took that
- * input (its prompt reported a disposition, or the prompt call ended); any other submission is
- * taken by its own handler and releases when the handler settles. Turn starts do not release
- * anything: a turn can start (an extension's, the previous input's) while a later input is still
+ * ticket, and admission is held while any ticket is open. A branch whose input still has to reach
+ * the runtime claims the ticket (`claimHandoff`) - text buffered for the main loop, a steer into a
+ * running turn - and releases it when the runtime took the input (its prompt reported a
+ * disposition, or the prompt call ended). Every other submission (a `!` command, a slash command)
+ * has been dispatched once the handler's synchronous part returns, so its ticket is released right
+ * there: a long-running command never holds deliveries for its whole runtime. Turn starts release
+ * nothing: a turn can start (an extension's, the previous input's) while a later input is still
  * buffered. The last ticket's release is the `submission` edge.
  */
 import type { RegisterControlEndpointOptions, SessionControlRegistration } from "../../core/extensions/types.ts";
 import type { ControlEndpointHost } from "../../core/session-control-actions.ts";
 import type { ActiveControlEndpoint, TuiControlContext } from "./session-control-lifecycle.ts";
 
-interface ControlledEditor {
+interface ControlledEditor<SubmitDetails extends readonly unknown[]> {
 	onChange?: (text: string) => void;
-	onSubmit?: (text: string) => void;
+	onSubmit?: (text: string, ...details: SubmitDetails) => void;
 }
 
 export interface SubmissionTicket {
@@ -56,32 +58,34 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 	}
 
 	/** Wraps the editor's callbacks; call after both are assigned. `hasDraft` reads the composer now. */
-	attachEditor(editor: ControlledEditor, hasDraft: () => boolean): void {
+	attachEditor<SubmitDetails extends readonly unknown[]>(
+		editor: ControlledEditor<SubmitDetails>,
+		hasDraft: () => boolean,
+	): void {
 		const change = editor.onChange;
 		editor.onChange = (text) => {
 			change?.(text);
 			this.editorChanged(hasDraft());
 		};
 		const submit = editor.onSubmit;
-		editor.onSubmit = (text) => {
+		editor.onSubmit = (text, ...details) => {
 			this.submitting = true;
 			queueMicrotask(() => {
 				this.submitting = false;
 			});
 			const ticket = this.openTicket();
 			this.handoff = ticket;
-			let pending: unknown;
 			try {
-				pending = submit?.(text);
+				submit?.(text, ...details);
 			} finally {
-				const handedOff = this.handoff !== ticket;
+				const claimed = this.handoff !== ticket;
 				this.handoff = undefined;
-				if (!handedOff) void Promise.resolve(pending).finally(() => ticket.release());
+				if (!claimed) ticket.release();
 			}
 		};
 	}
 
-	/** Called synchronously by the submit handler when it buffers text for the main loop. */
+	/** Called synchronously by a submit branch whose input still has to reach the runtime. */
 	claimHandoff(): SubmissionTicket | undefined {
 		const ticket = this.handoff;
 		this.handoff = undefined;

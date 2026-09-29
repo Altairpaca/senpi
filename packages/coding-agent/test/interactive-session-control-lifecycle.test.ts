@@ -82,13 +82,15 @@ describe("TuiSessionControlHost submission tickets", () => {
 			throw new Error("no endpoint in this test");
 		});
 		const buffered: Array<SubmissionTicket | undefined> = [];
-		const editor: { onChange?: (text: string) => void; onSubmit?: (text: string) => void } = {
-			onSubmit: (text) => {
+		const received: unknown[][] = [];
+		const editor: { onChange?: (text: string) => void; onSubmit?: (text: string, ...details: unknown[]) => void } = {
+			onSubmit: (text, ...details) => {
+				received.push([text, ...details]);
 				if (!text.startsWith("/")) buffered.push(control.claimHandoff());
 			},
 		};
 		control.attachEditor(editor, () => false);
-		return { control, editor, buffered };
+		return { control, editor, buffered, received };
 	}
 
 	it("holds until the LAST buffered input is taken, whatever order the others are taken in", async () => {
@@ -104,12 +106,17 @@ describe("TuiSessionControlHost submission tickets", () => {
 		expect(control.submissionInFlight()).toBe(false);
 	});
 
-	it("releases a submission its own handler took once the handler settled", async () => {
+	it("releases a submission no branch claimed as soon as the handler dispatched it", () => {
 		const { control, editor } = host();
 		editor.onSubmit?.("/name x");
-		expect(control.submissionInFlight()).toBe(true);
-		await nextMacrotask();
 		expect(control.submissionInFlight()).toBe(false);
+	});
+
+	it("forwards every onSubmit argument to the wrapped handler", () => {
+		const { editor, received } = host();
+		const details = { leadingWhitespace: " " };
+		editor.onSubmit?.(" /literal", details);
+		expect(received).toEqual([[" /literal", details]]);
 	});
 
 	it("holds while input is buffered outside the main loop", () => {

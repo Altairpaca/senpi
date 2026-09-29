@@ -15,7 +15,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { open, readdir, rm } from "fs/promises";
+import { appendFile, open, readdir, rm } from "fs/promises";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -1249,19 +1249,29 @@ export class SessionManager {
 	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
 		reserveSessionWrite(sessionFile);
 		const entries = this.fileEntries;
+		const serialize = (batch: readonly FileEntry[]): string =>
+			batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join("");
+		let written = 0;
 		const handle = await open(sessionFile, "wx");
 		try {
-			let written = 0;
 			while (written < entries.length) {
 				const batch = entries.slice(written);
 				written += batch.length;
-				await handle.writeFile(batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join(""));
+				await handle.writeFile(serialize(batch));
 			}
 		} finally {
 			await handle.close();
 		}
+		// Entries persisted while the handle closed: append until a pass finds nothing new.
+		while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
+			const batch = entries.slice(written);
+			written += batch.length;
+			await appendFile(sessionFile, serialize(batch));
+		}
 		// Synchronous with the last check above: no entry can land between it and the flag.
-		if (this.sessionFile === sessionFile && this.fileEntries === entries) this.flushed = true;
+		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
+			this.flushed = true;
+		}
 	}
 
 	_persist(entry: SessionEntry): void {

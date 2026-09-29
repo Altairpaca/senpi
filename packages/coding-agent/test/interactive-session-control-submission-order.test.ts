@@ -51,7 +51,7 @@ function inert<T extends object>(known: T): T {
 }
 
 /** A TUI shell around a real AgentSession: the real submit handler, main-loop body and control context. */
-async function terminal(harness: Harness, rows: Map<string, string>) {
+async function terminal(harness: Harness, rows: Map<string, string>, overrides: Record<string, unknown> = {}) {
 	const known: Record<string, unknown> & { defaultEditor: { onSubmit?: (text: string) => void } } = {
 		session: harness.session,
 		defaultEditor: {},
@@ -71,6 +71,7 @@ async function terminal(harness: Harness, rows: Map<string, string>) {
 		}),
 		composerHold: () => undefined,
 		agentIdle: false,
+		...overrides,
 	};
 	const shell = inert(known);
 	const control = new TuiSessionControlHost(() => mode.sessionControlContext.call(shell));
@@ -165,6 +166,28 @@ describe("session control admission never overtakes submitted input", () => {
 		expect(transcript(harness)).toEqual(["user:first", "user:second", "delivery:d1"]);
 		expect(tui.admitted.at(-1)).toMatch(/^d1:(started|queued):submission$/);
 		expect(tui.admitted.slice(0, -1).every((entry) => entry.startsWith("d1:held_draft:"))).toBe(true);
+	});
+
+	it("a delivery arriving while a `!` command runs is started: the command does not hold admission", async () => {
+		const harness = await createHarness({ persistSession: true });
+		cleanups.push(() => harness.cleanup());
+		harness.setResponses([fauxAssistantMessage("r1")]);
+		await harness.session.bindExtensions({});
+		const rows = new Map<string, string>();
+		const bash = Promise.withResolvers<void>();
+		const tui = await terminal(harness, rows, { handleBashCommand: () => bash.promise });
+
+		tui.submit("!sleep 12");
+		expect(tui.control.submissionInFlight()).toBe(false);
+		rows.set("d1", "remote-d1");
+		await controlData(tui.socket, { type: "wake" });
+		expect(tui.admitted).toHaveLength(1);
+		expect(tui.admitted[0]).toMatch(/^d1:started:/);
+		expect(await controlData(tui.socket, { type: "get_state" })).toMatchObject({ editor_has_draft: false });
+
+		bash.resolve();
+		await harness.session.waitForIdle();
+		expect(transcript(harness)).toEqual(["delivery:d1"]);
 	});
 
 	it("a turn an extension starts during the first input's preflight does not release the hold", async () => {
