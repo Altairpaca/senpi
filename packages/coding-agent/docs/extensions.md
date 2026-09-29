@@ -2206,7 +2206,7 @@ pi.events.emit("my:event", { ... });
 
 Senpi's default-on `config-reload` builtin watches configured global surfaces and trusted project-local `.senpi` surfaces. A real content change requests the normal full session reload when the agent is idle; busy or compacting sessions defer it until a safe idle edge. When an extension vetoes the reload through `session_before_reload` (for example while subagents it owns are still running), the change also defers quietly: one `Hot-reload deferred: <reason>` notice per distinct veto reason, silent retries on later idle edges plus a periodic veto recheck, and the usual `Hot-reloading:`/`Hot-reloaded:` notifications only once the veto clears and the reload actually runs. Parseable built-in files (`settings.json`, `models.json`, and `keybindings.json`) are validated before reload, so a rejected edit keeps the running configuration active.
 
-> **Cost on a shared host:** the watcher runs per session. Each session's `config-reload` instance lazily spawns one
+> **Cost on a multi-session host:** the watcher runs per session. Each session's `config-reload` instance lazily spawns one
 > `node:worker_threads` Worker for recursive filesystem watching, so a host serving N sessions carries about N extra
 > OS threads and ~5 MB per session ([senpi#1794](https://github.com/code-yeongyu/senpi/issues/1794)). It is the
 > dominant per-session cost of a shared RPC daemon ([RPC: session runtime](rpc.md#session-runtime---session-runtime-in-processworker));

@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- `pi.sharedHostEnabled` is removed from the ExtensionAPI: it could only ever be `true` inside the removed interactive shared-host join. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
 ### Added
 
 ### Changed
@@ -15,6 +17,10 @@
 ### Fixed
 
 ### Removed
+
+- Interactive sessions can no longer join a shared RPC host: every interactive launch runs on its own local runtime. The `experimental.sharedHost` setting and the `SENPI_ENABLE_SHARED_HOST` / `SENPI_DISABLE_SHARED_HOST` environment variables (any brand prefix) are gone and are ignored if set, with no notice. On first load, `experimental.sharedHost` is removed from the global settings file; nothing else in the file changes, except that a global `settings.jsonc` loses its comments in that one rewrite. A project `.senpi/settings.json` is never rewritten; the key is ignored there. The TUI's shared-host client (the remote session proxy, its reconnect loop and host-rendered extension dialogs) is removed with it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- The RPC `rendered_components` client capability. Hosts no longer render extension component factories: `setWidget` with a component factory, `setHeader` and `setFooter` send nothing over RPC, and `set_client_info` `width` has no effect. A client that still advertises the capability is accepted and receives ordinary records. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
 ## [2026.9.29-3] - 2026-09-29
 
@@ -37,8 +43,6 @@
 - Security: an MCP remote server declared by a skill (an `mcp.json` next to SKILL.md or a `mcp:` frontmatter block) no longer sends `bearerTokenEnv`. senpi ignores the field, sends no `Authorization` header and warns once, because the skill chooses the server's URL and could otherwise make senpi send any of your environment variables to it. To restore auth, declare that server in your own `mcp.json` (the global `<agentDir>/mcp.json`, `~/.senpi/agent/mcp.json` by default, or a trusted project's `.senpi/mcp.json`), where `bearerTokenEnv` keeps working. `${VAR}` in a skill remote server's `url` or `headers` also stays literal, with a warning. See [Environment variables in skill servers](docs/mcp.md#environment-variables-in-skill-servers). ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
 
 - Interactive and RPC prompts whose first token looks like a command (`/name`, no second `/`) and that no extension command, prompt template, or loaded `skill:<name>` handles are now refused with the exported `UnknownCommandError` instead of being sent to the model. The check runs after extension `input` handlers and skill/template expansion, so input rewrites such as bare skill aliases keep working; extension-sourced prompts and text that starts with whitespace (` /foo`) are exempt, and `unknownCommandAsText: true` (prompt option and RPC `prompt` field) sends the text unchanged. RPC answers with `errorCode: "unknown_command"` and `errorData: { command, suggestions, reason }`; a TUI builtin such as `/model` sent as a prompt gets `reason: "interactive_only"`. App-server `turn/start` refuses the same input with JSON-RPC error `-32602` whose `data` carries `errorCode: "unknown_command"`, `command`, `suggestions` and `reason`, starts no turn, and accepts `unknownCommandAsText: true` to send the text. ([#2348](https://github.com/code-yeongyu/senpi/issues/2348))
-
-- `pi.sharedHostEnabled` is removed from the ExtensionAPI (it could only ever be `true` inside the removed interactive shared-host join)
 
 ### Added
 
@@ -109,9 +113,6 @@
 - A usage limit that binds the whole account (a Claude session or weekly limit, a Codex usage limit, an empty balance) now falls back to a model on another provider first; models of the same provider are tried only when no other provider in the chain can serve. A limit that names one model (a Fable-only weekly cap, Copilot premium models) still moves to the next model on the same provider. The fallback notice now says which model or account hit its usage limit instead of `(transient)`. ([code-yeongyu/oh-my-openagent#8296](https://github.com/code-yeongyu/oh-my-openagent/issues/8296))
 
 ### Removed
-
-- Interactive sessions can no longer join a shared RPC host: every interactive launch runs on its own local runtime. The `experimental.sharedHost` setting and the `SENPI_ENABLE_SHARED_HOST` / `SENPI_DISABLE_SHARED_HOST` environment variables (any brand prefix) are gone and are ignored if set, with no notice. On first load, `experimental.sharedHost` is removed from the global settings file; nothing else in the file changes, except that a global `settings.jsonc` loses its comments in that one rewrite. A project `.senpi/settings.json` is never rewritten; the key is ignored there. The TUI's shared-host client (the remote session proxy, its reconnect loop and host-rendered extension dialogs) is removed with it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
-- The RPC `rendered_components` client capability. Hosts no longer render extension component factories: `setWidget` with a component factory, `setHeader` and `setFooter` send nothing over RPC, and `set_client_info` `width` has no effect. A client that still advertises the capability is accepted and receives ordinary records.
 
 ## [2026.9.28-7] - 2026-09-28
 

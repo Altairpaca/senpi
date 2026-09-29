@@ -89,7 +89,7 @@ Multi-session mode lets one `senpi --mode rpc` process serve several independent
 # Shared JSONL over stdio (legacy multi-session host)
 senpi --mode rpc --multi-session [options]
 
-# One shared host over a local socket; each accepted connection has its own JSONL feed
+# One multi-session host over a local socket; each accepted connection has its own JSONL feed
 senpi --mode rpc --listen unix:///tmp/senpi-rpc.sock [options]
 senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 ```
@@ -104,7 +104,7 @@ process-global session registry.
 
 - `in-process` - every session runs IN the host process, sharing its event loop. No worker isolate is allocated and
   no session cap applies (capacity is memory, never a refusal). This is the DEFAULT for a `--listen` socket host,
-  i.e. for the shared host clients attach to.
+  i.e. for the multi-session host clients attach to.
 - `worker` - every session owns a worker isolate, bounded by the worker capacity below. This is the DEFAULT for a
   stdio host (`--multi-session` without `--listen`, and `--listen stdio://`) and for embedders, and stays available
   for socket hosts that pass the flag explicitly.
@@ -200,7 +200,7 @@ upgraded, but its extension set does NOT cover what the running host loaded, so 
 extensions) or `profile_mismatch_attached` (the launch profiles differ, or one of them is unknown - a client
 without a launch spec can prove nothing about extensions and therefore never initiates a handoff).
 
-Four invariants govern every client of a shared host, and every client is expected to keep all four. The first two
+Four invariants govern every client of a multi-session host, and every client is expected to keep all four. The first two
 are what this decision encodes; the other two are what a client must not undo elsewhere:
 
 - **I1 - never terminate, signal or replace a host this process did not start.** A missing capability or a
@@ -220,8 +220,8 @@ are what this decision encodes; the other two are what a client must not undo el
   STRICTLY greater, such a pair attaches instead of upgrading.
 - **I3 - only the generation that owns the daemon state writes it; every other client reads.** A running host's
   pidfile, settings, reservations and socket belong to that generation. A client that cannot use what it finds
-  fails CLOSED - it reports the refusal, or starts its own private host on its own endpoint - and never edits a
-  shared host's state files, unlinks its socket, or removes its pidfile to "clean up". A handoff is the one
+  fails CLOSED - it reports the refusal, or starts its own private host on its own endpoint - and never edits
+  another generation's state files, unlinks its socket, or removes its pidfile to "clean up". A handoff is the one
   exception and it still writes only its OWN generation directory before repointing the pointer (see
   [Daemon state directory](#daemon-state-directory-layout-2)); the drained predecessor keeps its registration until
   it exits, because it is still serving.
@@ -591,7 +591,7 @@ sessions:
 | `node scripts/qa-rpc-socket/inprocess-daemon-qa.mjs` | Two COMPILED binaries of the tree differing only in build epoch; `host ensure --json` run from the older one; per-session `context` isolation (each session's extension sees only its own); `list_sessions` with and without `include_workers`; 50 sessions with the measured thread cost and no refusal; a retained session re-attached across a dropped connection; 200 bash calls leaving zero zombies; and a generation handoff by the newer binary while a client stays connected. |
 | `node scripts/qa-rpc-socket/generation-handoff.mjs` | The handoff alone, against the source supervisor: `ensureHost` -> generation 0, `handoffHost` -> generation 1 on a new pid, `session_path_in_use` naming the owner while the held session is parking, `session_closed { reason: "handoff_parked" }`, the predecessor exiting, the transcript reopening intact in the new generation, and `stopHost({ drain: true })` draining to exit. |
 
-Both exit non-zero if a daemon, a fixture host or the sandbox survives the run: a shared host outliving its QA is
+Both exit non-zero if a daemon, a fixture host or the sandbox survives the run: a host outliving its QA is
 exactly the failure they exist to catch.
 
 ### Child reaping on a socket host (`SENPI_RPC_HOST_REAPER`)
@@ -666,7 +666,7 @@ through the deepest existing ancestor of its directory (so the first generation 
 it runs behind without an environment variable. `host_socket` is omitted where no public path exists (an
 abstract socket, a supervised win32 host); a stdio host adds neither key.
 
-One shared host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
+One multi-session host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
 (`pi.sessionKind`, `pi.sessionContext` - see
 [ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext)). Probe
 `session_kind` and `session_context` in `get_protocol_info` capabilities before relying on either: an older host
@@ -721,14 +721,14 @@ error.
 
 ### Session auto-titling
 
-Auto-generated session titles are on by default only for interactive launches. A shared host decides titling per
+Auto-generated session titles are on by default only for interactive launches. A multi-session host decides titling per
 `open_session`: `auto_title: true` titles that session, `auto_title: false` leaves it untitled, and an omitted field
 keeps the host-wide default (`--auto-title-sessions` or the `auto_title_sessions` client capability). Probe
 `auto_title_per_session` in `get_protocol_info` before relying on the field; an older host ignores it. A non-boolean is
 refused with `invalid_launch_profile`. Sessions resumed with existing context messages are never retitled.
 
 `--auto-title-sessions` still opts every session on that host into titling when `auto_title` is omitted. It is
-deprecated for shared hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
+deprecated for multi-session hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
 over a launch-profile flag:
 
 ```bash
@@ -751,7 +751,7 @@ When `new_session`, `switch_session`, or `fork` swaps the live session - includi
 
 The command response reports only `{ cancelled }`, so this event is the only push channel carrying the new identity. The identity is `durableSessionId`, never `sessionId`: top-level `sessionId` is reserved for the per-connection routing handle that multi-session hosts tag every record with, and that tag is applied last, so reusing the key would overwrite the identity the event exists to deliver. Classic mode emits the event untagged.
 
-### Shared host lifecycle (cold start + idle exit)
+### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
 
@@ -850,7 +850,7 @@ A client may react to `host_superseded` early, but the old generation retains ea
 `session_path_in_use` on the successor remains a retryable response until parking releases that claim. A client
 that ignores the announcement still receives the terminal record and connection close.
 
-### Shared host occupancy (idle eviction, retention, empty-host exit)
+### Multi-session host occupancy (idle eviction, retention, empty-host exit)
 
 **The daemon does not cap sessions.** On the in-process runtime - the default for a `--listen` socket host, i.e. the
 shared daemon clients attach to - there is no session limit, no admission counter, and no eviction of a live session
@@ -951,7 +951,7 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
   both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
   return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
-  shared host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
+  host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
   before #2207 had a second admission watermark; current hosts have no such admission path.
 - **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
   samples and reports its own memory pressure. `host_memory_pressure` describes only the host that emitted it; pressure
@@ -1042,7 +1042,7 @@ instead of destroying it, so a peer that resumes reading within a 5-second grace
 that notice, and everything already written to it, before EOF. A peer that is still silent when the grace expires has
 its socket destroyed. A cut peer must reconnect and resynchronize, while the session keeps running and its other
 destinations keep receiving output. A failed or cut connection never withholds a session's credit and never fails the
-shared host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
+host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
 session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer is then cut on
 overflow. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
