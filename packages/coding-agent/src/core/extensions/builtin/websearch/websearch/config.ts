@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { CONFIG_DIR_NAME } from "../../../../../config.ts";
-import { isAllowedProviderBaseUrl } from "./provider-endpoints.ts";
+import { isAllowedProviderBaseUrl, isAllowedSearxngBaseUrl } from "./provider-endpoints.ts";
 import type {
 	CodexSearchMode,
 	ConfigLoadResult,
@@ -36,7 +36,23 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"xai",
 	"kimi",
 	"kagi",
+	"startpage",
+	"mojeek",
+	"ecosia",
+	"google-html",
+	"exa-mcp",
+	"searxng",
 ];
+/** Engines that need no key or account; a block on any of them puts it on a per-session cooldown. */
+export const KEYLESS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProvider>([
+	"duckduckgo-html",
+	"startpage",
+	"mojeek",
+	"ecosia",
+	"google-html",
+	"exa-mcp",
+	"searxng",
+]);
 const CONTEXT_SIZES: readonly SearchContextSize[] = ["low", "medium", "high"];
 const CODEX_MODES: readonly CodexSearchMode[] = ["cached", "live"];
 const STRATEGIES: readonly RoutingStrategy[] = ["priority", "round-robin", "fill-first"];
@@ -44,7 +60,14 @@ const DEFAULT_FREE_CONFIG: WebsearchConfig = {
 	strategy: "priority",
 	fallback: true,
 	auto: true,
-	providers: [{ id: "default", provider: "duckduckgo-html", maxResults: 10 }],
+	providers: [
+		{ provider: "duckduckgo-html", maxResults: 10 },
+		{ provider: "exa-mcp" },
+		{ provider: "startpage" },
+		{ provider: "mojeek" },
+		{ provider: "ecosia" },
+		{ provider: "google-html" },
+	],
 };
 
 export interface ConfigLoadOptions {
@@ -201,7 +224,19 @@ export function validateProviderConfig(config: SearchProviderEntry): ProviderVal
 		return { ok: false, reason: "invalid_config", message: "Provider timeoutMs must be greater than 0." };
 	}
 
-	if (config.baseUrl && !isAllowedProviderBaseUrl(config.baseUrl)) {
+	if (config.provider === "searxng") {
+		if (!config.baseUrl) {
+			return { ok: false, reason: "invalid_config", message: "Provider searxng requires baseUrl." };
+		}
+		if (!isAllowedSearxngBaseUrl(config.baseUrl)) {
+			return {
+				ok: false,
+				reason: "invalid_config",
+				message:
+					"Provider searxng baseUrl must be an HTTPS URL, or an http URL on the local network, without credentials.",
+			};
+		}
+	} else if (config.baseUrl && !isAllowedProviderBaseUrl(config.baseUrl)) {
 		return {
 			ok: false,
 			reason: "invalid_config",
@@ -224,7 +259,7 @@ export function validateProviderConfig(config: SearchProviderEntry): ProviderVal
 	if (
 		config.provider !== "codex" &&
 		config.provider !== "openai" &&
-		config.provider !== "duckduckgo-html" &&
+		!KEYLESS_PROVIDERS.has(config.provider) &&
 		!hasApiKey(config)
 	) {
 		return { ok: false, reason: "missing_api_key", message: `Provider ${config.provider} requires apiKey.` };
@@ -292,5 +327,5 @@ export async function loadWebsearchConfig(options: ConfigLoadOptions): Promise<C
 		return { ok: true, config, source: path };
 	}
 
-	return { ok: true, config: DEFAULT_FREE_CONFIG, source: "default:duckduckgo-html" };
+	return { ok: true, config: DEFAULT_FREE_CONFIG, source: "default:free-engines" };
 }

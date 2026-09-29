@@ -112,7 +112,7 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 				routingKey !== nextRoutingKey ||
 				routingState.successCounts.length !== config.providers.length
 			) {
-				routingState = createSearchRoutingState(config.providers.length);
+				routingState = createSearchRoutingState(config.providers.length, routingState?.cooldowns);
 				routingKey = nextRoutingKey;
 			}
 			const request = {

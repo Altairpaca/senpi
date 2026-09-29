@@ -32,11 +32,15 @@ function durationText(durationMs: number): string {
 	return durationMs >= 1000 ? `${Math.round(durationMs / 1000)}s` : `${durationMs}ms`;
 }
 
+function attemptState(attempt: NonNullable<SearchDetails["attempts"]>[number]): string | number {
+	if (attempt.skipped) return "skipped";
+	if (attempt.blocked === "challenge") return "challenged";
+	return attempt.error ? "failed" : attempt.resultsCount;
+}
+
 function attemptLabel(attempts: SearchDetails["attempts"]): string {
 	return attempts
-		? attempts
-				.map((attempt) => `${attemptRouteLabel(attempt)}:${attempt.error ? "failed" : attempt.resultsCount}`)
-				.join(" -> ")
+		? attempts.map((attempt) => `${attemptRouteLabel(attempt)}:${attemptState(attempt)}`).join(" -> ")
 		: "";
 }
 
@@ -47,7 +51,7 @@ function routeStateLabel(details: SearchProgressDetails): string {
 	return labels
 		.map((label, index) => {
 			const attempt = attempts[index];
-			if (attempt) return `${label}:${attempt.error ? "failed" : attempt.resultsCount}`;
+			if (attempt) return `${label}:${attemptState(attempt)}`;
 			return `${label}:${index === attempts.length ? "searching" : "pending"}`;
 		})
 		.join(" -> ");
