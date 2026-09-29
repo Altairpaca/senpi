@@ -1,5 +1,17 @@
 import type * as FsModule from "node:fs";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	readlinkSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -70,6 +82,21 @@ function serialize(lines: readonly unknown[]): string {
 	return lines.map((line) => `${JSON.stringify(line)}\n`).join("");
 }
 
+function migratedV2(): string {
+	return serialize([
+		{ ...LEGACY_V2_HEADER, version: 3 },
+		...LEGACY_V2_MESSAGES.map((line) =>
+			line.message.role === "hookMessage" ? { ...line, message: { ...line.message, role: "custom" } } : line,
+		),
+	]);
+}
+
+function tempFilesIn(directory: string): string[] {
+	return readdirSync(directory).filter((name) => name.endsWith(".tmp"));
+}
+
+const POSIX_PERMISSIONS_APPLY = process.platform !== "win32" && process.getuid?.() !== 0;
+
 describe("SessionManager whole-file rewrite", () => {
 	let dir: string;
 	let file: string;
@@ -101,18 +128,13 @@ describe("SessionManager whole-file rewrite", () => {
 		// Then the write error reaches the caller, the original transcript is untouched, and no temp file is left
 		expect(failure).toMatchObject({ code: "ENOSPC" });
 		expect(readFileSync(file).equals(original)).toBe(true);
-		expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		expect(tempFilesIn(dir)).toEqual([]);
 	});
 
 	it("writes the migrated transcript with the exact in-place bytes and keeps the file mode", () => {
 		// Given a version-2 transcript readable only by its owner
 		chmodSync(file, 0o600);
-		const expected = serialize([
-			{ ...LEGACY_V2_HEADER, version: 3 },
-			...LEGACY_V2_MESSAGES.map((line) =>
-				line.message.role === "hookMessage" ? { ...line, message: { ...line.message, role: "custom" } } : line,
-			),
-		]);
+		const expected = migratedV2();
 
 		// When opening it migrates the file to the current version
 		const session = SessionManager.open(file, dir);
@@ -121,6 +143,49 @@ describe("SessionManager whole-file rewrite", () => {
 		expect(session.getHeader()?.version).toBe(3);
 		expect(readFileSync(file, "utf8")).toBe(expected);
 		if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
-		expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		expect(tempFilesIn(dir)).toEqual([]);
 	});
+
+	it.skipIf(!POSIX_PERMISSIONS_APPLY)(
+		"migrates a writable transcript in place when its directory refuses new files",
+		() => {
+			// Given a writable version-2 transcript inside a directory that takes no new entries
+			chmodSync(dir, 0o555);
+			try {
+				// When opening it runs the version migration
+				const session = SessionManager.open(file, dir);
+
+				// Then it migrates exactly as the in-place rewrite did, with nothing left beside it
+				expect(session.getHeader()?.version).toBe(3);
+				expect(readFileSync(file, "utf8")).toBe(migratedV2());
+				expect(tempFilesIn(dir)).toEqual([]);
+			} finally {
+				chmodSync(dir, 0o755);
+			}
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"keeps a symlinked session file a link and migrates the file it points at",
+		() => {
+			// Given the transcript stored elsewhere and opened through a symlink
+			const storeDir = join(dir, "store");
+			mkdirSync(storeDir);
+			const target = join(storeDir, "legacy.jsonl");
+			writeFileSync(target, readFileSync(file));
+			rmSync(file);
+			symlinkSync(target, file);
+
+			// When opening the link runs the version migration
+			const session = SessionManager.open(file, dir);
+
+			// Then the link is untouched, the target holds the migrated transcript, and no temp file remains
+			expect(session.getHeader()?.version).toBe(3);
+			expect(lstatSync(file).isSymbolicLink()).toBe(true);
+			expect(readlinkSync(file)).toBe(target);
+			expect(readFileSync(target, "utf8")).toBe(migratedV2());
+			expect(tempFilesIn(dir)).toEqual([]);
+			expect(tempFilesIn(storeDir)).toEqual([]);
+		},
+	);
 });
