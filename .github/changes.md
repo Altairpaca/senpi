@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-29 - Model catalog publish runs only in the upstream repository (senpi#1522)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: the `publish` job runs only when `github.repository` is `badlogic/pi-mono`, and a new `Check R2 credentials` step skips the R2 upload with a notice when the access key or secret is empty. The `generate` job still builds and validates the catalog in every repository.
+
+### Why
+
+- The upload targets the upstream pi-artifacts R2 bucket, and this fork has no credentials for it, so every scheduled run inside the publication window failed at `aws s3 cp` with `Unable to locate credentials`.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `publish` job `if:` line and the steps before `Publish model catalog to R2` in `publish-model-catalog.yml`.
+
 ## 2026-09-29 - Node bundle CI step runs the reinstall regression file (senpi#2358)
 
 ### What changed
