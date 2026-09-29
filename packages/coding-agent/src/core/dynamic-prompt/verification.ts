@@ -1,3 +1,5 @@
+import type { PromptSurface } from "./types.ts";
+
 export type TestDisciplineRule = {
 	id:
 		| "deterministic-tests"
@@ -55,8 +57,6 @@ export function buildTestDisciplineSection(): string {
 	}
 	return lines.join("\n");
 }
-
-import type { PromptSurface } from "./types.ts";
 
 /**
  * The app surface's claim audit (senpi#2377): a check that could not run is covered by what did run,
