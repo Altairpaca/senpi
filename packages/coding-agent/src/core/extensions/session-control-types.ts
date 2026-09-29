@@ -80,7 +80,7 @@ export interface SessionAdmissionGate {
  * The process-lifetime admission ledger: `pending` = held by this runtime (either queue, or a
  * started turn whose entry is not written yet), `emitted` = transcript entry written, `failed`
  * (present only when non-empty) = the session file refused the entry: not held, still with its
- * sender, and `already_admitted` until the file takes a later entry.
+ * sender, and `already_admitted` until the run that refused it has settled with the file writable.
  */
 export interface AdmittedDeliveries {
 	readonly pending: readonly string[];

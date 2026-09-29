@@ -1971,6 +1971,8 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
+		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
+		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);

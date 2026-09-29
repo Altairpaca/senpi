@@ -6,7 +6,7 @@
  * one is admitted again only after the file has taken a later entry, so it is redelivered rather than lost.
  */
 import { chmodSync, readFileSync } from "node:fs";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
+import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
@@ -59,6 +59,80 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 		const text = readFileSync(sessionPath, "utf8");
 		expect(text.split("DELIVERY refused-1").length - 1).toBe(1);
 		expect(session.externalAdmission.list()).toEqual({ pending: [], emitted: ["ok-1", "refused-1"] });
+	});
+
+	it("is not redelivered inside the run that refused it when the file recovers mid-run: one copy in context and on disk", async () => {
+		// Given: a session whose file refuses the delivery entry, then takes the same run's next assistant message.
+		const gateway = gatewayFixture();
+		await using host = await startReleaseHost(gateway.extension);
+		const contextCopies: number[] = [];
+		const copiesIn = (context: unknown): number => JSON.stringify(context).split("DELIVERY refused-1").length - 1;
+		let redeliverMidRun: () => Promise<unknown> = async () => undefined;
+		let firstAssistantWritten: Promise<void> = Promise.resolve();
+		let midRunWake: unknown;
+		const answer =
+			(text: string): FauxResponseStep =>
+			(context) => {
+				contextCopies.push(copiesIn(context));
+				return fauxAssistantMessage(text);
+			};
+		host.faux.setResponses([
+			fauxAssistantMessage("seed reply"),
+			(context) => {
+				contextCopies.push(copiesIn(context));
+				return fauxAssistantMessage([fauxToolCall("no_such_tool", {})], { stopReason: "toolUse" });
+			},
+			async (context) => {
+				contextCopies.push(copiesIn(context));
+				await firstAssistantWritten;
+				midRunWake = await redeliverMidRun();
+				return fauxAssistantMessage("refused run reply");
+			},
+			answer("redelivered reply"),
+			answer("spare reply"),
+		]);
+		const { sessionId, sessionPath, session } = await host.open("midrun-recovery");
+		const manager = session.sessionManager;
+		const appendMessage = manager.appendMessage.bind(manager);
+		let assistantWritten!: () => void;
+		firstAssistantWritten = new Promise((resolve) => {
+			assistantWritten = resolve;
+		});
+		manager.appendMessage = (message) => {
+			const id = appendMessage(message);
+			if (message.role === "assistant") assistantWritten();
+			return id;
+		};
+		session.subscribe((event) => {
+			if (event.type === "transcript_write_failed" && event.role === "custom") chmodSync(sessionPath, 0o644);
+		});
+		redeliverMidRun = () => host.send({ type: "wake", id: "w2", sessionId, delivery_ids: ["refused-1"] }, "mid-run");
+		chmodSync(sessionPath, 0o444);
+
+		// When: the delivery runs, the sender retries it inside that run, and again after the run settled.
+		let settled = nextEvent(session, "agent_settled");
+		await host.send({ type: "wake", id: "w1", sessionId, delivery_ids: ["refused-1"] });
+		await settled;
+		settled = nextEvent(session, "agent_settled");
+		const afterSettle = await host.send({ type: "wake", id: "w3", sessionId, delivery_ids: ["refused-1"] });
+		const kindOf = (reply: unknown): unknown =>
+			(reply as { data?: { admitted?: { kind?: string }[] } }).data?.admitted?.[0]?.kind;
+		if (kindOf(afterSettle) === "started") await settled;
+
+		// Then: refused inside its own run, redelivered once after it, and held once in context and on disk.
+		expect({
+			midRun: kindOf(midRunWake),
+			afterSettle: kindOf(afterSettle),
+			mostCopiesInContext: Math.max(...contextCopies),
+			onDisk: readFileSync(sessionPath, "utf8").split("DELIVERY refused-1").length - 1,
+			ledger: session.externalAdmission.list(),
+		}).toEqual({
+			midRun: "already_admitted",
+			afterSettle: "started",
+			mostCopiesInContext: 1,
+			onDisk: 1,
+			ledger: { pending: [], emitted: ["refused-1"] },
+		});
 	});
 
 	it("answers already_admitted for a failed delivery while the file has taken no later entry", async () => {
