@@ -53,7 +53,14 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
+import {
+	APP_NAME,
+	DISPLAY_VERSION,
+	ENV_SESSION_DIR,
+	expandTildePath,
+	getAgentDir,
+	getInstallPackageDir,
+} from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -1077,7 +1084,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (process.platform === "win32") {
-		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
+		cleanupWindowsSelfUpdateQuarantine(getInstallPackageDir());
 	}
 
 	const cwd = process.cwd();

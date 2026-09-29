@@ -1,3 +1,25 @@
+## 2026-09-29 - A running session keeps its own build when the install is replaced (#2358)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: after the `--version`, help and bootstrap-repair paths, a bundled launch calls `prepareRuntimeSnapshot()` (`src/runtime-snapshot/`, new) and, on a hand-off, imports the snapshot's own `dist/bundle/cli.js` instead of `./cli-main`. That copy of `cli.ts` sees it already runs from a snapshot, claims it and imports its own `cli-main`. The bootstrap-repair check reads `getInstallPackageDir()`.
+- `packages/coding-agent/src/config.ts`: new `getInstallPackageDir()`, which equals `getPackageDir()` except inside a runtime snapshot, where it returns the install the snapshot was taken from (`runtime-snapshot.json`). `detectInstallMethod()` classifies the install path mapped through `resolveInstallPath(__dirname, ...)`, and `getInferredNpmInstall`, both pnpm global-root regexes, `isSelfUpdatePathWritable` and `isManagedByGlobalPackageManager` read `getInstallPackageDir()`.
+- `packages/coding-agent/src/main.ts` and `packages/coding-agent/src/package-manager-cli.ts`: the Windows self-update quarantine cleanup and the managed-install release check read `getInstallPackageDir()`.
+- `packages/coding-agent/src/runtime-snapshot/` (new, fork-only): `enter.ts` decides the hand-off, `layout.ts` builds `<agentDir>/runtime/<buildId>-<installHash>/` (copies `dist/bundle` and `package.json`, links every other package and `dist` entry, and builds a `node_modules` that is the union of the install's resolution path, so nested and hoisted dependencies resolve to the install's own copies, verified against the manifest's externals), `registry.ts` owns the directory lock, per-pid claims and pruning (a snapshot with no live claim and no use for 10 minutes is removed), and `marker.ts` reads the marker.
+
+### Why
+
+- `bun install -g` and `npm i -g` delete and rewrite the package directory. A session started before that died at its next lazy chunk import (`Cannot find module './anthropic-messages-<hash>.js'`, or `ENOENT reading` under Bun), and every later request failed the same way until restart (#2358). Bun rewrites every global package on any `bun install -g`, so each omo update hit every open session. Preloading the lazy chunks instead measured +53 to +66 MB RSS and 114 to 566 ms per process and still missed the 16 name-stable lazy files, workers and disk assets. The snapshot costs a one-time 32 to 144 ms copy of 158 files per build and about nothing per launch.
+- Any snapshot failure (read-only agent dir, unknown layout, lock busy for 5 s) runs in place, exactly as before: the snapshot only adds upgrade resilience and must never be why startup fails.
+
+### Why an extension could not handle it
+
+- The decision has to happen in the entry before the engine graph loads, and install-method detection is core config.
+
+### Expected merge conflict zones
+
+- MEDIUM: the final `cli-main` import in `cli.ts`; LOW: `getPackageDir()` call sites in `config.ts` near `detectInstallMethod`, `getInferredNpmInstall`, the pnpm global-root regexes and the self-update checks; the Windows quarantine call in `main.ts`; `getActiveManagedInstallRoot` and `prepareWindowsNpmSelfUpdate` in `package-manager-cli.ts`.
+
 ## 2026-09-29 - Edits made in ~/.pi/agent after its copy are reported and importable (omo#9173)
 
 ### What changed

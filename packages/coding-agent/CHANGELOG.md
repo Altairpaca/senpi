@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- A running session no longer dies when senpi or omo is updated underneath it. `bun install -g` and `npm i -g` delete and rewrite the installed package, so a session started earlier used to fail every later request with `Cannot find module './<chunk>-<hash>.js'` (or `ENOENT reading ...` under Bun), in each fallback model too, until it was restarted. Each launch now runs from its own copy of the bundle under `<agentDir>/runtime/`, taken once per build (about 30 MB, copied in well under a second), and keeps it until the session exits. Copies no running session uses are removed on a later launch. ([#2358](https://github.com/code-yeongyu/senpi/issues/2358))
+
 - Config you edit in `~/.pi/agent` after the one-time copy to `~/.senpi/agent` no longer goes unnoticed: the next interactive start warns once per change, naming the file you edited and the file senpi reads, e.g. `You edited ~/.pi/agent/models.json after senpi moved to ~/.senpi/agent; senpi reads ~/.senpi/agent/models.json`. `senpi config import-pi [models.json ...]` copies those edits over, saving each replaced file as `<file>.bak-<time>` first; `~/.pi/agent` is never written. The first start that copies `~/.pi/agent` now says where config lives from then on. ([omo#9173](https://github.com/code-yeongyu/oh-my-openagent/issues/9173))
 
 - A stdio MCP server carried by a skill you installed now expands `${VAR}` in its `command`, `args`, `env` and `cwd` the way your own `mcp.json` does, so the documented `"env": { "EXA_API_KEY": "${EXA_API_KEY}" }` reaches the server as your key instead of the literal placeholder. A skill of an untrusted project keeps the placeholder and warns once, naming the skill and the variable. ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
