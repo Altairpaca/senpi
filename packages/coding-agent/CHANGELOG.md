@@ -6,6 +6,8 @@
 
 - `pi.sharedHostEnabled` is removed from the ExtensionAPI: it could only ever be `true` inside the removed interactive shared-host join. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
+- Legacy `.pi/` project resources (extensions, skills, prompt templates, themes, hooks) now follow project trust like the project config directory: a project that is not trusted no longer loads them, and a project whose only project resources are in `.pi/` now asks whether to trust it instead of opening as trusted. Trusted projects load them as before.
+
 ### Added
 
 - Extensions can expose an interactive session to other local sessions: `pi.session.registerControlEndpoint({ inboxDir, drain })` (POSIX TUI only; anything else answers `unsupported`) serves a secret-authenticated control socket listed by `senpi host status --all` as `endpoint_kind: "tui"`, with read-mostly commands (`get_protocol_info`, `list_sessions`, `get_state`, `get_messages`, `set_session_name`, `subscribe`, `wake`, `extension_ui_response`) and never `prompt`/`steer`/`follow_up`. Delivered messages enter through `pi.session.admitExternalMessage()`, which admits each `delivery_id` exactly once (`started` / `queued` / `steered`), waits while you are typing (`held_draft`), refuses a stale turn (`turn_conflict`), and records the id in the transcript; they render as a "remote message" block, never as your own input. `pi.session.admissionGate()`, `listAdmittedDeliveries()`, `persistHeaderNow()` and the `session_control_wake` event (idle, submission, draft cleared, command, inbox, emitted, continue) complete the surface. A TUI with no registrant opens no socket. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
@@ -18,8 +20,6 @@
 
 ### Changed
 
-- Legacy `.pi/` project resources (extensions, skills, prompt templates, themes, hooks) now follow project trust like the project config directory: a project that is not trusted no longer loads them, and a project whose only project resources are in `.pi/` now asks whether to trust it instead of opening as trusted. Trusted projects load them as before.
-
 - Installing `@code-yeongyu/senpi` is smaller and faster: the package now declares its real dependencies instead of shipping its whole dependency tree inside the tarball, so bun no longer installs every dependency twice and npm no longer unpacks a 27,000-file tarball. Commands, library exports and features are unchanged. ([#2360](https://github.com/code-yeongyu/senpi/issues/2360))
 
 - The published packages no longer ship sourcemaps (they pointed at sources that are not published), and `@code-yeongyu/senpi` stops declaring three dependencies nothing used (`glob`, `@opentelemetry/api`, `proxy-from-env`), so installs are smaller again. ([#2362](https://github.com/code-yeongyu/senpi/issues/2362))
@@ -29,6 +29,8 @@
 - `senpi host ensure|handoff|stop --socket` against a terminal control endpoint (`endpoint_kind: "tui"`, or a `t-*.sock` name) refuses with exit 3 `reason: "unsupported_endpoint_kind"` without connecting to it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
 ### Fixed
+
+- A session file write that fails (permission denied, a full disk, a removed session directory) no longer leaves the refused entry in the session: the next entry is written as a child of the last entry the file actually holds, so the transcript stays whole on reload. A partial line a full disk left behind is removed before the next write, and a prompt whose messages could not be saved now fails with that error instead of reporting success. RPC clients, which never see that prompt failure, now get a `transcript_write_failed` event (`role`, `errorMessage`) for every message the file refused; an automatic retry or queued continuation whose messages could not be saved reports a continuation error; the next prompt no longer sends the model the unsaved messages, so the model sees the conversation a reload shows; and the interactive TUI says so once per run: `This turn was not saved to the session file (EACCES); the model will not see it after the next prompt.`
 
 - A transient `forbidden` / `Request not allowed` rejection from a Claude subscription is retried on the same model before any fallback. A fallback target that answers with a billing error (e.g. `credit balance is too low`) no longer pins the session: that provider's remaining rungs are skipped for its cooldown, and when the chain ends on it the next turn returns to the original model with a notice saying why. Billing on the original model still pins as before. ([#2376](https://github.com/code-yeongyu/senpi/issues/2376))
 
@@ -95,8 +97,6 @@
 ### Fixed
 
 - A resumed Claude conversation no longer re-sends its whole history when an extension starts the first turn. A terminal monitor that fires on restore, a goal continuation or a loop run can start a turn while the session is still starting up, and that turn used to reach Claude before the saved resume point was read back, so it went out as `Session continuity lost - resent the full conversation (registry_miss)`. Turns that extensions request while a session is starting now begin once every extension has finished starting up. ([#1972](https://github.com/code-yeongyu/senpi/issues/1972))
-
-- A session file write that fails (permission denied, a full disk, a removed session directory) no longer leaves the refused entry in the session: the next entry is written as a child of the last entry the file actually holds, so the transcript stays whole on reload. A partial line a full disk left behind is removed before the next write, and a prompt whose messages could not be saved now fails with that error instead of reporting success. RPC clients, which never see that prompt failure, now get a `transcript_write_failed` event (`role`, `errorMessage`) for every message the file refused; an automatic retry or queued continuation whose messages could not be saved reports a continuation error; the next prompt no longer sends the model the unsaved messages, so the model sees the conversation a reload shows; and the interactive TUI says so once per run: `This turn was not saved to the session file (EACCES); the model will not see it after the next prompt.`
 
 - Config you edit in `~/.pi/agent` after the one-time copy to `~/.senpi/agent` no longer goes unnoticed: the next interactive start warns once per change, naming the file you edited and the file senpi reads, e.g. `You edited ~/.pi/agent/models.json after senpi moved to ~/.senpi/agent; senpi reads ~/.senpi/agent/models.json`. `senpi config import-pi [models.json ...]` copies those edits over, saving each replaced file as `<file>.bak-<time>` first; `~/.pi/agent` is never written. The first start that copies `~/.pi/agent` now says where config lives from then on. ([omo#9173](https://github.com/code-yeongyu/oh-my-openagent/issues/9173))
 
