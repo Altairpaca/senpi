@@ -1,3 +1,21 @@
+## 2026-09-29 - Auth status mirrors `ambient` (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcAuthStatus` gains optional `ambient?: true`, mirroring `AuthStatus.ambient` (auth that came only from ambient AWS env or Google ADC).
+
+### Why
+
+- `getProviderAuthStatus` now reports it, and the RPC type is documented as that status's mirror; clients can tell a provider the user configured from one merely present in the environment (senpi#2327).
+
+### Why an extension could not handle it
+
+- It is the wire type of an existing RPC response.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcAuthStatus` interface.
+
 ## 2026-09-28 - `warm`: load a host's prompt path without opening a session (senpi#2314)
 
 ### What changed

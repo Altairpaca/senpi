@@ -34,6 +34,28 @@
 
 - LOW: the import block and the two `create` entry points in `model-runtime.ts`.
 
+## 2026-09-29 - Ambient cloud credentials never make their provider the automatic default (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-default-selection.ts` (new): `isAmbientOnlyProvider`, `createAmbientProviderCheck`, and `selectProviderDefault(available, providerDefaults, source)`. Selection considers models from providers whose auth status is not `ambient` first; ambient-only providers only when nothing else is available. Within that group the first available `providerDefaults` entry wins (`provider-default`), else the group's first model (`first-available`).
+- `packages/coding-agent/src/core/model-resolver.ts`: `findInitialModel` step 4 and the `restoreModelFromSession` fallback call `selectProviderDefault` instead of walking `defaultModelPerProvider` in key order over every available model. `defaultModelPerProvider` gains `anthropic-subscription: claude-opus-4-8` (same default as `anthropic`), so a Claude subscription login has a provider default at all.
+- `packages/coding-agent/src/core/model-runtime.ts`: `getProviderAuthStatus` returns `ambient: true` for environment auth whose `AuthCheck` is ambient.
+- `packages/coding-agent/src/core/provider-composer.ts`: `AuthStatus` gains optional `ambient?: true`.
+
+### Why
+
+- With AWS keys in the environment (kept for S3, deploys, ...) and no saved default, the key-order walk picked `amazon-bedrock` (2nd key) over every later provider, and a Claude subscription never matched the walk because it had no table entry. The session started on Bedrock even for users logged in elsewhere; the recommended-models switch hides it only outside app-server mode and only when a ladder model is available (senpi#2327).
+
+### Why an extension could not handle it
+
+- Initial model selection runs in core before extensions bind (see the recommended-models note: the resolver reads provider defaults first), and restore fallback happens inside `restoreModelFromSession`.
+
+### Expected merge conflict zones
+
+- MEDIUM: step 4 of `findInitialModel` and the fallback tail of `restoreModelFromSession` in `model-resolver.ts`, plus the `anthropic-subscription` row in `defaultModelPerProvider`; upstream edits to that table land beside it.
+- LOW: the environment return of `getProviderAuthStatus` in `model-runtime.ts`; the `AuthStatus` type in `provider-composer.ts`.
+
 ## 2026-09-29 - A usage limit skips the rest of a spent account and names itself in the fallback notice (omo#8296)
 
 ### What changed

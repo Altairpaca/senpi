@@ -756,7 +756,13 @@ export class ModelRuntime implements Models {
 		);
 		if (configured) return configured;
 		const check = this.snapshot.auth.get(providerId);
-		return check ? { configured: true, source: "environment", label: check.source } : { configured: false };
+		if (!check) return { configured: false };
+		return {
+			configured: true,
+			source: "environment",
+			label: check.source,
+			...(check.ambient ? { ambient: true } : {}),
+		};
 	}
 
 	private async prepareRequest<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(

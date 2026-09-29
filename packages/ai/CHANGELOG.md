@@ -16,6 +16,8 @@
 
 - A `claude_code_version_too_old` rejection on an Anthropic OAuth request now raises the advertised version to the one Anthropic names and retries the request once, so a model released after the last senpi build works the first time it is asked for. If the retry still fails, the error names the version senpi advertised and how to pin a newer one. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
 
+- `AuthResult` and `AuthCheck` carry `ambient: true` when Amazon Bedrock or Google Vertex auth came only from a shared cloud credential chain (AWS profile/keys/roles in the environment, Application Default Credentials), so callers can rank those providers below ones the user configured. ([#2327](https://github.com/code-yeongyu/senpi/issues/2327))
+
 ### Removed
 
 ## [2026.9.28-7] - 2026-09-28
