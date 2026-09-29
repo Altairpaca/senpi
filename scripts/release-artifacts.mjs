@@ -50,15 +50,6 @@ export function runGenerateImageModels(dryRun, runCommand, log, dryRunLog) {
 	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-image-models"]);
 }
 
-export function runShrinkwrap(dryRun, runCommand, log, dryRunLog) {
-	if (dryRun) {
-		dryRunLog("node scripts/generate-coding-agent-shrinkwrap.mjs");
-		return;
-	}
-	log("node scripts/generate-coding-agent-shrinkwrap.mjs");
-	runCommand("node", ["scripts/generate-coding-agent-shrinkwrap.mjs"]);
-}
-
 export function runInstallLock(dryRun, runCommand, log, dryRunLog) {
 	if (dryRun) {
 		dryRunLog("node scripts/generate-coding-agent-install-lock.mjs");
