@@ -1,5 +1,23 @@
 # changes.md — dynamic-prompt
 
+## 2026-09-29 - The handoff contract names which parts stay fixed and which follow the user's language (senpi#2366)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: new exported `HANDOFF_LANGUAGE_RULE`, rendered in `buildHandoffSection` in place of the sentence `Now and Next are the todo labels verbatim.`, which it absorbs: the labels Ask, wanted, For you, Now, and Next stay exactly as written, and the routing line, slot contents, todo labels, and the reply itself are written in the user's language (the one their instructions name, else the one they write in).
+
+### Why
+
+- Claude cores carry no user-language rule, and the routing line and handoff block are English sentence templates the model copies verbatim, so a user with a "reply in Korean" rule got English todo labels, English `Now`/`Next` slots, and (per the report) English replies. Category C: the model had no way to know which template tokens are machine-parsed (the ttsr repetitive-turns detector reads `Ask:` through `For you:` / `Now:` in model output) and which are fill-in. Every Claude preset renders this section, so one rule covers all of them; GPT-6 Astra keeps its own language line.
+
+### Why an extension could not handle it
+
+- This is the shared handoff section; an extension could only append a second, competing rule.
+
+### Expected merge conflict zones
+
+- The closing sentence of `buildHandoffSection`. Fork-only file.
+
 ## 2026-09-25 - The brief-update sentence reads as a sentence (senpi#2143)
 
 ### What changed
