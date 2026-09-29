@@ -1,6 +1,6 @@
 import { appendDebugLogEntry } from "./hidden-stdout-log.ts";
+import { parseSettingsJson } from "./settings-json.ts";
 import type { SettingsScope, SettingsStorage } from "./settings-manager.ts";
-import { parseSettingsJson } from "./settings-manager.ts";
 
 /**
  * Settings keys whose feature no longer exists. Each entry is `[parent, key]`: the key is deleted
