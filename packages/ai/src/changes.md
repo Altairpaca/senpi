@@ -1,3 +1,21 @@
+## 2026-09-29 - The anthropic-subscription cold-seed refusal is a context overflow (senpi#2329)
+
+### What changed
+
+- `packages/ai/src/utils/overflow.ts`: `OVERFLOW_PATTERNS` gains `/^The conversation is too long to resend \(about \d+ tokens, limit \d+\)/` and the provider list comment names it, so `isContextOverflow` classifies the refusal the `anthropic-subscription` lane raises before re-sending a conversation that cannot fit ("The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying.").
+
+### Why
+
+- The refusal must reach the same overflow recovery an API rejection does: senpi compacts its own history once and retries (oh-my-openagent#7975). Its wording is plain for the user, so it no longer matches the provider patterns.
+
+### Why an extension could not handle it
+
+- `isContextOverflow` is the shared classifier that core overflow recovery consults before any extension hook runs; only a core pattern can make the provider's own refusal count as an overflow.
+
+### Expected merge conflict zones
+
+- LOW: the head of `OVERFLOW_PATTERNS` in `packages/ai/src/utils/overflow.ts` and its provider list comment.
+
 ## 2026-09-29 - Claude Code fingerprint follows the latest release; Sonnet 5.5 request shaping (senpi#2321)
 
 ### What changed

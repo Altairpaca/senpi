@@ -1,5 +1,6 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
+import { coldSeedOverflow } from "./cold-seed-budget.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
@@ -44,6 +45,8 @@ export type ResidentSessionStreamInput = {
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
+	/** Called once per attempt, before dispatch, with whether it re-sends the whole history. */
+	onDispatchShape?: (coldSeed: boolean) => void;
 };
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
@@ -171,6 +174,14 @@ async function createResidentAttempt(
 	const flattenResult = flatten
 		? dedupeUltraworkBlocks(buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote))
 		: undefined;
+	input.onDispatchShape?.(flattenResult !== undefined);
+	const overBudget = flattenResult ? coldSeedOverflow(input.model, input.context, flattenResult.blocks) : undefined;
+	if (overBudget) {
+		// Never dispatch a re-send that cannot fit: the SDK cannot compact a single
+		// exchange, so the overflow must reach senpi's own compaction instead.
+		closeSession(sessionId, "cold_seed_over_budget");
+		throw overBudget;
+	}
 	const blocks = flattenResult
 		? flattenResult.blocks
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
