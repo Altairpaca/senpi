@@ -4,6 +4,20 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+- A running session no longer dies when senpi or omo is updated underneath it. `bun install -g` and `npm i -g` delete and rewrite the installed package, so a session started earlier used to fail every later request with `Cannot find module './<chunk>-<hash>.js'` (or `ENOENT reading ...` under Bun), in each fallback model too, until it was restarted. Each launch now runs from its own copy of the bundle under `<agentDir>/runtime/`, taken once per build (about 30 MB, copied in well under a second), and keeps it until the session exits. Copies no running session uses are removed on a later launch. ([#2358](https://github.com/code-yeongyu/senpi/issues/2358))
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
 - Security: an MCP remote server declared by a skill (an `mcp.json` next to SKILL.md or a `mcp:` frontmatter block) no longer sends `bearerTokenEnv`. senpi ignores the field, sends no `Authorization` header and warns once, because the skill chooses the server's URL and could otherwise make senpi send any of your environment variables to it. To restore auth, declare that server in your own `mcp.json` (the global `<agentDir>/mcp.json`, `~/.senpi/agent/mcp.json` by default, or a trusted project's `.senpi/mcp.json`), where `bearerTokenEnv` keeps working. `${VAR}` in a skill remote server's `url` or `headers` also stays literal, with a warning. See [Environment variables in skill servers](docs/mcp.md#environment-variables-in-skill-servers). ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
 
 - Interactive and RPC prompts whose first token looks like a command (`/name`, no second `/`) and that no extension command, prompt template, or loaded `skill:<name>` handles are now refused with the exported `UnknownCommandError` instead of being sent to the model. The check runs after extension `input` handlers and skill/template expansion, so input rewrites such as bare skill aliases keep working; extension-sourced prompts and text that starts with whitespace (` /foo`) are exempt, and `unknownCommandAsText: true` (prompt option and RPC `prompt` field) sends the text unchanged. RPC answers with `errorCode: "unknown_command"` and `errorData: { command, suggestions, reason }`; a TUI builtin such as `/model` sent as a prompt gets `reason: "interactive_only"`. App-server `turn/start` refuses the same input with JSON-RPC error `-32602` whose `data` carries `errorCode: "unknown_command"`, `command`, `suggestions` and `reason`, starts no turn, and accepts `unknownCommandAsText: true` to send the text. ([#2348](https://github.com/code-yeongyu/senpi/issues/2348))
@@ -25,8 +39,6 @@
 - Without a `websearch.json`, `web_search` no longer depends on DuckDuckGo alone: your search queries may now go to DuckDuckGo and Exa's hosted search service (no key and no session id is sent), then to Startpage, Mojeek, Ecosia and Google's results page, in that order. To keep searches away from these services, list only the providers you want in `websearch.json`; for DuckDuckGo only, use `{ "providers": [{ "provider": "duckduckgo-html" }] }`. When an engine answers with a bot check instead of results, the search says so and moves on to the next engine, and an engine that blocks a search (bot check, HTTP 429 or 403, network error) is skipped for 1 minute, doubling up to 15 minutes while it keeps blocking; skipped engines are listed in the routing line. The default still costs nothing: no key, no paid API, no other model. ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
 
 ### Fixed
-
-- A running session no longer dies when senpi or omo is updated underneath it. `bun install -g` and `npm i -g` delete and rewrite the installed package, so a session started earlier used to fail every later request with `Cannot find module './<chunk>-<hash>.js'` (or `ENOENT reading ...` under Bun), in each fallback model too, until it was restarted. Each launch now runs from its own copy of the bundle under `<agentDir>/runtime/`, taken once per build (about 30 MB, copied in well under a second), and keeps it until the session exits. Copies no running session uses are removed on a later launch. ([#2358](https://github.com/code-yeongyu/senpi/issues/2358))
 
 - A resumed Claude conversation no longer re-sends its whole history when an extension starts the first turn. A terminal monitor that fires on restore, a goal continuation or a loop run can start a turn while the session is still starting up, and that turn used to reach Claude before the saved resume point was read back, so it went out as `Session continuity lost - resent the full conversation (registry_miss)`. Turns that extensions request while a session is starting now begin once every extension has finished starting up. ([#1972](https://github.com/code-yeongyu/senpi/issues/1972))
 
