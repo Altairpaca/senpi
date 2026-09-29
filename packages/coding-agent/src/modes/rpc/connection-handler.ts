@@ -58,7 +58,7 @@ import type {
 import { FooterDataProvider } from "../../core/footer-data-provider.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
-import { UnknownCommandError } from "../../core/unknown-command.ts";
+import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
@@ -1136,7 +1136,7 @@ export function createRpcConnectionHandler(
 						if (e instanceof UnknownCommandError) {
 							const { command: name, suggestions, reason } = e;
 							output(
-								error(id, "prompt", e.message, RPC_ERROR_UNKNOWN_COMMAND, {
+								error(id, "prompt", `${e.message} ${UNKNOWN_COMMAND_CONFIRM_HINT}`, RPC_ERROR_UNKNOWN_COMMAND, {
 									command: name,
 									suggestions,
 									reason,

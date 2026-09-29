@@ -288,7 +288,7 @@ import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
-import { reportUnknownCommand, submitsCommandAsText } from "./unknown-command-feedback.ts";
+import { reportUnknownCommand, submitsCommandAsText, UnknownCommandConfirmation } from "./unknown-command-feedback.ts";
 import { formatDisplayVersion } from "./version-label.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
@@ -984,6 +984,7 @@ export class InteractiveMode {
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
+	private readonly unknownCommandConfirmation = new UnknownCommandConfirmation();
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
@@ -4533,6 +4534,7 @@ export class InteractiveMode {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
+			this.unknownCommandConfirmation.disarm();
 			if (this.session.isStreaming || this.session.retryAttempt > 0) {
 				void this.abortAndFireQueuedMessages().catch((error) =>
 					this.showError(error instanceof Error ? error.message : String(error)),
@@ -4809,7 +4811,8 @@ export class InteractiveMode {
 				this.hideShortcutOverlay();
 				this.lastEditorText = "";
 				text = text.trim();
-				const unknownCommandAsText = submitsCommandAsText(text, details);
+				const unknownCommandAsText =
+					this.unknownCommandConfirmation.confirms(text) || submitsCommandAsText(text, details);
 				if (!text) {
 					// Enter on an empty editor opens the pending async question; it needs
 					// no chord, so it works under every terminal and keymap.
@@ -6761,7 +6764,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
-				this.queueCompactionSubmission(text, "followUp", unknownCommandAsText);
+				this.queueCompactionSubmission(
+					text,
+					"followUp",
+					this.unknownCommandConfirmation.confirms(text) || unknownCommandAsText,
+				);
 			}
 			return;
 		}
@@ -6786,11 +6793,12 @@ export class InteractiveMode {
 				return;
 			}
 			const pendingEchoId = this.beginUserEcho(text, images);
+			const followUpAsText = this.unknownCommandConfirmation.confirms(text) || unknownCommandAsText;
 			try {
 				await this.session.prompt(text, {
 					streamingBehavior: "followUp",
 					...(images.length > 0 ? { images } : {}),
-					...(unknownCommandAsText ? { unknownCommandAsText } : {}),
+					...(followUpAsText ? { unknownCommandAsText: true } : {}),
 					...this.optimisticUserEchoes.promptOptions(pendingEchoId),
 				});
 			} catch (error) {
@@ -7198,8 +7206,13 @@ export class InteractiveMode {
 
 	/** Restore an unknown-command submission to the editor with a warning; `false` for any other error. */
 	private reportUnknownCommandRejection(error: unknown, submittedText: string): boolean {
+		const sendAgain = `${keyDisplayText("tui.input.submit")} again sends it as a message`;
 		return reportUnknownCommand(error, submittedText, {
 			editor: this.editor,
+			confirmation: this.unknownCommandConfirmation,
+			confirmHint: this.session.isStreaming
+				? `${sendAgain}.`
+				: `${sendAgain}; ${keyDisplayText("app.interrupt")} keeps editing.`,
 			showWarning: (message) => this.showWarning(message),
 		});
 	}

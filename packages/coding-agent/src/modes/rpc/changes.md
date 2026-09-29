@@ -16,6 +16,24 @@
 
 - LOW: the `RpcAuthStatus` interface.
 
+## 2026-09-29 - unknown_command refusal tells the client how to confirm (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `unknown_command` failure message appends `UNKNOWN_COMMAND_CONFIRM_HINT` (resend with `unknownCommandAsText: true`) instead of the TUI's leading-space advice. `errorCode` and `errorData` are unchanged.
+
+### Why
+
+- The advice in the RPC message was the TUI's; a protocol client confirms with the `unknownCommandAsText` field.
+
+### Why an extension could not handle it
+
+- The RPC error envelope for `prompt` is built in the connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `UnknownCommandError` branch of the `prompt` catch in `connection-handler.ts`.
+
 ## 2026-09-28 - `warm`: load a host's prompt path without opening a session (senpi#2314)
 
 ### What changed
