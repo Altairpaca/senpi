@@ -36,6 +36,8 @@
 
 - Anthropic Subscription custom-tool schemas now preserve JSON-Schema field descriptions, so Claude receives guidance such as eval's required `summary` field instead of making a wasted corrective call. ([#2145](https://github.com/code-yeongyu/senpi/issues/2145))
 
+- Fixed missing `initialModelProvenance` in `session_start` events for explicit and scoped CLI model selection ([#1560](https://github.com/code-yeongyu/senpi/issues/1560)).
+
 ### Removed
 
 ## [2026.9.29] - 2026-09-29
