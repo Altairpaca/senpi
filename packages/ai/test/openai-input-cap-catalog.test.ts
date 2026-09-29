@@ -17,6 +17,8 @@ const DOCUMENTED_TOTALS = new Map([
 const DELIBERATE_TIER_BUDGETS = new Map([
 	["gpt-6-sol", 400_000],
 	["gpt-6.1-sol", 400_000],
+	// Venice spells the point release without the dot (openai-gpt-61-sol).
+	["gpt-61-sol", 400_000],
 ]);
 
 function isFlagshipFamily(id: string): boolean {
@@ -67,6 +69,9 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 		["openrouter", "openai/gpt-6-luna", 922_000],
 		["vercel-ai-gateway", "openai/gpt-6-sol-fast", 400_000],
 		["vercel-ai-gateway", "openai/gpt-6.1-sol-fast", 400_000],
+		["venice", "openai-gpt-61-sol", 400_000],
+		["opencode", "gpt-6.1-sol", 400_000],
+		["github-copilot", "gpt-6.1-sol", 400_000],
 		["openai", "gpt-5-pro", 272_000],
 		["azure-openai-responses", "gpt-5-pro", 272_000],
 	] as const)("%s/%s resolves to %i", (provider: BuiltinProvider, id: string, contextWindow: number) => {

@@ -1,3 +1,21 @@
+## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: the Sol pattern accepts one digit glued to the 6 (`gpt-6(?:\.\d+|\d)?-sol`), so `openai-gpt-61-sol` warns at `xhigh` / `max` like every other GPT-6.1 Sol id; `gpt-61` and `gpt-611-sol` stay out (`test/high-reasoning-warning.test.ts`).
+
+### Why
+
+Venice spells the point release without the dot.
+
+### Why an extension could not handle it
+
+The warning matcher is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
 ## 2026-09-30 - GPT-6.1 Sol becomes the OpenAI provider default; warning covers it (senpi#2390)
 
 ### What changed
