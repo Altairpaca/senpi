@@ -1,3 +1,22 @@
+## 2026-09-29 - `release_session` awaits the header write of a never-written session
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: `releaseSession` awaits `sessionManager.persistHeaderNow()` before the final check (after an interrupt's settle), inside the `try` that answers `release_failed`, when the session has no file yet (`isTranscriptFlushed()` is false); a written session awaits nothing, so its claim stays in the same turn as the release request and a prompt routed after it is still refused (for a never-written session, a prompt routed right after it either lands whole before `session_released` or makes the release answer `turn_active`; documented in `docs/rpc.md`); `claimAndRelease` no longer starts the header write unawaited. A never-written session whose file cannot be created is answered `release_failed { detail }` and stays hosted with admission reopened; its `session_released` entry reaches disk on success. The final check, `externalAdmission.close()` and the close claim stay one synchronous step.
+- Tests: `test/rpc-release-header-write-failure.test.ts` (new): a real `--mode rpc --listen` host process, a session opened on a path nothing wrote, its directory made read-only: `release_failed` with `EACCES`, no file, the host alive and answering `list_sessions`, and no unhandled-rejection line on its stderr.
+
+### Why
+
+The unawaited header write made a release of a never-written session answer `released: true` with no file on disk, and its rejection reached no caller: in a real `--mode rpc` host that unhandled rejection ended the process (todo-25 merge review, senpi#2328).
+
+### Why an extension could not handle it
+
+The release decision and its answer are the router's.
+
+### Expected merge conflict zones
+
+- `releaseSession` / `claimAndRelease` in `session-release.ts`.
+
 ## 2026-09-29 - `release_session`: a failed hand-over answers `release_failed` and leaves the session hosted
 
 ### What changed

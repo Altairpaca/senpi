@@ -1971,6 +1971,8 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
+		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
+		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
@@ -2518,10 +2520,13 @@ export class AgentSession {
 					// Regular LLM message - persist as SessionMessageEntry
 					this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
 					this._incrementMessageRevision();
+					this.externalAdmission.observePersisted(event.message);
 				}
 			} catch (error) {
 				// The session manager kept nothing, so the turn goes on; the run's owner reports it.
 				const errorMessage = error instanceof Error ? error.message : String(error);
+				// A refused delivery is settled, not left held: a held start would queue every later delivery.
+				this.externalAdmission.observeRefused(event.message, errorMessage);
 				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
 				this._transcriptWriteFailures.record(event.message, error);
 				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
