@@ -31,6 +31,6 @@ it("reports the writes an accepted rpc prompt lost on the event stream", async (
 
 	// Then every message the file refused arrives as a transcript_write_failed frame
 	const failures = events.flatMap((event) => (event.type === "transcript_write_failed" ? [event] : []));
-	expect(failures.map((failure) => failure.role)).toEqual(expect.arrayContaining(["user", "assistant"]));
+	expect(failures.map((failure) => failure.role)).toEqual(["user", "assistant"]);
 	expect(failures.every((failure) => failure.errorMessage.includes("EACCES"))).toBe(true);
 }, 90_000);

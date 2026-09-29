@@ -160,4 +160,30 @@ describe("a turn whose session writes are refused", () => {
 		expect(await continuationError).toContain("EACCES");
 		expect(harness.eventsOfType("transcript_write_failed").map((event) => event.role)).toEqual(["assistant"]);
 	});
+
+	it("reports once, as a continuation error, a retry that also loses its writes after the prompt's refusal", async () => {
+		// Given a persisted session with automatic retries whose file turns read-only before the next prompt
+		const harness = await persistedHarness({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } });
+		harness.setResponses([
+			fauxAssistantMessage("first reply"),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "Request timed out." }),
+			fauxAssistantMessage("retried reply"),
+		]);
+		await harness.session.prompt("first");
+		lockFile(sessionFileOf(harness));
+
+		// When the prompt's writes are refused and its scheduled retry's reply is refused too
+		const refused = await harness.session.prompt("second").then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await harness.session.waitForSettledSessionWork();
+
+		// Then the prompt reported its own refusal and the retry run reported its loss exactly once
+		expect(refused).toMatchObject({ code: "EACCES" });
+		expect(harness.faux.state.callCount).toBe(3);
+		const continuationErrors = harness.eventsOfType("continuation_error").map((event) => event.errorMessage);
+		expect(continuationErrors).toHaveLength(1);
+		expect(continuationErrors[0]).toContain("EACCES");
+	});
 });

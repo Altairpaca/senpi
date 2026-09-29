@@ -3121,8 +3121,10 @@ Emitted without a request id when the loaded skill, extension, or MCP inventory 
 ### transcript_write_failed
 
 Emitted when the session file refuses to save a message of the running turn (permission denied, a full disk, a removed
-session directory). The message is not in the transcript and will not be in a reloaded session; the next prompt leaves it
-out of the model context too. A prompt accepted with `success: true` reports this failure only through this event.
+session directory). The message is not in the transcript and will not be in a reloaded session. The next prompt that starts a run while the
+session is idle leaves it out of the model context too; a steer or follow-up queued (`streamingBehavior`) during the
+refused run still sends it to the model on its turn. A prompt accepted with `success: true` reports this failure only
+through this event.
 
 ```json
 {

@@ -897,6 +897,8 @@ export class InteractiveMode {
 	private onInputCallback?: (input: InteractiveUserInput) => void;
 	private pendingUserInputs: InteractiveUserInput[] = [];
 	private agentIdle = false;
+	// One unsaved-turn notice per run, however many of its messages the session file refused.
+	private transcriptWriteNoticeShown = false;
 	private readonly optimisticUserEchoes: OptimisticUserEchoController;
 	/**
 	 * Clipboard images pasted into the composer, keyed by their visible
@@ -4970,6 +4972,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.agentIdle = false;
+				this.transcriptWriteNoticeShown = false;
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
@@ -5273,6 +5276,17 @@ export class InteractiveMode {
 			case "continuation_error":
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
 				break;
+
+			case "transcript_write_failed": {
+				if (this.transcriptWriteNoticeShown) break;
+				this.transcriptWriteNoticeShown = true;
+				const reason =
+					/^[A-Z][A-Z0-9_]+(?=:)/.exec(event.errorMessage)?.[0] ?? sanitizeTerminalLabel(event.errorMessage);
+				this.showWarning(
+					`This turn was not saved to the session file (${reason}); the model will not see it after the next prompt.`,
+				);
+				break;
+			}
 
 			case "session_abort":
 				this.providerErrors?.clear();
