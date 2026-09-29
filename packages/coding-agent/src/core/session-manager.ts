@@ -23,6 +23,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
 import { listSessionFilesInDir, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
+import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import {
 	hasOtherLiveSessionWriter,
@@ -1159,13 +1160,12 @@ export class SessionManager {
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
-		const fd = openSync(this.sessionFile, "w");
-		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(entry))}\n`);
-			}
-		} finally {
-			closeSync(fd);
+		replaceFileAtomically(this.sessionFile, this._serializedFileEntries());
+	}
+
+	private *_serializedFileEntries(): Generator<string> {
+		for (const entry of this.fileEntries) {
+			yield `${JSON.stringify(this.residentStore.materialize(entry))}\n`;
 		}
 	}
 

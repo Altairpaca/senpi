@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Opening a session saved by an older senpi version no longer risks losing it. Opening such a session rewrites the file in the current format, and that rewrite used to overwrite the file in place, so a full disk or an I/O error part-way through left the transcript truncated. The rewrite now writes a complete copy next to the file and swaps it in only once it is on disk; if writing fails, the original session stays exactly as it was and the error is reported.
+
 ### Removed
 
 ## [2026.9.29-3] - 2026-09-29

@@ -172,6 +172,13 @@
 			"note": "one-shot legacy provider-id migration (senpi#2044): the backup copy and the temp file renamed over models.json (KB-scale each). Runs only while the file still carries a legacy id, so at most once per file"
 		},
 		{
+			"file": "src/core/session-file-replace.ts",
+			"api": "writeFileSync",
+			"symbol": "writeDurably",
+			"count": 1,
+			"note": "DELIBERATE transcript path: whole transcript written to a temp file and renamed over the session file (session-scale, MB on long sessions), reached from SessionManager._rewriteFile on open-time migration, empty-file init, caller-id create, and branched-session create"
+		},
+		{
 			"file": "src/core/session-holders.ts",
 			"api": "readFileSync",
 			"symbol": "activeMover",
@@ -219,13 +226,6 @@
 			"symbol": "_persist",
 			"count": 1,
 			"note": "DELIBERATE transcript path: one JSONL entry appended per persisted entry (KB-scale), or a full flush of the pending entries on the first assistant message (session-scale)"
-		},
-		{
-			"file": "src/core/session-manager.ts",
-			"api": "writeFileSync",
-			"symbol": "_rewriteFile",
-			"count": 1,
-			"note": "DELIBERATE transcript path: whole transcript rewritten after an in-place edit (session-scale, MB on long sessions)"
 		},
 		{
 			"file": "src/core/session-manager.ts",
