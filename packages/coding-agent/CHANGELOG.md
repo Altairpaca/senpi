@@ -18,8 +18,6 @@
 
 ### Fixed
 
-- Fixed the prompt-cache keep-alive never arming in real sessions and pinging with a different tool list than the turn it keeps warm ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))
-
 - With `SENPI_PROMPT_SURFACE=app` (or `open_session.promptSurface: "app"`), replies no longer end with a note about a check or tool that could not run, such as an unavailable language-server hook, when the tests or other checks that did run already back the result. Terminal prompts are unchanged. ([#2377](https://github.com/code-yeongyu/senpi/issues/2377))
 
 - Remote compaction works again on the ChatGPT subscription lane. It used to call a compaction route the ChatGPT backend no longer serves, so every compaction silently fell back to a local summary. It now uses the backend's current compaction request, sent the same way as a normal turn (same login, network and proxy settings), with one attempt per compaction and a time budget long enough for a real compaction. The next turn now sends the server's compaction result instead of only a placeholder summary, including over the default WebSocket transport. If the attempt fails or times out, nothing is stored and the compaction uses the local summary as before. The same fix lets remote compaction results on the OpenAI API lane replay on the next turn. Thanks to @rhyme227 for the precise report and instrumentation. ([#2378](https://github.com/code-yeongyu/senpi/issues/2378) by [@rhyme227](https://github.com/rhyme227))
@@ -27,6 +25,8 @@
 - A session no longer leaves an empty `.omo/` (or `.senpi/`) folder in the project. Reading the project hook trust state when the project has no config folder returns the empty state without creating the folder for a lock. ([#2386](https://github.com/code-yeongyu/senpi/issues/2386))
 
 - RPC `get_auth_providers` gives each login method row its own status: a stored OAuth login no longer also marks the provider's API-key row connected, and vice versa, and `login_api_key` / `logout` answer only after the status reflects the change ([#2384](https://github.com/code-yeongyu/senpi/issues/2384)).
+
+- Fixed the prompt-cache keep-alive never arming in real sessions and pinging with a different tool list than the turn it keeps warm ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))
 
 ### Removed
 
