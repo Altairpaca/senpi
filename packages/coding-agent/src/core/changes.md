@@ -16,6 +16,24 @@
 
 - LOW: the first line of `_runAutoCompaction` and `_runPrePromptCompaction` in `agent-session.ts`.
 
+## 2026-09-29 - Surface-neutral unknown-command message (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/core/unknown-command.ts` (fork-only): the `UnknownCommandError` message is `Unknown command /foo. Did you mean /food?` with no surface advice; each surface appends its own confirm step. New export `UNKNOWN_COMMAND_CONFIRM_HINT` for protocol clients (RPC, app-server).
+
+### Why
+
+- The TUI confirms with a second Enter and protocol clients with `unknownCommandAsText`; one hardcoded "start the message with a space" line was wrong for both.
+
+### Why an extension could not handle it
+
+- The message belongs to the core typed error.
+
+### Expected merge conflict zones
+
+- None: fork-only file.
+
 ## 2026-09-29 - Together's default model is Kimi K3 (senpi#2321)
 
 ### What changed

@@ -898,6 +898,12 @@ function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => C
 }
 
 export class InteractiveMode {
+	private static confirmsRefusedUnknownCommand(host: InteractiveMode, text: string): boolean {
+		const confirmed = host.refusedUnknownCommandText === text;
+		host.refusedUnknownCommandText = undefined;
+		return confirmed;
+	}
+
 	private static restoreCompactionEscapeOverride(host: InteractiveMode): void {
 		if (!host.compactionEscapeOverrideActive) return;
 		host.defaultEditor.onEscape = host.autoCompactionEscapeHandler;
@@ -984,6 +990,8 @@ export class InteractiveMode {
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
+	/** The last refused unknown-command text; submitting it again unchanged sends it as a message. */
+	private refusedUnknownCommandText: string | undefined;
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
@@ -4533,6 +4541,7 @@ export class InteractiveMode {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
+			this.refusedUnknownCommandText = undefined;
 			if (this.session.isStreaming || this.session.retryAttempt > 0) {
 				void this.abortAndFireQueuedMessages().catch((error) =>
 					this.showError(error instanceof Error ? error.message : String(error)),
@@ -4809,7 +4818,8 @@ export class InteractiveMode {
 				this.hideShortcutOverlay();
 				this.lastEditorText = "";
 				text = text.trim();
-				const unknownCommandAsText = submitsCommandAsText(text, details);
+				const unknownCommandAsText =
+					InteractiveMode.confirmsRefusedUnknownCommand(this, text) || submitsCommandAsText(text, details);
 				if (!text) {
 					// Enter on an empty editor opens the pending async question; it needs
 					// no chord, so it works under every terminal and keymap.
@@ -6761,7 +6771,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				await this.session.prompt(text);
 			} else {
-				this.queueCompactionSubmission(text, "followUp", unknownCommandAsText);
+				this.queueCompactionSubmission(
+					text,
+					"followUp",
+					InteractiveMode.confirmsRefusedUnknownCommand(this, text) || unknownCommandAsText,
+				);
 			}
 			return;
 		}
@@ -6786,11 +6800,12 @@ export class InteractiveMode {
 				return;
 			}
 			const pendingEchoId = this.beginUserEcho(text, images);
+			const followUpAsText = InteractiveMode.confirmsRefusedUnknownCommand(this, text) || unknownCommandAsText;
 			try {
 				await this.session.prompt(text, {
 					streamingBehavior: "followUp",
 					...(images.length > 0 ? { images } : {}),
-					...(unknownCommandAsText ? { unknownCommandAsText } : {}),
+					...(followUpAsText ? { unknownCommandAsText: true } : {}),
 					...this.optimisticUserEchoes.promptOptions(pendingEchoId),
 				});
 			} catch (error) {
@@ -7198,8 +7213,15 @@ export class InteractiveMode {
 
 	/** Restore an unknown-command submission to the editor with a warning; `false` for any other error. */
 	private reportUnknownCommandRejection(error: unknown, submittedText: string): boolean {
+		const sendAgain = `${keyDisplayText("tui.input.submit")} again sends it as a message`;
 		return reportUnknownCommand(error, submittedText, {
 			editor: this.editor,
+			armConfirmation: (text) => {
+				this.refusedUnknownCommandText = text;
+			},
+			confirmHint: this.session.isStreaming
+				? `${sendAgain}.`
+				: `${sendAgain}; ${keyDisplayText("app.interrupt")} keeps editing.`,
 			showWarning: (message) => this.showWarning(message),
 		});
 	}
