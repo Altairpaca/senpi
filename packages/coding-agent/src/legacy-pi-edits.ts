@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
+import { APP_COMMAND, APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
 import { pathsPointToSameLocation } from "./legacy-dir-copy.ts";
 import { readLegacyPiAgentDirRecord, writeLegacyPiAgentDirRecord } from "./migrations-state.ts";
 
@@ -119,7 +119,7 @@ export function takeLegacyPiEditNotice(options: LegacyPiDirOptions = {}): readon
 
 export function formatLegacyPiEditNotice(edits: readonly LegacyPiEdit[], agentDir: string): string {
 	const files = edits.map((edit) => edit.file).join(" ");
-	const command = `${APP_NAME} config import-pi ${files}`;
+	const command = `${APP_COMMAND} config import-pi ${files}`;
 	const [only] = edits;
 	if (edits.length === 1 && only !== undefined) {
 		return `You edited ${only.piPath} after ${APP_NAME} moved to ${agentDir}; ${APP_NAME} reads ${only.agentPath}. Copy your change there (or run: ${command}).`;

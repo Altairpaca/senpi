@@ -1,10 +1,10 @@
 import chalk from "chalk";
-import { APP_NAME } from "../config.ts";
+import { APP_COMMAND } from "../config.ts";
 import { importLegacyPiConfig, LEGACY_PI_CONFIG_FILES } from "../legacy-pi-edits.ts";
 
 export const CONFIG_IMPORT_PI_ARGV = "import-pi";
 
-export const CONFIG_IMPORT_PI_USAGE = `${APP_NAME} config ${CONFIG_IMPORT_PI_ARGV} [${LEGACY_PI_CONFIG_FILES.join("|")} ...]`;
+export const CONFIG_IMPORT_PI_USAGE = `${APP_COMMAND} config ${CONFIG_IMPORT_PI_ARGV} [${LEGACY_PI_CONFIG_FILES.join("|")} ...]`;
 
 export function runConfigImportPi(files: readonly string[]): void {
 	const result = importLegacyPiConfig(files);
