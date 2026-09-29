@@ -1312,8 +1312,7 @@ export class SessionManager {
 				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
 			}
 		} catch (error) {
-			closeSync(fd);
-			discardFailedFirstFlush(this.sessionFile, error);
+			discardFailedFirstFlush(this.sessionFile, fd, error);
 		}
 		closeSync(fd);
 		this.flushed = true;

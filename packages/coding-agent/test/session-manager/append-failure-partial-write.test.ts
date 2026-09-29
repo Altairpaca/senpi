@@ -16,6 +16,7 @@ const fault = vi.hoisted(() => ({
 	appendKeepBytes: undefined as number | undefined,
 	writeFailAtCall: undefined as number | undefined,
 	writeCalls: 0,
+	closeFails: false,
 }));
 
 function noSpace(): Error {
@@ -42,6 +43,12 @@ vi.mock("fs", async (importOriginal) => {
 			fault.writeFailAtCall = undefined;
 			actual.writeFileSync(file, data.slice(0, Math.floor(data.length / 2)));
 			throw noSpace();
+		},
+		closeSync: (...args: Parameters<typeof actual.closeSync>) => {
+			actual.closeSync(...args);
+			if (!fault.closeFails) return;
+			fault.closeFails = false;
+			throw Object.assign(new Error("EIO: i/o error, close"), { code: "EIO" });
 		},
 	};
 });
@@ -70,6 +77,7 @@ afterEach(() => {
 	fault.appendKeepBytes = undefined;
 	fault.writeFailAtCall = undefined;
 	fault.writeCalls = 0;
+	fault.closeFails = false;
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -138,5 +146,25 @@ describe("SessionManager after a write that failed part-way", () => {
 		expect(leftBehind).toBe(false);
 		expectCompleteLinesMatchingMemory(session, file);
 		expect(session.getEntries().map((entry) => entry.type)).toEqual(["message", "message"]);
+	});
+
+	it("still removes a failed first flush and reports the write error when closing the file fails too", () => {
+		// Given a new session whose user message is still buffered in memory
+		const session = newSession();
+		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+		const file = session.getSessionFile();
+		if (!file) throw new Error("test setup: persisted session has no file path");
+		// When the first flush runs out of space and closing the half-written file fails as well
+		fault.writeFailAtCall = 3;
+		fault.closeFails = true;
+		const error = captureError(() => session.appendMessage(assistant("lost")));
+		const leftBehind = existsSync(file);
+		// And the reply is appended again
+		session.appendMessage(assistant("hi"));
+		// Then the caller got the write error with the close failure beside it, and no file was left behind
+		expect(error).toBeInstanceOf(AggregateError);
+		expect(error).toMatchObject({ errors: [{ code: "ENOSPC" }, { code: "EIO" }] });
+		expect(leftBehind).toBe(false);
+		expectCompleteLinesMatchingMemory(session, file);
 	});
 });

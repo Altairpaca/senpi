@@ -31,17 +31,27 @@ export function truncateToLastCompleteLine(path: string): void {
 }
 
 /**
- * Removes a session file whose first flush failed part-way, then rethrows the write error. The
- * first flush creates the file exclusively, so a partial file left behind would fail every later
- * flush with EEXIST while memory kept growing.
+ * Closes and removes a session file whose first flush failed part-way, then rethrows the write
+ * error. The first flush creates the file exclusively, so a partial file left behind would fail
+ * every later flush with EEXIST while memory kept growing. A failed close does not skip the
+ * removal; any cleanup failure is thrown together with the write error.
  */
-export function discardFailedFirstFlush(path: string, writeError: unknown): never {
+export function discardFailedFirstFlush(path: string, fd: number, writeError: unknown): never {
+	const cleanupErrors: unknown[] = [];
+	try {
+		closeSync(fd);
+	} catch (closeError) {
+		cleanupErrors.push(closeError);
+	}
 	try {
 		rmSync(path, { force: true });
-	} catch (cleanupError) {
+	} catch (removeError) {
+		cleanupErrors.push(removeError);
+	}
+	if (cleanupErrors.length > 0) {
 		throw new AggregateError(
-			[writeError, cleanupError],
-			`Session file write failed and the partial file ${path} could not be removed`,
+			[writeError, ...cleanupErrors],
+			`Session file write failed and the partial file ${path} could not be cleaned up`,
 		);
 	}
 	throw writeError;

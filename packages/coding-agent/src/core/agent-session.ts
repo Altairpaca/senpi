@@ -288,6 +288,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -353,6 +354,8 @@ export type AgentSessionEvent =
 			notice: string;
 	  }
 	| { type: "continuation_error"; errorMessage: string }
+	/** The session file refused a message of the running turn; the message is not in the transcript. */
+	| { type: "transcript_write_failed"; role: AgentMessage["role"]; errorMessage: string }
 	| {
 			type: "skill_invocation";
 			skills: readonly {
@@ -993,9 +996,11 @@ export class AgentSession {
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
-	// The first message write the session file refused during this run. Queued event work cannot
-	// throw to the prompt, so the run's prompt throws it once the queue settles.
-	private _transcriptWriteFailure: { readonly error: unknown } | undefined;
+	// Message writes the session file refused. Queued event work cannot throw to the prompt, so a
+	// prompt-owned run's prompt throws the first one once the queue settles; any other run reports it
+	// as a continuation error when it happens.
+	private readonly _transcriptWriteFailures = new TranscriptWriteFailures();
+	private _promptOwnsRun = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
 	// that AgentSession initiated required-compaction recovery.
@@ -2024,7 +2029,15 @@ export class AgentSession {
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		this._requiredCompactionAdmissionError = undefined;
-		this._transcriptWriteFailure = undefined;
+		this._transcriptWriteFailures.startRun();
+		this._promptOwnsRun = true;
+		if (!this.agent.state.isStreaming) {
+			const withoutRefused = this._transcriptWriteFailures.takeRefusedOut(this.agent.state.messages);
+			if (withoutRefused) {
+				this.agent.state.messages = withoutRefused;
+				this._incrementMessageRevision();
+			}
+		}
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		try {
@@ -2033,9 +2046,10 @@ export class AgentSession {
 			// blocking Agent core. Wait for this run's queued recovery decision
 			// before reporting prompt completion to the caller.
 			await this._agentEventQueue;
+			this._promptOwnsRun = false;
 			const requiredCompactionError = this._requiredCompactionAdmissionError;
 			this._requiredCompactionAdmissionError = undefined;
-			const transcriptWriteFailure = this._takeTranscriptWriteFailure();
+			const transcriptWriteFailure = this._transcriptWriteFailures.takeReport();
 			if (requiredCompactionError) {
 				this._sessionLogger.warn("prompt_rejected", {
 					stage: "admission",
@@ -2045,6 +2059,7 @@ export class AgentSession {
 			}
 			if (transcriptWriteFailure) throw transcriptWriteFailure.error;
 		} catch (error) {
+			this._promptOwnsRun = false;
 			if (
 				error instanceof Error &&
 				error.message ===
@@ -2064,12 +2079,6 @@ export class AgentSession {
 			await this._emitAgentSettled();
 			throw error;
 		}
-	}
-
-	private _takeTranscriptWriteFailure(): { readonly error: unknown } | undefined {
-		const failure = this._transcriptWriteFailure;
-		this._transcriptWriteFailure = undefined;
-		return failure;
 	}
 
 	/** Extract text content used to track fork-owned queued user messages. */
@@ -2511,12 +2520,12 @@ export class AgentSession {
 					this._incrementMessageRevision();
 				}
 			} catch (error) {
-				// The session manager kept nothing, so the turn goes on; the run's prompt reports it.
-				this._sessionLogger.warn("transcript_write_failed", {
-					role: event.message.role,
-					error: error instanceof Error ? error.message : String(error),
-				});
-				this._transcriptWriteFailure ??= { error };
+				// The session manager kept nothing, so the turn goes on; the run's owner reports it.
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
+				this._transcriptWriteFailures.record(event.message, error);
+				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
+				if (!this._promptOwnsRun) this._reportContinuationTranscriptFailure();
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -7451,6 +7460,7 @@ export class AgentSession {
 
 			await this._revalidateScheduledContinuationAdmission();
 			if (this.agent.state.isStreaming) return "taken-over";
+			if (!this._promptOwnsRun) this._transcriptWriteFailures.startRun();
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
@@ -7503,6 +7513,14 @@ export class AgentSession {
 		if (this.pendingMessageCount > 0 || this.agent.hasQueuedMessages()) {
 			this._scheduleContinuationAfterCurrentEvent();
 		}
+	}
+
+	/** A continuation run has no prompt to reject, so a message write it lost is reported like a failed continuation. */
+	private _reportContinuationTranscriptFailure(): void {
+		const failure = this._transcriptWriteFailures.takeReport();
+		if (!failure) return;
+		const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+		this._emit({ type: "continuation_error", errorMessage: `The session file did not save this run: ${message}` });
 	}
 
 	private _scheduleContinuationAfterCurrentEvent(

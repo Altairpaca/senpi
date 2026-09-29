@@ -3,8 +3,10 @@
 ### What changed
 
 - `packages/coding-agent/src/core/session-manager.ts`: `_appendEntry` writes the entry (`_persist`) before it commits it to `fileEntries`, `byId`, the leaf, the entry count and the usage totals, so a write that throws (EACCES, ENOSPC, a removed directory) leaves memory exactly as the file has it and the caller gets the error. `_persist` takes the not-yet-committed entry: an append to a flushed file that fails marks the tail as possibly torn and the next append first cuts the file back to its last complete line; a first flush that fails part-way removes the file it created exclusively, so the next flush can create it again. `appendSessionInfo` updates the name cache after the entry is written, and `branchWithSummary` no longer moves the leaf before its entry is written. A successful append writes the same bytes as before.
-- `packages/coding-agent/src/core/session-write-recovery.ts` (new, fork-only): `truncateToLastCompleteLine` and `discardFailedFirstFlush`.
-- `packages/coding-agent/src/core/agent-session.ts`: a message-end write the session manager refused no longer rejects the queued event work where nobody observes it. It is logged (`transcript_write_failed`), the rest of the message-end handling runs, and the run's `prompt` throws the first such error once its event queue settles (`_transcriptWriteFailure`, reset per run like `_requiredCompactionAdmissionError`).
+- `packages/coding-agent/src/core/session-write-recovery.ts` (new, fork-only): `truncateToLastCompleteLine` and `discardFailedFirstFlush`. `discardFailedFirstFlush` also closes the half-written file, so a failing close no longer skips the removal or the write error; cleanup failures are thrown beside the write error in an `AggregateError`.
+- `packages/coding-agent/src/core/transcript-write-failures.ts` (new, fork-only): `TranscriptWriteFailures`, the refused message writes of the session: the first error of a run to report once (`startRun` / `takeReport`), and the refused message objects to drop from the model context (`takeRefusedOut`).
+- `packages/coding-agent/src/core/agent-session.ts`: a message-end write the session manager refused no longer rejects the queued event work where nobody observes it. It is logged (`transcript_write_failed` with `role`), published as the new `transcript_write_failed` session event (`role`, `errorMessage`; RPC forwards it, which is how an RPC client learns about it after the prompt was accepted), the rest of the message-end handling runs, and the run's owner reports the first such error once: a run a `prompt` owns (`_promptOwnsRun`, from `_promptAgent` start until its event queue settles) has its `prompt` throw it after the queue settles, and any other run (retry, queued follow-up, compaction continuation) emits `continuation_error` right when the write fails. The continuation path never waits for the event queue, so it holds its session-work token no longer than before (waiting there delayed the next TTSR recovery generation). The next `_promptAgent` start, when nothing is streaming, drops exactly the refused message objects from `agent.state.messages`, so the next turn's model context equals a reload of the file.
+- `packages/coding-agent/src/core/session-log.ts`: `role` joins the allowed data keys, so the `transcript_write_failed` line keeps it.
 
 ### Why
 
@@ -17,7 +19,7 @@
 ### Expected merge conflict zones
 
 - MEDIUM: `_persist` and `_appendEntry` in `session-manager.ts` (restructured, plus `_commitEntry` split out of `_appendEntry`; upstream still writes after committing); one line each in `appendSessionInfo` and `branchWithSummary`.
-- LOW: the `message_end` persistence block in `_processAgentEvent` (wrapped in a try/catch) and the post-queue checks in `_promptAgent` in `agent-session.ts`.
+- LOW: the `message_end` persistence block in `_processAgentEvent` (wrapped in a try/catch), the run-start and post-queue checks in `_promptAgent`, the `AgentSessionEvent` union (one new member) and one line before the continuation run in `_continueAgentAfterCurrentRun` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.
 
 ## 2026-09-29 - Session file rewrites are atomic, so a failed migration keeps the original
 
