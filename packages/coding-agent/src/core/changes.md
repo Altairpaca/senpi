@@ -1,3 +1,21 @@
+## 2026-09-29 - A rejected request re-asks the compaction owner before its retry (senpi#2329)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_runAutoCompaction` and `_runPrePromptCompaction` no longer return early on `_isCompactionDelegated()` for an `overflow` whose request failed and will be retried (`willRetry`); the owning extension is consulted again. Threshold and pre-prompt routes, and an overflow classified on a completed turn, keep the sticky short-circuit (#1174).
+
+### Why
+
+- An `external-owner` rejection records `_delegatedCompactionKey`, and every later route returned before asking the owner, overflow included. Whether the owner can recover an overflow depends on the request that failed: on the `anthropic-subscription` lane a cold-seed re-sends senpi's own history as one message the SDK cannot compact, and the lane policy now claims that overflow. With the short-circuit in place an earlier threshold rejection kept that recovery from ever running, so the session died at "Prompt is too long" (oh-my-openagent#7975).
+
+### Why an extension could not handle it
+
+- The short-circuit sits in front of `session_before_compact`; no extension hook runs before it.
+
+### Expected merge conflict zones
+
+- LOW: the first line of `_runAutoCompaction` and `_runPrePromptCompaction` in `agent-session.ts`.
+
 ## 2026-09-29 - Together's default model is Kimi K3 (senpi#2321)
 
 ### What changed
