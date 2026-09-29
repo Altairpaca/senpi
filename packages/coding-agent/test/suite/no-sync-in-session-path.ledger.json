@@ -130,27 +130,6 @@
 			"note": "rendered HTML export (session-scale, MB on long sessions)"
 		},
 		{
-			"file": "src/core/footer-data-provider.ts",
-			"api": "readFileSync",
-			"symbol": "findGitPaths",
-			"count": 2,
-			"note": "`.git` file/`commondir` pointer (bytes)"
-		},
-		{
-			"file": "src/core/footer-data-provider.ts",
-			"api": "readFileSync",
-			"symbol": "readBranchFromHead",
-			"count": 1,
-			"note": "`.git/HEAD` (bytes); the sync and async branch readers now share this one read, the git probe itself is async"
-		},
-		{
-			"file": "src/core/footer-data-provider.ts",
-			"api": "readFileSync",
-			"symbol": "setupGitWatcher",
-			"count": 2,
-			"note": "`.git/HEAD` re-read on a watcher event (bytes)"
-		},
-		{
 			"file": "src/core/model-config.ts",
 			"api": "readFileSync",
 			"symbol": "loadSync",
@@ -263,6 +242,13 @@
 			"note": "settings.json read+write under the sync file lock (KB-scale)"
 		},
 		{
+			"file": "src/core/hidden-stdout-log.ts",
+			"api": "fs.appendFileSync",
+			"symbol": "appendDebugLogEntry",
+			"count": 1,
+			"note": "one debug-log line (bytes), reached from settings loading only when rewriting the global settings file to drop a retired key fails; recorded once per settings file per process"
+		},
+		{
 			"file": "src/core/trust-manager.ts",
 			"api": "readFileSync",
 			"symbol": "readTrustFile",
@@ -282,13 +268,6 @@
 			"symbol": "getBuiltinThemes",
 			"count": 4,
 			"note": "four bundled theme JSON files (KB-scale, startup)"
-		},
-		{
-			"file": "src/modes/interactive/theme/theme.ts",
-			"api": "fs.readFileSync",
-			"symbol": "loadThemeFromPath",
-			"count": 1,
-			"note": "one theme JSON file (KB-scale)"
 		},
 		{
 			"file": "src/modes/interactive/theme/theme.ts",
