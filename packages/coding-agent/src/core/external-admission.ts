@@ -6,6 +6,11 @@
  * or nothing happens. The ledger is the process-lifetime answer to "does this runtime hold, or has it
  * written, delivery X": a delivery is `pending` from admission until its transcript entry is
  * persisted, then `emitted`. A second admission of an id in either state is `already_admitted`.
+ * A delivery whose entry the session file refused is `failed` (with the error): it is no longer held,
+ * so it blocks nothing, and it stays with its sender. It is admitted again only once the run that
+ * refused it has settled and the file's last write succeeded: a redelivery then starts or joins a
+ * later run, whose start drops the refused copy from the model context, and it never loops against
+ * a file that still refuses writes.
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
@@ -42,6 +47,8 @@ export class ExternalAdmission {
 	private turnEpochValue = 0;
 	private readonly pending = new Map<string, PendingLane>();
 	private readonly emitted = new Set<string>();
+	private readonly failed = new Map<string, string>();
+	private fileTakesWrites = true;
 	private readonly emittedListeners = new Set<(deliveryId: string) => void>();
 	private editorSource: (() => EditorHoldState) | undefined;
 	private closedReason: string | undefined;
@@ -124,7 +131,9 @@ export class ExternalAdmission {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
-		if (this.pending.has(id) || this.emitted.has(id)) return { kind: "already_admitted", turn_epoch };
+		if (this.pending.has(id) || this.emitted.has(id) || this.failed.has(id)) {
+			return { kind: "already_admitted", turn_epoch };
+		}
 		if (!this.gate().can_admit) return { kind: "held_draft", turn_epoch };
 		if (input.expected_turn_id !== undefined && input.expected_turn_id !== turn_epoch) {
 			return { kind: "turn_conflict", turn_epoch };
@@ -151,16 +160,40 @@ export class ExternalAdmission {
 	}
 
 	list(): AdmittedDeliveries {
-		return { pending: [...this.pending.keys()], emitted: [...this.emitted] };
+		const deliveries = { pending: [...this.pending.keys()], emitted: [...this.emitted] };
+		if (this.failed.size === 0) return deliveries;
+		const failed = [...this.failed].map(([delivery_id, error]) => ({ delivery_id, error }));
+		return { ...deliveries, failed };
 	}
 
-	/** A custom message's transcript entry was written: its delivery, if any, is now emitted. */
+	/** A message's transcript entry was written: the file takes writes; a delivery's own entry makes it emitted. */
 	observePersisted(message: AgentMessage): void {
+		this.fileTakesWrites = true;
 		const id = deliveryIdOf(message);
 		if (id === undefined || this.emitted.has(id)) return;
 		this.pending.delete(id);
 		this.emitted.add(id);
 		for (const listener of this.emittedListeners) listener(id);
+	}
+
+	/**
+	 * The session file refused a delivery's entry: the delivery is settled as failed with `error` and is
+	 * no longer held, so its start stops counting as busy and later deliveries start. It stays with its sender.
+	 */
+	observeRefused(message: AgentMessage, error: string): void {
+		this.fileTakesWrites = false;
+		const id = deliveryIdOf(message);
+		if (id === undefined || this.emitted.has(id)) return;
+		this.pending.delete(id);
+		this.failed.set(id, error);
+	}
+
+	/**
+	 * A run settled: its refused messages leave the model context at the next run's start, so the failed
+	 * deliveries may be admitted again - unless the file's last write was refused too.
+	 */
+	observeRunSettled(): void {
+		if (this.fileTakesWrites) this.failed.clear();
 	}
 
 	/** The runtime's queues were cleared: queued deliveries are no longer held. */

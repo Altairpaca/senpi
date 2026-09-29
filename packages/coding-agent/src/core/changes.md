@@ -1,3 +1,26 @@
+## 2026-09-29 - A refused delivery write, a part-written async header and a release's header write never leave a session stuck
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts` (fork-only): `observeRefused(message, error)` settles a delivery whose entry the session file refused: it leaves `pending` (so its start stops counting as busy and the next delivery starts) and is recorded in a `failed` map with the error, listed by `list()` as `failed: [{ delivery_id, error }]` only while non-empty. `admit` answers `already_admitted` for a failed id. `observePersisted` (now called for every written message) and `observeRefused` record whether the file's last write succeeded, and `observeRunSettled` clears the map at the end of a run only when it did: a failed delivery is admissible again once the run that refused it has settled, so its redelivery starts or joins a later run, whose start (`takeRefusedOut`) has dropped the refused copy from the model context, and it is never queued into the refusing run (where the model would hold it twice).
+- `packages/coding-agent/src/core/agent-session.ts`: the message-end write path calls `externalAdmission.observeRefused` when the session manager refuses the write, and `observePersisted` after every written message, not only custom ones; `_emitAgentSettled` calls `externalAdmission.observeRunSettled()` once the run is marked inactive, before the `agent_settled` and `agent_idle` edges whose drain may redeliver.
+- `packages/coding-agent/src/core/session-manager.ts`: `_writeHeaderAsync` removes the file it created exclusively when any step after the open fails (a part-way `writeFile`, the close, a tail `appendFile`), through `discardFailedFirstFlushAsync`, and rethrows; the handle is closed exactly once.
+- `packages/coding-agent/src/core/session-write-recovery.ts` (fork-only): `discardFailedFirstFlushAsync(path, handle, error)`, the asynchronous twin of `discardFailedFirstFlush`, sharing its error reporting (`AggregateError` when the cleanup fails too).
+- Tests: `test/session-manager-header-write.test.ts` gains an assistant appended while the header write closes (lands once, in order; pins the header-write step-aside in `_persist`) and a part-way ENOSPC header write (no file left, next write persists every entry memory holds). `test/suite/external-admission-refused-write.test.ts` (new, real host, real `chmod 0444`), including a file that recovers mid-run: the retry inside the refusing run is `already_admitted`, the one after it settles starts, and the model context and the file each hold the delivery once.
+
+### Why
+
+Found in the todo-25 merge gate review of the session-gateway plan (senpi#2328), all three present since senpi#2365. A refused delivery write skipped `observePersisted`, so the delivery stayed `pending` with lane `start` and every later delivery was queued behind a turn that never ran. A part-way failure of the async header write left the half-written file, so every later first flush failed with `EEXIST` while entries appended during the failed write stayed in memory only. The step-aside (`if (this.headerWrite) return;`) had no test that fails without it.
+
+### Why an extension could not handle it
+
+The admission ledger and the transcript write path are the session runtime's; the header write is the session manager's.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `message_end` persistence `try/catch` in `_processAgentEvent`.
+- `session-manager.ts`: `_writeHeaderAsync` and the `session-write-recovery.ts` / `fs/promises` imports.
+
 ## 2026-09-29 - A failed session append leaves nothing an entry can chain onto
 
 ### What changed

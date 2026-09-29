@@ -15,7 +15,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { appendFile, open, readdir, rm } from "fs/promises";
+import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -25,7 +25,11 @@ import { listSessionFilesInDir, listSessionsFromDir, type SessionListProgress } 
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-import { discardFailedFirstFlush, truncateToLastCompleteLine } from "./session-write-recovery.ts";
+import {
+	discardFailedFirstFlush,
+	discardFailedFirstFlushAsync,
+	truncateToLastCompleteLine,
+} from "./session-write-recovery.ts";
 import {
 	hasOtherLiveSessionWriter,
 	registerSessionWriter,
@@ -1255,21 +1259,26 @@ export class SessionManager {
 		const serialize = (batch: readonly FileEntry[]): string =>
 			batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join("");
 		let written = 0;
-		const handle = await open(sessionFile, "wx");
+		let handle: FileHandle | undefined = await open(sessionFile, "wx");
 		try {
 			while (written < entries.length) {
 				const batch = entries.slice(written);
 				written += batch.length;
 				await handle.writeFile(serialize(batch));
 			}
-		} finally {
-			await handle.close();
-		}
-		// Entries persisted while the handle closed: append until a pass finds nothing new.
-		while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
-			const batch = entries.slice(written);
-			written += batch.length;
-			await appendFile(sessionFile, serialize(batch));
+			const closing = handle;
+			handle = undefined;
+			await closing.close();
+			// Entries persisted while the handle closed: append until a pass finds nothing new.
+			while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await appendFile(sessionFile, serialize(batch));
+			}
+		} catch (error) {
+			// This write created the file: a part-written one would fail every later first flush with
+			// EEXIST while the entries it was carrying stayed in memory only. Nothing counts as flushed yet.
+			return discardFailedFirstFlushAsync(sessionFile, handle, error);
 		}
 		// Synchronous with the last check above: no entry can land between it and the flag.
 		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {

@@ -994,11 +994,17 @@ registrant opens no socket and writes no registry directory.
   - `turn_conflict`: the epoch is stale, or a steer names none.
   - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
     submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
-  - `already_admitted`: this process already holds or already wrote that `delivery_id`.
+  - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
+    its entry and it is not admissible again yet (see `failed` below).
 
   The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
   carry the `delivery_id`. `listAdmittedDeliveries()` reports `pending` (held by the runtime) and `emitted`
-  (entry written) for the life of the process.
+  (entry written) for the life of the process. When the session file refuses a delivery's entry (`EACCES`,
+  `ENOSPC`), the delivery is settled as `failed: [{ delivery_id, error }]` (listed only while non-empty): it is no
+  longer held, so it blocks no later delivery and no release, and it stays with its sender. It becomes admissible
+  again once the run that refused it has settled and the file's last write succeeded: the redelivery then starts or
+  joins a later run, whose start drops the refused copy from the model context (so the model holds it once, as the
+  file does), and it never loops against a file that still refuses writes.
 - **Wake.** The drain runs on edges only, never on a timer, as the extension event `session_control_wake`. The
   edges are: the session went idle (`idle`), the user's last submission reached the runtime (`submission`),
   the editor was cleared without a submission (`draft_cleared`), a `wake` command (`command`), an entry created
@@ -1074,6 +1080,11 @@ no longer lists it and the handle answers `unknown_session`.
   session routed after it finds the session closing (`session_closing`); a drain pass still running admits
   nothing more (`pi.session.admitExternalMessage` throws, the delivery stays with its sender); and work started
   before it is seen by the check. Nothing is written to the file after `session_released`.
+- A session whose file was never written first waits for its header write, before that final check, so the
+  `session_released` entry has a file to land in. A prompt or delivery routed right after such a release is not
+  answered `session_closing`: either its whole turn runs and lands before `session_released`, or it is still
+  running at the final check, which then answers `turn_active`. A header write that fails answers `release_failed`
+  with `errorData.detail`, and the session stays hosted. A session whose file exists awaits nothing here.
 - While clients are attached (`attachments > 0` - e.g. a Desktop thread) it is refused with `attached` and
   `errorData { attachments }`; with `force: true` those clients receive
   `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written

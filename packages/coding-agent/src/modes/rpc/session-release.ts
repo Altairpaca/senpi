@@ -111,6 +111,11 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			dropped = takeQueuedInput(first.session);
 			await abortAndSettle(port, command.sessionId, first.session);
 		}
+		// A never-written session gets its file here, before the final check: its `session_released` entry
+		// must reach disk, and a header write that fails is this release's failure, never a stray rejection.
+		// A written session awaits nothing, so its claim stays in the same turn as the request that asked.
+		const manager = first.session.sessionManager;
+		if (!manager.isTranscriptFlushed()) await manager.persistHeaderNow();
 		answer = await claimAndRelease(port, command, interrupted, dropped);
 		return answer;
 	} catch (cause) {
@@ -151,10 +156,8 @@ async function claimAndRelease(
 	const admission = ready.session.externalAdmission;
 	admission.close(RELEASED_ADMISSION_CLOSED);
 	try {
-		const manager = ready.session.sessionManager;
-		manager.persistHeaderNow();
 		// On disk or not at all: a failed write leaves no entry a later append could chain onto.
-		manager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
+		ready.session.sessionManager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
 			reason: command.reason,
 			interrupted,
 			attachments: ready.attachments,

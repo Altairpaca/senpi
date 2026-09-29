@@ -1,4 +1,5 @@
 import { closeSync, fstatSync, ftruncateSync, openSync, readSync, rmSync } from "node:fs";
+import { type FileHandle, rm } from "node:fs/promises";
 
 const NEWLINE = 0x0a;
 const SCAN_CHUNK_BYTES = 64 * 1024;
@@ -48,6 +49,35 @@ export function discardFailedFirstFlush(path: string, fd: number, writeError: un
 	} catch (removeError) {
 		cleanupErrors.push(removeError);
 	}
+	throwWriteError(path, writeError, cleanupErrors);
+}
+
+/**
+ * `discardFailedFirstFlush` for the asynchronous header write: closes `handle` (when it is still open)
+ * and removes the file that write created, then rethrows the write error.
+ */
+export async function discardFailedFirstFlushAsync(
+	path: string,
+	handle: FileHandle | undefined,
+	writeError: unknown,
+): Promise<never> {
+	const cleanupErrors: unknown[] = [];
+	if (handle !== undefined) {
+		try {
+			await handle.close();
+		} catch (closeError) {
+			cleanupErrors.push(closeError);
+		}
+	}
+	try {
+		await rm(path, { force: true });
+	} catch (removeError) {
+		cleanupErrors.push(removeError);
+	}
+	throwWriteError(path, writeError, cleanupErrors);
+}
+
+function throwWriteError(path: string, writeError: unknown, cleanupErrors: readonly unknown[]): never {
 	if (cleanupErrors.length > 0) {
 		throw new AggregateError(
 			[writeError, ...cleanupErrors],
