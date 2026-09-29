@@ -1,3 +1,15 @@
+import type { OpenAiRemoteCompactionModel } from "./openai-remote-model.ts";
+
+const OPENAI_REMOTE_COMPACTION_TIMEOUT_MS = 15_000;
+/** A real subscription-lane v2 compaction outlasts 15s (senpi#2378); set from a measured live compaction plus margin. */
+export const CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS = 90_000;
+
+export function openAiRemoteCompactionTimeoutMs(model: OpenAiRemoteCompactionModel): number {
+	return model.api === "openai-codex-responses"
+		? CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS
+		: OPENAI_REMOTE_COMPACTION_TIMEOUT_MS;
+}
+
 export async function runWithRemoteTimeout<T>(options: {
 	signal: AbortSignal;
 	timeoutMs: number;
