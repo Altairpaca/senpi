@@ -3668,12 +3668,12 @@ export class AgentSession {
 		this._resourceLoader.emitExtensionEvent?.(channel, data);
 	}
 
-	/** Current session display name, if set */
 	/** Installed by the interactive mode before it binds extensions; `pi.session.registerControlEndpoint` needs one. */
 	setControlEndpointHost(host: ControlEndpointHost | undefined): void {
 		this._controlEndpointHost = host;
 	}
 
+	/** Current session display name, if set */
 	get sessionName(): string | undefined {
 		return this.sessionManager.getSessionName();
 	}

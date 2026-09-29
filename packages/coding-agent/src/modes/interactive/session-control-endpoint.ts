@@ -61,7 +61,7 @@ async function openEndpoint(
 	cleanups: Cleanup[],
 ): Promise<ActiveControlEndpoint> {
 	const { session, agentDir, surface } = context;
-	session.sessionManager.persistHeaderNow();
+	await session.sessionManager.persistHeaderNow();
 	await gcHostEndpoints(agentDir, { kinds: ["tui"] });
 	const instanceId = randomUUID();
 	const socket = await resolveTuiSocket(agentDir, instanceId);

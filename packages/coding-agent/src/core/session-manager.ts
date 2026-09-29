@@ -15,7 +15,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir } from "fs/promises";
+import { open, readdir, rm } from "fs/promises";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -885,6 +885,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private headerWrite: Promise<void> | undefined;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	// Runtime-only identity tracking lets AgentSession compare messages to a
@@ -1213,15 +1214,19 @@ export class SessionManager {
 	}
 
 	/**
-	 * Writes the buffered header (and anything buffered behind it) through the same exclusive create
-	 * the first assistant message would use, and appends every later entry immediately. A session that
-	 * is exposed to other processes needs its id on disk first: a reopen of a missing file mints a new id.
+	 * Writes the buffered header (and anything buffered behind it) through an exclusive create, as
+	 * the first assistant message would, and appends every later entry immediately. A session that
+	 * is exposed to other processes needs its id on disk first: a reopen of a missing file mints a
+	 * new id. The write is asynchronous (the session path never blocks on the filesystem); entries
+	 * persisted while it runs are appended by it before the transcript counts as flushed.
 	 */
-	persistHeaderNow(): void {
-		if (!this.persist || !this.sessionFile || this.flushed) return;
-		reserveSessionWrite(this.sessionFile);
-		this._writeBufferedEntriesExclusively(this.sessionFile);
-		this.flushed = true;
+	persistHeaderNow(): Promise<void> {
+		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? Promise.resolve();
+		const sessionFile = this.sessionFile;
+		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+			this.headerWrite = undefined;
+		});
+		return this.headerWrite;
 	}
 
 	isTranscriptFlushed(): boolean {
@@ -1232,23 +1237,31 @@ export class SessionManager {
 	 * Removes the session file when nothing happened in it - the header plus model/thinking setup
 	 * entries only - and returns to buffering, so a later entry cannot recreate a header-less file.
 	 */
-	discardHeaderOnlyFile(): boolean {
+	async discardHeaderOnlyFile(): Promise<boolean> {
+		await this.headerWrite;
 		if (!this.persist || !this.sessionFile || !this.flushed) return false;
 		if (!this.fileEntries.every((entry) => SETUP_ONLY_ENTRY_TYPES.has(entry.type))) return false;
-		rmSync(this.sessionFile, { force: true });
+		await rm(this.sessionFile, { force: true });
 		this.flushed = false;
 		return true;
 	}
 
-	private _writeBufferedEntriesExclusively(sessionFile: string): void {
-		const fd = openSync(sessionFile, "wx");
+	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
+		reserveSessionWrite(sessionFile);
+		const entries = this.fileEntries;
+		const handle = await open(sessionFile, "wx");
 		try {
-			for (const e of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
+			let written = 0;
+			while (written < entries.length) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await handle.writeFile(batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join(""));
 			}
 		} finally {
-			closeSync(fd);
+			await handle.close();
 		}
+		// Synchronous with the last check above: no entry can land between it and the flag.
+		if (this.sessionFile === sessionFile && this.fileEntries === entries) this.flushed = true;
 	}
 
 	_persist(entry: SessionEntry): void {
@@ -1268,7 +1281,16 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
-			this._writeBufferedEntriesExclusively(this.sessionFile);
+			// An asynchronous header write owns the file until it finishes, and appends this entry.
+			if (this.headerWrite) return;
+			const fd = openSync(this.sessionFile, "wx");
+			try {
+				for (const e of this.fileEntries) {
+					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
+				}
+			} finally {
+				closeSync(fd);
+			}
 			this.flushed = true;
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);

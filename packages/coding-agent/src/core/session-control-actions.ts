@@ -47,6 +47,6 @@ export function unboundSessionControlActions(): SessionControlActions {
 		admissionGate: notBound,
 		admitExternalMessage: notBound,
 		listAdmittedDeliveries: notBound,
-		persistHeaderNow: notBound,
+		persistHeaderNow: () => Promise.reject(new Error("Extension runtime not initialized")),
 	};
 }

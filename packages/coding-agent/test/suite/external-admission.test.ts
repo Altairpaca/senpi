@@ -164,7 +164,7 @@ describe("persistHeaderNow and the header-only exit rule", () => {
 		const file = target.sessionManager.getSessionFile();
 		if (file === undefined) throw new Error("no session file");
 		expect(existsSync(file)).toBe(false);
-		target.sessionManager.persistHeaderNow();
+		await target.sessionManager.persistHeaderNow();
 		const header = JSON.parse(readFileSync(file, "utf8").split("\n")[0] ?? "{}");
 		expect(header).toMatchObject({ type: "session", id: target.session.sessionId });
 		target.setResponses([fauxAssistantMessage("reply")]);
@@ -175,16 +175,36 @@ describe("persistHeaderNow and the header-only exit rule", () => {
 			.map((line) => JSON.parse(line).type);
 		expect(types.filter((type) => type === "session")).toHaveLength(1);
 		expect(types).toContain("message");
-		expect(target.sessionManager.discardHeaderOnlyFile()).toBe(false);
+		expect(await target.sessionManager.discardHeaderOnlyFile()).toBe(false);
 		expect(existsSync(file)).toBe(true);
+	});
+
+	it("entries persisted while the asynchronous header write runs land after the header, once", async () => {
+		const target = await harness();
+		const manager = target.sessionManager;
+		const file = manager.getSessionFile();
+		if (file === undefined) throw new Error("no session file");
+		const writing = manager.persistHeaderNow();
+		manager.appendMessage({ role: "user", content: "during the header write", timestamp: Date.now() });
+		manager.appendMessage(fauxAssistantMessage("assistant during the header write"));
+		expect(manager.isTranscriptFlushed()).toBe(false);
+		await writing;
+		expect(manager.isTranscriptFlushed()).toBe(true);
+		manager.appendCustomEntry("after", { n: 1 });
+		const lines = readFileSync(file, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(lines[0]).toMatchObject({ type: "session", id: target.session.sessionId });
+		expect(lines.slice(1).map((line) => line.id)).toEqual(manager.getEntries().map((entry) => entry.id));
 	});
 
 	it("removes a header-only file and returns to buffering", async () => {
 		const target = await harness();
 		const file = target.sessionManager.getSessionFile();
 		if (file === undefined) throw new Error("no session file");
-		target.sessionManager.persistHeaderNow();
-		expect(target.sessionManager.discardHeaderOnlyFile()).toBe(true);
+		await target.sessionManager.persistHeaderNow();
+		expect(await target.sessionManager.discardHeaderOnlyFile()).toBe(true);
 		expect(existsSync(file)).toBe(false);
 		expect(target.sessionManager.isTranscriptFlushed()).toBe(false);
 	});

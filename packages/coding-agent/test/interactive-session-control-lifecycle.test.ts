@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SessionControlDrainResult, SessionControlWakeEvent } from "../src/core/extensions/types.ts";
-import { TuiSessionControlHost } from "../src/modes/interactive/session-control-host.ts";
+import { type SubmissionTicket, TuiSessionControlHost } from "../src/modes/interactive/session-control-host.ts";
 import { resolveTuiSocket } from "../src/modes/interactive/session-control-registry.ts";
 import { WakeScheduler } from "../src/modes/interactive/session-control-wake.ts";
 import { createDaemonDirectories, createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
@@ -74,47 +74,49 @@ describe("WakeScheduler", () => {
 	});
 });
 
-describe("TuiSessionControlHost submission hold", () => {
+describe("TuiSessionControlHost submission tickets", () => {
 	const nextMacrotask = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-	function host(streaming: () => boolean) {
-		const control = new TuiSessionControlHost(() => ({
-			session: { isStreaming: streaming() } as never,
-			agentDir: "",
-			surface: {
-				draftHold: () => undefined,
-				blockingQuestion: () => false,
-				pendingQuestionIds: () => [],
-				answerQuestion: () => false,
-				notice: () => undefined,
-			},
-		}));
+	function host() {
+		const control = new TuiSessionControlHost(() => {
+			throw new Error("no endpoint in this test");
+		});
+		const buffered: Array<SubmissionTicket | undefined> = [];
 		const editor: { onChange?: (text: string) => void; onSubmit?: (text: string) => void } = {
-			onSubmit: () => undefined,
+			onSubmit: (text) => {
+				if (!text.startsWith("/")) buffered.push(control.claimHandoff());
+			},
 		};
 		control.attachEditor(editor, () => false);
-		return { control, editor };
+		return { control, editor, buffered };
 	}
 
-	it("holds plain text until the main loop's prompt call ends, not when the submit handler settles", async () => {
-		const { control, editor } = host(() => false);
-		const turn = Promise.withResolvers<void>();
-		editor.onSubmit?.("draft text");
-		const running = control.runPrompt(turn.promise);
-		await nextMacrotask();
+	it("holds until the LAST buffered input is taken, whatever order the others are taken in", async () => {
+		const { control, editor, buffered } = host();
+		editor.onSubmit?.("first");
+		editor.onSubmit?.("second");
 		await nextMacrotask();
 		expect(control.submissionInFlight()).toBe(true);
-		turn.resolve();
-		await running;
+		buffered[0]?.release();
+		expect(control.submissionInFlight()).toBe(true);
+		buffered[1]?.release();
+		buffered[1]?.release();
 		expect(control.submissionInFlight()).toBe(false);
 	});
 
-	it("releases a submission that no prompt call picks up once its handler settled", async () => {
-		const { control, editor } = host(() => false);
+	it("releases a submission its own handler took once the handler settled", async () => {
+		const { control, editor } = host();
 		editor.onSubmit?.("/name x");
 		expect(control.submissionInFlight()).toBe(true);
 		await nextMacrotask();
-		await nextMacrotask();
+		expect(control.submissionInFlight()).toBe(false);
+	});
+
+	it("holds while input is buffered outside the main loop", () => {
+		const { control } = host();
+		control.noteBufferedElsewhere(true);
+		expect(control.submissionInFlight()).toBe(true);
+		control.noteBufferedElsewhere(false);
 		expect(control.submissionInFlight()).toBe(false);
 	});
 });

@@ -123,7 +123,7 @@ export interface SessionControlActions {
 	admitExternalMessage(input: AdmitExternalMessageInput): ExternalAdmissionResult;
 	listAdmittedDeliveries(): AdmittedDeliveries;
 	/** Writes the session header now, so the session id is durable before anything exposes it. */
-	persistHeaderNow(): void;
+	persistHeaderNow(): Promise<void>;
 }
 
 /** `customType` of the transcript entry an admitted delivery becomes. */

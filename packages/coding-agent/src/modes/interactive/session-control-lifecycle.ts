@@ -2,8 +2,8 @@
  * A bound control endpoint's live wiring and its clean exit.
  *
  * Edges: `agent_idle` -> idle; a delivery's entry written -> emitted; SIGCONT -> continue. The host
- * adds submission (every `agent_start` is reported to it through `onTurnStart`) and draft_cleared;
- * the socket adds command; the watcher adds inbox.
+ * adds submission (its last open submission ticket released) and draft_cleared; the socket adds
+ * command; the watcher adds inbox.
  *
  * Clean exit, in order: stop every edge source, close the socket, apply the header-only rule (a
  * session file holding nothing but its header is removed only when the registrant says nothing
@@ -29,7 +29,6 @@ export interface TuiControlContext {
 	readonly agentDir: string;
 	readonly surface: TuiControlSurface;
 	readonly editorRevision: () => number;
-	readonly onTurnStart?: () => void;
 }
 
 export interface ActiveControlEndpoint {
@@ -59,7 +58,6 @@ export function activateControlEndpoint(parts: ActivationParts): ActiveControlEn
 	session.externalAdmission.setEditorSource(() => editorHold(context));
 	const unsubscribeSession = session.subscribe((event) => {
 		if (event.type === "agent_start") {
-			context.onTurnStart?.();
 			feed.publish("state");
 		} else if (event.type === "agent_idle") {
 			feed.publish("completion", { turn_epoch: session.externalAdmission.turnEpoch });
@@ -92,7 +90,7 @@ export function activateControlEndpoint(parts: ActivationParts): ActiveControlEn
 			feed.clear();
 			session.externalAdmission.setEditorSource(undefined);
 			await parts.server.close();
-			if (!(await sessionReferenced(parts.options, surface))) session.sessionManager.discardHeaderOnlyFile();
+			if (!(await sessionReferenced(parts.options, surface))) await session.sessionManager.discardHeaderOnlyFile();
 			await unregisterTuiEndpoint(parts.entry);
 		})();
 		return disposing;

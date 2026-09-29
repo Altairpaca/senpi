@@ -660,7 +660,7 @@ function createExtensionAPI(
 			},
 			persistHeaderNow() {
 				runtime.assertActive();
-				sessionControlOf(runtime).persistHeaderNow();
+				return sessionControlOf(runtime).persistHeaderNow();
 			},
 		},
 

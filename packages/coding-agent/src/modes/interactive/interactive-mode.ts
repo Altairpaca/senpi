@@ -260,7 +260,8 @@ import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
-import { TuiSessionControlHost } from "./session-control-host.ts";
+import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
+import type { TuiControlContext } from "./session-control-lifecycle.ts";
 import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
@@ -706,6 +707,7 @@ interface InteractiveUserInput {
 	pendingEchoId: string | undefined;
 	/** Typed after leading whitespace: send `/...` text to the model even when no command handles it. */
 	unknownCommandAsText?: boolean;
+	ticket?: SubmissionTicket;
 }
 
 /** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
@@ -905,22 +907,9 @@ export class InteractiveMode {
 	 */
 	private pendingImages = new Map<number, ImageContent>();
 	/** Lets an extension expose this session on a control endpoint; the endpoint module loads on first use. */
-	private readonly sessionControlHost: TuiSessionControlHost = new TuiSessionControlHost(() => ({
-		session: this.session,
-		agentDir: this.session.agentDir,
-		surface: {
-			draftHold: (): "attachment" | "draft" | undefined =>
-				this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold(),
-			blockingQuestion: () => this.askUserQuestion !== undefined,
-			pendingQuestionIds: () => [...this.pendingQuestions.keys()],
-			answerQuestion: (requestId, response) => {
-				const state = this.pendingQuestions.get(requestId);
-				state?.finish(response);
-				return state !== undefined;
-			},
-			notice: (line) => this.showWarning(line),
-		},
-	}));
+	private readonly sessionControlHost: TuiSessionControlHost = new TuiSessionControlHost(() =>
+		this.sessionControlContext(),
+	);
 	/**
 	 * Images pre-resolved by handleFollowUp's non-streaming branch, which hands
 	 * off through the public string-only `onSubmit(text)` API. Set BEFORE that
@@ -1858,9 +1847,7 @@ export class InteractiveMode {
 		while (true) {
 			const userInput = await this.getUserInput();
 			try {
-				await this.runSubmittedPrompt(
-					this.session.prompt(userInput.text, this.buildMainLoopPromptOptions(userInput)),
-				);
+				await this.session.prompt(userInput.text, this.buildMainLoopPromptOptions(userInput));
 			} catch (error: unknown) {
 				this.optimisticUserEchoes.reject(userInput.pendingEchoId);
 				this.clearStatusIndicator("working");
@@ -1868,6 +1855,8 @@ export class InteractiveMode {
 					continue;
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
+			} finally {
+				userInput.ticket?.release();
 			}
 		}
 	}
@@ -3891,10 +3880,22 @@ export class InteractiveMode {
 		return completion.promise;
 	}
 
-	/** Only the visible surface ticks; extension deadlines remain authoritative. */
-	/** The main loop's prompt for a submitted input; the session control host holds deliveries until it is taken. */
-	private runSubmittedPrompt(prompt: Promise<void>): Promise<void> {
-		return this.sessionControlHost ? this.sessionControlHost.runPrompt(prompt) : prompt;
+	private sessionControlContext(): Omit<TuiControlContext, "editorRevision"> {
+		return {
+			session: this.session,
+			agentDir: this.session.agentDir,
+			surface: {
+				draftHold: () => (this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold()),
+				blockingQuestion: () => this.askUserQuestion !== undefined,
+				pendingQuestionIds: () => [...this.pendingQuestions.keys()],
+				answerQuestion: (requestId, response) => {
+					const state = this.pendingQuestions.get(requestId);
+					state?.finish(response);
+					return state !== undefined;
+				},
+				notice: (line) => this.showWarning(line),
+			},
+		};
 	}
 
 	/** What the user is composing, if anything: a held external delivery waits for it. */
@@ -3903,6 +3904,7 @@ export class InteractiveMode {
 		return this.editor.getText().trim() === "" ? undefined : "draft";
 	}
 
+	/** Only the visible surface ticks; extension deadlines remain authoritative. */
 	private refreshAsyncWidget(): void {
 		this.sessionControlHost?.questionsChanged();
 		this.syncQuestionMouseCapture();
@@ -4914,11 +4916,13 @@ export class InteractiveMode {
 
 				const images = preResolvedImages ?? this.takeSubmissionImages(text);
 				const pendingEchoId = this.beginUserEcho(text, images);
+				const ticket = this.sessionControlHost?.claimHandoff();
 				const submission: InteractiveUserInput = {
 					text,
 					pendingEchoId,
 					...(images.length > 0 ? { images } : {}),
 					...(unknownCommandAsText ? { unknownCommandAsText } : {}),
+					...(ticket ? { ticket } : {}),
 				};
 				if (this.onInputCallback) {
 					this.onInputCallback(submission);
@@ -6278,6 +6282,7 @@ export class InteractiveMode {
 			preflightResult: echoOptions.preflightResult,
 			promptDisposition: (disposition) => {
 				echoOptions.promptDisposition(disposition);
+				userInput.ticket?.release();
 				// Clear the retained dock on a handled prompt only when it was the last
 				// buffered input; a still-queued follow-up remounts it on agent_start, so
 				// clearing here would bounce the editor/footer.
@@ -6981,6 +6986,9 @@ export class InteractiveMode {
 	}
 
 	private updatePendingMessagesDisplay(): void {
+		this.sessionControlHost?.noteBufferedElsewhere(
+			this.compactionQueuedMessages.length + this.compactionInFlightMessages.length > 0,
+		);
 		this.pendingMessagesContainer.clear();
 		const { steering: steeringMessages, followUp: followUpMessages } = this.getAllQueuedMessages();
 		if (steeringMessages.length > 0 || followUpMessages.length > 0) {

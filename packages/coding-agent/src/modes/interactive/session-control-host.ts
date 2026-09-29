@@ -8,12 +8,13 @@
  * `onSubmit`, so the clear is judged one microtask later, after the submission had its chance to
  * claim it.
  *
- * A submission holds admission until the runtime has taken it: plain text only resolves the main
- * loop's pending input, and the loop calls `prompt()` later, so without the hold a delivery could
- * start its own turn ahead of the user's message. The hold ends when the user's turn starts, when
- * the loop's prompt call ends, or - for input that starts no turn here (a command, a steer into a
- * running turn) - once the submit handler settled and no prompt call picked the input up. Its end
- * is the `submission` edge.
+ * A delivery never runs ahead of input the user already submitted. Every submission opens a
+ * ticket, and admission is held while any ticket is open. Text for the main loop hands its ticket
+ * over with the buffered input (`claimHandoff`), and it is released only when the runtime took that
+ * input (its prompt reported a disposition, or the prompt call ended); any other submission is
+ * taken by its own handler and releases when the handler settles. Turn starts do not release
+ * anything: a turn can start (an extension's, the previous input's) while a later input is still
+ * buffered. The last ticket's release is the `submission` edge.
  */
 import type { RegisterControlEndpointOptions, SessionControlRegistration } from "../../core/extensions/types.ts";
 import type { ControlEndpointHost } from "../../core/session-control-actions.ts";
@@ -24,13 +25,19 @@ interface ControlledEditor {
 	onSubmit?: (text: string) => void;
 }
 
+export interface SubmissionTicket {
+	/** Idempotent: the runtime took this input (or it will never reach the runtime). */
+	release(): void;
+}
+
 export class TuiSessionControlHost implements ControlEndpointHost {
 	private active: ActiveControlEndpoint | undefined;
 	private editorRevision = 0;
 	private hadDraft = false;
 	private submitting = false;
-	private submissionHeld = false;
-	private promptsRunning = 0;
+	private openTickets = 0;
+	private bufferedElsewhere = false;
+	private handoff: SubmissionTicket | undefined;
 	private readonly context: () => Omit<TuiControlContext, "editorRevision">;
 
 	constructor(context: () => Omit<TuiControlContext, "editorRevision">) {
@@ -41,7 +48,7 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 		await this.disposeActive();
 		const { registerSessionControlEndpoint } = await import("./session-control-endpoint.ts");
 		const outcome = await registerSessionControlEndpoint(
-			{ ...this.context(), editorRevision: () => this.editorRevision, onTurnStart: () => this.releaseSubmission() },
+			{ ...this.context(), editorRevision: () => this.editorRevision },
 			options,
 		);
 		if ("endpoint" in outcome) this.active = outcome.endpoint;
@@ -58,31 +65,38 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 		const submit = editor.onSubmit;
 		editor.onSubmit = (text) => {
 			this.submitting = true;
-			this.submissionHeld = true;
 			queueMicrotask(() => {
 				this.submitting = false;
 			});
-			void Promise.resolve(submit?.(text)).finally(() =>
-				setImmediate(() => {
-					if (this.promptsRunning === 0 || this.context().session.isStreaming) this.releaseSubmission();
-				}),
-			);
+			const ticket = this.openTicket();
+			this.handoff = ticket;
+			let pending: unknown;
+			try {
+				pending = submit?.(text);
+			} finally {
+				const handedOff = this.handoff !== ticket;
+				this.handoff = undefined;
+				if (!handedOff) void Promise.resolve(pending).finally(() => ticket.release());
+			}
 		};
 	}
 
-	submissionInFlight(): boolean {
-		return this.submissionHeld;
+	/** Called synchronously by the submit handler when it buffers text for the main loop. */
+	claimHandoff(): SubmissionTicket | undefined {
+		const ticket = this.handoff;
+		this.handoff = undefined;
+		return ticket;
 	}
 
-	/** Brackets the main loop's `prompt()` for a submitted input. */
-	async runPrompt<T>(prompt: Promise<T>): Promise<T> {
-		this.promptsRunning += 1;
-		try {
-			return await prompt;
-		} finally {
-			this.promptsRunning -= 1;
-			this.releaseSubmission();
-		}
+	submissionInFlight(): boolean {
+		return this.openTickets > 0 || this.bufferedElsewhere;
+	}
+
+	/** Input the TUI buffers outside the main loop (the compaction queue) holds admission the same way. */
+	noteBufferedElsewhere(held: boolean): void {
+		const released = this.bufferedElsewhere && !held;
+		this.bufferedElsewhere = held;
+		if (released) this.wakeIfUnheld();
 	}
 
 	questionsChanged(): void {
@@ -95,10 +109,24 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 		await active?.dispose();
 	}
 
-	private releaseSubmission(): void {
-		if (!this.submissionHeld) return;
-		this.submissionHeld = false;
-		this.active?.wake("submission");
+	private openTicket(): SubmissionTicket {
+		this.openTickets += 1;
+		let released = false;
+		return {
+			release: () => {
+				if (released) return;
+				released = true;
+				this.openTickets -= 1;
+				this.wakeIfUnheld();
+			},
+		};
+	}
+
+	private wakeIfUnheld(): void {
+		// Deferred: a prompt reports its disposition just before the run marks itself active.
+		queueMicrotask(() => {
+			if (!this.submissionInFlight()) this.active?.wake("submission");
+		});
 	}
 
 	private editorChanged(hasDraft: boolean): void {
