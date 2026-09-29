@@ -281,6 +281,7 @@ import {
 	type SkillInvocationToken,
 } from "./skill-invocation.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
+import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
@@ -289,6 +290,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */
@@ -467,6 +469,8 @@ export type AgentSessionEvent =
 			to: string;
 			chainKey: string;
 			reason: "transient" | "refusal" | "hard-error" | "billing";
+			/** Set when a usage limit caused the switch: `model` binds one model, `account` the whole provider. */
+			limit?: "model" | "account";
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
 	| { type: "retry_fallback_reverted"; from: string; to: string }
@@ -805,6 +809,11 @@ export interface PromptOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
+	/**
+	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
+	 * interactive or RPC input is rejected with `UnknownCommandError`.
+	 */
+	unknownCommandAsText?: boolean;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
 	/** Internal hook used by the TUI to distinguish handled input from owned prompt work. */
@@ -4047,6 +4056,14 @@ export class AgentSession {
 				expandedText = this._expandSkillCommand(expandedText);
 				const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 				expandedText = templateExpansion.text;
+				if (
+					expandedText === currentText &&
+					options?.source !== "extension" &&
+					options?.unknownCommandAsText !== true &&
+					!/^\s/.test(text)
+				) {
+					this._rejectUnknownCommand(currentText);
+				}
 				if (templateExpansion.template) {
 					pendingCommandInvocation = {
 						name: templateExpansion.template.name,
@@ -4344,6 +4361,23 @@ export class AgentSession {
 			});
 			return true;
 		}
+	}
+
+	/**
+	 * Throw `UnknownCommandError` when `text` is command-shaped and no extension command, prompt
+	 * template, or loaded skill resolves it. Runs after input transforms and expansion, so extension
+	 * rewrites and expanded commands never reach here as unknown.
+	 */
+	private _rejectUnknownCommand(text: string): void {
+		if (commandShapedName(text) === undefined) return;
+		const promptCommands = new Set<string>([
+			...this._extensionRunner.getRegisteredCommands().map((command) => command.invocationName),
+			...this.promptTemplates.map((template) => template.name),
+			...this.resourceLoader.getSkills().skills.map((skill) => `skill:${skill.name}`),
+		]);
+		const interactiveCommands = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+		const rejection = findUnknownCommand(text, { promptCommands, interactiveCommands });
+		if (rejection) throw rejection;
 	}
 
 	/**
@@ -7200,7 +7234,10 @@ export class AgentSession {
 		allowSummaryOnly = false,
 		keepRecentTokensOverride?: number,
 	): Promise<boolean> {
-		if (this._isCompactionDelegated()) return false;
+		// An earlier external-owner rejection never answers for a rejected request
+		// awaiting its retry: whether the owner can recover it depends on the request
+		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).
+		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		const controller = new AbortController();
 		const requestId = randomUUID();
 		this._claimCompactionController(controller, "compaction");
@@ -7426,7 +7463,7 @@ export class AgentSession {
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
-		if (this._isCompactionDelegated()) return false;
+		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		// Model identity is captured before the auth await below: a model switch during
 		// that await must not change the token budgets this compaction was admitted with.
 		const model = this.model;

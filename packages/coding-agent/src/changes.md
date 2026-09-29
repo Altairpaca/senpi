@@ -1,3 +1,39 @@
+## 2026-09-29 - Print mode names the usage limit behind a model fallback (omo#8296)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the stderr line for `retry_fallback_applied` prints `usageLimitCause(from, limit)` in place of the bare reason when a usage limit caused the switch, e.g. `Model fallback: a/x -> b/y (a/x hit its usage limit)`. Other switches print the reason as before.
+
+### Why
+
+- Headless runs and task children log this line; "(transient)" hid that the model had run out of its usage limit (omo#8296).
+
+### Why an extension could not handle it
+
+- The line is written by print mode's own session subscription.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_applied` branch in `print-mode.ts`.
+
+## 2026-09-28 - `createCliRuntimeFactory` can build a session's services alone (senpi#2314)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the services half of `createCliRuntimeFactory` (project trust, settings, resource loader with the launch profile's kind and context, extension factories) is a `createServices` closure the runtime factory calls first. The returned factory also carries `prepare(options)`, which builds those services for a host open (no start event) and drops them. The return type is `PreparableRuntimeFactory`.
+
+### Why
+
+A multi-session host's `warm` command (senpi#2314) must load exactly what the next `open_session` loads - the same resource paths, trust decision and extension factories - without creating an `AgentSession` or firing `session_start`. Only the factory knows those inputs, so it builds them for both paths.
+
+### Why an extension could not handle it
+
+Extensions are what gets loaded; the loading itself is the CLI runtime factory's.
+
+### Expected merge conflict zones
+
+- The body of `createCliRuntimeFactory` between its setup and `createAgentSessionFromServices`, and its return.
+
 ## 2026-09-27 - `senpi schedule` route for durable scheduled prompts
 
 ### What changed
@@ -92,6 +128,24 @@ omo imports senpi only through the package root (its `senpi-barrel.ts` resolves 
 
 - `packages/coding-agent/src/index.ts`: the run-mode export list from `./modes/index.ts`.
 - `packages/coding-agent/src/modes/index.ts`: the export block above the host-decision exports.
+
+## 2026-09-28 - Export UnknownCommandError (omo #9042)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `UnknownCommandError` and `UnknownCommandReason` from `./core/unknown-command.ts`.
+
+### Why
+
+- SDK callers of `AgentSession.prompt()` need to recognize the typed refusal of unknown commands.
+
+### Why an extension could not handle it
+
+- The package entry point is the only public export surface.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the line after the `./core/trust-manager.ts` export.
 
 ## 2026-09-27 - `senpi models discover <provider>` dispatch (senpi#2196)
 
