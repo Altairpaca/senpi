@@ -7202,7 +7202,10 @@ export class AgentSession {
 		allowSummaryOnly = false,
 		keepRecentTokensOverride?: number,
 	): Promise<boolean> {
-		if (this._isCompactionDelegated()) return false;
+		// An earlier external-owner rejection never answers for a rejected request
+		// awaiting its retry: whether the owner can recover it depends on the request
+		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).
+		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		const controller = new AbortController();
 		const requestId = randomUUID();
 		this._claimCompactionController(controller, "compaction");
@@ -7428,7 +7431,7 @@ export class AgentSession {
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
-		if (this._isCompactionDelegated()) return false;
+		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		// Model identity is captured before the auth await below: a model switch during
 		// that await must not change the token budgets this compaction was admitted with.
 		const model = this.model;

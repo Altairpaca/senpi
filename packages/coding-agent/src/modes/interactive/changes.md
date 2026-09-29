@@ -1,3 +1,21 @@
+## 2026-09-29 - `/model` lists ambient-only providers after configured ones (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts`: `sortModels` orders models from providers the user configured before providers available only through ambient cloud credentials (`createAmbientProviderCheck`), after the current model and favorites and before the provider/id order.
+
+### Why
+
+- Bedrock's many models sorted second by provider name, so AWS keys in the environment made them lead `/model` for users who never set Bedrock up (senpi#2327).
+
+### Why an extension could not handle it
+
+- Sorting is private to `ModelSelectorComponent`.
+
+### Expected merge conflict zones
+
+- LOW: the comparator in `sortModels`.
+
 ## 2026-09-29 - The model-fallback notice says which model or account hit its usage limit (omo#8296)
 
 ### What changed

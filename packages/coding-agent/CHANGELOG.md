@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- A resumed Claude conversation no longer re-sends its whole history when an extension starts the first turn. A terminal monitor that fires on restore, a goal continuation or a loop run can start a turn while the session is still starting up, and that turn used to reach Claude before the saved resume point was read back, so it went out as `Session continuity lost - resent the full conversation (registry_miss)`. Turns that extensions request while a session is starting now begin once every extension has finished starting up. ([#1972](https://github.com/code-yeongyu/senpi/issues/1972))
+
 - The Together provider's default model is Kimi K3. Together no longer lists Kimi K2.6, so a `together/` session with no model set picked an id the catalog had dropped. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
 
 - `session.log` lines keep their `sessionId`, so the continuity and close lines of concurrent Claude subscription sessions can be told apart again. The logger's key allowlist had dropped the field. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
@@ -22,7 +24,11 @@
 
 - Resuming a Claude conversation whose sent history was rolled back or diverged no longer forks at an assistant message the current history no longer contains. The resume decision now anchors the fork at the newest assistant boundary inside the shared history and re-sends that point's remainder, and when no such boundary exists it rebuilds from the transcript instead of resuming a lineage that keeps an unrelated old-branch assistant ([#1974](https://github.com/code-yeongyu/senpi/issues/1974)).
 
+- AWS credentials in the environment (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, an ECS or web-identity role) no longer make Amazon Bedrock the startup model when you have logged in to or configured another provider; the same holds for Google Vertex through Application Default Credentials. Those providers stay in `/model`, listed after the providers you configured, and still become the default when nothing else is available or you pick them. A Claude subscription login now has its own default model (`claude-opus-4-8`). ([#2327](https://github.com/code-yeongyu/senpi/issues/2327))
+
 - On `anthropic-subscription`, changing the thinking level while the model is streaming no longer kills the turn with "query ended before the active turn completed"; the new level applies from the next request. A turn whose every attempt failed is no longer reported as "Session continuity lost - resent the full conversation": nothing was re-sent, and session.log records it as `failed` instead of `flatten`. Continuity and close lines in session.log now carry the session id. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
+
+- An `anthropic-subscription` session no longer dies at "Prompt is too long" after its resident Claude Code session is lost. The conversation re-send that follows is now measured before it is sent; when it cannot fit, the turn reports "The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying." and, as when the API rejects the re-send as too long, senpi compacts its own history once and retries, also after a restart. A resident turn's overflow is still left to the Claude Agent SDK. ([#2329](https://github.com/code-yeongyu/senpi/issues/2329), [code-yeongyu/oh-my-openagent#7975](https://github.com/code-yeongyu/oh-my-openagent/issues/7975))
 
 - A usage limit that binds the whole account (a Claude session or weekly limit, a Codex usage limit, an empty balance) now falls back to a model on another provider first; models of the same provider are tried only when no other provider in the chain can serve. A limit that names one model (a Fable-only weekly cap, Copilot premium models) still moves to the next model on the same provider. The fallback notice now says which model or account hit its usage limit instead of `(transient)`. ([code-yeongyu/oh-my-openagent#8296](https://github.com/code-yeongyu/oh-my-openagent/issues/8296))
 
