@@ -108,6 +108,8 @@
 
 ### Removed
 
+- Interactive sessions can no longer join a shared RPC host: every interactive launch runs on its own local runtime. The `experimental.sharedHost` setting and the `SENPI_ENABLE_SHARED_HOST` / `SENPI_DISABLE_SHARED_HOST` environment variables (any brand prefix) are gone and are ignored if set, with no notice. On first load, `experimental.sharedHost` is removed from the global settings file; nothing else in the file changes, except that a global `settings.jsonc` loses its comments in that one rewrite. A project `.senpi/settings.json` is never rewritten; the key is ignored there. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
 ## [2026.9.28-7] - 2026-09-28
 
 ### Breaking Changes

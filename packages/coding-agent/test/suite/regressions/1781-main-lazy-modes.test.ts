@@ -40,7 +40,6 @@ const DEFERRED_SPECIFIERS = [
 	},
 	{ specifier: "./modes/rpc/multi-session-host.js", branch: "--mode rpc --multi-session" },
 	{ specifier: "./modes/rpc/rpc-mode.js", branch: "--mode rpc" },
-	{ specifier: "./modes/interactive/interactive-host-runtime.js", branch: "the shared-host opt-in" },
 	{ specifier: "./cli/list-tips.js", branch: "--list-tips" },
 	{ specifier: "./cli/session-picker.js", branch: "--resume" },
 ] as const;
@@ -49,6 +48,10 @@ const DEFERRED_SPECIFIERS = [
 const FORBIDDEN_SUBGRAPHS = [
 	{ pattern: /\/dist\/modes\/rpc\/multi-session-host\.js$/u, owner: "--mode rpc --multi-session" },
 	{ pattern: /\/dist\/package-manager-cli\.js$/u, owner: "the package-manager commands" },
+	{
+		pattern: /\/dist\/modes\/interactive\/interactive-host-runtime\.js$/u,
+		owner: "nothing: interactive launches no longer join a shared host",
+	},
 ] as const;
 
 const APP_SERVER_SUBGRAPH = /\/dist\/modes\/app-server\//u;

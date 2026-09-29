@@ -56,6 +56,7 @@ import {
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
 import { withoutOverride } from "./settings-overrides.ts";
+import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
@@ -153,10 +154,6 @@ export type PackageSource =
 			hooks?: string[];
 	  };
 
-export interface ExperimentalSettings {
-	sharedHost?: boolean;
-}
-
 export interface Settings {
 	providers?: Record<string, ProviderConcurrencySettings>;
 	lastChangelogVersion?: string;
@@ -229,7 +226,6 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
-	experimental?: ExperimentalSettings;
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
@@ -740,7 +736,10 @@ export class SettingsManager {
 		if (!content) {
 			return {};
 		}
-		return SettingsManager.migrateSettings(parseSettingsJson(content));
+		const raw = parseSettingsJson(content);
+		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
+		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
+		return SettingsManager.migrateSettings(raw);
 	}
 
 	private static tryLoadFromStorage(
@@ -2242,10 +2241,6 @@ export class SettingsManager {
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		return tools ? [...tools] : undefined;
-	}
-
-	getExperimentalSharedHost(): boolean {
-		return this.settings.experimental?.sharedHost === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

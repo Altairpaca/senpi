@@ -438,7 +438,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
-		this.sharedHostEnabled = options.sharedHostEnabled ?? this.settingsManager.getExperimentalSharedHost();
+		this.sharedHostEnabled = options.sharedHostEnabled ?? false;
 		this.extensionSession = {
 			sharedHostEnabled: this.sharedHostEnabled,
 			sessionKind: options.sessionKind ?? "interactive",

@@ -92,6 +92,29 @@
 - MEDIUM: step 4 of `findInitialModel` and the fallback tail of `restoreModelFromSession` in `model-resolver.ts`, plus the `anthropic-subscription` row in `defaultModelPerProvider`; upstream edits to that table land beside it.
 - LOW: the environment return of `getProviderAuthStatus` in `model-runtime.ts`; the `AuthStatus` type in `provider-composer.ts`.
 
+## 2026-09-29 - The retired `experimental.sharedHost` setting is removed from the settings file (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `ExperimentalSettings`, `Settings.experimental` and `getExperimentalSharedHost()` are removed. `loadFromStorage` runs `removeRetiredSettingsKeys` on the raw parsed object of each scope before `migrateSettings`, so the key is ignored in memory for both scopes; when it was present in the GLOBAL scope, `writeRawScopedSettings` rewrites that file. A project file is never rewritten, and a file without the key is never written.
+- `packages/coding-agent/src/core/settings-retired-keys.ts` (new): `removeRetiredSettingsKeys(raw)` deletes `experimental.sharedHost` and drops `experimental` once empty. `writeRawScopedSettings(storage, scope)` re-parses the content seen under the storage lock, removes the retired keys, and writes `JSON.stringify(raw, null, 2)` without `migrateSettings()`, so every other key keeps its parsed value exactly (legacy `queueMode`, `retry.maxDelayMs`, provider ids stay in their legacy shape). A global `settings.jsonc` loses its comments in that one write. A failed write never fails the load; after it fails for a settings file, no later `SettingsManager` in the process retries it, and it is recorded once in the brand debug log.
+- `packages/coding-agent/src/core/hidden-stdout-log.ts`: `appendDebugLogEntry` is exported so settings loading can record the failed rewrite.
+- `packages/coding-agent/src/core/resource-loader.ts`: the `sharedHostEnabled` fallback no longer reads the removed setting (`options.sharedHostEnabled ?? false`); the option itself is removed with the extension API field separately.
+- `packages/coding-agent/src/core/shared-host-policy.ts`: deleted.
+
+### Why
+
+- The interactive shared-host join is removed (senpi#2328), so the setting controls nothing. Leaving it in users' files would keep a dead key forever; the normal save path (`persistScopedSettings`) re-runs every migration before serializing and would rewrite unrelated legacy fields, so the removal needs its own raw write.
+
+### Why an extension could not handle it
+
+- Settings parsing, migration and persistence are owned by `SettingsManager` and run before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `SettingsManager.loadFromStorage`, the `Settings` interface, and the getter block around `getDefaultTools` in `settings-manager.ts`.
+- LOW: the `sharedHostEnabled` assignment in the `DefaultResourceLoader` constructor.
+
 ## 2026-09-29 - A usage limit skips the rest of a spent account and names itself in the fallback notice (omo#8296)
 
 ### What changed
