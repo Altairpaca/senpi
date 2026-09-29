@@ -1,3 +1,21 @@
+## 2026-09-29 - The revert notice says when a fallback could not serve (senpi#2376)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `⇄ Reverted to <to>` notice explains `<from> cannot serve right now (its account hit a billing or usage limit), so the session is back on the original model.` when the event carries `cause: "fallback-unusable"`; every other revert keeps "The original model is back after its cooldown lapsed."
+
+### Why
+
+- A return from a billing-dead fallback happens before the original's cooldown lapses, so the cooldown wording would misstate why the model changed.
+
+### Why an extension could not handle it
+
+- The fallback notices are rendered by the interactive event loop, not an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_reverted` case in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
 ## 2026-09-29 - Control endpoint: `extension_ui_response` names the question in `uiRequestId` and replies under the frame `id`
 
 ### What changed
