@@ -17,6 +17,18 @@ import { createHarness, type Harness } from "./harness.ts";
 // stays with the agent. The terminal surface keeps the routing line.
 const ROUTING_LINE_SENTINEL = "I read this as";
 const FEEDBACK_GUIDANCE = /tool and hook feedback/i;
+const COVERED_BY_EVIDENCE = "covered by the evidence that did run";
+const UNRUN_CHECK_REPORTING =
+	/flag the unverified explicitly|could not (verify|run)|cannot run, say so|what you could not and why/i;
+
+function occurrences(text: string, needle: RegExp): number {
+	return text.match(new RegExp(needle.source, "gi"))?.length ?? 0;
+}
+
+function intentGate(text: string): string {
+	const start = text.indexOf("## Intent Gate");
+	return text.slice(start, text.indexOf("\n## ", start + 1));
+}
 
 const PRESET_NAMES = [...VALID_PRESETS].filter((name): name is Exclude<PromptPresetName, "auto"> => name !== "auto");
 const PROMPTS = ["dynamic", ...PRESET_NAMES] as const;
@@ -49,8 +61,16 @@ describe("prompt surface contract", () => {
 		expect(text).not.toContain(ROUTING_LINE_SENTINEL);
 		expect(text).not.toMatch(/routing line/i);
 		expect(text).not.toMatch(/declared stop condition/i);
-		expect(text).toMatch(FEEDBACK_GUIDANCE);
 		expect(text).toContain("## Intent Gate");
+	});
+
+	it.each(PROMPTS)("%s on the app surface covers an unrun check with the evidence that did run", (prompt) => {
+		const text = render(prompt, "app");
+
+		expect(text).not.toMatch(UNRUN_CHECK_REPORTING);
+		expect(text.split(COVERED_BY_EVIDENCE).length - 1).toBe(1);
+		expect(occurrences(text, FEEDBACK_GUIDANCE)).toBe(1);
+		expect(intentGate(text)).not.toMatch(FEEDBACK_GUIDANCE);
 	});
 
 	it.each(PROMPTS)("%s on the terminal surface keeps the routing line", (prompt) => {

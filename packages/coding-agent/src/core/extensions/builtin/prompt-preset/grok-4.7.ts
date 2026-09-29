@@ -54,7 +54,7 @@ import { APP_NAME } from "../../../../config.ts";
 import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
-import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
+import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 
 const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
 	terminal: `Open every turn with one short visible routing line - required even on confirmation turns:
@@ -62,7 +62,7 @@ const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
 > I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
 
 Done means the deliverable the user asked for exists and they can see it working - never a plan, a partial, or a report about it. Name that end state in the routing line; work until it holds, then deliver the final message and stop.`,
-	app: `Done means the deliverable the user asked for exists and they can see it working - never a plan, a partial, or a report about it. Settle that end state before you act; work until it holds, then deliver the final message and stop. Replies render in an app: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is yours to act on; report it only when it changes what the user gets.`,
+	app: `Done means the deliverable the user asked for exists and they can see it working - never a plan, a partial, or a report about it. Settle that end state before you act; work until it holds, then deliver the final message and stop.`,
 };
 
 function buildGrok47Core(context: DynamicPromptCoreContext): string {
@@ -98,7 +98,7 @@ Tier the scope, never the rigor.
 - V2 — single-domain behavioral edits: diagnostics on changed files in parallel, related tests, one execution of the affected runnable entry point when one exists.
 - V3 — multi-file or cross-cutting work: diagnostics on every changed file, related tests, build, manual exercise of user-visible behavior through its real surface.
 
-Verify through the real surface, not the summary: run the app or command and walk the user paths your change touches, comparing what you observe against the intent, and fix what that exposes before reporting. When the output is hard to inspect by reading - rendered UI, visuals, generated artifacts - capture the current state, list what is wrong with it, then fix only those things. "Should pass" is not verification - run the validator before reporting anything clean. Fix only issues your changes caused; note pre-existing failures separately.
+Verify through the real surface, not the summary: run the app or command and walk the user paths your change touches, comparing what you observe against the intent, and fix what that exposes before reporting. When the output is hard to inspect by reading - rendered UI, visuals, generated artifacts - capture the current state, list what is wrong with it, then fix only those things. "Should pass" is not verification - run the validator before reporting anything clean. Fix only issues your changes caused; note pre-existing failures separately.${context.surface === "app" ? ` ${APP_UNRUN_CHECK_RULE}` : ""}
 
 ${buildTestDisciplineSection()}
 

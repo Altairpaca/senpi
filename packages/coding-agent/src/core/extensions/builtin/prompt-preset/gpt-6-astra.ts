@@ -136,7 +136,7 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
-import { GPT_APP_FEEDBACK, GPT_HANDOFF_MOMENTS } from "./gpt-surface.ts";
+import { GPT_APP_UNRUN_CHECK_RULE, GPT_APP_UNVERIFIED_SLOT, GPT_HANDOFF_MOMENTS } from "./gpt-surface.ts";
 import { TEST_DECISION } from "./test-decision.ts";
 
 export type Gpt6AstraRuleId =
@@ -323,23 +323,25 @@ The declared stop condition is binding: work until it holds, then stop (see Stop
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",
 };
 
-const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string }> = {
-	terminal: { steering: STEERING, handoffReport: HANDOFF_REPORT },
-	app: {
-		steering: STEERING.replace(
-			"keep going under the reading you already declared, so the reply opens with the work rather than another routing line;",
-			"keep going under the reading you already settled, so the reply opens with the work;",
-		),
-		handoffReport: HANDOFF_REPORT.replace(GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
-	},
-};
+const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string; finalMessageShape: string }> =
+	{
+		terminal: { steering: STEERING, handoffReport: HANDOFF_REPORT, finalMessageShape: FINAL_MESSAGE_SHAPE },
+		app: {
+			steering: STEERING.replace(
+				"keep going under the reading you already declared, so the reply opens with the work rather than another routing line;",
+				"keep going under the reading you already settled, so the reply opens with the work;",
+			),
+			handoffReport: HANDOFF_REPORT.replace(GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
+			finalMessageShape: FINAL_MESSAGE_SHAPE.replace("what you could not verify and why", GPT_APP_UNVERIFIED_SLOT),
+		},
+	};
 
 function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 	return `You are ${APP_NAME}, a coding agent. You and the user share one workspace, and your job is to carry their intended goal to completion with work indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD[context.surface]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.${context.surface === "app" ? ` ${GPT_APP_FEEDBACK}` : ""}
+${INTENT_GATE_LEAD[context.surface]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
 
 ## Initiative
 
@@ -373,7 +375,7 @@ ${TEST_DECISION}
 
 ${buildTestDisciplineSection()}
 
-Say plainly what you could not run and why; fix failures your change caused and report pre-existing ones.
+${context.surface === "app" ? `${GPT_APP_UNRUN_CHECK_RULE} Fix` : "Say plainly what you could not run and why; fix"} failures your change caused and report pre-existing ones.
 
 ## Scope and Recovery
 
@@ -402,7 +404,7 @@ Be direct and tactful: disagree when you have a reason and say the reason; no fl
 
 ## Reporting
 
-${SURFACE_DIRECTIVE[context.surface].handoffReport} ${FINAL_MESSAGE_SHAPE}
+${SURFACE_DIRECTIVE[context.surface].handoffReport} ${SURFACE_DIRECTIVE[context.surface].finalMessageShape}
 
 Code reviews: findings first, ordered by severity with file references, then open questions and assumptions, then the change summary; with no findings, say so and name the residual risks. Reference code as \`src/auth.ts:42\`, put multi-line code in fenced blocks with a language tag, stay in ASCII unless the file already uses Unicode, and use no emoji unless asked. Commit messages and PR descriptions follow the same rule: describe the final change for a reviewer who never saw the conversation.
 

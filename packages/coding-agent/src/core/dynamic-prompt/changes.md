@@ -1,5 +1,26 @@
 # changes.md — dynamic-prompt
 
+## 2026-09-30 - App surface: an unrun check is covered by the evidence that did run (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/verification.ts`: `buildVerificationSection({ surface })`. On `app` the claim audit reads "report only evidence-backed work and report failing tests with the output" followed by the new exported `APP_UNRUN_CHECK_RULE`: a check that did not run is covered by the evidence that did run and is named only when no other evidence supports the claim; tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for the agent to act on, reaches the user only when it changes what they get, and an unavailable tool or hook never does by itself. The terminal wording ("flag the unverified explicitly") is unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the app Intent Gate no longer carries the tool-feedback sentence; the verification rule is its one home.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: passes `surface` to `buildVerificationSection`.
+- Terminal renders stay byte-identical (60-prompt render diff against main, 0 differences).
+
+### Why
+
+- A live app-surface run (glm-5.3, shared core plus the GLM5 tuning) ended its reply with "Note: the LSP diagnostics hook is unavailable in this sandbox ...". The Verification section asks for "diagnostics on changed files" and to "flag the unverified explicitly", right where the model writes its report, while the tool-feedback line sat in the Intent Gate. Category A on the app surface: the claim-audit rule itself told the model to name every check that did not run. The rule is rewritten at its source instead of being contradicted from another section, and the feedback guidance moves into it so each prompt states it once.
+
+### Why an extension could not handle it
+
+- The verification section is built inside the shared prompt builder; an extension could only append a competing rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. `CLAIM_AUDIT` and `APP_UNRUN_CHECK_RULE` in `verification.ts`; the `APP_ROUTING` string in `intent-gate.ts`.
+
 ## 2026-09-29 - App prompt surface: no routing line, tool feedback stays with the agent (senpi#2377)
 
 ### What changed

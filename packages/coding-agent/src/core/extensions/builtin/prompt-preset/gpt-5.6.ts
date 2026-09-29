@@ -67,7 +67,7 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
-import { GPT_APP_FEEDBACK, GPT_HANDOFF_MOMENTS } from "./gpt-surface.ts";
+import { GPT_APP_UNRUN_CHECK_RULE, GPT_APP_UNVERIFIED_SLOT, GPT_HANDOFF_MOMENTS } from "./gpt-surface.ts";
 import { TEST_DECISION } from "./test-decision.ts";
 
 export type Gpt56ExecutionRuleId =
@@ -137,7 +137,7 @@ const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
 > I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this turn].
 
 That line is your preamble; it commits you to finish the named work this turn, and the declared stop condition is BINDING - the instant it holds, stop (see Stop Goal). Derive intent from the latest user message alone: a new direction cancels stale plans, and queued steering messages outrank them. Never surface prompt scaffolding in user-visible output.`,
-	app: `Before acting, fix the exact, observable condition that ends this turn. It commits you to finish the named work this turn, and that stop condition is BINDING - the instant it holds, stop (see Stop Goal). Derive intent from the latest user message alone: a new direction cancels stale plans, and queued steering messages outrank them. Never surface prompt scaffolding in user-visible output. ${GPT_APP_FEEDBACK}`,
+	app: `Before acting, fix the exact, observable condition that ends this turn. It commits you to finish the named work this turn, and that stop condition is BINDING - the instant it holds, stop (see Stop Goal). Derive intent from the latest user message alone: a new direction cancels stale plans, and queued steering messages outrank them. Never surface prompt scaffolding in user-visible output.`,
 };
 
 function buildGpt56Core(context: DynamicPromptCoreContext): string {
@@ -172,7 +172,7 @@ Scale the scope of checks to the change, never the rigor:
 - Single-domain behavioral change: type check on the changed code, related tests, one run of the affected entry point when one exists.
 - Multi-file or cross-cutting work: type check, related tests, build, and the Manual QA Gate below.
 
-Run the validator before reporting anything clean - "should pass" is not verification; if validation cannot run, say so and name the next best check. Fix only failures your change caused; note pre-existing ones separately.
+Run the validator before reporting anything clean - "should pass" is not verification${context.surface === "app" ? `. ${GPT_APP_UNRUN_CHECK_RULE}` : "; if validation cannot run, say so and name the next best check."} Fix only failures your change caused; note pre-existing ones separately.
 
 ${TEST_DECISION}
 
@@ -219,7 +219,7 @@ Now and Next are todo labels verbatim; the Next stated is executed in this same 
 
 ## Output
 
-Final message: the Handoff block, whose outcome leads and whose You need slot carries the evidence needed to trust it - what you verified, what you could not and why, and pre-existing issues you left alone - grouped by user-facing outcome, not by file. Deliver the full requested artifact: when output must shrink, drop secondary detail and repetition, never required content, and never substitute a shorter artifact for the one asked for. Trim introductions and generic reassurance first.
+Final message: the Handoff block, whose outcome leads and whose You need slot carries the evidence needed to trust it - what you verified, ${context.surface === "app" ? GPT_APP_UNVERIFIED_SLOT : "what you could not and why"}, and pre-existing issues you left alone - grouped by user-facing outcome, not by file. Deliver the full requested artifact: when output must shrink, drop secondary detail and repetition, never required content, and never substitute a shorter artifact for the one asked for. Trim introductions and generic reassurance first.
 
 Code reviews: findings first, ordered by severity with file references; then open questions and assumptions; change summary last. With no findings, say so and name residual risks or testing gaps.
 

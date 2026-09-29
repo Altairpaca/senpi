@@ -97,7 +97,7 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 				"",
 				buildWorkingTaskSection(),
 				"",
-				buildVerificationSection(),
+				buildVerificationSection({ surface }),
 				"",
 				toolSection,
 				"",
