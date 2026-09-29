@@ -1045,12 +1045,16 @@ export type RpcExtensionEvent = {
 // Extension UI Commands (stdin)
 // ============================================================================
 
-/** Response to an extension UI request */
+/**
+ * Response to an extension UI request. `id` is this frame's correlation id, echoed by its reply;
+ * `uiRequestId` names the request answered, and without it `id` does (the short form).
+ */
+type RpcExtensionUIResponseFrame = { type: "extension_ui_response"; id: string; uiRequestId?: string };
 export type RpcExtensionUIResponse =
-	| { type: "extension_ui_response"; id: string; value: string }
-	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true }
-	| { type: "extension_ui_response"; id: string; answers: RpcQuestionAnswers; comment?: string };
+	| (RpcExtensionUIResponseFrame & { value: string })
+	| (RpcExtensionUIResponseFrame & { confirmed: boolean })
+	| (RpcExtensionUIResponseFrame & { cancelled: true })
+	| (RpcExtensionUIResponseFrame & { answers: RpcQuestionAnswers; comment?: string });
 
 /** Inbound draft updates for an open `question` request. */
 export type RpcExtensionUIProgress = {
