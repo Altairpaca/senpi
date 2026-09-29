@@ -12,6 +12,8 @@
 
 - A running session survives an update that changes how the package's dependencies are laid out (for example a release with `bundledDependencies` followed by one without). Its runtime snapshot used to link each dependency back to the install, so after such an update every PTY tool (bash, monitor) and `eval` failed with `ENOENT` on the missing directory until restart. The snapshot now holds its own copy of every package the install's dependency graph reaches (copy-on-write clones where the filesystem supports them, otherwise hardlinks, otherwise plain copies; type declarations and source maps are left out). The first launch after an update builds it once, about 1.5 to 2.5 s on macOS; every later launch starts as before. ([#2408](https://github.com/code-yeongyu/senpi/issues/2408))
 
+- A shared RPC host keeps running the build it started with when the install is replaced. The host supervisor and its host children used to start the install's unbundled `dist/cli-main.js`, even from a runtime snapshot, so an update could break or silently change a running shared host. They now start the snapshot's own bundled CLI and claim the snapshot like a session does, and a new launch still picks up the new build. ([#2409](https://github.com/code-yeongyu/senpi/issues/2409))
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29

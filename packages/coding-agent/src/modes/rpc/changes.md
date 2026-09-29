@@ -19,6 +19,24 @@ A provider listed with both an OAuth and an API-key login row got the same provi
 
 - the `get_auth_providers` case in `connection-handler.ts`; the tail of `core/auth-providers.ts`.
 
+## 2026-09-30 - A bundled host re-enters its own bundled CLI (#2409)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: in a bundled build, `resolveCliMainPath()` returns the package's declared bin (the bundle's `cli.js` beside the chunk) before trying `../../cli-main.js`; it takes the module path and layout as parameters for tests.
+
+### Why
+
+- Bundled, `host-lifecycle` is a chunk under `dist/bundle/chunks/`, so `../../cli-main.js` reached `dist/cli-main.js`, the unbundled tree the package also ships. From a runtime snapshot that was a link into the install, so the supervisor and every host child ran install code an update replaces, and never claimed the snapshot (#2409). Through the bundle's `cli.js` they run the snapshot's copy and claim it the way a session does.
+
+### Why an extension could not handle it
+
+- The supervisor and host child spawn commands are built by the RPC host lifecycle, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `resolveCliMainPath()` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
+
 ## 2026-09-29 - `open_session.promptSurface`: per-session prompt surface (senpi#2377)
 
 ### What changed
