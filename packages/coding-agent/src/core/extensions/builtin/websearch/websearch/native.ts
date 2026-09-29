@@ -8,6 +8,7 @@ export interface NativeModelInfo {
 	id: string;
 	baseUrl: string;
 	api?: string;
+	cost?: { input: number; output: number };
 }
 
 export type NativeAuthResult =
@@ -19,7 +20,7 @@ export interface NativeModelRegistry {
 	getAvailable?(): NativeModelInfo[];
 }
 
-interface NativeProviderMapping {
+export interface NativeProviderMapping {
 	provider: SearchProvider;
 	resource: string;
 	routeLabel?: string;
@@ -31,7 +32,7 @@ interface NativeEntryOptions {
 	signal?: AbortSignal;
 }
 
-function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
+export function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
 	const isOpenAiModel = /^gpt-(4o|4\.1|5)/.test(model.id) && !model.id.includes("codex");
 	if (model.provider === "openai" && isOpenAiModel) {
 		return { provider: "openai", resource: "responses" };
@@ -120,7 +121,7 @@ function buildEndpointUrl(baseUrl: string, resource: string, endpointPath?: stri
 	return configured.href;
 }
 
-function nativeRouteKey(model: NativeModelInfo): string | null {
+export function nativeRouteKey(model: NativeModelInfo): string | null {
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
 	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource, mapping.endpointPath);
@@ -189,6 +190,7 @@ export async function buildNativeEntries(
 	model: NativeModelInfo | undefined,
 	modelRegistry: NativeModelRegistry | undefined,
 	signal?: AbortSignal,
+	searchModel?: { model: string; fallbackModel?: string },
 ): Promise<SearchProviderEntry[]> {
 	signal?.throwIfAborted();
 	if (!modelRegistry) return [];
@@ -200,7 +202,7 @@ export async function buildNativeEntries(
 	if (activeRouteKey) {
 		seenRoutes.add(activeRouteKey);
 		const activeEntry = await buildNativeEntryForModel(model, modelRegistry, { signal });
-		if (activeEntry) entries.push(activeEntry);
+		if (activeEntry) entries.push(searchModel ? { ...activeEntry, ...searchModel } : activeEntry);
 	}
 
 	if (!modelRegistry.getAvailable) return entries;
