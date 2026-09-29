@@ -1,3 +1,22 @@
+## 2026-09-29 - The package resolution memo key carries the project trust state (senpi#2371)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `resolvePackagePaths()` passes `projectTrusted: this.settingsManager.isProjectTrusted()` into `resolvedPathsMemoKey`.
+- `packages/coding-agent/src/core/resolved-paths-memo.ts` (fork-only): `ResolvedPathsMemoKeyInput` gains a required `projectTrusted: boolean`. Refresh, eviction and the promise memo are unchanged.
+
+### Why
+
+- `DefaultPackageManager.resolve()` reads `isProjectTrusted()` directly (project `.agents/skills` and project-scope resources are skipped while untrusted), but the senpi#1844 key did not include it. At startup without a cached decision, `reload()` resolves once in the untrusted pre-trust pass and again after the trust decision. With no project settings file both passes produced the same key, so the trusted pass reused the untrusted result and a project trusted through `trust.json` lost its `.agents/skills` for the whole session (missing from `/skill:` and from the system prompt). The same key let an untrusted open of a folder reuse a trusted open's result in the same process, so the untrusted open loaded that project's skills, extensions, prompt templates, themes and hooks without trust.
+
+### Why an extension could not handle it
+
+- Package resolution and its memo run inside the host resource loader before any extension is bound.
+
+### Expected merge conflict zones
+
+- LOW: the `resolvedPathsMemoKey({...})` argument object in `resolvePackagePaths()` in `packages/coding-agent/src/core/resource-loader.ts` (one added line).
+
 ## 2026-09-29 - A failed session append leaves nothing an entry can chain onto
 
 ### What changed
