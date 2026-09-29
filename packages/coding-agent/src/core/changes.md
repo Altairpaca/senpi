@@ -18,6 +18,24 @@
 
 - LOW: the body of `_rewriteFile` plus the new `_serializedFileEntries` generator right after it, and one import line in `session-manager.ts`.
 
+## 2026-09-29 - `ExternalAdmission.close()`: admission ends when a host hands the session over
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts`: `close(reason)` makes every later `admit()` throw `reason` and change nothing; `reopen()` undoes it. Additive: two methods, one field, and a first-line guard in `admit`; nothing else in the class changed.
+
+### Why
+
+`release_session` (modes/rpc) hands a session to another writer. A drain pass that was already running when the release claimed the session could still admit a delivery until the runtime was disposed, so its entry, the reply and a stop-state landed after `session_released`. The release now closes admission in the same synchronous step as its claim; the delivery stays with its sender, which redelivers it to the new owner.
+
+### Why an extension could not handle it
+
+The drain is the extension; it cannot know the host is about to tear its session down.
+
+### Expected merge conflict zones
+
+- The field list, the method after `onEmitted`, and the first line of `admit` in `external-admission.ts`.
+
 ## 2026-09-29 - Atomic external-message admission, its ledger, and a durable header on demand
 
 ### What changed

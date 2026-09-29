@@ -1,3 +1,23 @@
+## 2026-09-29 - `release_session`: admission closes at the claim; `interrupt` empties the queues and reports `dropped`
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: the final busy check, `externalAdmission.close(RELEASED_ADMISSION_CLOSED)` and the close claim are one synchronous step, so a drain pass still running admits nothing into a session being torn down. `interruptAndSettle` now runs `session.clearQueue({ abortWillFollow: true })` before aborting (queued deliveries leave the ledger unwritten - the sender redelivers them - and user queued text is kept) and closes admission while it settles; a release still busy after it reopens admission. The success reply always carries `dropped: { deliveries, user_messages }` (empty without `interrupt`); an interrupted refusal carries it in `errorData`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `dropped` on the `release_session` response.
+- `test/suite/rpc-release-host-support.ts` (new): a real in-process host (production router, registry, writer, binding) over real `AgentSession`s on the faux provider. `test/suite/rpc-release-session-delivery.test.ts` (new): a drain that admits in the teardown window is refused and nothing follows `session_released`; interrupt with a queued delivery releases and reports it; interrupt with queued user steer/follow-up reports both texts. The rig's fake session gains `clearQueue` and `externalAdmission.close/reopen`.
+
+### Why
+
+Gate re-review r2 of todo 8: a drain pass in flight at the claim wrote a delivery, its reply and a stop-state after `session_released`; and `interrupt` never released a session holding a queued gateway delivery (`abort()` leaves the queue, so `busy: ["delivery"]` stayed forever). Queued user text dropped by an interrupt must not vanish silently, so it is handed back.
+
+### Why an extension could not handle it
+
+The release decision and teardown are the router's; the queues belong to `AgentSession`.
+
+### Expected merge conflict zones
+
+- `releaseSession` (the claim step) and `interruptAndSettle` in `session-release.ts`; the `release_session` response type in `rpc-types.ts`.
+
 ## 2026-09-29 - `release_session` hands over only a quiet session (bash, prompt preflight, other requests)
 
 ### What changed

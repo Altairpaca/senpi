@@ -624,8 +624,17 @@ export type RpcResponse =
 			type: "response";
 			command: "release_session";
 			success: true;
-			/** `attachments`: clients that were still attached (non-zero only with `force`). */
-			data: { released: true; session_path: string; attachments: number };
+			/**
+			 * `attachments`: clients that were still attached (non-zero only with `force`). `dropped`: what an
+			 * `interrupt` took out of the queues - delivery ids their sender must redeliver to the next owner,
+			 * and the user's queued steer/follow-up text in enqueue order, to put back into the next editor.
+			 */
+			data: {
+				released: true;
+				session_path: string;
+				attachments: number;
+				dropped: { deliveries: readonly string[]; user_messages: readonly string[] };
+			};
 	  }
 	| {
 			id?: string;

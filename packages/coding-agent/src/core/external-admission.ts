@@ -44,6 +44,7 @@ export class ExternalAdmission {
 	private readonly emitted = new Set<string>();
 	private readonly emittedListeners = new Set<(deliveryId: string) => void>();
 	private editorSource: (() => EditorHoldState) | undefined;
+	private closedReason: string | undefined;
 	private readonly port: ExternalAdmissionPort;
 	private readonly inputHolds = new Set<InputHoldState>();
 	private readonly settledListeners = new Set<() => void>();
@@ -97,6 +98,19 @@ export class ExternalAdmission {
 		return () => this.emittedListeners.delete(listener);
 	}
 
+	/**
+	 * From here on every `admit` throws `reason` and changes nothing: the runtime is being handed to
+	 * another writer, so the delivery stays with its sender and is delivered there instead.
+	 */
+	close(reason: string): void {
+		this.closedReason ??= reason;
+	}
+
+	/** Undoes `close` when the hand-over it was closed for did not happen. */
+	reopen(): void {
+		this.closedReason = undefined;
+	}
+
 	gate(): SessionAdmissionGate {
 		const editor = this.editorSource?.() ?? { revision: 0 };
 		const base = { editor_revision: editor.revision, turn_epoch: this.turnEpochValue };
@@ -107,6 +121,7 @@ export class ExternalAdmission {
 	}
 
 	admit(input: AdmitExternalMessageInput): ExternalAdmissionResult {
+		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
 		if (this.pending.has(id) || this.emitted.has(id)) return { kind: "already_admitted", turn_epoch };

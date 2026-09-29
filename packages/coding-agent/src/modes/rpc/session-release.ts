@@ -9,8 +9,8 @@
  * records which host let go of it and when. Clients still attached (only with `force`) receive
  * `session_closed { reason: "released" }`, which tells them NOT to reopen the path here.
  *
- * A session is released only when it is QUIET: no agent run, no prompt still in preflight, no admitted
- * delivery waiting to be written, no bash, compaction or barrier-held session work (the fields the
+ * A session is released only when it is QUIET: no agent run, no prompt still in preflight, no queued user
+ * input, no admitted delivery waiting to be written, no bash, compaction or barrier-held session work (the fields the
  * handoff park judges by), and no other request for the session in flight on any connection. Anything
  * else would write the file after the new writer took it. Busy is refused with nothing changed -
  * `turn_active` when a turn is running or about to start, `session_busy` for other work, both naming
@@ -44,9 +44,20 @@ export const RELEASE_SETTLE_MS = 10_000;
 
 export type ReleaseSessionCommand = Extract<RpcCommand, { type: "release_session" }>;
 
+/** What an `interrupt` release took out of the queues: delivery ids to redeliver, user text to restore. */
+export interface ReleaseDropped {
+	readonly deliveries: readonly string[];
+	readonly user_messages: readonly string[];
+}
+
+/** What `pi.session.admitExternalMessage` throws once a release has closed admission. */
+export const RELEASED_ADMISSION_CLOSED =
+	"release_session handed this session to another runtime; deliver there instead (admission is closed here)";
+
 export type ReleaseBusySignal =
 	| "turn"
 	| "prompt"
+	| "queued"
 	| "delivery"
 	| "bash"
 	| "compaction"
@@ -88,16 +99,27 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	if (!("session" in first)) return first;
 	const busy = busySignals(port, command.sessionId, first.session);
 	const interrupted = busy.length > 0;
+	let dropped: ReleaseDropped = { deliveries: [], user_messages: [] };
 	if (interrupted) {
 		if (command.interrupt !== true) return refuse(busyCode(busy), { attachments: first.attachments, busy });
-		await interruptAndSettle(port, command.sessionId, first.session);
+		first.session.externalAdmission.close(RELEASED_ADMISSION_CLOSED);
+		dropped = await interruptAndSettle(port, command.sessionId, first.session);
 	}
 	const ready = releasable(port, command);
 	if (!("session" in ready)) return ready;
 	const stillBusy = busySignals(port, command.sessionId, ready.session);
 	if (stillBusy.length > 0) {
-		return refuse(busyCode(stillBusy), { attachments: ready.attachments, busy: stillBusy, interrupted });
+		ready.session.externalAdmission.reopen();
+		return refuse(busyCode(stillBusy), {
+			attachments: ready.attachments,
+			busy: stillBusy,
+			interrupted,
+			...(interrupted ? { dropped } : {}),
+		});
 	}
+	// From here to the close claim nothing awaits: a drain pass still running admits nothing more, so a
+	// delivery it had not admitted stays with its sender and reaches the next owner.
+	ready.session.externalAdmission.close(RELEASED_ADMISSION_CLOSED);
 	const manager = ready.session.sessionManager;
 	manager.persistHeaderNow();
 	manager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
@@ -113,7 +135,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		type: "response",
 		command: "release_session",
 		success: true,
-		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments },
+		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments, dropped },
 	};
 }
 
@@ -122,6 +144,8 @@ function busySignals(port: SessionReleasePort, sessionId: string, session: Agent
 	const signals: ReleaseBusySignal[] = [];
 	if (activity.isStreaming) signals.push("turn");
 	if (port.pendingPrompts(sessionId).length > 0) signals.push("prompt");
+	// Queued user input outlives its run (a steer can end the stream it was aimed at): it is still owed a turn.
+	if (session.pendingMessageCount > 0) signals.push("queued");
 	if (session.externalAdmission.list().pending.length > 0) signals.push("delivery");
 	if (activity.isBashRunning) signals.push("bash");
 	if (activity.isCompacting) signals.push("compaction");
@@ -133,12 +157,27 @@ function busySignals(port: SessionReleasePort, sessionId: string, session: Agent
 }
 
 function busyCode(signals: readonly ReleaseBusySignal[]): string {
-	return signals.some((signal) => signal === "turn" || signal === "prompt" || signal === "delivery")
+	return signals.some(
+		(signal) => signal === "turn" || signal === "prompt" || signal === "queued" || signal === "delivery",
+	)
 		? RPC_ERROR_TURN_ACTIVE
 		: RPC_ERROR_SESSION_BUSY;
 }
 
-async function interruptAndSettle(port: SessionReleasePort, sessionId: string, session: AgentSession): Promise<void> {
+async function interruptAndSettle(
+	port: SessionReleasePort,
+	sessionId: string,
+	session: AgentSession,
+): Promise<ReleaseDropped> {
+	// Queued input never runs here again: queued deliveries leave the ledger (unwritten, so their sender
+	// redelivers them to the next owner) and the user's queued text is handed back in the reply.
+	const admittedBefore = session.externalAdmission.list().pending;
+	const cleared = session.clearQueue({ abortWillFollow: true });
+	const stillAdmitted = new Set(session.externalAdmission.list().pending);
+	const dropped: ReleaseDropped = {
+		deliveries: admittedBefore.filter((deliveryId) => !stillAdmitted.has(deliveryId)),
+		user_messages: cleared.ordered.map((queued) => queued.text),
+	};
 	session.abortBash();
 	// A prompt still in preflight, or an admitted delivery, may start its run after the abort below.
 	const stopStarts = session.subscribe((event) => {
@@ -161,6 +200,7 @@ async function interruptAndSettle(port: SessionReleasePort, sessionId: string, s
 		clearTimeout(deadline);
 		stopStarts();
 	}
+	return dropped;
 }
 
 function releasable(port: SessionReleasePort, command: ReleaseSessionCommand): Releasable | RpcResponse {

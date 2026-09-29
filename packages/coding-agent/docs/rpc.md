@@ -975,23 +975,31 @@ is the picker). It is a teardown, not a transfer: nothing is replayed. The host 
 `session_released` (`{ reason, interrupted, attachments, host_instance, released_at }`, a bookkeeping entry the
 model never sees) to the transcript - writing the header first if the file was still buffered - then drains
 every attachment, disposes the runtime, releases the path reservation (in-process and the cross-generation claim
-in `reservations/`) and answers `{ released: true, session_path, attachments }`. From then on `list_sessions`
+in `reservations/`) and answers `{ released: true, session_path, attachments, dropped }`. From then on `list_sessions`
 no longer lists it and the handle answers `unknown_session`.
 
 - It hands over only a QUIET session: no agent run, no `prompt` still in preflight (its command already answered,
-  its run not started), no admitted delivery not yet written, no bash, compaction or barrier-held session work
+  its run not started), no queued user steer/follow-up (`queued`: still owed a turn even after the stream it was
+  aimed at ended), no admitted delivery not yet written, no bash, compaction or barrier-held session work
   (the fields the handoff park judges by), and no other request for that session in flight on any connection.
   Otherwise it is refused, changing nothing: `turn_active` when a turn is running or about to start (`busy`
-  contains `turn`, `prompt` or `delivery`), `session_busy` for other work (`bash`, `compaction`, `session_work`,
+  contains `turn`, `prompt`, `queued` or `delivery`), `session_busy` for other work (`bash`, `compaction`, `session_work`,
   `activity`, `request`); `errorData { attachments, busy: [...] }` names every signal. The refused work runs to
   its end on the host, which keeps the path.
-- With `interrupt: true` a busy session's run and any bash are aborted (a turn that a pending prompt or delivery
-  starts meanwhile is aborted too); the release waits up to 10 s for the run to go idle, for the other requests
-  and prompts to settle - the cancelled bash is recorded then, before the release - and checks again. Still busy
-  answers the same refusal with `errorData.interrupted: true`; otherwise the entry records `interrupted: true`.
-- The final check and the close claim run in one synchronous step: a command for the session routed after it
-  finds the session closing (`session_closing`), and work started before it is seen by the check. Nothing is
-  written to the file after `session_released`.
+- With `interrupt: true` a busy session first has its queues emptied, then its run and any bash aborted (a turn
+  that a pending prompt starts meanwhile is aborted too), and external admission closed; the release waits up to
+  10 s for the run to go idle, for the other requests and prompts to settle - the cancelled bash is recorded then,
+  before the release - and checks again. Still busy answers the same refusal with `errorData.interrupted: true`
+  and `errorData.dropped`, and reopens admission; otherwise the entry records `interrupted: true`.
+- Nothing queued vanishes silently. `dropped: { deliveries, user_messages }` (always present; empty without
+  `interrupt`) lists what the interrupt took out of the queues: `deliveries` are the ids of admitted deliveries
+  that were never written - they are no longer in the session's ledger and not on disk, so their sender delivers
+  them again to the next owner - and `user_messages` is the user's queued steer and follow-up text in enqueue
+  order, which the caller puts back into the next editor (`omo daemon adopt` does).
+- The final check, closing external admission and the close claim run in one synchronous step: a command for the
+  session routed after it finds the session closing (`session_closing`); a drain pass still running admits
+  nothing more (`pi.session.admitExternalMessage` throws, the delivery stays with its sender); and work started
+  before it is seen by the check. Nothing is written to the file after `session_released`.
 - While clients are attached (`attachments > 0` - e.g. a Desktop thread) it is refused with `attached` and
   `errorData { attachments }`; with `force: true` those clients receive
   `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written
@@ -2354,9 +2362,16 @@ Response:
   "type": "response",
   "command": "release_session",
   "success": true,
-  "data": { "released": true, "session_path": "/path/to/session.jsonl", "attachments": 0 }
+  "data": {
+    "released": true,
+    "session_path": "/path/to/session.jsonl",
+    "attachments": 0,
+    "dropped": { "deliveries": [], "user_messages": [] }
+  }
 }
 ```
+
+`dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner and restore `user_messages` into its editor.
 
 Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `host_draining`, `session_closing` or `unknown_session`.
 

@@ -145,7 +145,16 @@ function inProcessRuntimeFactory(): {
 					return bash !== undefined;
 				},
 				isCompacting: false,
-				externalAdmission: { list: () => ({ pending: [...pendingDeliveries], emitted: [] }) },
+				externalAdmission: {
+					list: () => ({ pending: [...pendingDeliveries], emitted: [] }),
+					close: () => {},
+					reopen: () => {},
+				},
+				// Queued deliveries leave the ledger exactly as `AgentSession.clearQueue` drops them.
+				clearQueue: () => {
+					pendingDeliveries.splice(0);
+					return Object.assign({ steering: [], followUp: [] }, { ordered: [] });
+				},
 				// Composed through the production predicate so this fake cannot drift
 				// from the activity contract the sweep consults.
 				get activitySnapshot() {
