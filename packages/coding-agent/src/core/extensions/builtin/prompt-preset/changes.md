@@ -21,6 +21,27 @@
 
 - Fork-only files. The claim-audit and final-message sentences of each core, the `INTENT_GATE_LEAD.app` strings, and `SURFACE_DIRECTIVE` in `gpt-6-astra.ts`.
 
+## 2026-09-30 - GPT-6.1 Sol resolves to the GPT-6 family preset; two writing rules from codex's 6.1 Sol template (senpi#2390)
+
+### What changed
+
+- `presets.ts` `hasGpt6FamilySignal`: the tier marker accepts an optional point release (`gpt[._-]?6(?:[._-]\d+)?[._-](astra|sol|luna)`), so `gpt-6.1-sol`, `gpt-6.1-sol-fast`, `openai/gpt-6.1-sol`, `GPT-6.1-Sol` and the display name "GPT-6.1 Sol" render the `gpt-6-astra` preset. Bare `gpt-6.1`, `gpt-6-mini` and near-miss words stay unmatched.
+- `gpt-6-astra.ts`: new rule `no-reflexive-apology` (concern `writing-style`, rendered once in `## Writing` after `direct-statements`): "Apologize or fault yourself only for an avoidable mistake of your own, and then plainly: acknowledge it, correct it, move on. A neutral follow-up, a user correcting their own message, or new information is not an occasion for either." `direct-statements` adds "what something is not" to the announcements to skip. The rendered prompt grows from 2,925 to 2,968 words; nothing else in the core moves. Both rules render for every GPT-6 tier: the builder never sees the model, `promptPreset: "gpt-6-astra"` is one byte-stable prompt, and OpenAI's GPT-6 guide shares its practices across the family.
+- `test/suite/prompt-presets-gpt-6-family.test.ts`: 6.1 Sol id shapes (base, `-fast` on the Codex lane, OpenRouter, Vercel `-fast`, display-name cased id), display-name resolution, byte-identical render against Astra, the apply_patch gate agreement, and the catalog sweep (matcher widened the same way). `test/suite/prompt-presets-gpt-6-astra.test.ts`: `no-reflexive-apology` pinned to `writing-style` / `Writing`.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29. openai/codex ships it the Astra template plus exactly two edits no other tier received: the paragraph against reflexive apologies and self-blame, and "what something is not" in the negation-avoid list. Those are OpenAI's only first-party, trace-derived signals about this model, and this preset addressed neither prior (category C, missing context). Everything else in codex's 6.1 Sol template was mapped section by section against this core and is either already carried (permission-as-final-step, steering, initiative, writing style, technical communication, PR descriptions, batching rules, skills precedence, no tool messaging) or left out on purpose (commentary channel, file-link syntax, apps, plugins). No senpi trace of 6.1 Sol exists yet, so no Astra-observed rule was removed on its account. The apology rule is positive-framed and 40 words against codex's 55.
+
+### Why an extension could not handle it
+
+Preset matching and the GPT-6 core are this extension; a user extension could only re-implement the whole dispatch.
+
+### Expected merge conflict zones
+
+- `presets.ts`: the GPT-6 matcher block near the top.
+- `gpt-6-astra.ts`: the `Gpt6AstraRuleId` union, the `DIRECT_STATEMENTS` / `NO_REFLEXIVE_APOLOGY` constants, `GPT6_ASTRA_RULES`, and the `## Writing` line of the core.
+
 ## 2026-09-29 - App prompt surface for every preset (senpi#2377)
 
 ### What changed
