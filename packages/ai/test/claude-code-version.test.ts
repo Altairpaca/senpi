@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	CLAUDE_CODE_VERSION_FLOOR,
 	CLAUDE_NPM_DIST_TAG_URL,
 	CLAUDE_RELEASE_CHANNEL_URL,
 	type ClaudeCodeVersionStore,
@@ -166,11 +165,5 @@ describe("requiredClaudeCodeVersionFromError", () => {
 				'400 {"error":{"message":"tool_choice: type \\"tool\\" is not supported"}}',
 			),
 		).toBeUndefined();
-	});
-});
-
-describe("CLAUDE_CODE_VERSION_FLOOR", () => {
-	it("is at least the version Claude Sonnet 5.5 requires", () => {
-		expect(compareClaudeCodeVersions(CLAUDE_CODE_VERSION_FLOOR, "2.1.284")).toBeGreaterThanOrEqual(0);
 	});
 });

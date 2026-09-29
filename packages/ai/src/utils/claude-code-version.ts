@@ -11,9 +11,6 @@
 import type { ProviderEnv } from "../types.ts";
 import { getProviderEnvValue } from "./provider-env.ts";
 
-/** Bundled floor: the Claude Code version the pinned `@anthropic-ai/claude-agent-sdk` ships. */
-export const CLAUDE_CODE_VERSION_FLOOR = "2.1.284";
-
 /** Exact `X.Y.Z` pins the fingerprint and skips the network lookup. */
 export const CLAUDE_CODE_VERSION_PIN_ENV = "PI_CLAUDE_CODE_VERSION";
 
@@ -207,6 +204,7 @@ export function createClaudeCodeVersionResolver(options: ClaudeCodeVersionResolv
 let installedStore: ClaudeCodeVersionStore | null = null;
 let installedOffline = false;
 let defaultResolver: ClaudeCodeVersionResolver | undefined;
+let defaultFloor: string | undefined;
 
 /**
  * Hosts with a filesystem install their cache here once at startup (see
@@ -222,12 +220,11 @@ export function installClaudeCodeVersionStore(
 	defaultResolver = undefined;
 }
 
-function resolver(): ClaudeCodeVersionResolver {
-	defaultResolver ??= createClaudeCodeVersionResolver({
-		floor: CLAUDE_CODE_VERSION_FLOOR,
-		store: installedStore,
-		offline: installedOffline,
-	});
+function resolver(floor: string): ClaudeCodeVersionResolver {
+	if (defaultResolver === undefined || defaultFloor !== floor) {
+		defaultFloor = floor;
+		defaultResolver = createClaudeCodeVersionResolver({ floor, store: installedStore, offline: installedOffline });
+	}
 	return defaultResolver;
 }
 
@@ -236,9 +233,12 @@ function pinnedClaudeCodeVersion(env?: ProviderEnv): string | undefined {
 	return isExactSemver(pin) ? pin : undefined;
 }
 
-/** The version the next OAuth request signs with. */
-export function getClaudeCodeVersion(env?: ProviderEnv): string {
-	return pinnedClaudeCodeVersion(env) ?? resolver().get();
+/**
+ * The version the next OAuth request signs with. `floor` is the bundled Claude Code version the
+ * caller declares (the `claudeCodeVersion` constant in `api/anthropic-messages.ts`).
+ */
+export function getClaudeCodeVersion(floor: string, env?: ProviderEnv): string {
+	return pinnedClaudeCodeVersion(env) ?? resolver(floor).get();
 }
 
 /**
@@ -248,12 +248,13 @@ export function getClaudeCodeVersion(env?: ProviderEnv): string {
  */
 export async function recoverClaudeCodeVersion(
 	error: Error,
+	floor: string,
 	advertised: string,
 	env?: ProviderEnv,
 ): Promise<string | undefined> {
 	if (pinnedClaudeCodeVersion(env) !== undefined) return undefined;
 	const required = requiredClaudeCodeVersionFromError(error.message);
-	const next = required === undefined ? await resolver().refresh() : resolver().raise(required);
+	const next = required === undefined ? await resolver(floor).refresh() : resolver(floor).raise(required);
 	return compareClaudeCodeVersions(next, advertised) > 0 ? next : undefined;
 }
 

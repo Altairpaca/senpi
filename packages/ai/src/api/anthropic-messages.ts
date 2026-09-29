@@ -136,7 +136,12 @@ function getCacheControl(
 	};
 }
 
-// Stealth mode: Mimic Claude Code's tool naming exactly
+// Stealth mode: Mimic Claude Code's identity and tool naming exactly.
+// The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
+// (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
+// (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
+const claudeCodeVersion = "2.1.284";
+
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
 // To update: https://github.com/badlogic/cchistory
@@ -1207,7 +1212,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		try {
 			let client: Anthropic;
 			let isOAuth = false;
-			let claudeCodeVersion: string | undefined;
+			let advertisedClaudeCodeVersion: string | undefined;
 			let usageModel = model;
 			let inputTransformations: BetaInputTransformation[] | undefined;
 			let openClient: (() => void) | undefined;
@@ -1250,7 +1255,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					);
 					client = created.client;
 					isOAuth = created.isOAuthToken;
-					claudeCodeVersion = created.claudeCodeVersion;
+					advertisedClaudeCodeVersion = created.claudeCodeVersion;
 				};
 				openClient();
 			}
@@ -1261,20 +1266,25 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				if (
 					claudeCodeVersionRetried ||
 					openClient === undefined ||
-					claudeCodeVersion === undefined ||
+					advertisedClaudeCodeVersion === undefined ||
 					!isClaudeCodeVersionTooOldError(error)
 				) {
 					return false;
 				}
-				const next = await recoverClaudeCodeVersion(error, claudeCodeVersion, options?.env);
+				const next = await recoverClaudeCodeVersion(
+					error,
+					claudeCodeVersion,
+					advertisedClaudeCodeVersion,
+					options?.env,
+				);
 				if (next === undefined) return false;
 				claudeCodeVersionRetried = true;
 				openClient();
 				return true;
 			};
 			const noteTooOldClaudeCode = (error: unknown): void => {
-				if (claudeCodeVersion !== undefined && isClaudeCodeVersionTooOldError(error)) {
-					error.message = `${error.message}\n${claudeCodeVersionTooOldHint(claudeCodeVersion)}`;
+				if (advertisedClaudeCodeVersion !== undefined && isClaudeCodeVersionTooOldError(error)) {
+					error.message = `${error.message}\n${claudeCodeVersionTooOldHint(advertisedClaudeCodeVersion)}`;
 				}
 			};
 			const fallbackKey = unsignedThinkingFallbackKey(model, options?.sessionId);
@@ -1912,7 +1922,7 @@ function createClient(
 
 	// OAuth: Bearer auth, Claude Code identity headers
 	if (apiKey && isOAuthToken(apiKey)) {
-		const claudeCodeVersion = getClaudeCodeVersion(env);
+		const advertisedClaudeCodeVersion = getClaudeCodeVersion(claudeCodeVersion, env);
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
@@ -1927,7 +1937,7 @@ function createClient(
 						accept: "application/json",
 						"anthropic-dangerous-direct-browser-access": "true",
 						"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
-						"user-agent": `claude-cli/${claudeCodeVersion}`,
+						"user-agent": `claude-cli/${advertisedClaudeCodeVersion}`,
 						"x-app": "cli",
 					},
 					model.headers,
@@ -1936,7 +1946,7 @@ function createClient(
 			),
 		});
 
-		return { client, isOAuthToken: true, claudeCodeVersion };
+		return { client, isOAuthToken: true, claudeCodeVersion: advertisedClaudeCodeVersion };
 	}
 
 	// API key auth

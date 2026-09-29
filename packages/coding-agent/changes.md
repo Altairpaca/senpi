@@ -4,7 +4,7 @@
 
 - `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.280 -> 0.3.284 (Claude Code 2.1.280 -> 2.1.284). `bun.lock`, `package-lock.json`, `install-lock/package-lock.json` and `publish-deps.lock.json` regenerated with `bun run refresh-lock`; the platform packages relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
 - `packages/coding-agent/docs/environment-variables.md`: `PI_CLAUDE_CODE_VERSION`. `docs/settings.md`: `promptPreset` lists `claude-sonnet-5-5`.
-- `test/suite/regressions/2033-claude-code-version-currency.test.ts`: the currency invariant now reads `CLAUDE_CODE_VERSION_FLOOR` in `packages/ai/src/utils/claude-code-version.ts` and requires it to equal the installed SDK's `claudeCodeVersion`.
+- `test/suite/regressions/2033-claude-code-version-currency.test.ts`: the currency invariant keeps reading the `claudeCodeVersion` declaration in `packages/ai/src/api/anthropic-messages.ts` (now the floor of the advertised version) and requires it to equal the installed SDK's `claudeCodeVersion`.
 
 ### Why
 

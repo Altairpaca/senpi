@@ -23,9 +23,9 @@ function installedSdkClaudeCodeVersion(): string {
 }
 
 function engineClaudeCodeVersionFloor(): string {
-	const source = readFileSync(join(repoRoot, "packages", "ai", "src", "utils", "claude-code-version.ts"), "utf8");
-	const match = /export const CLAUDE_CODE_VERSION_FLOOR = "(\d+\.\d+\.\d+)";/.exec(source);
-	if (!match?.[1]) throw new Error("claude-code-version.ts has no CLAUDE_CODE_VERSION_FLOOR declaration");
+	const source = readFileSync(join(repoRoot, "packages", "ai", "src", "api", "anthropic-messages.ts"), "utf8");
+	const match = /const claudeCodeVersion = "(\d+\.\d+\.\d+)";/.exec(source);
+	if (!match?.[1]) throw new Error("anthropic-messages.ts has no claudeCodeVersion declaration");
 	return match[1];
 }
 
