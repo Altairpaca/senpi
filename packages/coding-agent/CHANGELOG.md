@@ -36,6 +36,8 @@
 
 - The Windows CI test for SIGKILL escalation of an owned RPC host no longer fails intermittently with `foreign_writer`. The test stages and asserts the pidfile writer identity it relies on, and `ensureHost`'s test identity probe now also decides pidfile writer ownership, so a starved `powershell.exe` CIM read can no longer make the test's own host look foreign. Production ownership checks are unchanged. ([#1830](https://github.com/code-yeongyu/senpi/issues/1830))
 
+- An MCP server that changes its tool list mid-session now gets its new list registered. After `notifications/tools/list_changed`, a session whose MCP connection is not shared re-registered the tools it cached at startup, so added tools never appeared and removed tools came back over their tombstones. The new list also replaces the on-disk catalog cache the next session starts from. ([#2188](https://github.com/code-yeongyu/senpi/issues/2188))
+
 - Anthropic Subscription custom-tool schemas now preserve JSON-Schema field descriptions, so Claude receives guidance such as eval's required `summary` field instead of making a wasted corrective call. ([#2145](https://github.com/code-yeongyu/senpi/issues/2145))
 
 - Fixed missing `initialModelProvenance` in `session_start` events for explicit and scoped CLI model selection ([#1560](https://github.com/code-yeongyu/senpi/issues/1560)).
