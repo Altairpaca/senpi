@@ -6,6 +6,8 @@
 
 ### Added
 
+- `SENPI_PROMPT_SURFACE=app` renders every built-in system prompt (the default prompt and every preset) for a host that shows replies as chat, such as the OmO Desktop: replies no longer open with the `I read this as ...` routing line, and tool and hook feedback (comment-checker findings, language-server availability, internal notices) stays with the agent unless it changes what you get. Unset, or any other value, keeps today's terminal prompts unchanged. On a multi-session host each session can choose its own surface with `open_session.promptSurface: "terminal" | "app"` (host capability `prompt_surface`), so one host serves terminal and app clients at once; a later open with another value switches that session's prompt. ([#2377](https://github.com/code-yeongyu/senpi/issues/2377))
+
 ### Changed
 
 - `gpt-6.1-sol` is the implicit default for the `openai` and `chatgpt-subscription` providers where `gpt-6-sol` was: a session that lands on an implicit OpenAI default picks GPT-6.1 Sol when it is authenticated, and a registry that carries GPT-6 Sol or GPT-5.6 Sol but not GPT-6.1 Sol falls through to the first available model as before. Your explicitly configured `defaultModel` is untouched; GPT-6 Sol stays selectable. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
@@ -18,6 +20,12 @@
 
 - With `SENPI_PROMPT_SURFACE=app` (or `open_session.promptSurface: "app"`), replies no longer end with a note about a check or tool that could not run, such as an unavailable language-server hook, when the tests or other checks that did run already back the result. Terminal prompts are unchanged. ([#2377](https://github.com/code-yeongyu/senpi/issues/2377))
 
+- Remote compaction works again on the ChatGPT subscription lane. It used to call a compaction route the ChatGPT backend no longer serves, so every compaction silently fell back to a local summary. It now uses the backend's current compaction request, sent the same way as a normal turn (same login, network and proxy settings), with one attempt per compaction and a time budget long enough for a real compaction. The next turn now sends the server's compaction result instead of only a placeholder summary, including over the default WebSocket transport. If the attempt fails or times out, nothing is stored and the compaction uses the local summary as before. The same fix lets remote compaction results on the OpenAI API lane replay on the next turn. Thanks to @rhyme227 for the precise report and instrumentation. ([#2378](https://github.com/code-yeongyu/senpi/issues/2378) by [@rhyme227](https://github.com/rhyme227))
+
+- A session no longer leaves an empty `.omo/` (or `.senpi/`) folder in the project. Reading the project hook trust state when the project has no config folder returns the empty state without creating the folder for a lock. ([#2386](https://github.com/code-yeongyu/senpi/issues/2386))
+
+- RPC `get_auth_providers` gives each login method row its own status: a stored OAuth login no longer also marks the provider's API-key row connected, and vice versa, and `login_api_key` / `logout` answer only after the status reflects the change ([#2384](https://github.com/code-yeongyu/senpi/issues/2384)).
+
 ### Removed
 
 ## [2026.9.29-4] - 2026-09-29
@@ -29,8 +37,6 @@
 - Legacy `.pi/` project resources (extensions, skills, prompt templates, themes, hooks) now follow project trust like the project config directory: a project that is not trusted no longer loads them, and a project whose only project resources are in `.pi/` now asks whether to trust it instead of opening as trusted. Trusted projects load them as before.
 
 ### Added
-
-- `SENPI_PROMPT_SURFACE=app` renders every built-in system prompt (the default prompt and every preset) for a host that shows replies as chat, such as the OmO Desktop: replies no longer open with the `I read this as ...` routing line, and tool and hook feedback (comment-checker findings, language-server availability, internal notices) stays with the agent unless it changes what you get. Unset, or any other value, keeps today's terminal prompts unchanged. On a multi-session host each session can choose its own surface with `open_session.promptSurface: "terminal" | "app"` (host capability `prompt_surface`), so one host serves terminal and app clients at once; a later open with another value switches that session's prompt. ([#2377](https://github.com/code-yeongyu/senpi/issues/2377))
 
 - Extensions can expose an interactive session to other local sessions: `pi.session.registerControlEndpoint({ inboxDir, drain })` (POSIX TUI only; anything else answers `unsupported`) serves a secret-authenticated control socket listed by `senpi host status --all` as `endpoint_kind: "tui"`, with read-mostly commands (`get_protocol_info`, `list_sessions`, `get_state`, `get_messages`, `set_session_name`, `subscribe`, `wake`, `extension_ui_response`) and never `prompt`/`steer`/`follow_up`. Delivered messages enter through `pi.session.admitExternalMessage()`, which admits each `delivery_id` exactly once (`started` / `queued` / `steered`), waits while you are typing (`held_draft`), refuses a stale turn (`turn_conflict`), and records the id in the transcript; they render as a "remote message" block, never as your own input. `pi.session.admissionGate()`, `listAdmittedDeliveries()`, `persistHeaderNow()` and the `session_control_wake` event (idle, submission, draft cleared, command, inbox, emitted, continue) complete the surface. A TUI with no registrant opens no socket. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
@@ -52,15 +58,9 @@
 
 ### Fixed
 
-- Remote compaction works again on the ChatGPT subscription lane. It used to call a compaction route the ChatGPT backend no longer serves, so every compaction silently fell back to a local summary. It now uses the backend's current compaction request, sent the same way as a normal turn (same login, network and proxy settings), with one attempt per compaction and a time budget long enough for a real compaction. The next turn now sends the server's compaction result instead of only a placeholder summary, including over the default WebSocket transport. If the attempt fails or times out, nothing is stored and the compaction uses the local summary as before. The same fix lets remote compaction results on the OpenAI API lane replay on the next turn. Thanks to @rhyme227 for the precise report and instrumentation. ([#2378](https://github.com/code-yeongyu/senpi/issues/2378) by [@rhyme227](https://github.com/rhyme227))
-
 - A session file write that fails (permission denied, a full disk, a removed session directory) no longer leaves the refused entry in the session: the next entry is written as a child of the last entry the file actually holds, so the transcript stays whole on reload. A partial line a full disk left behind is removed before the next write, and a prompt whose messages could not be saved now fails with that error instead of reporting success. RPC clients, which never see that prompt failure, now get a `transcript_write_failed` event (`role`, `errorMessage`) for every message the file refused; an automatic retry or queued continuation whose messages could not be saved reports a continuation error; the next prompt no longer sends the model the unsaved messages, so the model sees the conversation a reload shows; and the interactive TUI says so once per run: `This turn was not saved to the session file (EACCES); the model will not see it after the next prompt.`
 
-- A session no longer leaves an empty `.omo/` (or `.senpi/`) folder in the project. Reading the project hook trust state when the project has no config folder returns the empty state without creating the folder for a lock. ([#2386](https://github.com/code-yeongyu/senpi/issues/2386))
-
 - A transient `forbidden` / `Request not allowed` rejection from a Claude subscription is retried on the same model before any fallback. A fallback target that answers with a billing error (e.g. `credit balance is too low`) no longer pins the session: that provider's remaining rungs are skipped for its cooldown, and when the chain ends on it the next turn returns to the original model with a notice saying why. Billing on the original model still pins as before. ([#2376](https://github.com/code-yeongyu/senpi/issues/2376))
-
-- RPC `get_auth_providers` gives each login method row its own status: a stored OAuth login no longer also marks the provider's API-key row connected, and vice versa, and `login_api_key` / `logout` answer only after the status reflects the change ([#2384](https://github.com/code-yeongyu/senpi/issues/2384)).
 
 - A gateway delivery whose transcript entry the session file refused (`EACCES`, `ENOSPC`) no longer blocks every later delivery to that session. It used to stay pending forever, so the next delivery was queued behind a turn that never came. It is now settled as failed with the error (`listAdmittedDeliveries().failed`), later deliveries start and are saved as soon as the file is writable, and the failed one is accepted again once the run that refused it is over and the file is writable, so the model sees it once, as the file does. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
@@ -660,7 +660,6 @@
 - Upgrading across the subscription provider rename is now covered end to end: an agent directory written by an older senpi keeps its logins, settings, custom models and saved accounts, and is migrated exactly once. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
 
 - Settings, credentials, sessions and `models.json` written before the subscription provider rename keep working: the old provider ids are resolved on read everywhere they are stored, and senpi tells you once which ids to update in `models.json`. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
-
 
 - Your saved settings survive the subscription provider rename: `defaultProvider`, `defaultModel`, favourites, per-model thinking/tier maps and fallback chains written under `openai-codex`/`claude-sdk-oauth` are rewritten once to `chatgpt-subscription`/`anthropic-subscription` on first load. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
 
