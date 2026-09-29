@@ -10,6 +10,8 @@ export type SearchProvider =
 	| "z-ai"
 	| "openai"
 	| "codex"
+	| "chatgpt-subscription"
+	| "google"
 	| "anthropic"
 	| "perplexity"
 	| "xai"
@@ -25,6 +27,8 @@ export interface SearchProviderConfig {
 	provider: SearchProvider;
 	apiKey?: string;
 	baseUrl?: string;
+	/** Extra request headers the session credential requires; resolved from the model registry, never read from websearch.json. */
+	headers?: Record<string, string>;
 	searchEngineId?: string;
 	maxResults?: number;
 	model?: string;

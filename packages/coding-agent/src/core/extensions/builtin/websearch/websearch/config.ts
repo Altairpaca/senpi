@@ -31,12 +31,16 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"z-ai",
 	"openai",
 	"codex",
+	"chatgpt-subscription",
+	"google",
 	"anthropic",
 	"perplexity",
 	"xai",
 	"kimi",
 	"kagi",
 ];
+// These entries may omit apiKey: the search then uses the matching senpi login.
+const SESSION_LOGIN_PROVIDERS: readonly SearchProvider[] = ["chatgpt-subscription", "google"];
 const CONTEXT_SIZES: readonly SearchContextSize[] = ["low", "medium", "high"];
 const CODEX_MODES: readonly CodexSearchMode[] = ["cached", "live"];
 const STRATEGIES: readonly RoutingStrategy[] = ["priority", "round-robin", "fill-first"];
@@ -225,6 +229,7 @@ export function validateProviderConfig(config: SearchProviderEntry): ProviderVal
 		config.provider !== "codex" &&
 		config.provider !== "openai" &&
 		config.provider !== "duckduckgo-html" &&
+		!SESSION_LOGIN_PROVIDERS.includes(config.provider) &&
 		!hasApiKey(config)
 	) {
 		return { ok: false, reason: "missing_api_key", message: `Provider ${config.provider} requires apiKey.` };

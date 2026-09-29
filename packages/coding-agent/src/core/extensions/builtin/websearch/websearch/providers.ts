@@ -1,8 +1,10 @@
 import { anthropicProvider } from "./providers/anthropic.ts";
 import { braveProvider } from "./providers/brave.ts";
+import { chatgptSubscriptionProvider } from "./providers/chatgpt-subscription.ts";
 import { deepseekProvider } from "./providers/deepseek.ts";
 import { duckDuckGoHtmlProvider } from "./providers/duckduckgo-html.ts";
 import { exaProvider } from "./providers/exa.ts";
+import { googleProvider } from "./providers/google.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
 import { kagiProvider } from "./providers/kagi.ts";
 import { kimiProvider } from "./providers/kimi.ts";
@@ -11,7 +13,7 @@ import { perplexityProvider } from "./providers/perplexity.ts";
 import { serpdiveProvider } from "./providers/serpdive.ts";
 import { serperProvider } from "./providers/serper.ts";
 import type { ProviderModule } from "./providers/shared.ts";
-import { parseObjectPayload, resolveDomainFilters } from "./providers/shared.ts";
+import { isJsonObject, parseObjectPayload, resolveDomainFilters } from "./providers/shared.ts";
 import { tavilyProvider } from "./providers/tavily.ts";
 import { xaiProvider } from "./providers/xai.ts";
 import { zAiProvider } from "./providers/z-ai.ts";
@@ -35,6 +37,8 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"z-ai": zAiProvider,
 	openai: openAiResponsesProvider,
 	codex: openAiResponsesProvider,
+	"chatgpt-subscription": chatgptSubscriptionProvider,
+	google: googleProvider,
 	anthropic: anthropicProvider,
 	perplexity: perplexityProvider,
 	xai: xaiProvider,
@@ -52,6 +56,18 @@ export function buildSearchRequest(config: SearchProviderConfig, request: Search
 		allowedDomains,
 		blockedDomains,
 	});
+}
+
+export function parseSearchPayload(provider: SearchProvider, bodyText: string): unknown {
+	const parseBody = PROVIDER_MODULES[provider].parseBody;
+	if (parseBody) return parseBody(bodyText);
+	if (bodyText.length === 0) return {};
+	try {
+		const parsed: unknown = JSON.parse(bodyText);
+		return isJsonObject(parsed) ? parsed : {};
+	} catch {
+		return {};
+	}
 }
 
 export function normalizeSearchResponse(provider: SearchProvider, payload: unknown): SearchResultItem[] {

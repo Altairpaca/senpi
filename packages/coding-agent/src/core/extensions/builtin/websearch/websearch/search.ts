@@ -1,4 +1,4 @@
-import { buildSearchRequest, normalizeSearchResponse } from "./providers.ts";
+import { buildSearchRequest, normalizeSearchResponse, parseSearchPayload } from "./providers.ts";
 import { attemptRouteLabel, providerEntryLabel, routeAttemptEntries } from "./route-attempts.ts";
 import type {
 	JsonObject,
@@ -195,12 +195,8 @@ async function performProviderSearch(
 	let payload: unknown = {};
 	if (config.provider === "duckduckgo-html") {
 		payload = { html: bodyText };
-	} else if (bodyText.length > 0) {
-		try {
-			payload = JSON.parse(bodyText);
-		} catch {
-			payload = {};
-		}
+	} else {
+		payload = parseSearchPayload(config.provider, bodyText);
 	}
 	if (!response.ok) {
 		const details: SearchDetails = {
@@ -225,7 +221,13 @@ async function performProviderSearch(
 		durationMs: Date.now() - startedAt,
 		truncated: results.length > max,
 	};
-	if (limitedResults.length === 0) details.error = noResultsMessage(config, request);
+	if (limitedResults.length === 0) {
+		const failure =
+			isJsonObject(payload) && payload.error !== undefined ? extractErrorDetail({ error: payload.error }, "") : "";
+		details.error = failure
+			? `Search provider ${providerEntryLabel(config)} failed: ${failure}`
+			: noResultsMessage(config, request);
+	}
 	if (config.id !== undefined) details.entryId = config.id;
 	return details;
 }

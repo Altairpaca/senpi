@@ -20,10 +20,22 @@ export interface BuildContext {
 export interface ProviderModule {
 	buildRequest(ctx: BuildContext): BuiltSearchRequest;
 	normalizeResponse(data: JsonObject): SearchResultItem[];
+	/** Turns a non-JSON response body (for example a server-sent event stream) into the payload `normalizeResponse` reads. */
+	parseBody?(bodyText: string): JsonObject;
 }
 
 export function contentHeaders(extra?: Record<string, string>): Record<string, string> {
 	return { Accept: "application/json", "Content-Type": "application/json", ...(extra ?? {}) };
+}
+
+/** Credential headers resolved from the session login, underneath the provider's own request headers. */
+export function withConfigHeaders(
+	config: SearchProviderConfig,
+	headers: Record<string, string>,
+): Record<string, string> {
+	const merged = new Headers(config.headers);
+	for (const [name, value] of Object.entries(headers)) merged.set(name, value);
+	return Object.fromEntries(merged.entries());
 }
 
 export function clamp(value: number, min: number, max: number): number {
