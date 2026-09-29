@@ -1,3 +1,24 @@
+## 2026-09-29 - a cold-seed that cannot fit is refused before dispatch and marked for senpi-owned recovery (senpi#2329)
+
+### What changed
+
+- `cold-seed-budget.ts` (new): `estimateColdSeedTokens` measures a cold-seed request as UTF-8 bytes / 4 over the system prompt, the tool schemas and the flattened blocks (a lower bound for Claude's tokenizer; images and Claude Code's own preamble are left out). `coldSeedOverflow` returns a `ColdSeedOverflowError` ("prompt is too long: at least N tokens > M maximum ...") when that lower bound already exceeds `model.contextWindow`. `markColdSeedOverflow` appends the `claude_sdk_oauth_cold_seed_overflow` diagnostic to a failed cold-seed turn whose error is a context overflow; `isColdSeedOverflowMessage` reads it back.
+- `session-stream.ts`: `createResidentAttempt` reports each attempt's shape through the new `onDispatchShape` callback and, for a flatten/bootstrap that cannot fit, closes the freshly created resident entry and throws before any SDK submission.
+- `stream.ts`: tracks whether the last resident attempt was a cold-seed and marks the failed output with `markColdSeedOverflow`, for a pre-dispatch refusal and for an API rejection alike.
+
+### Why
+
+- A cold-seed re-sends the whole senpi branch as one `<conversation_history>` user message. Senpi stands compaction down on this lane, so that branch was never compacted, and the Claude Agent SDK cannot compact a single exchange: the request failed with "Prompt is too long" and nothing recovered it (oh-my-openagent#7975). The marker is persisted with the message, so the compaction lane policy can tell senpi's own flattened history from the SDK's resident transcript, also after a restart.
+
+### Why an extension could not handle it
+
+- The dispatch shape and the failed output are internal to this provider stream.
+
+### Expected merge conflict zones
+
+- MEDIUM: the flatten block computation near the end of `createResidentAttempt` in `session-stream.ts` (also touched by continuity work on #1972-#1974).
+- LOW: the `residentSessionMessages` call and the catch block in `stream.ts`.
+
 ## 2026-09-29 - A rejected or missing resume checkpoint falls back to an earlier verified boundary (senpi#1973)
 
 ### What changed
