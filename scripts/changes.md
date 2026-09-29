@@ -8,6 +8,7 @@
 - `scripts/publish.mjs`: validates each package against those checks; `materializeMissingPublishRuntime` is no longer called.
 - Removed: `scripts/prepare-senpi-publish-dependencies.mjs`, `scripts/prepare-senpi-publish-placements.mjs`, `scripts/materialize-publish-runtime.mjs`, `scripts/generate-coding-agent-shrinkwrap.mjs`, `scripts/unpublished-bundled-workspaces.mjs` (no-op since the desktop workspaces left the bundle) and their tests.
 - `scripts/registry-packages.mjs`, `scripts/release-packages.mjs`, `scripts/local-release.mjs`: comments no longer describe the removed bundle; no behavior change.
+- `scripts/check-lockfile-commit.mjs`: the lockfile-commit hint points at the coding-agent install-lock instead of the removed shrinkwrap.
 - `scripts/release.mjs`, `scripts/release-artifacts.mjs`: no shrinkwrap step and no stale-bundle-overlay `npm ci`; root `package.json` drops `check:shrinkwrap`/`shrinkwrap:coding-agent` and the shrinkwrap step of `refresh-lock`.
 
 ### Why
