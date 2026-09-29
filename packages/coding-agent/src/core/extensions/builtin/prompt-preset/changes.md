@@ -1,5 +1,50 @@
 # prompt-preset Extension Changes
 
+## 2026-09-29 - App prompt surface for every preset (senpi#2377)
+
+### What changed
+
+- Every preset renders a `surface: "app"` variant (`SENPI_PROMPT_SURFACE=app`, see `dynamic-prompt/changes.md`); `terminal` renders are byte-identical to before. Shared-core presets (claude-opus-4-x, deepseek, glm, gpt-5 through 5.4, kimi-k2-x) take the shared intent gate and handoff app wording.
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `kimi-k3.ts`, `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`: the Intent Gate lead is an `INTENT_GATE_LEAD: Record<PromptSurface, string>` whose `terminal` entry is the old text verbatim; the `app` entry keeps each core's stop-condition and scaffolding rules in its own wording, drops the routing line, and adds the core's tool-and-hook-feedback sentence. `buildHandoffSection` receives `surface: context.surface`. `kimi-k3.ts`: "Before the routing line, reread ..." reads "Before you act, reread ..." on `app`.
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: same `INTENT_GATE_LEAD` shape; the inline handoff moments come from `GPT_HANDOFF_MOMENTS` and the feedback sentence from `GPT_APP_FEEDBACK` in the new `gpt-surface.ts`. Astra keeps `GPT6_ASTRA_RULES` as the terminal wording and derives its `app` steering and handoff-report directives from it (`SURFACE_DIRECTIVE`), dropping "rather than another routing line" and the routing-line moment.
+- `claude-fable-5.ts`, `grok-4.6.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: "your declared stop condition" (context-limit line, Stop Goal) reads "your stop condition" on `app`, so no app prompt asks for a declared, i.e. written-out, condition.
+- `kimi-k2-6.ts`, `kimi-k2-code.ts`: the "The intent gate routing line is required every turn." sentence is omitted on `app`.
+- `presets.ts` `withDefaults` and `index.ts` `eventOptionsToBuilderInput` carry `surface` from the session's system-prompt options; `settings.ts` exports `VALID_PRESETS` so the surface suite iterates every preset name.
+- `test/suite/prompt-presets-app-surface.test.ts` (new): for the dynamic prompt and every `VALID_PRESETS` name, `app` has no "I read this as" / "routing line" and has the feedback guidance; `terminal` (omitted and explicit) keeps the routing line; `resolvePromptSurface` accepts only `app`; a harness session with `SENPI_PROMPT_SURFACE=app` renders the app prompt for a preset model and the fallback prompt.
+
+### Why
+
+- The routing line is a terminal contract; an app host renders replies as chat, where the line and relayed tool notices read as harness chatter (omo-desktop-app#1313). Per-core wording keeps each model's dialect; one `app` entry per core replaces the lead at its source instead of appending a counter-rule.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself; the lead text lives inside each core.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `INTENT_GATE_LEAD` declarations above each `build*Core`, and the handoff call sites.
+
+## 2026-09-29 - Claude Sonnet 5.5 preset (senpi#2321)
+
+### What changed
+
+- `claude-sonnet-5-5.ts` (new): the `claude-opus-5-5` core with the Sonnet 5.5 guide's coding-agent deltas applied at the sentence they replace, one home per rule (prompt-engineering A/B/C pass, no rule appended): `## Style` names the three early stops the guide documents at low and medium effort (confirming a plan the request already settles, asking a self-answerable question, stopping after one part of a multipart task) in place of the Opus 5.5 "unattended run" endings; `## Scope` widens the tests-only clause to tests, docs and supporting files and carries the guide's mention-at-the-end remedy; `## Verification` folds the guide's "a check that failed to start does not count; install declared deps with the project's own package manager; name the unrun check" into the existing "run the validator" sentence; the Opus 5.5 time-as-cost delegation sentence is dropped (undocumented for Sonnet). Unchanged: Intent Gate and its stop condition, explore-before-acting, the claim audit, the Handoff block, no reasoning-in-text lines.
+- `presets.ts`: `CLAUDE_SONNET_55_MARKERS` (`sonnet-5-5`, `sonnet-5.5`) resolve to `claude-sonnet-5-5` after the Opus matchers; Sonnet 5 and Sonnet 4.x keep the default dynamic prompt. `settings.ts`: the name joins `PromptPresetName` and `VALID_PRESETS`.
+- `test/suite/prompt-presets-claude-sonnet-5-5.test.ts` (new): id shapes (dashed, dotted, dated, Bedrock, Vertex, display name), non-matches (Sonnet 5, Opus 5.5, `sonnet-55`), forced preset, catalog sweep.
+
+### Why
+
+- Anthropic's Sonnet 5.5 guide (2026-09-28) says Sonnet 5 prompts carry over and documents three low/medium-effort early stops, supporting-file over-delivery, and reporting a change done without a runnable check. Each maps onto a sentence the Opus 5.5 core already has, so the delta is a replacement, not growth.
+
+### Why an extension could not handle it
+
+- Preset dispatch lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the Claude matcher block and the `buildPreset` switch in `presets.ts`; `claude-sonnet-5-5.ts` is fork-only.
+
+
 ## 2026-09-28 - GPT-6 Astra: the stated goal bounds the work (#2256)
 
 ### What changed
