@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
@@ -87,6 +88,12 @@ export class SessionWorkerClient {
 		const result = await this.request({ type: "prepare", configuration, profile });
 		if (result.type !== "prepared") throw new Error("Invalid worker prepare response");
 		return result.sessionPath;
+	}
+
+	/** Moves the worker's live session to another prompt surface (a later `open_session.promptSurface`). */
+	async setPromptSurface(surface: PromptSurface): Promise<void> {
+		const result = await this.request({ type: "prompt_surface", surface });
+		if (result.type !== "result") throw new Error("Invalid worker prompt_surface response");
 	}
 
 	async commit(): Promise<WorkerSnapshot> {

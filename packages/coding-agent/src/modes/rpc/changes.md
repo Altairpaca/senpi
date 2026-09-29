@@ -1,3 +1,28 @@
+## 2026-09-29 - `open_session.promptSurface`: per-session prompt surface (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `open_session` gains `promptSurface?: PromptSurface` (`"terminal" | "app"`).
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `sessionPromptSurfaceError`; `session-command-router.ts` refuses any other value with `invalid_launch_profile: promptSurface must be "terminal" or "app".` (same code as a bad `auto_title`), puts a valid value on the launch profile, and advertises the host capability `prompt_surface` in `get_protocol_info`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `PROMPT_SURFACE_CAPABILITY = "prompt_surface"`.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: an attach whose profile names a different `promptSurface` refreezes the entry profile with it and calls `runtime.setPromptSurface`; an attach without the field keeps the session's surface.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: same rule for worker-backed sessions (`attach` is now async and awaits `SessionWorkerClient.setPromptSurface`); `session-worker-client.ts` / `session-worker-protocol.ts` / `session-worker.ts`: new `prompt_surface` host-to-worker request answered with `result`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `openSession` accepts `promptSurface`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: header table and notes document the field, its capability and its error detail; `docs/rpc.md` gains a `### Prompt surface` section.
+- Tests: `test/suite/rpc-open-session-prompt-surface.test.ts` (new) on one real in-process shared host (`contextHost`): two sessions opened with different surfaces get different prompts; an omitted field follows `SENPI_PROMPT_SURFACE`; a later attach with another surface rebuilds the live prompt and an attach without it keeps it; `promptSurface: "web"` is refused; `prompt_surface` is advertised. `test/suite/rpc-session-context-support.ts` exposes the session's system prompt and the new open field; the two worker-message fakes answer `prompt_surface` like `bind`/`command`.
+
+### Why
+
+- The OmO Desktop opens and creates every session through `open_session` on a shared host that may also serve terminal clients; the process env alone could not give them different prompts. Hosts advertise the capability so the Desktop sends the field only where it is honored, the way it gates `durableSessionId`.
+
+### Why an extension could not handle it
+
+- The launch profile is parsed and frozen by the router and registry before any session exists.
+
+### Expected merge conflict zones
+
+- The `open_session` validation block and the capability set in `session-command-router.ts`; the attach branches of both registries; the `HostToSessionWorker` union.
+
 ## 2026-09-29 - `release_session` awaits the header write of a never-written session
 
 ### What changed

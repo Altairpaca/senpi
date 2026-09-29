@@ -1029,6 +1029,7 @@ export function createCliRuntimeFactory(
 				parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES")),
 				launchProfile?.autoTitle,
 			),
+			promptSurface: launchProfile?.promptSurface,
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
