@@ -2611,6 +2611,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `summarization_retry_attempt_start` | Retried summarization request starts |
 | `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
+| `transcript_write_failed` | The session file refused a message of the running turn (`role`, `errorMessage`) |
 | `extension_event` | Capability-gated extension-owned event (`extension_events` clients only) |
 | `commands_changed` | Ordered command/skill candidate snapshot changed |
 | `command_invocation` | Accepted extension-command or prompt-template invocation metadata |
@@ -3115,6 +3116,22 @@ Emitted without a request id when the loaded skill, extension, or MCP inventory 
 
 ```json
 {"type": "loaded_surfaces_changed"}
+```
+
+### transcript_write_failed
+
+Emitted when the session file refuses to save a message of the running turn (permission denied, a full disk, a removed
+session directory). The message is not in the transcript and will not be in a reloaded session. The next prompt that starts a run while the
+session is idle leaves it out of the model context too; a steer or follow-up queued (`streamingBehavior`) during the
+refused run still sends it to the model on its turn. A prompt accepted with `success: true` reports this failure only
+through this event.
+
+```json
+{
+  "type": "transcript_write_failed",
+  "role": "assistant",
+  "errorMessage": "EACCES: permission denied, open '/path/to/session.jsonl'"
+}
 ```
 
 ### extension_error

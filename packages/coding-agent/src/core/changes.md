@@ -1,3 +1,26 @@
+## 2026-09-29 - A failed session append leaves nothing an entry can chain onto
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_appendEntry` writes the entry (`_persist`) before it commits it to `fileEntries`, `byId`, the leaf, the entry count and the usage totals, so a write that throws (EACCES, ENOSPC, a removed directory) leaves memory exactly as the file has it and the caller gets the error. `_persist` takes the not-yet-committed entry: an append to a flushed file that fails marks the tail as possibly torn and the next append first cuts the file back to its last complete line; a first flush that fails part-way removes the file it created exclusively, so the next flush can create it again. `appendSessionInfo` updates the name cache after the entry is written, and `branchWithSummary` no longer moves the leaf before its entry is written. A successful append writes the same bytes as before.
+- `packages/coding-agent/src/core/session-write-recovery.ts` (new, fork-only): `truncateToLastCompleteLine` and `discardFailedFirstFlush`. `discardFailedFirstFlush` also closes the half-written file, so a failing close no longer skips the removal or the write error; cleanup failures are thrown beside the write error in an `AggregateError`.
+- `packages/coding-agent/src/core/transcript-write-failures.ts` (new, fork-only): `TranscriptWriteFailures`, the refused message writes of the session: the first error of a run to report once (`startRun` / `takeReport`), and the refused message objects to drop from the model context (`takeRefusedOut`).
+- `packages/coding-agent/src/core/agent-session.ts`: a message-end write the session manager refused no longer rejects the queued event work where nobody observes it. It is logged (`transcript_write_failed` with `role`), published as the new `transcript_write_failed` session event (`role`, `errorMessage`; RPC forwards it, which is how an RPC client learns about it after the prompt was accepted), the rest of the message-end handling runs, and the run's owner reports the first such error once: a run a `prompt` owns (`_promptOwnsRun`, from `_promptAgent` start until its event queue settles) has its `prompt` throw it after the queue settles, and any other run (retry, queued follow-up, compaction continuation) emits `continuation_error` right when the write fails. The continuation path never waits for the event queue, so it holds its session-work token no longer than before (waiting there delayed the next TTSR recovery generation). The next `_promptAgent` start, when nothing is streaming, drops exactly the refused message objects from `agent.state.messages`, so the next turn's model context equals a reload of the file.
+- `packages/coding-agent/src/core/session-log.ts`: `role` joins the allowed data keys, so the `transcript_write_failed` line keeps it.
+
+### Why
+
+- `_appendEntry` pushed the entry into memory and only then wrote it. When the write threw, the entry stayed in memory as the leaf, and the next successful append was written with a `parentId` the file never received, so on reload the transcript lost everything after the break. Found while making `release_session` answer `release_failed` (the aborted reply and the stop-state stayed memory-only after a refused write); a refused rename followed by a written `session_released` entry reopened as a one-entry branch with no messages. Inside a turn the throw rejected one queued `_processAgentEvent`, which the next event's handler absorbed, so the prompt resolved as if the turn had been saved.
+
+### Why an extension could not handle it
+
+- Entry ordering, the leaf and the JSONL writes are private to `SessionManager`, and the agent event queue is private to `AgentSession`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_persist` and `_appendEntry` in `session-manager.ts` (restructured, plus `_commitEntry` split out of `_appendEntry`; upstream still writes after committing); one line each in `appendSessionInfo` and `branchWithSummary`.
+- LOW: the `message_end` persistence block in `_processAgentEvent` (wrapped in a try/catch), the run-start and post-queue checks in `_promptAgent`, the `AgentSessionEvent` union (one new member) and one line before the continuation run in `_continueAgentAfterCurrentRun` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.
+
 ## 2026-09-29 - Session file rewrites are atomic, so a failed migration keeps the original
 
 ### What changed
@@ -35,24 +58,6 @@
 ### Expected merge conflict zones
 
 - LOW: the loop header in `_emit`.
-
-## 2026-09-29 - `SessionManager.appendCustomEntryOrNothing`: a custom entry on disk or not at all
-
-### What changed
-
-- `packages/coding-agent/src/core/session-manager.ts`: `appendCustomEntryOrNothing(customType, data)` appends like `appendCustomEntry`, but when writing the entry throws it takes the entry back out (`fileEntries`, `byId`, `entryOrdersById`, `fullEntryCount`), returns the leaf to its parent and bumps `mutationCount` before rethrowing. Additive: one method after `appendCustomEntry`; `appendCustomEntry` and `_appendEntry` are unchanged.
-
-### Why
-
-`release_session` (modes/rpc) writes a `session_released` entry before handing the file over. When that write failed (EACCES, ENOSPC, a removed directory) the entry stayed in memory, and the next entry written on the session the host kept had a parent that was never on disk (gate re-review r4 of todo 8).
-
-### Why an extension could not handle it
-
-The entry list and leaf are private to `SessionManager`.
-
-### Expected merge conflict zones
-
-- The method block after `appendCustomEntry` in `session-manager.ts`.
 
 ## 2026-09-29 - `ExternalAdmission.close()`: admission ends when a host hands the session over
 

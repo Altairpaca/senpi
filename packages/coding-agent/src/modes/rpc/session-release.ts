@@ -154,7 +154,7 @@ async function claimAndRelease(
 		const manager = ready.session.sessionManager;
 		manager.persistHeaderNow();
 		// On disk or not at all: a failed write leaves no entry a later append could chain onto.
-		manager.appendCustomEntryOrNothing(SESSION_RELEASED_ENTRY_TYPE, {
+		manager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
 			reason: command.reason,
 			interrupted,
 			attachments: ready.attachments,
