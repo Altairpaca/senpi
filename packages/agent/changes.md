@@ -8,6 +8,14 @@
 
 - The maps point at `src/`, which is not published, so they cannot resolve for consumers and only add install size.
 
+### Why an extension could not handle it
+
+- Package publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `files` list in `package.json`.
+
 # changes
 
 ## 2026-09-21 - Migrate the test runner to Vitest 5 (senpi#1895)

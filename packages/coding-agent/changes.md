@@ -8,6 +8,14 @@
 
 - Smaller install and tarball with no behavior change; see `scripts/changes.md`.
 
+### Why an extension could not handle it
+
+- Package manifest and publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` block and `files` list in `packages/coding-agent/package.json`.
+
 ## 2026-09-29 - Publish the real dependency manifest (senpi#2360)
 
 ### What changed
