@@ -10,10 +10,10 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
-import { SCAN_MIGRATIONS, writeCompletedScanMigrations } from "../../../src/migrations-state.ts";
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 import { ProjectTrustStore } from "../../../src/core/trust-manager.ts";
 import { main } from "../../../src/main.ts";
+import { SCAN_MIGRATIONS, writeCompletedScanMigrations } from "../../../src/migrations-state.ts";
 import { stopThemeWatcher } from "../../../src/modes/interactive/theme/theme.ts";
 
 const launched = vi.hoisted(() => ({ runtimes: [] as unknown[], prompts: [] as string[], answer: "" }));
