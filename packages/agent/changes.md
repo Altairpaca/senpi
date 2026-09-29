@@ -1,3 +1,13 @@
+## 2026-09-29 - Published tarball excludes sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/agent/package.json`: `files` excludes `dist/**/*.map`.
+
+### Why
+
+- The maps point at `src/`, which is not published, so they cannot resolve for consumers and only add install size.
+
 # changes
 
 ## 2026-09-21 - Migrate the test runner to Vitest 5 (senpi#1895)

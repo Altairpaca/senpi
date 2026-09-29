@@ -118,7 +118,8 @@ function copyVendoredTypeWorkspaces(repoRoot) {
 
 		const targetRoot = join(vendorRoot, workspace.target);
 		mkdirSync(dirname(targetRoot), { recursive: true });
-		cpSync(sourceRoot, targetRoot, { recursive: true });
+		// Sourcemaps point at workspace sources that are not published; they never ship.
+		cpSync(sourceRoot, targetRoot, { recursive: true, filter: (path) => !path.endsWith(".map") });
 	}
 
 	const clientRoot = join(vendorRoot, "pi-client");

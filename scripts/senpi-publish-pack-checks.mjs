@@ -65,12 +65,22 @@ function packedFilePaths(packed) {
 	return new Set((packed.files ?? []).map((file) => file.path.replace(/^package\//, "")));
 }
 
+// Published sourcemaps reference workspace sources that are never published, so they cannot
+// resolve for consumers and only add install size (senpi#2362).
+function assertNoSourcemaps(filePaths, packageName) {
+	const maps = [...filePaths].filter((path) => path.endsWith(".map"));
+	if (maps.length > 0) {
+		throw new Error(`${packageName} package tarball must not ship sourcemaps (found ${maps.length}, e.g. ${maps[0]})`);
+	}
+}
+
 export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, options = {}) {
 	const check = publishedWorkspacePackageChecks(options.nativePrebuildTargets).find(
 		(candidate) => candidate.packageName === sourcePackageName,
 	);
-	if (!check) return;
 	const filePaths = packedFilePaths(packed);
+	assertNoSourcemaps(filePaths, sourcePackageName);
+	if (!check) return;
 	const missing = [];
 	for (const requiredFile of check.requiredFiles) {
 		if (filePaths.has(requiredFile)) continue;
@@ -103,6 +113,7 @@ export function assertSenpiPackedWorkspaceFiles(packed, manifest) {
 	if (shippedShrinkwrap) {
 		throw new Error(`senpi package tarball must not ship npm-shrinkwrap.json (found ${shippedShrinkwrap}).`);
 	}
+	assertNoSourcemaps(filePaths, "senpi");
 	if (manifest.bundleDependencies !== undefined || manifest.bundledDependencies !== undefined) {
 		throw new Error("senpi publish manifest must not declare bundleDependencies; dependencies resolve from the registry.");
 	}

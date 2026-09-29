@@ -87,7 +87,7 @@ its published `npm:@code-yeongyu/senpi-*` alias and no `bundleDependencies` (sen
 tarball ships no `node_modules`; `senpi-publish-pack-checks.mjs` enforces that contract for the
 senpi pack and checks each published alias package for its loader-visible files
 (`pi-agent-core` tree-sitter assets, `pi-pty` `native/index.js` plus a warned-optional prebuild,
-`senpi-codemode` sources). Staging dirties `packages/coding-agent/package.json`; restore with
+`senpi-codemode` sources) and rejects any published `*.map`. Staging dirties `packages/coding-agent/package.json`; restore with
 `git checkout --` after it.
 
 ## Anti-patterns

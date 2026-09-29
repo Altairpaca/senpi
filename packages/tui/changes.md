@@ -1,3 +1,13 @@
+## 2026-09-29 - Published tarball excludes sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/tui/package.json`: `files` excludes `dist/**/*.map`.
+
+### Why
+
+- The maps point at `src/`, which is not published, so they cannot resolve for consumers and only add install size.
+
 # changes
 
 ## 2026-09-21 - Refresh the renderer dependency pins (senpi#1895)

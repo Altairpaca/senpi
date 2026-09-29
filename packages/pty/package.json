@@ -27,6 +27,7 @@
 	},
 	"files": [
 		"dist",
+		"!dist/**/*.map",
 		"native",
 		"README.md"
 	],
