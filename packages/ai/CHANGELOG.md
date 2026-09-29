@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A provider module that disappeared because the installed package was replaced while the session was running now ends the turn once with `The installed package changed while this session was running, so <file> can no longer be loaded. Restart and resume this session to continue.`, instead of the same `Cannot find module` failure on every retry and fallback model. ([#2358](https://github.com/code-yeongyu/senpi/issues/2358))
+
 ### Removed
 
 ## [2026.9.29-2] - 2026-09-29

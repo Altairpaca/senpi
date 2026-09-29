@@ -452,6 +452,7 @@ jobs:
           bun test scripts/node-bundle-provider-isolation.test.ts
           bun test scripts/node-bundle-smoke.test.ts
           bun test scripts/node-bundle-cursor-exec.test.ts
+          bun test scripts/node-bundle-reinstall.test.ts
 
       - name: Script tests
         run: npm run test:scripts

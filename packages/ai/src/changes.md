@@ -1,3 +1,21 @@
+## 2026-09-29 - A provider module removed by a reinstall ends the turn once (#2358)
+
+### What changed
+
+- `packages/ai/src/api/lazy.ts`: a setup failure whose error is a missing shipped `.js` module (`Cannot find module '<path>'`, or Bun's `ENOENT reading "<path>"`) becomes the message from `describeReplacedInstall()`, new in `utils/provider-failure-description.ts` beside the marker it stamps: `senpi:no-turn-retry:` plus "The installed package changed while this session was running, so <file> can no longer be loaded. Restart and resume this session to continue." Other setup failures keep their own text.
+
+### Why
+
+- After a package manager rewrote the install under a running session, the missing provider chunk failed the turn, then the same-model retries and every fallback model failed on the same missing module (#2358). The no-turn-retry marker stops both, and the text says what to do. A bare package name or a `.ts` source path is left alone, so a genuinely missing dependency still reads as itself.
+
+### Why an extension could not handle it
+
+- `lazyStream` builds the error message before any session or extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: `createSetupErrorMessage` in `api/lazy.ts`; the end of `utils/provider-failure-description.ts`.
+
 ## 2026-09-29 - Cursor exec calls run once in the release bundle; bundle copies share module state (senpi#2334)
 
 ### What changed

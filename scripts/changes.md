@@ -1,3 +1,21 @@
+## 2026-09-29 - The bundle names its build for the runtime snapshot (#2358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: after both esbuild passes, writes `dist/bundle/runtime-manifest.json` with `buildId` (the first 16 hex digits of a SHA-256 over every emitted file's path and bytes) and `externals` (`collectExternalPackages`: the non-builtin package names the bundle imports at runtime).
+
+### Why
+
+- The CLI keys its runtime snapshot by build and verifies that the snapshot resolves the bundle's externals exactly as the install does (#2358).
+
+### Why an extension could not handle it
+
+- The manifest describes the build output itself.
+
+### Expected merge conflict zones
+
+- LOW: the end of `buildBundle()` after `validateExternalImports`.
+
 ## 2026-09-29 - bun.lock regeneration converges and matches every workspace manifest (senpi#2352)
 
 ### What changed

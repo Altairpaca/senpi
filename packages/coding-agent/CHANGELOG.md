@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A running session no longer dies when senpi or omo is updated underneath it. `bun install -g` and `npm i -g` delete and rewrite the installed package, so a session started earlier used to fail every later request with `Cannot find module './<chunk>-<hash>.js'` (or `ENOENT reading ...` under Bun), in each fallback model too, until it was restarted. Each launch now runs from its own copy of the bundle under `<agentDir>/runtime/`, taken once per build (about 30 MB, copied in well under a second), and keeps it until the session exits. Copies no running session uses are removed on a later launch. ([#2358](https://github.com/code-yeongyu/senpi/issues/2358))
+
 ### Removed
 
 ## [2026.9.29-2] - 2026-09-29
