@@ -58,6 +58,10 @@
 
 - `endpoint.json` records `registry_version: 1` and `endpoint_kind` (`rpc_host` | `tui`); a record from an older build reads as `rpc_host`. `senpi host status --all` rows carry `endpoint_kind`, `alive` and `reason` (`live_unresponsive` for an endpoint whose process runs but does not answer, `dead` once every recorded process is gone). New library exports `classifyEndpointLiveness`, `listHostEndpoints`, `readAllHostStatus` and `gcHostEndpoints(agentDir, { kinds })`, which reaps only endpoints of the listed kinds.
 
+- A multi-session host can hand a session to a local terminal: `release_session { sessionId, reason: "takeover" }` records `session_released` in the transcript, ends the session on the host without replaying anything and frees its file, so `senpi --session <path>` continues it locally. It refuses while a turn runs (`turn_active`, or `interrupt: true` to abort first) and while clients are attached (`attached`, or `force: true`; they then receive `session_closed { reason: "released" }`).
+- A multi-session host answers `wake { sessionId, delivery_ids? }` with the same contract as a terminal control endpoint: an extension on a host session registers with `pi.session.registerControlEndpoint({ inboxDir, drain })` and its drain runs on idle, on inbox changes and on each `wake`, which answers what that pass admitted.
+- `senpi host status --all` rows carry `owner` (for a `tui` row: the terminal's pid, cwd and the session it holds), and `session_rows` carry `cwd` and `name`.
+
 ### Changed
 
 - In the TUI, an unknown command no longer reaches the model: the submitted text goes back into the editor with `Unknown command /ulw-exec. Did you mean /skill:ulw-execute?` and a line saying that Enter again sends it as a message and Esc keeps editing. Pressing Enter again on the unchanged text sends it as ordinary text; starting the message with a space does the same in one step. ([#2348](https://github.com/code-yeongyu/senpi/issues/2348))
@@ -67,6 +71,7 @@
 - Without a `websearch.json`, `web_search` no longer depends on DuckDuckGo alone: your search queries may now go to DuckDuckGo and Exa's hosted search service (no key and no session id is sent), then to Startpage, Mojeek, Ecosia and Google's results page, in that order. To keep searches away from these services, list only the providers you want in `websearch.json`; for DuckDuckGo only, use `{ "providers": [{ "provider": "duckduckgo-html" }] }`. When an engine answers with a bot check instead of results, the search says so and moves on to the next engine, and an engine that blocks a search (bot check, HTTP 429 or 403, network error) is skipped for 1 minute, doubling up to 15 minutes while it keeps blocking; skipped engines are listed in the routing line. The default still costs nothing: no key, no paid API, no other model. ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
 
 - `senpi host status --all` probes a `tui` endpoint for at most 1.5 s, so a suspended terminal no longer holds the listing for the 10 s host budget.
+- `senpi host ensure|handoff|stop --socket` against a terminal control endpoint (`endpoint_kind: "tui"`, or a `t-*.sock` name) refuses with exit 3 `reason: "unsupported_endpoint_kind"` without connecting to it.
 
 ### Fixed
 
@@ -113,6 +118,8 @@
 - Resuming a Claude conversation whose sent history was rolled back or diverged no longer forks at an assistant message the current history no longer contains. The resume decision now anchors the fork at the newest assistant boundary inside the shared history and re-sends that point's remainder, and when no such boundary exists it rebuilds from the transcript instead of resuming a lineage that keeps an unrelated old-branch assistant ([#1974](https://github.com/code-yeongyu/senpi/issues/1974)).
 
 - AWS credentials in the environment (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, an ECS or web-identity role) no longer make Amazon Bedrock the startup model when you have logged in to or configured another provider; the same holds for Google Vertex through Application Default Credentials. Those providers stay in `/model`, listed after the providers you configured, and still become the default when nothing else is available or you pick them. A Claude subscription login now has its own default model (`claude-opus-4-8`). ([#2327](https://github.com/code-yeongyu/senpi/issues/2327))
+
+- `senpi host status --all` no longer reports an endpoint `alive` when its socket answers without naming an instance: the verdict used the generation the directory had recorded instead of the socket's own answer.
 
 - On `anthropic-subscription`, changing the thinking level while the model is streaming no longer kills the turn with "query ended before the active turn completed"; the new level applies from the next request. A turn whose every attempt failed is no longer reported as "Session continuity lost - resent the full conversation": nothing was re-sent, and session.log records it as `failed` instead of `flatten`. Continuity and close lines in session.log now carry the session id. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
 

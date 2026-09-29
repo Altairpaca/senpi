@@ -10,17 +10,28 @@
  * see.
  *
  * Every row carries the endpoint's `endpoint_kind` and the liveness verdict (`host-endpoint-liveness.ts`)
- * as `alive` (routable) plus `reason` when it is not. A `tui` row is read under TUI_PROBE_TIMEOUT_MS
- * whatever budget the caller grants the hosts, so one suspended terminal costs the listing 1.5 s,
- * not 10.
+ * as `alive` (routable) plus `reason` when it is not. `alive` is judged from what the socket itself
+ * answered, never from the directory's record of it: a socket that answers without naming an instance
+ * is not routable, whatever generation the directory last recorded. A `tui` row is read under
+ * TUI_PROBE_TIMEOUT_MS whatever budget the caller grants the hosts, so one suspended terminal costs the
+ * listing 1.5 s, not 10; it is sent `get_protocol_info` and `list_sessions` only - the two commands a
+ * terminal endpoint and a host both answer - and carries `owner`: the terminal process and the one
+ * session it holds.
  */
 import { readHostCrashRecords } from "./host-crash-record.ts";
 import { type EndpointKind, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { type EndpointLiveness, endpointProbeTimeoutMs, judgeEndpointLiveness } from "./host-endpoint-liveness.ts";
 import { type HostEndpointEntry, type HostEndpointIdentitySource, listHostEndpoints } from "./host-endpoints.ts";
 import { readGenerationRows } from "./host-generations.ts";
-import { type HostStatusReport, readHostStatus } from "./host-status.ts";
-import { readClaimRows } from "./host-status-rows.ts";
+import { type HostStatusReport, probeHostStatus } from "./host-status.ts";
+import { type HostSessionRow, readClaimRows } from "./host-status-rows.ts";
+
+/** Who serves a `tui` endpoint: the terminal process (as recorded) and the session it holds, when it answered. */
+export interface TuiEndpointOwner {
+	readonly pid: number | null;
+	readonly cwd: string | null;
+	readonly session: { readonly id: string; readonly path: string | null; readonly name: string | null } | null;
+}
 
 export interface HostEndpointStatus extends Omit<HostStatusReport, "socket"> {
 	readonly socket: string | null;
@@ -31,6 +42,8 @@ export interface HostEndpointStatus extends Omit<HostStatusReport, "socket"> {
 	readonly alive: boolean;
 	/** Why a row is not alive: still running but not answering, or provably gone. `null` when alive. */
 	readonly reason: Exclude<EndpointLiveness, "routable"> | null;
+	/** `tui` rows only; `null` for a host endpoint. */
+	readonly owner: TuiEndpointOwner | null;
 }
 
 /**
@@ -74,14 +87,30 @@ async function endpointStatus(endpoint: HostEndpointEntry, options: StatusAllOpt
 	const paths = hostDaemonDirectoryPaths(endpoint.dir);
 	if (endpoint.socket === null) {
 		const verdict = livenessFields(await judgeEndpointLiveness(paths, undefined));
-		return { ...(await unaddressableStatus(endpoint.dir)), socket: null, ...located, ...verdict };
+		const status = await unaddressableStatus(endpoint.dir);
+		const owner = endpoint.endpoint_kind === "tui" ? tuiOwner(status, []) : null;
+		return { ...status, socket: null, ...located, ...verdict, owner };
 	}
-	const report = await readHostStatus(
+	const { report, answered, listing } = await probeHostStatus(
 		{ socket: endpoint.socket, agentDir: options.agentDir, includeWorkers: options.includeWorkers },
 		{ prune: false, timeoutMs: endpointProbeTimeoutMs(endpoint.endpoint_kind, options.timeoutMs) },
 	);
-	const verdict = await judgeEndpointLiveness(paths, report.reachable ? report.instanceId : undefined);
-	return { ...report, ...located, ...livenessFields(verdict) };
+	const verdict = await judgeEndpointLiveness(
+		paths,
+		answered === undefined ? undefined : (answered.instanceId ?? null),
+	);
+	const owner = endpoint.endpoint_kind === "tui" ? tuiOwner(report, listing) : null;
+	return { ...report, ...located, ...livenessFields(verdict), owner };
+}
+
+/** The recorded pid of the pointer's generation, and the one session row a terminal endpoint lists. */
+function tuiOwner(status: Pick<HostStatusReport, "generations">, listing: readonly HostSessionRow[]): TuiEndpointOwner {
+	const row = listing[0];
+	return {
+		pid: status.generations.find((generation) => generation.current)?.pid ?? null,
+		cwd: row?.cwd ?? null,
+		session: row === undefined ? null : { id: row.id, path: row.session_path, name: row.name },
+	};
 }
 
 function livenessFields(verdict: EndpointLiveness): Pick<HostEndpointStatus, "alive" | "reason"> {

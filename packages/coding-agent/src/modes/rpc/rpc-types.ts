@@ -14,7 +14,7 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
-import type { ContextUsage, SessionKind } from "../../core/extensions/types.ts";
+import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
 import type { ProcessFootprintMeasure } from "../../core/process-footprint.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -64,6 +64,12 @@ type RpcSessionCommand =
 	| { id?: string; type: "get_follow_up_messages" }
 	| { id?: string; type: "abort_branch_summary" }
 	| { id?: string; type: "new_session"; parentSession?: string }
+	/**
+	 * Runs the session's inbox drain once and answers what it admitted - the same contract as a
+	 * terminal control endpoint's `wake`. `delivery_ids` names the deliveries the caller just queued;
+	 * a session whose extension registered no control endpoint answers `admitted: []`.
+	 */
+	| { id?: string; type: "wake"; delivery_ids?: string[] }
 
 	// State
 	| { id?: string; type: "get_state" }
@@ -255,6 +261,16 @@ export const RPC_ERROR_EMPTY_TEXT = "empty";
 export const RPC_ERROR_STALE_LEAF = "stale_leaf";
 /** `prompt` text was command-shaped but no command handles it; mirrors `UnknownCommandError`. */
 export const RPC_ERROR_UNKNOWN_COMMAND = "unknown_command";
+/** `release_session` while the session runs a turn, without `interrupt: true`. */
+export const RPC_ERROR_TURN_ACTIVE = "turn_active";
+/** `release_session` while clients are attached, without `force: true`; `errorData.attachments` names how many. */
+export const RPC_ERROR_ATTACHED = "attached";
+/** `release_session` with a `reason` other than `takeover`. */
+export const RPC_ERROR_INVALID_RELEASE_REASON = "invalid_release_reason";
+/** `release_session` for a session this host cannot hand over: `errorData.detail` is `worker_runtime` or `no_session_file`. */
+export const RPC_ERROR_RELEASE_UNSUPPORTED = "release_unsupported";
+/** A draining host parks every session itself; `release_session` and `open_session` are refused meanwhile. */
+export const RPC_ERROR_HOST_DRAINING = "host_draining";
 
 export type RpcErrorCode =
 	| typeof RPC_ERROR_UNKNOWN_SESSION
@@ -279,7 +295,12 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_NOT_USER
 	| typeof RPC_ERROR_EMPTY_TEXT
 	| typeof RPC_ERROR_UNKNOWN_COMMAND
-	| typeof RPC_ERROR_STALE_LEAF;
+	| typeof RPC_ERROR_STALE_LEAF
+	| typeof RPC_ERROR_TURN_ACTIVE
+	| typeof RPC_ERROR_ATTACHED
+	| typeof RPC_ERROR_INVALID_RELEASE_REASON
+	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
+	| typeof RPC_ERROR_HOST_DRAINING;
 
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
@@ -345,6 +366,22 @@ export type RpcCommand =
 			durableSessionId?: string;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
+	| {
+			id?: string;
+			/**
+			 * Hands the session over to a runtime outside this host (`omo daemon adopt` resumes it in a local
+			 * terminal with `--session <session_path>`): records `session_released` in the transcript, tears
+			 * the session down without replaying anything, and frees its path reservation, so the next
+			 * writer of the file is the one the caller starts. Refused with `turn_active` mid-turn unless
+			 * `interrupt` (the turn is aborted first), and with `attached` while clients hold it unless
+			 * `force` (they receive `session_closed { reason: "released" }`).
+			 */
+			type: "release_session";
+			sessionId: string;
+			reason: "takeover";
+			interrupt?: boolean;
+			force?: boolean;
+	  }
 	| {
 			id?: string;
 			type: "list_sessions";
@@ -576,6 +613,21 @@ export type RpcResponse =
 			data: { sessionId: string; state: RpcSessionState; attached?: boolean };
 	  }
 	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }
+	| {
+			id?: string;
+			type: "response";
+			command: "release_session";
+			success: true;
+			/** `attachments`: clients that were still attached (non-zero only with `force`). */
+			data: { released: true; session_path: string; attachments: number };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "wake";
+			success: true;
+			data: { admitted: readonly SessionControlAdmission[] };
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -1133,6 +1185,8 @@ export type RpcSessionParkedEvent = {
  *   again. The idle sweep ends it once no client holds it; a handoff drain ends it instead of parking
  *   it with a path nothing can reopen (senpi#2285).
  * - `error`: the session failed (worker death, output overflow) and the host sealed it.
+ * - `released`: `release_session` handed the session to a runtime outside this host. `sessionPath` is
+ *   the file that runtime now writes: do NOT reopen it on this host, which would make a second writer.
  */
 export type RpcSessionClosedReason =
 	| "client_close"
@@ -1141,6 +1195,7 @@ export type RpcSessionClosedReason =
 	| "replaced"
 	| "handoff_parked"
 	| "session_dir_removed"
+	| "released"
 	| "error";
 
 /** Terminal record of a closed routing handle. `reason` is absent on older hosts and older records. */

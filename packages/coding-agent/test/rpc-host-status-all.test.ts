@@ -224,6 +224,8 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 				id: sessionId,
 				kind: "worker",
 				session_path: sessionPath,
+				cwd: qa.cwd,
+				name: null,
 				attachments: 1,
 				context: { tree_key: "tree-7", host_socket: canonicalSocket(qa.legacy), host_instance: instanceId },
 			},

@@ -18,12 +18,14 @@
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
+	createHostDaemonPaths,
 	type EndpointKind,
 	HOST_DAEMON_LAYOUT,
 	hostDaemonDirectoryPaths,
 	socketNamesDirectory,
 } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { isTuiControlSocket } from "./tui-socket.ts";
 
 export type HostEndpointIdentitySource = "endpoint" | "settings" | "generation-settings" | "unknown";
 
@@ -71,6 +73,18 @@ async function identifyEndpoint(dir: string): Promise<HostEndpointEntry> {
 		}
 	}
 	return { socket: null, dir, identity: "unknown", endpoint_kind: "rpc_host" };
+}
+
+/**
+ * What serves `socket`, from disk and its name alone - it contacts nothing. `tui` when the socket has a
+ * terminal control socket's name (`t-<16hex>.sock`: a terminal that exited leaves no record, and the
+ * name still says no host belongs there) or its directory's `endpoint.json` says so.
+ */
+export async function endpointKindOfSocket(socket: string, agentDir: string): Promise<EndpointKind> {
+	if (isTuiControlSocket(socket)) return "tui";
+	const paths = createHostDaemonPaths({ socket, agentDir });
+	const named = await recordNaming(paths.endpointFile, paths.dir);
+	return named === undefined ? "rpc_host" : endpointKindOf(named.record);
 }
 
 function endpointKindOf(record: Record<string, unknown>): EndpointKind {

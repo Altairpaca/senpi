@@ -67,6 +67,7 @@ import {
 	QUESTION_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
+import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
@@ -253,6 +254,7 @@ export function createRpcConnectionHandler(
 	// already learns the new identity from its command response.
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
+	let sessionControl: HostSessionControl | undefined;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let unsubscribeLoadedSurfaces: (() => void) | undefined;
@@ -665,6 +667,14 @@ export function createRpcConnectionHandler(
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
 		sessionQuestionBridges.set(session, questions);
+		// Installed before the bind below: extensions register their control endpoint on session_start.
+		sessionControl?.dispose();
+		sessionControl = new HostSessionControl(
+			session,
+			runtimeHost.launchProfile?.sessionContext?.host_socket,
+			(line) => void process.stderr.write(`senpi rpc session ${routingSessionId ?? "classic"}: ${line}\n`),
+		);
+		session.setControlEndpointHost?.(sessionControl);
 		if (replacedSession) {
 			lastAbortSource = undefined;
 			if (routingSessionId !== undefined || !replacementIssuedHere) {
@@ -1049,6 +1059,14 @@ export function createRpcConnectionHandler(
 			case "abort_branch_summary":
 				session.abortBranchSummary();
 				return success(id, "abort_branch_summary");
+
+			case "wake": {
+				const deliveryIds = Array.isArray(command.delivery_ids)
+					? command.delivery_ids.filter((entry): entry is string => typeof entry === "string")
+					: undefined;
+				const result = (await sessionControl?.wake(deliveryIds)) ?? {};
+				return success(id, "wake", { admitted: result.admitted ?? [] });
+			}
 
 			case "new_session": {
 				const options = command.parentSession ? { parentSession: command.parentSession } : undefined;
@@ -1700,6 +1718,8 @@ export function createRpcConnectionHandler(
 	};
 
 	const dispose = async (): Promise<void> => {
+		sessionControl?.dispose();
+		sessionControl = undefined;
 		questions.cancelAll();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();

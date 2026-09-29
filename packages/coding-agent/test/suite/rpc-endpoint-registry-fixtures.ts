@@ -50,6 +50,40 @@ export function answeringSocket(socket: string, instanceId: string): Promise<voi
 	});
 }
 
+/**
+ * Answers `get_protocol_info` (naming `instanceId` only when given) and `list_sessions` (with `sessions`),
+ * anything else with `unsupported`, and returns the list every received command type is pushed to.
+ */
+export async function scriptedSocket(
+	socket: string,
+	answers: { readonly instanceId: string | undefined; readonly sessions: readonly Record<string, unknown>[] },
+): Promise<string[]> {
+	const received: string[] = [];
+	await listen(socket, (connection) => {
+		held.push(connection);
+		let buffered = "";
+		connection.on("data", (chunk) => {
+			buffered += chunk.toString("utf8");
+			for (let newline = buffered.indexOf("\n"); newline !== -1; newline = buffered.indexOf("\n")) {
+				const request: Record<string, unknown> = JSON.parse(buffered.slice(0, newline));
+				buffered = buffered.slice(newline + 1);
+				const type = String(request.type);
+				received.push(type);
+				const data =
+					type === "get_protocol_info"
+						? { protocolVersion: 1, serverVersion: "fixture", capabilities: [], instanceId: answers.instanceId }
+						: { sessions: answers.sessions };
+				const reply =
+					type === "get_protocol_info" || type === "list_sessions"
+						? { id: request.id, type: "response", command: type, success: true, data }
+						: { id: request.id, type: "response", command: type, success: false, error: "unsupported" };
+				connection.write(`${JSON.stringify(reply)}\n`);
+			}
+		});
+	});
+	return received;
+}
+
 export type Recorded = { readonly pid: number; readonly processStartTime: string };
 
 export async function liveRecord(): Promise<Recorded> {

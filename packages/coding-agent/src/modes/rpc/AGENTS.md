@@ -21,6 +21,8 @@ worker-session-registry.ts WORKER runtime (stdio hosts, embedders): one isolate 
 session-binding.ts, session-command-router.ts,
 session-event-writer.ts, session-event-fanout.ts,
 session-extension-ui-requests.ts                            Session wiring
+host-session-control.ts   `registerControlEndpoint` on a host session + the `wake` command (drain passes)
+session-release.ts        `release_session`: hand a session to a local runtime (bookkeeping entry, park teardown)
 session-attribution.ts    AsyncLocalStorage {sessionId, tool} the stall watchdog blames by
 loop-lag-watchdog.ts      200 ms drift probe -> stderr line + `host_stalled` record
 host-memory-sampler.ts    30 s footprint sampler (core/process-footprint.ts) -> `host_memory_pressure`; halves the idle window
@@ -71,6 +73,9 @@ One host per endpoint; a client may run many endpoints under one agent dir (omo 
 - **I3** — only the owning generation writes its daemon state; everyone else reads. Clients fail CLOSED (report, or start their own private host) and never edit, unlink or delete another generation's files, socket or pidfile. Layout 2 deliberately writes no flat `host.pid`, which is what makes pre-layout-2 clients fail closed instead of taking the daemon over.
 - **Endpoint removal** — `gcHostEndpoints` (`senpi host gc`) is the ONLY path that removes an endpoint directory (`endpoint.json` included), its socket or its `.next-*`/`.shield-*` siblings, and only on the three-part evidence read INSIDE that socket's ensure lock (`hostEnsureLockTarget`): no live generation pidfile (the pointer's generation included), no live claim owner, a socket that refuses or is absent (successor binds included). It removes siblings, then the socket, then the directory LAST (a failed removal stays listed for the next gc), leaves a directory-typed sibling in place (`skipped`), and records one endpoint's failure as `failed` without stopping the run. It never signals, never runs inside `ensure`/`status`, and never touches a layout-1 flat directory or a directory whose socket nothing names.
 - **I4** — worker sessions are invisible by default: `kind: "worker"` rows need `include_workers: true`, `context` is published on that listing only, and their `session_closed`/`session_parked` records go to attached connections only.
+- **Endpoint kinds** — a `tui` endpoint (a terminal's control socket, `t-<16hex>.sock`) is owned by its terminal process. `runHostRequest` refuses `ensure`/`handoff`/`stop` against one with `unsupported_endpoint_kind` (exit 3) from `endpoint.json` or the socket name alone, BEFORE any connection; `status --all` sends it `get_protocol_info` + `list_sessions` only and reports `owner`; `gc` reaps a dead one on the same three-part evidence. `alive` is judged from the socket's own `get_protocol_info` answer (`probeHostStatus().answered`), never from the recorded generation the report falls back to.
+- **Wake** — `wake` on a host session has the terminal endpoint's contract: one `WakeScheduler` pass, answered with its `{ admitted }`; no registered drain answers `admitted: []`. A host session's registration binds nothing (the host socket is the endpoint) and is `unsupported_mode` without a public `host_socket`.
+- **Release** — `release_session` is the only way a host gives a live session's file to another writer. Every check and the close claim run with no await between them; a refusal (`turn_active`, `attached`, `release_unsupported`, `host_draining`) changes nothing; attached clients are told `session_closed { reason: "released" }`, never `session_parked` (reopening the path on the host would make a second writer).
 
 ### The no-sync rule
 
