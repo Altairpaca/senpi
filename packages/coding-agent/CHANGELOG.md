@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A running session survives an update that changes how the package's dependencies are laid out (for example a release with `bundledDependencies` followed by one without). Its runtime snapshot used to link each dependency back to the install, so after such an update every PTY tool (bash, monitor) and `eval` failed with `ENOENT` on the missing directory until restart. The snapshot now holds its own copy of every package the install's dependency graph reaches (copy-on-write clones where the filesystem supports them, otherwise hardlinks, otherwise plain copies; type declarations and source maps are left out). The first launch after an update builds it once, about 1.5 to 2.5 s on macOS; every later launch starts as before. ([#2408](https://github.com/code-yeongyu/senpi/issues/2408))
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29
