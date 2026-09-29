@@ -60,6 +60,14 @@ describe("interactive thinking level cycle", () => {
 		expect(statuses).not.toContain("Current model does not support thinking");
 	});
 
+	it("reports unsupported models when the cycle returns undefined", async () => {
+		const context = createContext(undefined);
+		await proto.cycleThinkingLevel.call(context);
+		await flushMicrotasks();
+		const statuses = context.showStatus.mock.calls.map((call) => String(call[0]));
+		expect(statuses).toContain("Current model does not support thinking");
+	});
+
 	it("drives the level status from thinking_level_changed", async () => {
 		const context = createContext("high");
 		context.isInitialized = true;
