@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- On the `anthropic-subscription` lane, a `write` or `edit` to a file outside the working directory no longer comes back as `File has not been read yet` while senpi still makes the change. Claude Code's built-in Write/Edit ran their own read check before senpi could answer, so one call got a refusal and a success, and a model that retried applied the edit twice. senpi now offers `write` and `edit` to Claude Code as its own tools, so each call runs once and returns one result, as on the direct Anthropic lanes. Existing sessions reattach once to pick up the new tool list. Reported by @haamsuk-collab. ([#2401](https://github.com/code-yeongyu/senpi/issues/2401))
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29
