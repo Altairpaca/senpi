@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A Claude conversation no longer re-sends its whole history when the resume point it asks for is gone. If Claude Code answers that the message it should branch from no longer exists, or a retry has lost its newest checkpoint, the session now branches from the newest earlier point that Claude Code still has for that conversation and sends only what came after it. Only when no such point exists does it fall back to a full re-send. ([#1973](https://github.com/code-yeongyu/senpi/issues/1973))
+
 - Resuming a Claude conversation whose sent history was rolled back or diverged no longer forks at an assistant message the current history no longer contains. The resume decision now anchors the fork at the newest assistant boundary inside the shared history and re-sends exactly that point's remainder, and when no such boundary exists it rebuilds from the transcript instead of resuming a lineage that keeps an unrelated old-branch assistant ([#1974](https://github.com/code-yeongyu/senpi/issues/1974)).
 
 - On `anthropic-subscription`, changing the thinking level while the model is streaming no longer kills the turn with "query ended before the active turn completed"; the new level applies from the next request. A turn whose every attempt failed is no longer reported as "Session continuity lost - resent the full conversation": nothing was re-sent, and session.log records it as `failed` instead of `flatten`. Continuity and close lines in session.log now carry the session id. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))

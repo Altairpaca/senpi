@@ -1,3 +1,27 @@
+## 2026-09-29 - A rejected or missing resume checkpoint falls back to an earlier verified boundary (senpi#1973)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-continuity.ts`: `retryCheckpointDecision` forks at the newest mapped boundary inside the proven pre-turn prefix (`newestBoundaryWithin(..., binding.sentCount)`) when `lastAssistantUuid` is gone, instead of flattening with `timeout_retry`. The legacy `decideFromBinding` branch no longer flattens on a missing `lastAssistantUuid` before the senpi#1974 boundary search runs; with no boundary inside the shared prefix it still flattens, keeping `registry_miss` for that shape.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-checkpoint-recovery.ts` (new): `earlierVerifiedCheckpoint` picks the newest mapped boundary strictly below the rejected one that lies inside the hash-proven prefix and appears in the SDK transcript of the SAME session as a top-level assistant; `reattachRecoveringCheckpoint` reattaches and, when Claude Code rejects the fork point with `No message found with message.uuid`, forks at that earlier boundary with `atUuid` and `from` taken from the same boundary. At most 3 recoveries; every retry strictly lowers the index. Each recovery logs `claude_sdk_oauth_checkpoint_recovered` with the two indices only.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: `createResidentAttempt` reattaches through `reattachRecoveringCheckpoint`; `from` comes from the boundary that actually attached. Any failure the recovery does not absorb still reaches `onResumeFallback` and cold-seeds with `resume_initialization_failed`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: exports `RESUME_MESSAGE_MISSING` so both paths recognize the same Claude Code wording.
+
+### Why
+
+- The first rejected or missing checkpoint re-sent the whole conversation although an earlier boundary was recoverable: a same-turn retry whose pre-turn UUID had just been dropped (senpi#1958 keeps the earlier ones mapped for exactly this), a detached binding without its newest assistant, and a fork point Claude Code no longer holds (oh-my-openagent#8424 finding 4 measured one such re-send at 905,874 B with no cache read).
+
+### Why an extension could not handle it
+
+- The continuity decision and the resident reattach are internal to this builtin; no hook sees the binding or the reattach failure.
+
+### Expected merge conflict zones
+
+- LOW: `session-checkpoint-recovery.ts` is new.
+- MEDIUM: the `boundary` block at the tail of `retryCheckpointDecision` and the flatten line after the senpi#1974 search in `decideFromBinding`.
+- MEDIUM: the `reattachRecoveringCheckpoint` call inside the reattach/fork branch of `createResidentAttempt`.
+- Fail-closed, by design: the config-dir lane, a missing `cwd`, an unreadable transcript, a transcript carrying another session id, a candidate held only as a subagent message, and any boundary outside the proven prefix. The persisted sidecar still stores one checkpoint; nothing invents an older mapping across a restart.
+
 ## 2026-09-29 - A detached-binding fork names one boundary for atUuid and from (senpi#1974)
 
 ### What changed
