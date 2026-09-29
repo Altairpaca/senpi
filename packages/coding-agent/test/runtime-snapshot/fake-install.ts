@@ -26,6 +26,7 @@ function writePackage(packageDir: string, build: string): void {
 	);
 	write(join(packageDir, "dist/modes/interactive/theme/dark.json"), "{}\n");
 	write(join(packageDir, "docs/index.md"), `# ${build}\n`);
+	write(join(packageDir, "dist/core/extensions/builtin/websearch.js"), "export default () => {};\n");
 	write(join(packageDir, "node_modules/nested-dep/package.json"), JSON.stringify({ name: "nested-dep" }));
 }
 

@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { getInstallPackageDir } from "../../src/config.ts";
+import { canonicalizeGlobalDefaultExtensionModulePath } from "../../src/core/resource-loader.ts";
 import { prepareRuntimeSnapshot } from "../../src/runtime-snapshot/enter.ts";
 import { resolveInstallPath } from "../../src/runtime-snapshot/marker.ts";
 import { createFakeInstall, type FakeInstall } from "./fake-install.ts";
 
 // #2358: a package manager deletes and rewrites the install under running sessions; a launch
 // runs from a per-build snapshot instead, so later lazy imports never reach the rewritten tree.
+const SHIM_TARGET = "dist/core/extensions/builtin/websearch.js";
+
 function handOff(install: FakeInstall): { snapshotDir: string; entryPath: string } {
 	const decision = prepareRuntimeSnapshot(install.entryPath, install.packageDir, install.agentDir);
 	if (decision.kind !== "hand-off") throw new Error(`expected a hand-off, got ${decision.kind}`);
@@ -95,6 +98,9 @@ describe("runtime snapshot of a bundled install (#2358)", () => {
 				join(realpathSync(install.packageDir), "dist/bundle/chunks"),
 			);
 			expect(resolveInstallPath(install.root, snapshotDir)).toBe(install.root);
+			expect(canonicalizeGlobalDefaultExtensionModulePath(join(snapshotDir, SHIM_TARGET))).toBe(
+				realpathSync(join(install.packageDir, SHIM_TARGET)),
+			);
 		} finally {
 			delete process.env.SENPI_PACKAGE_DIR;
 		}
