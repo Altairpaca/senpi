@@ -52,7 +52,7 @@ import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-p
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
-import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
+import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildExecutionToolingParagraph } from "./execution-tooling.ts";
 
 function buildSearchLine(context: DynamicPromptCoreContext): string {
@@ -69,7 +69,7 @@ const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
 > I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
 
 Only the user's explicit request commits you to implementation. The stop condition is an observable end state and it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.`,
-	app: `Only the user's explicit request commits you to implementation. Before acting, settle the exact, observable condition that ends this turn; it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output. Replies render in an app: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for you to act on; mention it only when it changes what the user gets.`,
+	app: `Only the user's explicit request commits you to implementation. Before acting, settle the exact, observable condition that ends this turn; it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.`,
 };
 
 function buildClaudeOpus5Core(context: DynamicPromptCoreContext): string {
@@ -104,7 +104,7 @@ Scale the checks to the change, never the rigor: diagnostics on every changed fi
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification: run the validator. Before reporting progress, audit each claim against a tool result from this session; report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output. Fix only failures your change caused.
+"Should pass" is not verification: run the validator. Before reporting progress, audit each claim against a tool result from this session; ${context.surface === "app" ? `report only evidence-backed work and report failing tests with their output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with their output."} Fix only failures your change caused.
 
 ${context.toolSection}
 

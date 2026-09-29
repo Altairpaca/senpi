@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- With `SENPI_PROMPT_SURFACE=app` (or `open_session.promptSurface: "app"`), replies no longer end with a note about a check or tool that could not run, such as an unavailable language-server hook, when the tests or other checks that did run already back the result. Terminal prompts are unchanged. ([#2377](https://github.com/code-yeongyu/senpi/issues/2377))
+
 ### Removed
 
 ## [2026.9.29-4] - 2026-09-29

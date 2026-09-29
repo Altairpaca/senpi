@@ -34,7 +34,7 @@ import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-p
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
-import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
+import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildExecutionToolingParagraph } from "./execution-tooling.ts";
 
 function buildSearchLine(context: DynamicPromptCoreContext): string {
@@ -51,7 +51,7 @@ const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
 > I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
 
 The line keeps your reading transparent; only the user's explicit request commits you to implementation. Name the stop condition as an observable end state, not a step count. Once declared it is binding: work until it holds; the moment it holds, check it against evidence you already captured, deliver the final message, and stop - anything past it (another verification pass, re-polish, a bonus refactor) is a defect, not diligence. Never surface other prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`,
-	app: `Only the user's explicit request commits you to implementation. Before acting, name the stop condition for yourself as an observable end state, not a step count. It is binding: work until it holds; the moment it holds, check it against evidence you already captured, deliver the final message, and stop - anything past it (another verification pass, re-polish, a bonus refactor) is a defect, not diligence. Never surface prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output. Replies render in an app: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for you to act on; mention it only when it changes what the user gets.`,
+	app: `Only the user's explicit request commits you to implementation. Before acting, name the stop condition for yourself as an observable end state, not a step count. It is binding: work until it holds; the moment it holds, check it against evidence you already captured, deliver the final message, and stop - anything past it (another verification pass, re-polish, a bonus refactor) is a defect, not diligence. Never surface prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`,
 };
 
 function buildClaudeFable5Core(context: DynamicPromptCoreContext): string {
@@ -85,7 +85,7 @@ Tier the scope, never the rigor:
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output. Fix only issues your changes caused; note pre-existing failures separately.
+"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: ${context.surface === "app" ? `report only evidence-backed work and report failing tests with the output. ${APP_UNRUN_CHECK_RULE}` : "report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output."} Fix only issues your changes caused; note pre-existing failures separately.
 
 ${context.toolSection}
 
