@@ -1,3 +1,4 @@
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -37,6 +38,7 @@ export type HostToSessionWorker =
 	| { type: "commit"; request: number }
 	| { type: "bind"; request: number; sessionId: string; capabilities: readonly string[]; connection?: string }
 	| { type: "command"; request: number; command: object; connection?: string }
+	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "cancel_ui" }
 	| { type: "close" };
 

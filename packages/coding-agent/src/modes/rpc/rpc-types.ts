@@ -12,6 +12,7 @@ import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
@@ -378,6 +379,14 @@ export type RpcCommand =
 			 * with `session_id_in_use` when a live session already holds it.
 			 */
 			durableSessionId?: string;
+			/**
+			 * Where THIS session's replies render (default: the host's `SENPI_PROMPT_SURFACE`). `app` builds
+			 * a prompt with no visible routing line that keeps tool and hook feedback with the agent;
+			 * `terminal` is the classic prompt. A later open that attaches with another value rebuilds
+			 * the session's prompt; an attach without it keeps the current surface. Requires the host
+			 * capability `prompt_surface`. Any other value is refused with `invalid_launch_profile`.
+			 */
+			promptSurface?: PromptSurface;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| {

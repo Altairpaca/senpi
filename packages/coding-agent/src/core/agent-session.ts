@@ -118,6 +118,7 @@ import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
 import {
 	type BuildDynamicSystemPromptOptions,
 	buildDynamicSystemPrompt,
+	type PromptSurface,
 	resolvePromptSurface,
 } from "./dynamic-prompt/index.ts";
 import {
@@ -604,6 +605,8 @@ export interface AgentSessionConfig {
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
 	autoTitleSessions?: boolean;
+	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
+	promptSurface?: PromptSurface;
 }
 
 type SessionModelEntry = {
@@ -1154,8 +1157,10 @@ export class AgentSession {
 		appendSystemPrompt?: string;
 	};
 	private _systemPromptOverride?: string;
+	private _promptSurface: PromptSurface | undefined;
 
 	constructor(config: AgentSessionConfig) {
+		this._promptSurface = config.promptSurface;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
@@ -3300,6 +3305,18 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	/**
+	 * Rebuilds the prompt for another surface (a later `open_session.promptSurface`). The next
+	 * turn's `before_agent_start` hands presets the new surface through `systemPromptOptions`.
+	 */
+	setPromptSurface(surface: PromptSurface): void {
+		const current = this._baseSystemPromptOptions.surface;
+		this._promptSurface = surface;
+		if (current === surface) return;
+		this._systemPromptOverride = undefined;
+		this._applyToolDeclarations(this.getActiveToolNames());
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -3838,7 +3855,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
-			surface: resolvePromptSurface(process.env),
+			surface: this._promptSurface ?? resolvePromptSurface(process.env),
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};

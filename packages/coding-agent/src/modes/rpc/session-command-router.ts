@@ -5,6 +5,7 @@ import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	PROMPT_SURFACE_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
@@ -12,7 +13,12 @@ import {
 } from "./custom-capability.ts";
 import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
-import { sessionAutoTitleError, sessionContextError, sessionKindError } from "./rpc-input-validation.ts";
+import {
+	sessionAutoTitleError,
+	sessionContextError,
+	sessionKindError,
+	sessionPromptSurfaceError,
+} from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse, RpcSessionClosedReason } from "./rpc-types.ts";
 import {
 	RPC_ERROR_INVALID_LAUNCH_PROFILE,
@@ -277,6 +283,8 @@ export class SessionCommandRouter {
 				// Only a multi-session host can refuse a duplicate durable id, because only it
 				// sees every live session's identity.
 				DURABLE_SESSION_ID_CAPABILITY,
+				// Every session's prompt is built from its own launch profile, so one host serves both surfaces.
+				PROMPT_SURFACE_CAPABILITY,
 				// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 				...(this.registry.warm ? [WARM_CAPABILITY] : []),
 				...(this.connectionOptions?.capabilities ?? []),
@@ -547,6 +555,9 @@ export class SessionCommandRouter {
 		const autoTitleError = sessionAutoTitleError(command.auto_title);
 		if (autoTitleError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${autoTitleError}`);
+		const promptSurfaceError = sessionPromptSurfaceError(command.promptSurface);
+		if (promptSurfaceError)
+			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${promptSurfaceError}`);
 		let opened: OpenRpcSession | undefined;
 		try {
 			opened = await this.registry.openSession(
@@ -565,6 +576,7 @@ export class SessionCommandRouter {
 						: command.context,
 					...(command.durableSessionId !== undefined ? { durableSessionId: command.durableSessionId } : {}),
 					...(typeof command.auto_title === "boolean" ? { autoTitle: command.auto_title } : {}),
+					...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
 				{ retainOnDisconnect: command.retain_on_disconnect === true },

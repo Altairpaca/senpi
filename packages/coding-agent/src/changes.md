@@ -1,3 +1,21 @@
+## 2026-09-29 - The CLI runtime factory passes the launch profile's prompt surface (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory`'s `createRuntime` passes `promptSurface: launchProfile?.promptSurface` to `createAgentSessionFromServices`.
+
+### Why
+
+- `open_session.promptSurface` reaches the session through the launch profile, the same path `kind`, `context` and `auto_title` take.
+
+### Why an extension could not handle it
+
+- The runtime factory builds the session before extensions bind.
+
+### Expected merge conflict zones
+
+- LOW: the `createAgentSessionFromServices` call in `createRuntime`.
+
 ## 2026-09-29 - Print mode names why a fallback returned early (senpi#2376)
 
 ### What changed
