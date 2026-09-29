@@ -1,3 +1,25 @@
+## 2026-09-29 - a thinking-level change never kills a streaming turn, and a failed turn is not reported as a re-send (oh-my-openagent#8759)
+
+### What changed
+
+- `session-registry-wiring.ts`: `thinking_level_select` leaves the resident query alone while a turn is in flight (`entry.activeTurn`). Reasoning options are part of `toolsetHash`, so the next admission after the turn settles sees the drift and reattaches with the new level. An idle session still keeps its binding and closes as before.
+- `session-stream.ts` / `session-observability.ts`: the terminal observation of a turn whose every attempt failed is the new kind `failed` instead of `flatten`. The interactive notice renders only `flatten` and `disabled`, so a failed turn no longer shows "Session continuity lost - resent the full conversation (query_failed)".
+- `session-observability.ts` / `stream.ts`: `claude_sdk_oauth_session_continuity` and `claude_sdk_oauth_session_close` session.log lines carry `sessionId` (the senpi session id). `stageContinuityDecision` and `emitContinuityObservation` take the session id as a parameter.
+
+### Why
+
+- Closing the live query mid-stream ends the SDK iterator, so the pump failed the active turn with "Anthropic Subscription query ended before the active turn completed". Measured on a scripted session: a level change 1.5 s into a streaming answer discarded 690 generated tokens and the user lost the turn; one reporter saw 10 of 12 such failures follow a `thinking_level_selected` close.
+- A failed attempt re-sends nothing: the retry checkpoint forks at the pre-turn boundary on the next attempt (measured: five 429s, then `fork / timeout_retry` with a full cache read). Labelling the failure `flatten` inflated flatten counts in session.log (243 of 254 in one reporter's day) and showed a false "resent the full conversation" notice.
+- Without a session id, continuity and close lines from several concurrent sessions could not be attributed.
+
+### Why an extension could not handle it
+
+- The query lifecycle, the observation vocabulary and the session.log events are internal to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `thinking_level_select` handler in `session-registry-wiring.ts`; the terminal `catch` of `residentSessionMessages`; the signatures of `stageContinuityDecision` / `emitContinuityObservation` and the close log line in `session-observability.ts`.
+
 ## 2026-09-28 - refresh-lock contention and token-endpoint hiccups are never an authentication verdict (senpi#2281)
 
 ### What changed

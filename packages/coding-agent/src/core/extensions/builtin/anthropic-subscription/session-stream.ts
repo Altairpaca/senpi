@@ -185,6 +185,7 @@ async function createResidentAttempt(
 				? { collapsedDirectives: flattenResult.collapsedDirectives }
 				: {}),
 		}),
+		sessionId,
 		input.onContinuityDecision,
 		// The pending close cause is consumed only when the staged observation
 		// actually emits (attempt retained) — a discarded attempt leaves the
@@ -198,9 +199,11 @@ export async function* residentSessionMessages(input: ResidentSessionStreamInput
 	try {
 		yield* residentAuthLaneMessages(input);
 	} catch (error) {
-		// Every attempt failed: the turn yields exactly one terminal observation.
+		// Every attempt failed: the turn yields exactly one terminal observation. It is `failed`,
+		// not `flatten`: nothing was re-sent, and the retry checkpoint still resumes the lineage.
 		emitContinuityObservation(
-			{ kind: "flatten", reason: sanitizeTerminalFailure(error) },
+			{ kind: "failed", reason: sanitizeTerminalFailure(error) },
+			input.streamOptions.sessionId,
 			input.onContinuityDecision,
 		);
 		throw error;
