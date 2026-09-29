@@ -12,9 +12,12 @@
  * ticket, and admission is held while any ticket is open. A branch whose input still has to reach
  * the runtime claims the ticket (`claimHandoff`) - text buffered for the main loop, a steer into a
  * running turn - and releases it when the runtime took the input (its prompt reported a
- * disposition, or the prompt call ended). Every other submission (a `!` command, a slash command)
- * has been dispatched once the handler's synchronous part returns, so its ticket is released right
- * there: a long-running command never holds deliveries for its whole runtime. Turn starts release
+ * disposition, or the prompt call ended). Every other submission has been handed to the runtime
+ * (`session.prompt`, which holds admission itself from its entry - see
+ * `ExternalAdmission.beginInput`) or to a built-in, once the handler's synchronous part returns, so
+ * its ticket is released right there: a long-running `!` command never holds deliveries for its
+ * whole runtime, while an extension command stays held by its prompt until it submitted its text or
+ * its handler settled. Turn starts release
  * nothing: a turn can start (an extension's, the previous input's) while a later input is still
  * buffered. The last ticket's release is the `submission` edge.
  */

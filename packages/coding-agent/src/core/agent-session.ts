@@ -3885,6 +3885,33 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		// Held synchronously, before any await: an external delivery never overtakes this input.
+		const hold = this.externalAdmission.beginInput({
+			command: this._isExtensionCommandText(text, options),
+			submittedByCommand: options?.source === "extension",
+		});
+		try {
+			await this._prompt(text, {
+				...options,
+				promptDisposition: (disposition) => {
+					hold.accepted();
+					options?.promptDisposition?.(disposition);
+				},
+			});
+		} finally {
+			hold.end();
+		}
+	}
+
+	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
+		if (!(options?.expandPromptTemplates ?? true) || !text.startsWith("/")) return false;
+		const spaceIndex = text.indexOf(" ");
+		return (
+			this._extensionRunner.getCommand(spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex)) !== undefined
+		);
+	}
+
+	private async _prompt(text: string, options: PromptOptions): Promise<void> {
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");

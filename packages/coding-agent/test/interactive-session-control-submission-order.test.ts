@@ -26,6 +26,7 @@ interface ModeMethods {
 	sessionControlContext(this: object): Omit<TuiControlContext, "editorRevision">;
 	getUserInput(this: object): Promise<InputLike>;
 	buildMainLoopPromptOptions(this: object, input: InputLike): Record<string, unknown>;
+	handleAnswerCommand(this: object, argument: string): Promise<void>;
 }
 
 const mode = InteractiveMode.prototype as unknown as ModeMethods;
@@ -206,5 +207,125 @@ describe("session control admission never overtakes submitted input", () => {
 		releaseFirst();
 		await loop;
 		expect(tui.control.submissionInFlight()).toBe(false);
+	});
+});
+
+async function harnessWithCommands() {
+	const release = Promise.withResolvers<void>();
+	const entered = Promise.withResolvers<void>();
+	const commands: ExtensionFactory = (pi) => {
+		pi.registerCommand("ask", {
+			description: "submits text after an await",
+			handler: async (args) => {
+				entered.resolve();
+				await release.promise;
+				pi.sendUserMessage(`asked: ${args}`, { deliverAs: "followUp" });
+			},
+		});
+		pi.registerCommand("noop", {
+			description: "never submits",
+			handler: async () => {
+				entered.resolve();
+				await release.promise;
+			},
+		});
+		pi.registerCommand("boom", {
+			description: "throws after an await",
+			handler: async () => {
+				entered.resolve();
+				await release.promise;
+				throw new Error("boom");
+			},
+		});
+	};
+	const harness = await createHarness({ persistSession: true, extensionFactories: [commands] });
+	cleanups.push(() => harness.cleanup());
+	harness.setResponses([fauxAssistantMessage("r1"), fauxAssistantMessage("r2"), fauxAssistantMessage("r3")]);
+	await harness.session.bindExtensions({});
+	const isExtensionCommand = (text: string) =>
+		text.startsWith("/") &&
+		harness.session.extensionRunner.getCommand(text.slice(1).split(" ")[0] ?? "") !== undefined;
+	return { harness, isExtensionCommand, entered: entered.promise, release: () => release.resolve() };
+}
+
+describe("commands that may submit text after an await hold admission until they did", () => {
+	it("draft held, Enter on /ask, the command sends after an await: the delivery lands after its text", async () => {
+		const { harness, isExtensionCommand, entered, release } = await harnessWithCommands();
+		const rows = new Map<string, string>();
+		let draft: "draft" | undefined = "draft";
+		const tui = await terminal(harness, rows, { isExtensionCommand, composerHold: () => draft });
+		rows.set("d1", "remote-d1");
+		await controlData(tui.socket, { type: "wake" });
+		draft = undefined;
+		tui.submit("/ask why");
+		await entered;
+		await controlData(tui.socket, { type: "wake" });
+		const emitted = new Promise<void>((resolve) => harness.session.externalAdmission.onEmitted(() => resolve()));
+		release();
+		await emitted;
+		await harness.session.waitForIdle();
+		expect(transcript(harness)).toEqual(["user:asked: why", "delivery:d1"]);
+		expect(tui.admitted.slice(0, -1).every((entry) => entry.startsWith("d1:held_draft:"))).toBe(true);
+		expect(tui.admitted.length).toBeGreaterThanOrEqual(3);
+	});
+
+	it.each(["/noop", "/boom"])(
+		"a command that never submits (%s) releases the hold when its handler settles",
+		async (command) => {
+			const { harness, isExtensionCommand, entered, release } = await harnessWithCommands();
+			const rows = new Map<string, string>();
+			const tui = await terminal(harness, rows, { isExtensionCommand });
+			tui.submit(command);
+			await entered;
+			rows.set("d1", "remote-d1");
+			await controlData(tui.socket, { type: "wake" });
+			expect(tui.admitted.length).toBeGreaterThan(0);
+			expect(tui.admitted.every((entry) => entry.startsWith("d1:held_draft:"))).toBe(true);
+			const emitted = new Promise<void>((resolve) => harness.session.externalAdmission.onEmitted(() => resolve()));
+			release();
+			await emitted;
+			await harness.session.waitForIdle();
+			expect(transcript(harness)).toEqual(["delivery:d1"]);
+			expect(tui.admitted.at(-1)).toMatch(/^d1:started:/);
+		},
+	);
+
+	it("/answer skip holds until its dismissal message was accepted, then the delivery lands after it", async () => {
+		const harness = await createHarness({ persistSession: true });
+		cleanups.push(() => harness.cleanup());
+		harness.setResponses([fauxAssistantMessage("r1"), fauxAssistantMessage("r2")]);
+		await harness.session.bindExtensions({});
+		const completion = Promise.withResolvers<void>();
+		const question = {
+			request: {
+				requestId: "q-1",
+				questions: [
+					{ id: "q1", header: "Pick", question: "Which?", options: [{ label: "a" }], multiSelect: false },
+				],
+				waitForAnswer: false,
+				timeoutMs: 60_000,
+			},
+			draft: { answers: {} },
+			finish: () => undefined,
+			completion: completion.promise,
+		};
+		const rows = new Map<string, string>();
+		const tui = await terminal(harness, rows, {
+			shownQuestion: question,
+			handleAnswerCommand: mode.handleAnswerCommand,
+		});
+		tui.submit("/answer skip");
+		rows.set("d1", "remote-d1");
+		await controlData(tui.socket, { type: "wake" });
+		expect(tui.admitted.length).toBeGreaterThan(0);
+		expect(tui.admitted.every((entry) => entry.startsWith("d1:held_draft:"))).toBe(true);
+		const emitted = new Promise<void>((resolve) => harness.session.externalAdmission.onEmitted(() => resolve()));
+		completion.resolve();
+		await emitted;
+		await harness.session.waitForIdle();
+		const order = transcript(harness);
+		expect(order).toHaveLength(2);
+		expect(order[0]).toMatch(/^user:/);
+		expect(order[1]).toBe("delivery:d1");
 	});
 });

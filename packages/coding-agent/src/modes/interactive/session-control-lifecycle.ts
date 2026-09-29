@@ -1,9 +1,10 @@
 /**
  * A bound control endpoint's live wiring and its clean exit.
  *
- * Edges: `agent_idle` -> idle; a delivery's entry written -> emitted; SIGCONT -> continue. The host
- * adds submission (its last open submission ticket released) and draft_cleared; the socket adds
- * command; the watcher adds inbox.
+ * Edges: `agent_idle` -> idle; a delivery's entry written -> emitted; SIGCONT -> continue; the last
+ * input hold of the session ended (`onInputsSettled`) -> submission. The host adds submission (its
+ * last open submission ticket released) and draft_cleared; the socket adds command; the watcher adds
+ * inbox.
  *
  * Clean exit, in order: stop every edge source, close the socket, apply the header-only rule (a
  * session file holding nothing but its header is removed only when the registrant says nothing
@@ -75,6 +76,10 @@ export function activateControlEndpoint(parts: ActivationParts): ActiveControlEn
 		}
 	});
 	const unsubscribeEmitted = session.externalAdmission.onEmitted(() => void wake("emitted"));
+	// Deferred like the host's release: an accepted prompt marks its run active right after.
+	const unsubscribeInputs = session.externalAdmission.onInputsSettled(() =>
+		queueMicrotask(() => void wake("submission")),
+	);
 	const stopContinue = onProcessContinue(() => void wake("continue"));
 	const exitCleanup = (): void => unregisterTuiEndpointSync(parts.entry);
 	process.once("exit", exitCleanup);
@@ -84,6 +89,7 @@ export function activateControlEndpoint(parts: ActivationParts): ActiveControlEn
 			process.removeListener("exit", exitCleanup);
 			unsubscribeSession();
 			unsubscribeEmitted();
+			unsubscribeInputs();
 			stopContinue();
 			parts.stopInbox();
 			parts.scheduler.dispose();

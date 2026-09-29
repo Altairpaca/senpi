@@ -45,6 +45,8 @@ export class ExternalAdmission {
 	private readonly emittedListeners = new Set<(deliveryId: string) => void>();
 	private editorSource: (() => EditorHoldState) | undefined;
 	private readonly port: ExternalAdmissionPort;
+	private readonly inputHolds = new Set<InputHoldState>();
+	private readonly settledListeners = new Set<() => void>();
 
 	constructor(port: ExternalAdmissionPort) {
 		this.port = port;
@@ -64,6 +66,32 @@ export class ExternalAdmission {
 		this.editorSource = source;
 	}
 
+	/**
+	 * Holds admission while user input is on its way into the runtime: from `prompt()` entry until the
+	 * prompt reports a disposition or returns. A `command` hold (an extension or built-in command that
+	 * may submit text after an await) also ends as soon as a prompt the command submitted - one from
+	 * an extension (`submittedByCommand`) that began while it was open - is accepted. Ending a hold is
+	 * idempotent; the last one to end notifies `onInputsSettled`.
+	 */
+	beginInput(options: { readonly command?: boolean; readonly submittedByCommand?: boolean } = {}): InputHold {
+		const parents = options.submittedByCommand ? [...this.inputHolds].filter((hold) => hold.command) : [];
+		const state: InputHoldState = { command: options.command === true };
+		this.inputHolds.add(state);
+		const end = (): void => this.endHold(state);
+		return {
+			accepted: () => {
+				end();
+				for (const parent of parents) this.endHold(parent);
+			},
+			end,
+		};
+	}
+
+	onInputsSettled(listener: () => void): () => void {
+		this.settledListeners.add(listener);
+		return () => this.settledListeners.delete(listener);
+	}
+
 	onEmitted(listener: (deliveryId: string) => void): () => void {
 		this.emittedListeners.add(listener);
 		return () => this.emittedListeners.delete(listener);
@@ -72,6 +100,7 @@ export class ExternalAdmission {
 	gate(): SessionAdmissionGate {
 		const editor = this.editorSource?.() ?? { revision: 0 };
 		const base = { editor_revision: editor.revision, turn_epoch: this.turnEpochValue };
+		if (this.inputHolds.size > 0) return { can_admit: false, hold_reason: "draft", ...base };
 		return editor.hold_reason === undefined
 			? { can_admit: true, ...base }
 			: { can_admit: false, hold_reason: editor.hold_reason, ...base };
@@ -126,11 +155,27 @@ export class ExternalAdmission {
 		}
 	}
 
+	private endHold(state: InputHoldState): void {
+		if (!this.inputHolds.delete(state)) return;
+		if (this.inputHolds.size === 0) for (const listener of this.settledListeners) listener();
+	}
+
 	private isBusy(): boolean {
 		if (this.port.isBusy()) return true;
 		for (const lane of this.pending.values()) if (lane === "start") return true;
 		return false;
 	}
+}
+
+interface InputHoldState {
+	readonly command: boolean;
+}
+
+export interface InputHold {
+	/** The runtime took the input: it started a turn, was queued, or was handled. */
+	accepted(): void;
+	/** The submission ended without being accepted (it threw, was cancelled, or never submitted). */
+	end(): void;
 }
 
 function deliveryMessage(input: AdmitExternalMessageInput): SessionControlDeliveryMessage {
