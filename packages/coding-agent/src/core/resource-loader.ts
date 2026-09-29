@@ -828,6 +828,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			resolvedPathsMemoKey({
 				agentDir: this.agentDir,
 				cwd: this.cwd,
+				projectTrusted: this.settingsManager.isProjectTrusted(),
 				globalSettings: this.settingsManager.getGlobalSettings(),
 				projectSettings: this.settingsManager.getProjectSettings(),
 				additionalExtensionPaths: this.additionalExtensionPaths,
