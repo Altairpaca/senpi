@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- A resumed Claude conversation no longer re-sends its whole history when an extension starts the first turn. A terminal monitor that fires on restore, a goal continuation or a loop run can start a turn while the session is still starting up, and that turn used to reach Claude before the saved resume point was read back, so it went out as `Session continuity lost - resent the full conversation (registry_miss)`. Turns that extensions request while a session is starting now begin once every extension has finished starting up. ([#1972](https://github.com/code-yeongyu/senpi/issues/1972))
+
 - Config you edit in `~/.pi/agent` after the one-time copy to `~/.senpi/agent` no longer goes unnoticed: the next interactive start warns once per change, naming the file you edited and the file senpi reads, e.g. `You edited ~/.pi/agent/models.json after senpi moved to ~/.senpi/agent; senpi reads ~/.senpi/agent/models.json`. `senpi config import-pi [models.json ...]` copies those edits over, saving each replaced file as `<file>.bak-<time>` first; `~/.pi/agent` is never written. The first start that copies `~/.pi/agent` now says where config lives from then on. ([omo#9173](https://github.com/code-yeongyu/oh-my-openagent/issues/9173))
 
 - A stdio MCP server carried by a skill you installed now expands `${VAR}` in its `command`, `args`, `env` and `cwd` the way your own `mcp.json` does, so the documented `"env": { "EXA_API_KEY": "${EXA_API_KEY}" }` reaches the server as your key instead of the literal placeholder. A skill of an untrusted project keeps the placeholder and warns once, naming the skill and the variable. ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
@@ -57,8 +59,6 @@
 - Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.284, the first release that knows Claude Sonnet 5.5: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.280 to 0.3.284. The engine's own Anthropic OAuth requests now advertise the latest published Claude Code (refreshed in the background, floor 2.1.284) instead of a build-time constant, and `PI_CLAUDE_CODE_VERSION=X.Y.Z` pins it. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
 
 ### Fixed
-
-- A resumed Claude conversation no longer re-sends its whole history when an extension starts the first turn. A terminal monitor that fires on restore, a goal continuation or a loop run can start a turn while the session is still starting up, and that turn used to reach Claude before the saved resume point was read back, so it went out as `Session continuity lost - resent the full conversation (registry_miss)`. Turns that extensions request while a session is starting now begin once every extension has finished starting up. ([#1972](https://github.com/code-yeongyu/senpi/issues/1972))
 
 - The Together provider's default model is Kimi K3. Together no longer lists Kimi K2.6, so a `together/` session with no model set picked an id the catalog had dropped. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
 
