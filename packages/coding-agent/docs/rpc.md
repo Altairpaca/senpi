@@ -673,7 +673,7 @@ abstract socket, a supervised win32 host); a stdio host adds neither key.
 
 One shared host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
 (`pi.sessionKind`, `pi.sessionContext` - see
-[ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext--pisharedhostenabled)). Probe
+[ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext)). Probe
 `session_kind` and `session_context` in `get_protocol_info` capabilities before relying on either: an older host
 ignores both fields and lists every session.
 

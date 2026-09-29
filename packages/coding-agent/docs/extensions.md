@@ -1599,7 +1599,7 @@ export default function (pi: ExtensionAPI) {
 
 ## ExtensionAPI Methods
 
-### pi.sessionKind / pi.sessionContext / pi.sharedHostEnabled
+### pi.sessionKind / pi.sessionContext
 
 Read-only facts about the session this extension instance was loaded for, available at factory time so an extension
 can decide what to register before it registers anything:
@@ -1607,7 +1607,6 @@ can decide what to register before it registers anything:
 | Property | Type | Value |
 |---|---|---|
 | `pi.cwd` | `string` | Absolute working directory of this session |
-| `pi.sharedHostEnabled` | `boolean` | Whether this session runs on a shared RPC host |
 | `pi.sessionKind` | `"interactive" \| "worker"` | Visibility class the opener chose (`open_session.kind`); `interactive` for classic launches and any open that omits it |
 | `pi.sessionContext` | `Readonly<Record<string, string>>` | Opaque labels the opener attached (`open_session.context`), or `{}` |
 

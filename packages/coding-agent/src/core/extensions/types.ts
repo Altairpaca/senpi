@@ -1881,14 +1881,12 @@ export const EMPTY_SESSION_CONTEXT: SessionContext = Object.freeze({});
 
 /** The per-session facts an extension factory may branch on at registration time. */
 export interface ExtensionSessionProfile {
-	readonly sharedHostEnabled: boolean;
 	readonly sessionKind: SessionKind;
 	readonly sessionContext: SessionContext;
 }
 
 /** The profile a classic launch (and any caller that names none) loads extensions with. */
 export const DEFAULT_EXTENSION_SESSION_PROFILE: ExtensionSessionProfile = Object.freeze({
-	sharedHostEnabled: false,
 	sessionKind: "interactive",
 	sessionContext: EMPTY_SESSION_CONTEXT,
 });
@@ -1911,8 +1909,6 @@ export interface ExtensionAPI {
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
-	/** Effective shared-host capability for registration-time extension decisions. */
-	readonly sharedHostEnabled: boolean;
 	/**
 	 * Visibility class of the session this extension instance was loaded for
 	 * (`open_session.kind`). `interactive` for classic launches and every open that

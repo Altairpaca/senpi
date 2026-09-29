@@ -92,6 +92,24 @@
 - MEDIUM: step 4 of `findInitialModel` and the fallback tail of `restoreModelFromSession` in `model-resolver.ts`, plus the `anthropic-subscription` row in `defaultModelPerProvider`; upstream edits to that table land beside it.
 - LOW: the environment return of `getProviderAuthStatus` in `model-runtime.ts`; the `AuthStatus` type in `provider-composer.ts`.
 
+## 2026-09-29 - The resource loader no longer carries `sharedHostEnabled` (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `DefaultResourceLoaderOptions.sharedHostEnabled` and the private `sharedHostEnabled` field of `DefaultResourceLoader` are removed. The constructor builds the extension session profile from `sessionKind` and `sessionContext` only, because `pi.sharedHostEnabled` is removed from the extension API (`src/core/extensions/changes.md`, same date).
+
+### Why
+
+- The option only fed `pi.sharedHostEnabled`, which could be `true` only inside the removed interactive shared-host join (senpi#2328).
+
+### Why an extension could not handle it
+
+- The resource loader constructs the extension runtime before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `DefaultResourceLoaderOptions`, the field list, and the `extensionSession` assignment in the `DefaultResourceLoader` constructor.
+
 ## 2026-09-29 - The retired `experimental.sharedHost` setting is removed from the settings file (senpi#2328)
 
 ### What changed

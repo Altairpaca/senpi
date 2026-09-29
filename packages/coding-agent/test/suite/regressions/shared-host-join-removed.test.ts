@@ -3,7 +3,8 @@
  * runtime: neither the retired `experimental.sharedHost` setting nor the brand-prefixed
  * `ENABLE_SHARED_HOST` / `DISABLE_SHARED_HOST` env flags change that, open a socket, or print
  * anything. The retired key is removed from the GLOBAL settings file by a targeted raw rewrite (no
- * other migration lands in that write); a PROJECT file is only ignored, never rewritten.
+ * other migration lands in that write); a PROJECT file is only ignored, never rewritten. Extensions
+ * no longer see a `pi.sharedHostEnabled` field.
  *
  * This file is the one place the removed names are kept, to prove they stay removed.
  */
@@ -15,6 +16,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, getDebugLogPath } from "../../../src/config.ts";
 import { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
+import { loadExtensions } from "../../../src/core/extensions/loader.ts";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { parseSettingsJson, SettingsManager, type SettingsStorage } from "../../../src/core/settings-manager.ts";
 import { main } from "../../../src/main.ts";
 import { stopThemeWatcher } from "../../../src/modes/interactive/theme/theme.ts";
@@ -106,6 +109,22 @@ describe("interactive launch never joins a shared host", () => {
 		expect(connects).toBe(0);
 		expect(stderr).not.toContain("SHARED_HOST");
 		expect(readJson(globalPath)).not.toHaveProperty("experimental");
+	});
+});
+
+describe("retired pi.sharedHostEnabled extension field", () => {
+	it("is not an own property of the ExtensionAPI an extension factory receives", async () => {
+		let api: ExtensionAPI | undefined;
+
+		const result = await loadExtensions(["probe.js"], cwd, undefined, undefined, {
+			factoryResolver: () => (pi) => {
+				api = pi;
+			},
+		});
+
+		expect(result.errors).toEqual([]);
+		expect(api).toBeDefined();
+		expect(Object.hasOwn(api ?? {}, "sharedHostEnabled")).toBe(false);
 	});
 });
 

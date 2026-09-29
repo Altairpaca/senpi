@@ -66,14 +66,12 @@ import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./type
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
-	sharedHostEnabled?: boolean;
 	sessionKind?: SessionKind;
 	sessionContext?: SessionContext;
 }
 
 function sessionProfile(options: ExtensionSessionOptions | undefined): ExtensionSessionProfile {
 	return {
-		sharedHostEnabled: options?.sharedHostEnabled ?? false,
 		sessionKind: options?.sessionKind ?? "interactive",
 		sessionContext: options?.sessionContext ?? EMPTY_SESSION_CONTEXT,
 	};
@@ -379,7 +377,6 @@ function createExtensionAPI(
 
 	const api = {
 		cwd,
-		sharedHostEnabled: session.sharedHostEnabled,
 		sessionKind: session.sessionKind,
 		sessionContext: session.sessionContext,
 

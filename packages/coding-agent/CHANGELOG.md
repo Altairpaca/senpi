@@ -38,6 +38,8 @@
 
 - Interactive and RPC prompts whose first token looks like a command (`/name`, no second `/`) and that no extension command, prompt template, or loaded `skill:<name>` handles are now refused with the exported `UnknownCommandError` instead of being sent to the model. The check runs after extension `input` handlers and skill/template expansion, so input rewrites such as bare skill aliases keep working; extension-sourced prompts and text that starts with whitespace (` /foo`) are exempt, and `unknownCommandAsText: true` (prompt option and RPC `prompt` field) sends the text unchanged. RPC answers with `errorCode: "unknown_command"` and `errorData: { command, suggestions, reason }`; a TUI builtin such as `/model` sent as a prompt gets `reason: "interactive_only"`. App-server `turn/start` refuses the same input with JSON-RPC error `-32602` whose `data` carries `errorCode: "unknown_command"`, `command`, `suggestions` and `reason`, starts no turn, and accepts `unknownCommandAsText: true` to send the text. ([#2348](https://github.com/code-yeongyu/senpi/issues/2348))
 
+- `pi.sharedHostEnabled` is removed from the ExtensionAPI (it could only ever be `true` inside the removed interactive shared-host join)
+
 ### Added
 
 - Skills read an `argument-hint` frontmatter field (`Skill.argumentHint`), and extension commands registered with `argumentHint` now pass it to the slash picker, so choosing `/skill:<name>` or such a command with Enter fills in `/name ` and waits for the arguments.
