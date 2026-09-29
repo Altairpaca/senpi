@@ -30,6 +30,8 @@
 
 - `web_search` through OpenAI's hosted search (the `openai` and `codex` providers, native OpenAI routes) and xAI no longer lists URLs the model wrote in its answer as sources. Only pages the search returned count, so an answer that never searched is a failed attempt and the next provider is tried instead of an invented link being reported as a result. ([#2337](https://github.com/code-yeongyu/senpi/issues/2337))
 
+- The Windows CI test for SIGKILL escalation of an owned RPC host no longer fails intermittently with `foreign_writer`. The test stages and asserts the pidfile writer identity it relies on, and `ensureHost`'s test identity probe now also decides pidfile writer ownership, so a starved `powershell.exe` CIM read can no longer make the test's own host look foreign. Production ownership checks are unchanged. ([#1830](https://github.com/code-yeongyu/senpi/issues/1830))
+
 - Anthropic Subscription custom-tool schemas now preserve JSON-Schema field descriptions, so Claude receives guidance such as eval's required `summary` field instead of making a wasted corrective call. ([#2145](https://github.com/code-yeongyu/senpi/issues/2145))
 
 - Fixed missing `initialModelProvenance` in `session_start` events for explicit and scoped CLI model selection ([#1560](https://github.com/code-yeongyu/senpi/issues/1560)).
