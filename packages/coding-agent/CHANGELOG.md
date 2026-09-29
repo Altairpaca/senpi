@@ -30,6 +30,8 @@
 
 - A stdio MCP server carried by a skill you installed now expands `${VAR}` in its `command`, `args`, `env` and `cwd` the way your own `mcp.json` does, so the documented `"env": { "EXA_API_KEY": "${EXA_API_KEY}" }` reaches the server as your key instead of the literal placeholder. A skill of an untrusted project keeps the placeholder and warns once, naming the skill and the variable. ([#2345](https://github.com/code-yeongyu/senpi/issues/2345))
 
+- Fixed Bun extension loading for sloppy-mode CommonJS dependencies and await-only JavaScript files in `type: module` packages, while preserving explicit strict directives and CommonJS metadata ([#1841](https://github.com/code-yeongyu/senpi/issues/1841)).
+
 - `web_search` through OpenAI's hosted search (the `openai` and `codex` providers, native OpenAI routes) and xAI no longer lists URLs the model wrote in its answer as sources. Only pages the search returned count, so an answer that never searched is a failed attempt and the next provider is tried instead of an invented link being reported as a result. ([#2337](https://github.com/code-yeongyu/senpi/issues/2337))
 
 - The Windows CI test for SIGKILL escalation of an owned RPC host no longer fails intermittently with `foreign_writer`. The test stages and asserts the pidfile writer identity it relies on, and `ensureHost`'s test identity probe now also decides pidfile writer ownership, so a starved `powershell.exe` CIM read can no longer make the test's own host look foreign. Production ownership checks are unchanged. ([#1830](https://github.com/code-yeongyu/senpi/issues/1830))
