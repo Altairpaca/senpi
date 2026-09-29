@@ -109,9 +109,15 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 	});
 	let serial = 0;
 
-	const send = async (command: RpcCommand & { id: string }): Promise<WireRecord> => {
+	const connections = new Set(["driver"]);
+	// A connection's commands are handled in order: a command held in preflight holds back later ones on it.
+	const send = async (command: RpcCommand & { id: string }, connection = "driver"): Promise<WireRecord> => {
+		if (!connections.has(connection)) {
+			connections.add(connection);
+			writer.registerConnection(connection, { writeRaw: receive, waitForBackpressure: async () => {} });
+		}
 		const answered = new Promise<WireRecord>((resolve) => answerWaiters.set(command.id, resolve));
-		const direct = await writer.withConnection("driver", () => router.handle(command));
+		const direct = await writer.withConnection(connection, () => router.handle(command));
 		await writer.flush();
 		const answer = (direct as WireRecord | undefined) ?? (await answered);
 		answerWaiters.delete(command.id);
@@ -136,12 +142,26 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 			const sessionId = data?.sessionId;
 			const session = sessionId === undefined ? undefined : registry.peek(sessionId)?.runtime?.session;
 			if (sessionId === undefined || session === undefined) throw new Error(`open failed: ${JSON.stringify(reply)}`);
-			const idle = nextEvent(session, "agent_idle");
+			// `agent_settled` ends every run (after its extension handlers); `agent_idle` may be skipped.
+			const settled = nextEvent(session, "agent_settled");
 			await send({ type: "prompt", id: `seed-${serial}`, sessionId, message: "seed the transcript" });
-			await idle;
+			await settled;
 			writer.unregisterConnection(connection);
 			await router.releaseConnection(connection);
 			return { sessionId, sessionPath: data?.state?.sessionFile ?? sessionPath, session };
+		},
+		async attach(sessionPath: string): Promise<WireRecord> {
+			const connection = `attach-${++serial}`;
+			writer.registerConnection(connection, { writeRaw: receive, waitForBackpressure: async () => {} });
+			const id = `attach-${serial}`;
+			const answered = new Promise<WireRecord>((resolve) => answerWaiters.set(id, resolve));
+			await writer.withConnection(connection, () =>
+				router.handle({ type: "open_session", id, cwd, sessionPath, retain_on_disconnect: true }),
+			);
+			await writer.flush();
+			const answer = records.find((record) => record.id === id) ?? (await answered);
+			answerWaiters.delete(id);
+			return answer;
 		},
 		release(sessionId: string, fields: { interrupt?: boolean } = {}): Promise<WireRecord> {
 			return send({ type: "release_session", id: `release-${++serial}`, sessionId, reason: "takeover", ...fields });

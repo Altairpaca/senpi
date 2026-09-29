@@ -54,6 +54,12 @@ export interface ReleaseDropped {
 export const RELEASED_ADMISSION_CLOSED =
 	"release_session handed this session to another runtime; deliver there instead (admission is closed here)";
 
+/** `errorData.hint` of a refusal whose `busy` names `queued`: only an interrupt hands that input back. */
+export const RELEASE_QUEUED_HINT =
+	"queued user input is still owed a turn; release with interrupt: true to take it out and receive it in dropped.user_messages";
+
+const NOTHING_DROPPED: ReleaseDropped = { deliveries: [], user_messages: [] };
+
 export type ReleaseBusySignal =
 	| "turn"
 	| "prompt"
@@ -91,30 +97,48 @@ interface Releasable {
 }
 
 export async function releaseSession(port: SessionReleasePort, command: ReleaseSessionCommand): Promise<RpcResponse> {
-	const refuse = (code: string, data?: Readonly<Record<string, unknown>>): RpcResponse =>
-		refusal(command.id, code, data);
-	if (command.reason !== "takeover") return refuse(RPC_ERROR_INVALID_RELEASE_REASON);
-	if (port.draining()) return refuse(RPC_ERROR_HOST_DRAINING);
-	const first = releasable(port, command);
+	if (command.reason !== "takeover") return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
+	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
+	const first = releasable(port, command, undefined);
 	if (!("session" in first)) return first;
 	const busy = busySignals(port, command.sessionId, first.session);
-	const interrupted = busy.length > 0;
-	let dropped: ReleaseDropped = { deliveries: [], user_messages: [] };
-	if (interrupted) {
-		if (command.interrupt !== true) return refuse(busyCode(busy), { attachments: first.attachments, busy });
-		first.session.externalAdmission.close(RELEASED_ADMISSION_CLOSED);
-		dropped = await interruptAndSettle(port, command.sessionId, first.session);
+	if (busy.length === 0) return claimAndRelease(port, command, false, NOTHING_DROPPED);
+	if (command.interrupt !== true) {
+		return refusal(command.id, busyCode(busy), { attachments: first.attachments, ...busyData(busy) });
 	}
-	const ready = releasable(port, command);
+	// From this close() on, every answer except a release reopens admission on the session the host keeps.
+	const admission = first.session.externalAdmission;
+	admission.close(RELEASED_ADMISSION_CLOSED);
+	let answer: RpcResponse | undefined;
+	try {
+		const dropped = await interruptAndSettle(port, command.sessionId, first.session);
+		answer = await claimAndRelease(port, command, true, dropped);
+		return answer;
+	} finally {
+		if (answer?.success !== true) admission.reopen();
+	}
+}
+
+/**
+ * The final check and the release. After an interrupt every refusal carries `interrupted` and `dropped`:
+ * the queues were already emptied, so what they held must reach the caller whatever the answer.
+ */
+async function claimAndRelease(
+	port: SessionReleasePort,
+	command: ReleaseSessionCommand,
+	interrupted: boolean,
+	dropped: ReleaseDropped,
+): Promise<RpcResponse> {
+	const taken = interrupted ? { interrupted: true, dropped } : undefined;
+	const ready = releasable(port, command, taken);
 	if (!("session" in ready)) return ready;
 	const stillBusy = busySignals(port, command.sessionId, ready.session);
 	if (stillBusy.length > 0) {
-		ready.session.externalAdmission.reopen();
-		return refuse(busyCode(stillBusy), {
+		return refusal(command.id, busyCode(stillBusy), {
 			attachments: ready.attachments,
-			busy: stillBusy,
+			...busyData(stillBusy),
 			interrupted,
-			...(interrupted ? { dropped } : {}),
+			...taken,
 		});
 	}
 	// From here to the close claim nothing awaits: a drain pass still running admits nothing more, so a
@@ -129,7 +153,9 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		host_instance: port.hostInstance ?? null,
 		released_at: new Date().toISOString(),
 	});
-	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) return refuse(RPC_ERROR_SESSION_CLOSING);
+	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
+		return refusal(command.id, RPC_ERROR_SESSION_CLOSING, taken);
+	}
 	return {
 		id: command.id,
 		type: "response",
@@ -154,6 +180,12 @@ function busySignals(port: SessionReleasePort, sessionId: string, session: Agent
 	if (signals.length === 0 && isHandoffBusy(activity)) signals.push("activity");
 	if (port.otherRequests(sessionId) > 0) signals.push("request");
 	return signals;
+}
+
+function busyData(signals: readonly ReleaseBusySignal[]): Readonly<Record<string, unknown>> {
+	return signals.includes("queued")
+		? { busy: signals, retry_with: { interrupt: true }, hint: RELEASE_QUEUED_HINT }
+		: { busy: signals };
 }
 
 function busyCode(signals: readonly ReleaseBusySignal[]): string {
@@ -203,23 +235,27 @@ async function interruptAndSettle(
 	return dropped;
 }
 
-function releasable(port: SessionReleasePort, command: ReleaseSessionCommand): Releasable | RpcResponse {
+/** `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`. */
+function releasable(
+	port: SessionReleasePort,
+	command: ReleaseSessionCommand,
+	taken: Readonly<Record<string, unknown>> | undefined,
+): Releasable | RpcResponse {
+	const refuse = (code: string, data?: Readonly<Record<string, unknown>>): RpcResponse =>
+		refusal(command.id, code, data || taken ? { ...data, ...taken } : undefined);
 	let entry: RpcSessionEntry;
 	try {
 		entry = port.lookup(command.sessionId);
 	} catch (cause) {
-		return refusal(command.id, port.code(cause));
+		return refuse(port.code(cause));
 	}
-	if (entry.state !== "open") return refusal(command.id, RPC_ERROR_SESSION_CLOSING);
+	if (entry.state !== "open") return refuse(RPC_ERROR_SESSION_CLOSING);
 	const session = entry.runtime?.session;
-	if (session === undefined) return refusal(command.id, RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "worker_runtime" });
+	if (session === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "worker_runtime" });
 	const sessionPath = entry.sessionPath ?? session.sessionFile;
-	if (sessionPath === undefined) {
-		return refusal(command.id, RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "no_session_file" });
-	}
-	if (entry.attachments > 0 && command.force !== true) {
-		return refusal(command.id, RPC_ERROR_ATTACHED, { attachments: entry.attachments });
-	}
+	if (sessionPath === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "no_session_file" });
+	if (entry.attachments > 0 && command.force !== true)
+		return refuse(RPC_ERROR_ATTACHED, { attachments: entry.attachments });
 	return { session, sessionPath, attachments: entry.attachments };
 }
 

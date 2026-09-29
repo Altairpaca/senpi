@@ -10,14 +10,39 @@ import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { ExtensionFactory, SessionControlAdmission } from "../../src/core/extensions/types.ts";
-import { RELEASED_ADMISSION_CLOSED } from "../../src/modes/rpc/session-release.ts";
+import { RELEASE_QUEUED_HINT, RELEASED_ADMISSION_CLOSED } from "../../src/modes/rpc/session-release.ts";
 import { afterReleased, heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
 
+interface Gate {
+	readonly entered: () => void;
+	readonly go: Promise<void>;
+}
+
+function gate(): { held: Gate; entered: Promise<void>; go: () => void } {
+	let entered!: () => void;
+	const enteredPromise = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	let go!: () => void;
+	const goPromise = new Promise<void>((resolve) => {
+		go = resolve;
+	});
+	return { held: { entered, go: goPromise }, entered: enteredPromise, go };
+}
+
 function gatewayFixture() {
-	let armed: { entered: () => void; go: Promise<void> } | undefined;
+	let armed: Gate | undefined;
+	let heldInput: Gate | undefined;
 	const outcomes: string[] = [];
 	let inboxDir = "";
 	const extension: ExtensionFactory = (pi) => {
+		pi.on("input", async () => {
+			const hold = heldInput;
+			heldInput = undefined;
+			if (hold === undefined) return;
+			hold.entered();
+			await hold.go;
+		});
 		pi.on("session_start", async (_event, ctx) => {
 			inboxDir = join(`${ctx.sessionManager.getSessionFile() ?? "session"}.inbox`);
 			await pi.session.registerControlEndpoint({
@@ -52,16 +77,14 @@ function gatewayFixture() {
 		extension,
 		outcomes,
 		armLateDrain(): { entered: Promise<void>; go: () => void; wake: () => void } {
-			let entered!: () => void;
-			const enteredPromise = new Promise<void>((resolve) => {
-				entered = resolve;
-			});
-			let go!: () => void;
-			const goPromise = new Promise<void>((resolve) => {
-				go = resolve;
-			});
-			armed = { entered, go: goPromise };
-			return { entered: enteredPromise, go, wake: () => writeFileSync(join(inboxDir, "late-1"), "marker") };
+			const late = gate();
+			armed = late.held;
+			return { entered: late.entered, go: late.go, wake: () => writeFileSync(join(inboxDir, "late-1"), "marker") };
+		},
+		holdNextInput(): { entered: Promise<void>; go: () => void } {
+			const input = gate();
+			heldInput = input.held;
+			return { entered: input.entered, go: input.go };
 		},
 	};
 }
@@ -139,5 +162,84 @@ describe("release_session and gateway deliveries (real host)", () => {
 		expect(file).not.toContain("USER STEER TEXT");
 		expect(file).not.toContain("USER FOLLOW TEXT");
 		expect(afterReleased(sessionPath)).toEqual([]);
+	});
+
+	it("an interrupted release refused `attached` reopens admission and still hands back what it took", async () => {
+		// Given: a running turn, user text queued behind it, and a prompt held in its input handler, which
+		// keeps the interrupt's settle window open.
+		const gateway = gatewayFixture();
+		await using host = await startReleaseHost(gateway.extension);
+		host.faux.setResponses([
+			fauxAssistantMessage("seed reply"),
+			heldTurn,
+			fauxAssistantMessage("after 1"),
+			fauxAssistantMessage("after 2"),
+			fauxAssistantMessage("after 3"),
+		]);
+		const { sessionId, sessionPath, session } = await host.open("attached-refusal");
+		const started = nextEvent(session, "agent_start");
+		await host.send({ type: "prompt", id: "work", sessionId, message: "long work" });
+		await started;
+		await host.send({ type: "follow_up", id: "f", sessionId, message: "USER FOLLOW TEXT" });
+		const input = gateway.holdNextInput();
+		void host.send(
+			{ type: "prompt", id: "slow", sessionId, message: "slow input", streamingBehavior: "followUp" },
+			"held-input",
+		);
+		await input.entered;
+
+		// When: the release interrupts, and a client attaches while it waits for the held prompt.
+		const aborted = nextEvent(session, "session_abort");
+		const reply = host.release(sessionId, { interrupt: true });
+		await aborted;
+		expect(await host.attach(sessionPath)).toMatchObject({ success: true, data: { attached: true } });
+		input.go();
+
+		// Then: refused with what the interrupt took, and the session the host keeps admits deliveries again.
+		expect(await reply).toMatchObject({
+			success: false,
+			error: "attached",
+			errorData: {
+				attachments: 1,
+				interrupted: true,
+				dropped: { deliveries: [], user_messages: ["USER FOLLOW TEXT"] },
+			},
+		});
+		expect(await host.send({ type: "wake", id: "w", sessionId, delivery_ids: ["after-refusal"] })).toMatchObject({
+			success: true,
+			data: { admitted: [{ delivery_id: "after-refusal" }] },
+		});
+		expect(gateway.outcomes.filter((outcome) => outcome.includes(":refused:"))).toEqual([]);
+	});
+
+	it("a plain release with the user's text queued names interrupt as the way to recover it", async () => {
+		// Given: a turn running with user text queued behind it.
+		const gateway = gatewayFixture();
+		await using host = await startReleaseHost(gateway.extension);
+		host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
+		const { sessionId, session } = await host.open("queued-plain");
+		const started = nextEvent(session, "agent_start");
+		await host.send({ type: "prompt", id: "work", sessionId, message: "long work" });
+		await started;
+		await host.send({ type: "follow_up", id: "f", sessionId, message: "USER FOLLOW TEXT" });
+
+		// When: a plain release, then the one it points to.
+		const plain = await host.release(sessionId);
+		const interrupted = await host.release(sessionId, { interrupt: true });
+
+		// Then: the refusal says interrupt recovers the text, and the interrupt does.
+		expect(plain).toMatchObject({
+			success: false,
+			error: "turn_active",
+			errorData: {
+				busy: expect.arrayContaining(["queued"]),
+				retry_with: { interrupt: true },
+				hint: RELEASE_QUEUED_HINT,
+			},
+		});
+		expect(interrupted).toMatchObject({
+			success: true,
+			data: { released: true, dropped: { user_messages: ["USER FOLLOW TEXT"] } },
+		});
 	});
 });

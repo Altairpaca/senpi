@@ -990,7 +990,13 @@ no longer lists it and the handle answers `unknown_session`.
   that a pending prompt starts meanwhile is aborted too), and external admission closed; the release waits up to
   10 s for the run to go idle, for the other requests and prompts to settle - the cancelled bash is recorded then,
   before the release - and checks again. Still busy answers the same refusal with `errorData.interrupted: true`
-  and `errorData.dropped`, and reopens admission; otherwise the entry records `interrupted: true`.
+  and `errorData.dropped`; otherwise the entry records `interrupted: true`. Every refusal after the interrupt
+  (still busy, `attached` because a client attached while it waited, `unknown_session`, `session_closing`)
+  reopens admission on the session the host keeps and carries `interrupted: true` and `dropped` in `errorData`,
+  since the queues were already emptied.
+- A refusal whose `busy` names `queued` also carries `errorData.retry_with: { interrupt: true }` and a `hint`:
+  queued user input is owed a turn even when none is running (an aborted run leaves it queued), and only an
+  interrupt release takes it out and hands it back in `dropped.user_messages`.
 - Nothing queued vanishes silently. `dropped: { deliveries, user_messages }` (always present; empty without
   `interrupt`) lists what the interrupt took out of the queues: `deliveries` are the ids of admitted deliveries
   that were never written - they are no longer in the session's ledger and not on disk, so their sender delivers
