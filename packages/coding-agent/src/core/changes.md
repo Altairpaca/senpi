@@ -1,3 +1,21 @@
+## 2026-09-29 - The model runtime installs the Claude Code version cache (senpi#2321)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `ModelRuntime.create` and `createSync` call `installClaudeCodeVersionFileStore` (from `@earendil-works/pi-ai/utils/claude-code-version-cache`) with `<dirname(models.json)>/claude-code-version.json` and `offline: envValue("OFFLINE") !== undefined`, so every host with a models.json (CLI, SDK, RPC, app-server, daemon, session worker) shares one on-disk Claude Code version cache and one background lookup per six hours. An in-memory runtime (`modelsPath: null`, tests) keeps pi-ai's bundled floor.
+
+### Why
+
+- pi-ai's resolver is browser-safe and holds no filesystem; the host decides where the cache lives, and `ModelRuntime.create` is the one place every mode passes through with the agent directory resolved.
+
+### Why an extension could not handle it
+
+- Extensions load after the runtime exists and cannot reach pi-ai's module state before the first request.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the two `create` entry points in `model-runtime.ts`.
+
 ## 2026-09-29 - A usage limit skips the rest of a spent account and names itself in the fallback notice (omo#8296)
 
 ### What changed

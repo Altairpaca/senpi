@@ -39,6 +39,12 @@ import type {
 } from "../types.ts";
 import { isVideoMimeType } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import {
+	claudeCodeVersionTooOldHint,
+	getClaudeCodeVersion,
+	isClaudeCodeVersionTooOldError,
+	recoverClaudeCodeVersion,
+} from "../utils/claude-code-version.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -131,8 +137,6 @@ function getCacheControl(
 }
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.280";
-
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
 // To update: https://github.com/badlogic/cchistory
@@ -288,7 +292,14 @@ const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
  * this as `compat.supportsDisabledThinking: false`, but `models.json` entries and third-party
  * gateway rows carry no generated compat, so the family fact has to live here as well.
  */
-const DISABLED_THINKING_REJECTING_MODEL_MARKERS = ["fable-5", "mythos-5", "opus-5-5", "opus-5.5"] as const;
+const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
+	"fable-5",
+	"mythos-5",
+	"opus-5-5",
+	"opus-5.5",
+	"sonnet-5-5",
+	"sonnet-5.5",
+] as const;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",
 	"opus-4.6",
@@ -1195,13 +1206,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		const requestSignal = combinedAbort.signal;
 		try {
 			let client: Anthropic;
-			let isOAuth: boolean;
+			let isOAuth = false;
+			let claudeCodeVersion: string | undefined;
 			let usageModel = model;
 			let inputTransformations: BetaInputTransformation[] | undefined;
+			let openClient: (() => void) | undefined;
 
 			if (options?.client) {
 				client = options.client;
-				isOAuth = false;
 			} else {
 				const apiKey = options?.apiKey;
 				const optionsHeaders = providerHeadersToRecord(options?.headers);
@@ -1223,21 +1235,48 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				);
 				const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 
-				const created = createClient(
-					model,
-					apiKey,
-					options?.interleavedThinking ?? true,
-					shouldUseFineGrainedToolStreamingBeta(model, context),
-					options?.refusalFallbacks !== undefined,
-					optionsHeaders,
-					options?.fetch,
-					copilotDynamicHeaders,
-					cacheSessionId,
-					options?.env,
-				);
-				client = created.client;
-				isOAuth = created.isOAuthToken;
+				openClient = () => {
+					const created = createClient(
+						model,
+						apiKey,
+						options?.interleavedThinking ?? true,
+						shouldUseFineGrainedToolStreamingBeta(model, context),
+						options?.refusalFallbacks !== undefined,
+						optionsHeaders,
+						options?.fetch,
+						copilotDynamicHeaders,
+						cacheSessionId,
+						options?.env,
+					);
+					client = created.client;
+					isOAuth = created.isOAuthToken;
+					claudeCodeVersion = created.claudeCodeVersion;
+				};
+				openClient();
 			}
+			// One retry per request: a `claude_code_version_too_old` 400 names the version Anthropic
+			// wants, so the fingerprint is raised and the same request goes out again with it.
+			let claudeCodeVersionRetried = false;
+			const retryWithNewerClaudeCode = async (error: unknown): Promise<boolean> => {
+				if (
+					claudeCodeVersionRetried ||
+					openClient === undefined ||
+					claudeCodeVersion === undefined ||
+					!isClaudeCodeVersionTooOldError(error)
+				) {
+					return false;
+				}
+				const next = await recoverClaudeCodeVersion(error, claudeCodeVersion, options?.env);
+				if (next === undefined) return false;
+				claudeCodeVersionRetried = true;
+				openClient();
+				return true;
+			};
+			const noteTooOldClaudeCode = (error: unknown): void => {
+				if (claudeCodeVersion !== undefined && isClaudeCodeVersionTooOldError(error)) {
+					error.message = `${error.message}\n${claudeCodeVersionTooOldHint(claudeCodeVersion)}`;
+				}
+			};
 			const fallbackKey = unsignedThinkingFallbackKey(model, options?.sessionId);
 			let unsignedThinkingReplay: UnsignedThinkingReplay =
 				fallbackKey && unsignedThinkingTextReplayFallbacks.has(fallbackKey)
@@ -1293,6 +1332,15 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
 								return createRequest();
 							}
+							if (await retryWithNewerClaudeCode(error)) {
+								try {
+									return await createRequest();
+								} catch (retryError) {
+									noteTooOldClaudeCode(retryError);
+									throw retryError;
+								}
+							}
+							noteTooOldClaudeCode(error);
 							throw error;
 						}
 					},
@@ -1794,7 +1842,7 @@ function createClient(
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
 	env?: ProviderEnv,
-): { client: Anthropic; isOAuthToken: boolean } {
+): { client: Anthropic; isOAuthToken: boolean; claudeCodeVersion?: string } {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model);
 	const betaFeatures: string[] = [];
@@ -1864,6 +1912,7 @@ function createClient(
 
 	// OAuth: Bearer auth, Claude Code identity headers
 	if (apiKey && isOAuthToken(apiKey)) {
+		const claudeCodeVersion = getClaudeCodeVersion(env);
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
@@ -1887,7 +1936,7 @@ function createClient(
 			),
 		});
 
-		return { client, isOAuthToken: true };
+		return { client, isOAuthToken: true, claudeCodeVersion };
 	}
 
 	// API key auth
