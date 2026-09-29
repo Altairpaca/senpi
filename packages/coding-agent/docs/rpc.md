@@ -1203,8 +1203,9 @@ handlers nor expansion changed the text, a name that is not a registered extensi
 template, or loaded `skill:<name>` is refused before the model sees it. The failure carries
 `errorCode: "unknown_command"` and `errorData: {"command", "suggestions", "reason"}`: `command` and
 `suggestions` (up to three close names) omit the leading `/`, and `reason` is `"unknown"` or
-`"interactive_only"` for a TUI builtin such as `/model`. Set `"unknownCommandAsText": true` to send
-such text to the model unchanged:
+`"interactive_only"` for a TUI builtin such as `/model`. A message that starts with whitespace
+(`" /foo bar"`) is sent as text, as in the TUI; set `"unknownCommandAsText": true` to send such text to the
+model unchanged without the leading space:
 
 ```json
 {"type": "prompt", "message": "/etc is where the config lives", "unknownCommandAsText": true}

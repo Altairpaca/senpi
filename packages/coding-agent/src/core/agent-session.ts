@@ -4059,7 +4059,8 @@ export class AgentSession {
 				if (
 					expandedText === currentText &&
 					options?.source !== "extension" &&
-					options?.unknownCommandAsText !== true
+					options?.unknownCommandAsText !== true &&
+					!/^\s/.test(text)
 				) {
 					this._rejectUnknownCommand(currentText);
 				}

@@ -158,7 +158,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/unknown-command.ts` (fork-only): `UnknownCommandError` (`command`, `suggestions`, `reason`), `commandShapedName`, `findUnknownCommand`, and `unknownCommandErrorFromWire` for the RPC client.
-- `packages/coding-agent/src/core/agent-session.ts`: `PromptOptions.unknownCommandAsText`. In `prompt()`, after the `input` event and skill/template expansion, text that expansion left unchanged, from a source other than `extension`, without the opt-out, goes through `_rejectUnknownCommand`, which throws when the leading `/name` token names no extension command, prompt template, or loaded `skill:<name>` (TUI builtins get `reason: "interactive_only"`). The throw sits inside the prompt's try block, so the input disposition is `rejected`, `preflightResult(false)` fires, and no user message is built or persisted.
+- `packages/coding-agent/src/core/agent-session.ts`: `PromptOptions.unknownCommandAsText`. In `prompt()`, after the `input` event and skill/template expansion, text that expansion left unchanged, from a source other than `extension`, without the opt-out, and not starting with whitespace, goes through `_rejectUnknownCommand`, which throws when the leading `/name` token names no extension command, prompt template, or loaded `skill:<name>` (TUI builtins get `reason: "interactive_only"`). The throw sits inside the prompt's try block, so the input disposition is `rejected`, `preflightResult(false)` fires, and no user message is built or persisted.
 - `packages/coding-agent/src/core/skills.ts`: `Skill.argumentHint` from the `argument-hint` frontmatter string (trimmed, omitted when empty); `SkillFrontmatter` declares the field.
 
 ### Why

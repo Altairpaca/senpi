@@ -117,6 +117,14 @@ describe("AgentSession.prompt rejects unknown commands", () => {
 		expect(getUserTexts(harness)).toEqual(["/foo bar"]);
 	});
 
+	it("sends text that starts with whitespace as text, over RPC too", async () => {
+		const harness = await sessionWithSkill();
+
+		await harness.session.prompt(" /foo bar", { source: "rpc" });
+
+		expect(getUserTexts(harness)).toEqual([" /foo bar"]);
+	});
+
 	it("accepts a bare alias an input handler rewrites into a skill command", async () => {
 		const harness = await sessionWithSkill([
 			(pi) => {
