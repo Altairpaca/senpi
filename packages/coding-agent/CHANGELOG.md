@@ -8,6 +8,12 @@
 
 ### Changed
 
+- `gpt-6.1-sol` is the implicit default for the `openai` and `chatgpt-subscription` providers where `gpt-6-sol` was: a session that lands on an implicit OpenAI default picks GPT-6.1 Sol when it is authenticated, and a registry that carries GPT-6 Sol or GPT-5.6 Sol but not GPT-6.1 Sol falls through to the first available model as before. Your explicitly configured `defaultModel` is untouched; GPT-6 Sol stays selectable. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
+
+- GPT-6.1 Sol runs on the GPT-6 system prompt: any `gpt-6.1-sol` id (Fast variants, gateway-prefixed ids, the display name "GPT-6.1 Sol") selects the prompt the GPT-6 family already uses instead of the generic one. That prompt gains the two writing rules OpenAI's own Codex template adds only for GPT-6.1 Sol: apologize or blame yourself only for an avoidable mistake of your own (a neutral follow-up, a user correcting their own message, or new information is not an occasion for either), and leave out announcements of what something is not. Astra, GPT-6 Sol and Luna render the same prompt, so they pick the rules up too. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
+
+- The high-reasoning warning that fires for GPT-5.6 Sol and GPT-6 Sol at `xhigh` / `max` now also covers GPT-6.1 Sol, including `-fast`, `-pro` and gateway-prefixed ids. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
+
 ### Fixed
 
 - Fixed the prompt-cache keep-alive never arming in real sessions and pinging with a different tool list than the turn it keeps warm ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))

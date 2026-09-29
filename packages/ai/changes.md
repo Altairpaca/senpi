@@ -1,3 +1,24 @@
+## 2026-09-30 - GPT-6.1 Sol catalog rows and Fast variant (senpi#2390)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `gpt-6.1-sol` joins every OpenAI id table that carries `gpt-6-sol` (tool search + additional tools on `openai` and `chatgpt-subscription`, short-context cap, long-context pricing tiers, Fast/Priority `-fast` variants on both first-party providers) and, unlike GPT-6 Sol, `CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS` (openai/codex's `models.json` flags `gpt-6.1-sol` `supports_reasoning_effort_updates: true`, as it does `gpt-6-astra`). It stays out of `OPENAI_RESPONSES_NONE_REASONING_MODELS` and `applyGpt6ThinkingLevels` forces `off: null` for it as for Astra, because the model page documents `low`/`medium`/`high`/`xhigh`/`max` only. `OPENAI_GPT_6_STANDARD_COSTS["gpt-6.1-sol"]` is 2/10/0.1/2.5 per MTok (the cached-input rate halves versus GPT-6 Sol); the flagship and family context-window tables carry `gpt-6.1-sol` at the 400,000 Sol budget, listed before `gpt-6-sol` since the family lookup matches by substring. Hand-added rows land in the `openai` fallback list and the `chatgpt-subscription` list.
+- `packages/ai/src/providers/data/` regenerated with `--strict`: +2 rows each on `openai.json` and `chatgpt-subscription.json` (base + `-fast`), +1 on `azure-openai-responses.json`, +4 on `openrouter.json` (`openai/gpt-6.1-sol`, `-pro`, both `:batch`), +2 on `vercel-ai-gateway.json` (`openai/gpt-6.1-sol`, `openai/gpt-6.1-sol-fast`; Vercel also added two `inclusionai/ling-3.1-flash` rows). Incidental upstream drift: OpenRouter DeepSeek V4 Pro prices refreshed and `~openai/gpt-sol-latest` now resolves to GPT-6.1 Sol (0.1 cache reads, no `none`). No model id was removed. models.dev, GitHub Copilot, OpenCode Zen and OpenGateway do not list the model yet.
+- Tests: `test/gpt-6-family-catalog.test.ts` adds `gpt-6.1-sol` with `supportsNone: false` (first-party rows, pricing tiers, `off` vetoed on catalog and map-less rows, `-fast` variant, family-wide budget); `test/openai-input-cap-catalog.test.ts` exempts the deliberate `gpt-6.1-sol @ 400,000` pairing and pins the OpenRouter and Vercel rows; `test/openai-config-update.test.ts` pins the `chatgpt-subscription` flag set as `gpt-6-astra`, `gpt-6-astra-fast`, `gpt-6.1-sol`, `gpt-6.1-sol-fast`.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29 (developers.openai.com/api/docs/models/gpt-6.1-sol): near-Astra quality at GPT-6 Sol's price, and Codex made it the default catalog model. Without rows the id was unselectable on every lane, and the `gpt-6-sol` substring matchers did not cover it. Ultrafast is deliberately absent: OpenAI's Ultrafast pricing table lists `gpt-6-astra` only and the announcement says GPT-6.1 Sol Ultrafast follows "in the coming days"; senpi carries no `ultrafast` service tier yet (the openai SDK's `service_tier` union stops at `priority`), so that is its own change when it ships.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package; nothing loaded at runtime can add a first-party row or change what the generator wrote.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the OpenAI id tables near the top, `OPENAI_GPT_6_STANDARD_COSTS`, `applyGpt6ThinkingLevels`, the hand-added `openai` and `chatgpt-subscription` row lists.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than merge.
+
 ## 2026-09-29 - Published tarball excludes sourcemaps (senpi#2362)
 
 ### What changed
