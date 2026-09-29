@@ -1,6 +1,6 @@
 import { Text } from "@earendil-works/pi-tui";
 
-import { providerEntryLabel } from "./search.ts";
+import { attemptRouteLabel } from "./route-attempts.ts";
 import type { SearchDetails, SearchErrorDetails, SearchProgressDetails, SearchRenderDetails } from "./types.ts";
 
 interface ThemeLike {
@@ -35,7 +35,7 @@ function durationText(durationMs: number): string {
 function attemptLabel(attempts: SearchDetails["attempts"]): string {
 	return attempts
 		? attempts
-				.map((attempt) => `${providerEntryLabel(attempt)}:${attempt.error ? "failed" : attempt.resultsCount}`)
+				.map((attempt) => `${attemptRouteLabel(attempt)}:${attempt.error ? "failed" : attempt.resultsCount}`)
 				.join(" -> ")
 		: "";
 }
@@ -99,7 +99,7 @@ export function renderSearchResult(
 	if (details.error) return new Text(theme.fg("error", details.error), 0, 0);
 
 	const count = details.results.length;
-	const provider = providerEntryLabel(details);
+	const provider = attemptRouteLabel(details);
 	const summary =
 		theme.fg("success", `${count} result${count === 1 ? "" : "s"}`) +
 		theme.fg("muted", ` via ${provider} in ${durationText(details.durationMs)}`) +

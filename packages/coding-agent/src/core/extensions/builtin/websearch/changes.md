@@ -1,3 +1,32 @@
+## 2026-09-29 - Native web search runs on a cheaper same-provider model, with the session model as fallback (senpi#2340)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search-model.ts` (new): `resolveNativeSearchModel` picks the model a native search runs on for the session's own route. A `nativeModel` setting wins when the registry lists that id (or `provider/id`) on the same provider and the same `nativeRouteKey` as the session model; otherwise it is ignored with a warning. Without the setting, a per-provider default table ported from oh-my-pi's `web-search-model` catalog axis (`claude-haiku-4-5`/`claude-haiku-4.5`, `gpt-5.6-luna`, `grok-4.3`, `deepseek-v4-flash`) applies only when the candidate is on the same route and its catalog `cost` is no higher than the session model's on input and output and lower on at least one. `"session"` pins the session model.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/native.ts`: `NativeModelInfo` carries optional `cost`; `nativeMapping`, `NativeProviderMapping` and `nativeRouteKey` are exported; `buildNativeEntries` takes an optional `{ model, fallbackModel }` applied to the active session route entry only (discovered routes keep their own model). Auth still resolves through the session model, so the credential never changes.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/route-attempts.ts` (new): `providerEntryLabel` moved here unchanged (re-exported from `search.ts`), plus `attemptRouteLabel` (`label (model)`) and `routeAttemptEntries`, which expands an entry with `fallbackModel` into the chosen-model attempt and the session-model retry.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search.ts`: `performSearch` runs each route through `searchRoute`, which retries a failed or empty chosen-model attempt on `fallbackModel` before the routing strategy moves on (also with `fallback: false`). Attempts and details record `model`; route labels, the routing-attempts line, the `via` fragment and the all-failed message name it.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`: `WebsearchConfig.nativeModel`, `SearchProviderEntry.fallbackModel`, `SearchDetails.model`, `SearchAttempt.model`.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/config.ts`: reads top-level `nativeModel` (both the `providers` form and the single-provider shorthand) and rejects a non-string or empty value with a named message.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/tool.ts`: resolves the choice before building native entries; `createWebSearchTool` takes an optional `onSearchComplete` callback.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/renderers.ts`: the expanded route line and the result summary use `attemptRouteLabel`.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/index.ts`: `/websearch status` reports `native model=<id> (falls back to <session id>)`, the route and model of the last successful search, and a `warning`-level line when `nativeModel` is ignored.
+- Covered by `test/suite/websearch-native-search-model.test.ts` and `test/suite/websearch-native-search-model-status.test.ts`.
+
+### Why
+
+- Native search sub-requests ran on the session model itself, so an Opus-class session paid Opus rates (or spent Opus subscription usage) for a request that only has to find URLs. senpi#2340.
+- The setting is a new `nativeModel` key rather than a reuse of `model`: in `websearch.json` `model` already means a configured provider's model, and in the single-provider shorthand the top-level `model` *is* that provider's model, so reusing it would change the meaning of existing files. The settings.json per-purpose keys (`compaction.model`, `lookAt.models`) each need a dedicated `ExtensionContext` getter threaded through `agent-session.ts`; this builtin already owns its config file, so the setting lives there.
+
+### Why an extension could not handle it
+
+- The native route construction, routing loop and `/websearch` command are private to this builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: `performSearch` in `websearch/search.ts` (the per-route loop now calls `searchRoute`) and `formatSearchText`.
+- LOW: the `buildNativeEntries` signature and its active-entry push in `websearch/native.ts`; the `NativeModelInfo` fields; `configFromObject` and `loadWebsearchConfig` in `websearch/config.ts`; the status handler in `index.ts`. Re-vendoring must carry `route-attempts.ts` and `search-model.ts`, or restore `providerEntryLabel` in `search.ts`.
+
 ## 2026-09-28 - Native web search uses the credential's own API host (senpi#2309)
 
 ### What changed

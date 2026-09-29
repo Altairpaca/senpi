@@ -158,6 +158,8 @@ function providerEntryFromObject(raw: JsonObject): SearchProviderEntry | null {
 
 function configFromObject(raw: JsonObject): WebsearchConfig | null {
 	const auto = optionalBoolean(raw.auto) ?? true;
+	const nativeModel = optionalString(raw.nativeModel);
+	const shared = nativeModel ? { auto, nativeModel } : { auto };
 	const providersValue = raw.providers;
 	const rawProviders = Array.isArray(providersValue) ? providersValue : undefined;
 	if (rawProviders) {
@@ -167,11 +169,11 @@ function configFromObject(raw: JsonObject): WebsearchConfig | null {
 			.filter((entry): entry is SearchProviderEntry => entry !== null);
 		const strategy = optionalStrategy(raw.strategy) ?? "priority";
 		const fallback = optionalBoolean(raw.fallback) ?? true;
-		return { strategy, fallback, auto, providers };
+		return { strategy, fallback, ...shared, providers };
 	}
 
 	const provider = providerEntryFromObject(raw);
-	return provider ? { strategy: "priority", fallback: true, auto, providers: [provider] } : null;
+	return provider ? { strategy: "priority", fallback: true, ...shared, providers: [provider] } : null;
 }
 
 function hasApiKey(config: SearchProviderConfig): boolean {
@@ -276,6 +278,10 @@ export async function loadWebsearchConfig(options: ConfigLoadOptions): Promise<C
 		const raw = parseJsonObject(await readFile(path, "utf8"));
 		if (!raw) {
 			return { ok: false, reason: "invalid_config", message: `Invalid JSON object in ${path}`, source: path };
+		}
+		if (raw.nativeModel !== undefined && !optionalString(raw.nativeModel)) {
+			const message = `Websearch config nativeModel in ${path} must be a non-empty model id.`;
+			return { ok: false, reason: "invalid_config", message, source: path };
 		}
 		const config = configFromObject(raw);
 		if (!config) {

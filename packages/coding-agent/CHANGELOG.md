@@ -6,7 +6,11 @@
 
 ### Added
 
+- `websearch.json` accepts `nativeModel`, the model the session's hosted web search runs on, for example `"nativeModel": "claude-haiku-4-5"`. It must be served by the same provider, endpoint and credential as the session model; any other value is ignored and `/websearch status` warns about it. When the chosen model fails or finds nothing, the same search retries on the session model before moving to the next search provider. See [Web Search](docs/web-search.md). ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
+
 ### Changed
+
+- Hosted web search no longer runs on your top-tier session model when a cheaper model of the same provider is available on the same endpoint: Claude routes use `claude-haiku-4-5`, OpenAI Responses routes `gpt-5.6-luna`, xAI `grok-4.3`, DeepSeek `deepseek-v4-flash`, and only when the model list shows that model with a lower price than the session model. If it fails, the search retries on the session model. Set `"nativeModel": "session"` in `websearch.json` to keep the old behavior. The routing attempts line and `/websearch status` now name the model that served each search. ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
 
 ### Fixed
 

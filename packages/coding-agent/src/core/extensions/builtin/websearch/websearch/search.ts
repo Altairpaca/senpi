@@ -1,4 +1,5 @@
 import { buildSearchRequest, normalizeSearchResponse } from "./providers.ts";
+import { attemptRouteLabel, providerEntryLabel, routeAttemptEntries } from "./route-attempts.ts";
 import type {
 	JsonObject,
 	RoutingStrategy,
@@ -89,16 +90,7 @@ export function createSearchRoutingState(providerCount: number): SearchRoutingSt
 	return { roundRobinCursor: 0, successCounts: Array.from({ length: providerCount }, () => 0) };
 }
 
-export function providerEntryLabel(entry: {
-	readonly provider: string;
-	readonly id?: string;
-	readonly entryId?: string;
-}): string {
-	const id = entry.entryId ?? entry.id;
-	if (!id || id === entry.provider) return entry.provider;
-	const nativePrefix = `native-${entry.provider}-`;
-	return id.endsWith("/native") ? id : `${entry.provider}/${id.startsWith(nativePrefix) ? "native" : id}`;
-}
+export { providerEntryLabel };
 
 function sortedPriorityIndices(providers: SearchProviderEntry[]): number[] {
 	return providers
@@ -245,6 +237,7 @@ function attemptFromDetails(details: SearchDetails): SearchAttempt {
 		resultsCount: details.results.length,
 	};
 	if (details.entryId) attempt.entryId = details.entryId;
+	if (details.model) attempt.model = details.model;
 	if (details.error) attempt.error = details.error;
 	return attempt;
 }
@@ -254,6 +247,30 @@ export type SearchAttemptListener = (
 	attempts: readonly SearchAttempt[],
 	routeLabels: readonly string[],
 ) => void;
+
+async function searchRoute(
+	entry: SearchProviderEntry,
+	request: SearchRequest,
+	signal: AbortSignal | undefined,
+	attempts: SearchAttempt[],
+	notify: (label: string) => void,
+): Promise<SearchDetails> {
+	const searchEntry = async (variant: SearchProviderEntry): Promise<SearchDetails> => {
+		notify(providerEntryLabel(variant));
+		const result = await performProviderSearch(variant, request, signal);
+		if (variant.model !== undefined) result.model = variant.model;
+		attempts.push(attemptFromDetails(result));
+		return result;
+	};
+	// A route with a cheaper search model retries on the session model before routing moves on (senpi#2340).
+	const [primary, ...retries] = routeAttemptEntries(entry);
+	let details = await searchEntry(primary);
+	for (const retry of retries) {
+		if (!details.error) break;
+		details = await searchEntry(retry);
+	}
+	return details;
+}
 
 export async function performSearch(
 	config: WebsearchConfig,
@@ -268,7 +285,7 @@ export async function performSearch(
 	const attempts: SearchAttempt[] = [];
 	const routeLabels = order.flatMap((index) => {
 		const provider = config.providers[index];
-		return provider ? [providerEntryLabel(provider)] : [];
+		return provider ? routeAttemptEntries(provider).map(attemptRouteLabel) : [];
 	});
 	const collected = new Map<string, SearchDetails["results"][number]>();
 	let selectedDetails: SearchDetails | undefined;
@@ -276,9 +293,9 @@ export async function performSearch(
 	for (const index of order) {
 		const provider = config.providers[index];
 		if (!provider) continue;
-		onAttempt?.(providerEntryLabel(provider), attempts, routeLabels);
-		const details = await performProviderSearch(provider, request, signal);
-		attempts.push(attemptFromDetails(details));
+		const details = await searchRoute(provider, request, signal, attempts, (label) =>
+			onAttempt?.(label, attempts, routeLabels),
+		);
 
 		if (details.error) {
 			if (!config.fallback) return { ...details, strategy: config.strategy, attempts };
@@ -312,6 +329,7 @@ export async function performSearch(
 			attempts,
 		};
 		if (selectedDetails.entryId !== undefined) details.entryId = selectedDetails.entryId;
+		if (selectedDetails.model !== undefined) details.model = selectedDetails.model;
 		return details;
 	}
 
@@ -328,7 +346,7 @@ export async function performSearch(
 		durationMs: Date.now() - startedAt,
 		strategy: config.strategy,
 		attempts,
-		error: `All configured search providers failed: ${attempts.map((attempt) => `${providerEntryLabel(attempt)} ${attempt.error ?? "failed"}`).join("; ")}`,
+		error: `All configured search providers failed: ${attempts.map((attempt) => `${attemptRouteLabel(attempt)} ${attempt.error ?? "failed"}`).join("; ")}`,
 	};
 }
 
@@ -336,14 +354,14 @@ export function formatSearchText(details: SearchDetails): string {
 	if (details.error) return details.error;
 	if (details.results.length === 0) return `No web search results found for "${details.query}".`;
 
-	const route = ` via ${providerEntryLabel(details)}`;
+	const route = ` via ${attemptRouteLabel(details)}`;
 	const lines = [`Web search results for "${details.query}"${route}:`, ""];
 	if (details.attempts && details.attempts.length > 0) {
 		lines.push(
 			`Routing attempts: ${details.attempts
 				.map(
 					(attempt) =>
-						`${providerEntryLabel(attempt)} ${attempt.error ? `failed: ${attempt.error}` : `${attempt.resultsCount} result${attempt.resultsCount === 1 ? "" : "s"}`}`,
+						`${attemptRouteLabel(attempt)} ${attempt.error ? `failed: ${attempt.error}` : `${attempt.resultsCount} result${attempt.resultsCount === 1 ? "" : "s"}`}`,
 				)
 				.join(" -> ")}`,
 			"",
