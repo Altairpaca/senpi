@@ -1,3 +1,21 @@
+## 2026-09-29 - Print mode names why a fallback returned early (senpi#2376)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the `Model fallback reverted` stderr line appends `(<from> cannot serve right now)` when `retry_fallback_reverted` carries `cause: "fallback-unusable"`.
+
+### Why
+
+- The session now returns from a billing-dead fallback before the original's cooldown lapses; the line must not read like an ordinary cooldown revert.
+
+### Why an extension could not handle it
+
+- Print mode's event-to-stderr writer is core output, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_reverted` branch in `packages/coding-agent/src/modes/print-mode.ts`.
+
 ## 2026-09-29 - A running session keeps its own build when the install is replaced (#2358)
 
 ### What changed

@@ -67,6 +67,7 @@ import {
 	QUESTION_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
+import { settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
@@ -1683,15 +1684,12 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			const response = parsed as RpcExtensionUIResponse;
-			const result = questions.respond(response);
-			if (typeof result === "string") output(error(response.id, "extension_ui_response", result));
-			if (result) return;
-			if (!pendingExtensionRequests.resolve(response) && routingSessionId !== undefined) {
-				// This binding owns exactly one session's request map. A response not
-				// requested here is a routed protocol error, never a cross-session match.
-				output(error(undefined, "extension_ui_response", "unknown_extension_ui_request"));
-			}
+			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
+				questions,
+				dialogs: pendingExtensionRequests,
+				routed: routingSessionId !== undefined,
+			});
+			if (reply) output(reply);
 			return;
 		}
 

@@ -10,6 +10,7 @@ import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import type { AdmissionHoldReason, QuestionResponse, SessionControlDrainResult } from "../../core/extensions/types.ts";
+import { answeredUiRequestId } from "../rpc/extension-ui-response.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
@@ -108,17 +109,21 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 	};
 }
 
-/** Only a question this session asked, and is still waiting on, can be answered. */
+/**
+ * Only a question this session asked, and is still waiting on, can be answered. `uiRequestId` names
+ * it (the short form: `id`); the reply always carries the frame's `id`, as on a host.
+ */
 function answerQuestion(surface: TuiControlSurface, command: ControlCommand): object {
-	const requestId = command.id;
-	if (typeof requestId !== "string" || !surface.pendingQuestionIds().includes(requestId)) {
-		return failure(requestId, "extension_ui_response", "unknown_request");
+	const frameId = command.id;
+	const requestId = answeredUiRequestId(command);
+	if (requestId === undefined || !surface.pendingQuestionIds().includes(requestId)) {
+		return failure(frameId, "extension_ui_response", "unknown_request");
 	}
 	const response = questionResponse(command);
 	if (response === undefined || !surface.answerQuestion(requestId, response)) {
-		return failure(requestId, "extension_ui_response", "invalid_response");
+		return failure(frameId, "extension_ui_response", "invalid_response");
 	}
-	return success(requestId, "extension_ui_response");
+	return success(frameId, "extension_ui_response");
 }
 
 function questionResponse(command: ControlCommand): QuestionResponse | undefined {

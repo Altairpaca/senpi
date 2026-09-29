@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `classifyErrorMessage` / `isRetryableAssistantError` treat an Anthropic `forbidden` error whose message is only `Request not allowed` as retryable; `permission_error` and forbidden rejections that carry a reason stay terminal. ([#2376](https://github.com/code-yeongyu/senpi/issues/2376))
+
 ### Removed
 
 ## [2026.9.29-3] - 2026-09-29

@@ -982,7 +982,9 @@ registrant opens no socket and writes no registry directory.
     still holds after it.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
-    (`unknown_request` / `invalid_response` otherwise).
+    (`unknown_request` / `invalid_response` otherwise). `uiRequestId` names the question (a pending
+    question id from the `question` feed); without it, `id` does. The reply carries the frame's `id`,
+    as on a host (see "Extension UI Responses").
   - `prompt`, `steer` and `follow_up` are `unsupported`.
 - **Admission.** A message from another session enters only through the registrant's drain, which calls
   `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
@@ -3416,7 +3418,33 @@ Clients without the `question` capability get a sequential fallback: one `select
 
 ### Extension UI Responses (stdin)
 
-Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`). The `id` must match the request.
+Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`, `question`).
+
+A response carries two ids:
+
+- `uiRequestId` names the `extension_ui_request` being answered (its `id`).
+- `id` is the response frame's own correlation id; the reply echoes it.
+
+Without `uiRequestId`, `id` names the request too. That short form is what the examples below use and
+what every older client sends; it keeps working unchanged.
+
+Every response a multi-session host or a terminal control endpoint settles gets exactly one reply,
+carrying the frame's `id`:
+
+```json
+{"id": "answer-1", "type": "response", "command": "extension_ui_response", "success": true}
+```
+
+`success: true` means the answer resolved a pending request. A refusal carries the same `id` and an
+`error`: on a host `question_incomplete` (a `question` answer with neither answers nor a comment),
+`question_already_resolved` (a late answer) or `unknown_extension_ui_request` (no request of that
+session has that id); on a terminal `unknown_request` or `invalid_response`. A single-session stdio
+connection answers every response it resolves the same way, and ignores one that matches none of its
+requests. A client may still fire and forget: the reply is an ordinary `response` record.
+
+```json
+{"type": "extension_ui_response", "id": "answer-1", "uiRequestId": "uuid-1", "value": "Allow"}
+```
 
 #### Value response (select, input, editor)
 

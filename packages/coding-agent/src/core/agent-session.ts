@@ -474,7 +474,13 @@ export type AgentSessionEvent =
 			limit?: "model" | "account";
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
-	| { type: "retry_fallback_reverted"; from: string; to: string }
+	| {
+			type: "retry_fallback_reverted";
+			from: string;
+			to: string;
+			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
+			cause?: "fallback-unusable";
+	  }
 	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
 	| {
 			type: "server_fallback_aborted";

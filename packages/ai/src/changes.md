@@ -1,3 +1,21 @@
+## 2026-09-29 - A reason-less forbidden rejection is retried, not treated as terminal (senpi#2376)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` matches the Anthropic `forbidden` error whose message is only `Request not allowed` (either field order, optional status prefix), so `classifyErrorMessage` answers `retryable` instead of `unknown`.
+
+### Why
+
+- A Claude subscription path answered some requests with `{"type":"error","error":{"type":"forbidden","message":"Request not allowed"}}` while the same credential served neighbouring requests with 200, and the burst ended by itself. As "unknown" the session hopped down the fallback ladder at once, onto a provider that could not serve; a bounded same-model retry recovers. `permission_error` and `forbidden` rejections that name a reason stay terminal.
+
+### Why an extension could not handle it
+
+- Retry classification is the shared provider-error classifier every session and summarizer consults before any extension hook runs.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `RETRYABLE_PROVIDER_ERROR_PATTERN` in `packages/ai/src/utils/retry.ts` (two added patterns).
+
 ## 2026-09-29 - A provider module removed by a reinstall ends the turn once (#2358)
 
 ### What changed
