@@ -92,7 +92,6 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 				queueMicrotask(() => this.emit("exit", 0));
 				break;
 			case "cancel_ui":
-			case "display":
 				break;
 			default: {
 				const exhaustive: never = message;

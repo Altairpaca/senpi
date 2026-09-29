@@ -32,19 +32,11 @@ export interface WorkerSnapshot {
 	streaming: boolean;
 }
 
-export interface WorkerDisplay {
-	revision: number;
-	width: number;
-	rendered: boolean;
-	capabilities: readonly string[];
-}
-
 export type HostToSessionWorker =
 	| { type: "prepare"; request: number; configuration: CliRuntimeConfiguration; profile: RpcSessionLaunchProfile }
 	| { type: "commit"; request: number }
-	| { type: "bind"; request: number; sessionId: string; display: WorkerDisplay; connection?: string }
-	| { type: "command"; request: number; command: object; connection?: string; display: WorkerDisplay }
-	| { type: "display"; display: WorkerDisplay }
+	| { type: "bind"; request: number; sessionId: string; capabilities: readonly string[]; connection?: string }
+	| { type: "command"; request: number; command: object; connection?: string }
 	| { type: "cancel_ui" }
 	| { type: "close" };
 
@@ -54,7 +46,7 @@ export type SessionWorkerToHost =
 	| { type: "result"; request: number; error?: string }
 	| { type: "reserve"; path: string; signal: SharedArrayBuffer }
 	| { type: "snapshot"; snapshot: WorkerSnapshot; signal: SharedArrayBuffer; settled?: boolean }
-	| { type: "control_done"; control: "display" | "cancel_ui" }
+	| { type: "control_done"; control: "cancel_ui" }
 	| {
 			type: "output";
 			record: object;
@@ -63,7 +55,6 @@ export type SessionWorkerToHost =
 			activity: Pick<WorkerSnapshot, "busy" | "handoffBusy" | "streaming">;
 			snapshot?: WorkerSnapshot;
 	  }
-	| { type: "width"; connection?: string; width: number; signal: SharedArrayBuffer }
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "request_close" }
 	| { type: "failure"; error: string };

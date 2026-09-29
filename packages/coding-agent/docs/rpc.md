@@ -1,7 +1,5 @@
 # RPC Mode
 
-Shared-host clients may advertise the `rendered_components` capability to receive factory-rendered widget, header, and footer records. In a shared session, component rendering uses the minimum width reported by currently attached connections, defaulting to 80 when none report a width; disconnected connections no longer contribute.
-
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these
@@ -91,7 +89,7 @@ Multi-session mode lets one `senpi --mode rpc` process serve several independent
 # Shared JSONL over stdio (legacy multi-session host)
 senpi --mode rpc --multi-session [options]
 
-# One shared host over a local socket; each accepted connection has its own JSONL feed
+# One multi-session host over a local socket; each accepted connection has its own JSONL feed
 senpi --mode rpc --listen unix:///tmp/senpi-rpc.sock [options]
 senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 ```
@@ -106,7 +104,7 @@ process-global session registry.
 
 - `in-process` - every session runs IN the host process, sharing its event loop. No worker isolate is allocated and
   no session cap applies (capacity is memory, never a refusal). This is the DEFAULT for a `--listen` socket host,
-  i.e. for the shared host clients attach to.
+  i.e. for the multi-session host clients attach to.
 - `worker` - every session owns a worker isolate, bounded by the worker capacity below. This is the DEFAULT for a
   stdio host (`--multi-session` without `--listen`, and `--listen stdio://`) and for embedders, and stays available
   for socket hosts that pass the flag explicitly.
@@ -202,7 +200,7 @@ upgraded, but its extension set does NOT cover what the running host loaded, so 
 extensions) or `profile_mismatch_attached` (the launch profiles differ, or one of them is unknown - a client
 without a launch spec can prove nothing about extensions and therefore never initiates a handoff).
 
-Four invariants govern every client of a shared host, and every client is expected to keep all four. The first two
+Four invariants govern every client of a multi-session host, and every client is expected to keep all four. The first two
 are what this decision encodes; the other two are what a client must not undo elsewhere:
 
 - **I1 - never terminate, signal or replace a host this process did not start.** A missing capability or a
@@ -222,8 +220,8 @@ are what this decision encodes; the other two are what a client must not undo el
   STRICTLY greater, such a pair attaches instead of upgrading.
 - **I3 - only the generation that owns the daemon state writes it; every other client reads.** A running host's
   pidfile, settings, reservations and socket belong to that generation. A client that cannot use what it finds
-  fails CLOSED - it reports the refusal, or starts its own private host on its own endpoint - and never edits a
-  shared host's state files, unlinks its socket, or removes its pidfile to "clean up". A handoff is the one
+  fails CLOSED - it reports the refusal, or starts its own private host on its own endpoint - and never edits
+  another generation's state files, unlinks its socket, or removes its pidfile to "clean up". A handoff is the one
   exception and it still writes only its OWN generation directory before repointing the pointer (see
   [Daemon state directory](#daemon-state-directory-layout-2)); the drained predecessor keeps its registration until
   it exits, because it is still serving.
@@ -593,7 +591,7 @@ sessions:
 | `node scripts/qa-rpc-socket/inprocess-daemon-qa.mjs` | Two COMPILED binaries of the tree differing only in build epoch; `host ensure --json` run from the older one; per-session `context` isolation (each session's extension sees only its own); `list_sessions` with and without `include_workers`; 50 sessions with the measured thread cost and no refusal; a retained session re-attached across a dropped connection; 200 bash calls leaving zero zombies; and a generation handoff by the newer binary while a client stays connected. |
 | `node scripts/qa-rpc-socket/generation-handoff.mjs` | The handoff alone, against the source supervisor: `ensureHost` -> generation 0, `handoffHost` -> generation 1 on a new pid, `session_path_in_use` naming the owner while the held session is parking, `session_closed { reason: "handoff_parked" }`, the predecessor exiting, the transcript reopening intact in the new generation, and `stopHost({ drain: true })` draining to exit. |
 
-Both exit non-zero if a daemon, a fixture host or the sandbox survives the run: a shared host outliving its QA is
+Both exit non-zero if a daemon, a fixture host or the sandbox survives the run: a host outliving its QA is
 exactly the failure they exist to catch.
 
 ### Child reaping on a socket host (`SENPI_RPC_HOST_REAPER`)
@@ -634,17 +632,14 @@ requests (select, confirm, input, and editor) are requester-only; other extensio
 attached connections. To observe a foreign session, open it by its existing
 `sessionPath`; the host attaches that connection during `open_session`.
 
-### Client information and rendered components
+### Client information
 
-Clients may send `set_client_info` with `{ sessionId, width, capabilities? }`. Advertising `rendered_components` registers
-that connection to receive factory-rendered `setWidget`, `setHeader`, and `setFooter` records. Those records are filtered
-per connection; array/undefined widget records and dialog requests retain their existing delivery semantics. Width is
-shared per session using the minimum of attached clients, and a closed or dropped connection no longer contributes its
-width or capability registration. Snapshot replay preserves rendered-component provenance and applies the same capability
-filter to late joiners; a client that registers `rendered_components` while a snapshot is active receives its retained
-factory-rendered records. On a shared socket host, `rendered_components` is registration-only: it is never inherited from the host environment and must be sent in `set_client_info` for each client connection. Registration applies to the sessions attached by that connection; closing one session removes only that session's width and capability association, while socket disposal removes all associations. Clients must re-register `width` and `capabilities` after every reconnect. When the last
-capable connection leaves a still-attached binding, live component renderers and footer data providers are disposed but
-their factories are retained; a later capable connection recreates and re-renders them.
+Clients may send `set_client_info` with `{ sessionId?, width, capabilities? }`. `capabilities` registers the connection's
+opt-in client capabilities (see [Client capabilities](#client-capabilities)); a name the host does not know is ignored,
+never refused. Registration belongs to the connection that sent it: socket disposal removes it, and clients must
+re-register `capabilities` after every reconnect. `width` is accepted for compatibility and has no effect: the host
+renders no extension components, so a component factory passed to `setWidget`, `setHeader`, or `setFooter` never
+reaches the wire.
 
 ### Session kind and context (`open_session`)
 
@@ -671,9 +666,9 @@ through the deepest existing ancestor of its directory (so the first generation 
 it runs behind without an environment variable. `host_socket` is omitted where no public path exists (an
 abstract socket, a supervised win32 host); a stdio host adds neither key.
 
-One shared host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
+One multi-session host therefore loads ONE extension set and still lets an extension recognize the session it was loaded for
 (`pi.sessionKind`, `pi.sessionContext` - see
-[ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext--pisharedhostenabled)). Probe
+[ExtensionAPI session identity](extensions.md#pisessionkind--pisessioncontext)). Probe
 `session_kind` and `session_context` in `get_protocol_info` capabilities before relying on either: an older host
 ignores both fields and lists every session.
 
@@ -726,14 +721,14 @@ error.
 
 ### Session auto-titling
 
-Auto-generated session titles are on by default only for interactive launches. A shared host decides titling per
+Auto-generated session titles are on by default only for interactive launches. A multi-session host decides titling per
 `open_session`: `auto_title: true` titles that session, `auto_title: false` leaves it untitled, and an omitted field
 keeps the host-wide default (`--auto-title-sessions` or the `auto_title_sessions` client capability). Probe
 `auto_title_per_session` in `get_protocol_info` before relying on the field; an older host ignores it. A non-boolean is
 refused with `invalid_launch_profile`. Sessions resumed with existing context messages are never retitled.
 
 `--auto-title-sessions` still opts every session on that host into titling when `auto_title` is omitted. It is
-deprecated for shared hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
+deprecated for multi-session hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
 over a launch-profile flag:
 
 ```bash
@@ -741,10 +736,6 @@ senpi --mode rpc --multi-session --auto-title-sessions
 ```
 
 Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is byte-identical to today. Mode is fixed at process start; there is no runtime transition.
-
-### Interactive sessions and shared-host opt-out
-
-Interactive launches use the shared RPC host by default when a persisted session is available. A cold start takes approximately 1.3 seconds on the first launch; warm attachment to an existing compatible host is fast. To use the local runtime directly for a launch, set `SENPI_DISABLE_SHARED_HOST=1`. This uses the same local fallback runtime and does not change RPC socket behavior for other clients.
 
 ### Session replacement
 
@@ -760,7 +751,7 @@ When `new_session`, `switch_session`, or `fork` swaps the live session - includi
 
 The command response reports only `{ cancelled }`, so this event is the only push channel carrying the new identity. The identity is `durableSessionId`, never `sessionId`: top-level `sessionId` is reserved for the per-connection routing handle that multi-session hosts tag every record with, and that tag is applied last, so reusing the key would overwrite the identity the event exists to deliver. Classic mode emits the event untagged.
 
-### Shared host lifecycle (cold start + idle exit)
+### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
 
@@ -859,7 +850,7 @@ A client may react to `host_superseded` early, but the old generation retains ea
 `session_path_in_use` on the successor remains a retryable response until parking releases that claim. A client
 that ignores the announcement still receives the terminal record and connection close.
 
-### Shared host occupancy (idle eviction, retention, empty-host exit)
+### Multi-session host occupancy (idle eviction, retention, empty-host exit)
 
 **The daemon does not cap sessions.** On the in-process runtime - the default for a `--listen` socket host, i.e. the
 shared daemon clients attach to - there is no session limit, no admission counter, and no eviction of a live session
@@ -960,7 +951,7 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   (`{ type, rssMb, footprintMb, measure, sessions }`) on every sample, writes one stderr line per five minutes naming
   both numbers, and HALVES the idle-eviction window above while the host stays above the threshold, so idle sessions
   return their memory sooner. It is released as soon as the footprint falls back under the threshold. Memory never refuses an open: the
-  shared host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
+  host has no resource caps, so every `open_session` is admitted whatever the host holds (#2207). Hosts released
   before #2207 had a second admission watermark; current hosts have no such admission path.
 - **Per-endpoint pressure under sharding**: an agent directory may contain many independent hosts, so each endpoint
   samples and reports its own memory pressure. `host_memory_pressure` describes only the host that emitted it; pressure
@@ -1037,8 +1028,7 @@ they do not each reset that budget. Interrupt requests have a five-second deadli
 by count and bytes without imposing a new timeout on long-running commands. The desktop's 60-second open/readmission
 window is a separate client-side wait: the host normally reports its earlier 30-second failure within that window,
 but a slow transport can delay delivery. Neither timeout proves worker exit or permits concurrent reopening.
-Display updates coalesce to one pending update and one latest value; UI cancellation and close have separate control
-messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Over a
+UI cancellation coalesces to one pending request, and close has its own control message. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Over a
 socket host, credit returns as soon as every destination of that session has ACCEPTED the record into its own bounded
 queue (64 MiB per connection), not when the peer's kernel has drained it: a client that is merely busy cannot withhold
 the producing worker's credit. On the shared stdio lane credit still waits for stdout backpressure. A five-second credit
@@ -1052,7 +1042,7 @@ instead of destroying it, so a peer that resumes reading within a 5-second grace
 that notice, and everything already written to it, before EOF. A peer that is still silent when the grace expires has
 its socket destroyed. A cut peer must reconnect and resynchronize, while the session keeps running and its other
 destinations keep receiving output. A failed or cut connection never withholds a session's credit and never fails the
-shared host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
+host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
 session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer is then cut on
 overflow. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
@@ -1068,7 +1058,7 @@ told to resynchronize, and a newly affected or reconnected peer receives its own
 episode. Clients receiving a notice must stop issuing closes, drain output, and resynchronize unacknowledged requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
 Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
 
-The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
+The classic handler, extension UI bridge and provider scope run inside the owning worker; only
 plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
 file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
 `src/modes/rpc/session-worker.ts` as an explicit entrypoint. Bun 1.4.2 supports `--compile --splitting`
@@ -2948,13 +2938,14 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 There are two categories of extension UI methods:
 
 - **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
+- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
-- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops. `setFooter()` and `setHeader()` render factory components for clients advertising `rendered_components`.
+- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()`, `setHeader()`, and `setFooter()` are no-ops
+- `setWidget()` forwards string-array widgets only; a component factory emits nothing
 - `getEditorText()` returns `""`
 - `getToolsExpanded()` returns `false`
 - `pasteToEditor()` delegates to `setEditorText()` (no paste/collapse handling)
@@ -3081,22 +3072,7 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 }
 ```
 
-Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Component factories are rendered by the host using the attached client's terminal width.
-
-#### setHeader / setFooter
-
-Set or clear the extension header or footer using rendered text lines. Clients that do not understand these additive methods ignore them.
-
-```json
-{
-  "type": "extension_ui_request",
-  "id": "uuid-10",
-  "method": "setHeader",
-  "widgetLines": ["Header line"]
-}
-```
-
-Omit `widgetLines` to restore the built-in surface. Attached clients send `set_client_info` with their terminal width after attach and on resize; hosts default to width 80 when no width is supplied.
+Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string-array widgets are sent; a component factory needs a terminal to render into and produces no record.
 
 #### setTitle
 

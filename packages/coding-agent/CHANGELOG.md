@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- `pi.sharedHostEnabled` is removed from the ExtensionAPI: it could only ever be `true` inside the removed interactive shared-host join. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
 ### Added
 
 ### Changed
@@ -15,6 +17,10 @@
 ### Fixed
 
 ### Removed
+
+- Interactive sessions can no longer join a shared RPC host: every interactive launch runs on its own local runtime. The `experimental.sharedHost` setting and the `SENPI_ENABLE_SHARED_HOST` / `SENPI_DISABLE_SHARED_HOST` environment variables (any brand prefix) are gone and are ignored if set, with no notice. On first load, `experimental.sharedHost` is removed from the global settings file; nothing else in the file changes, except that a global `settings.jsonc` loses its comments in that one rewrite. A project `.senpi/settings.json` is never rewritten; the key is ignored there. The TUI's shared-host client (the remote session proxy, its reconnect loop and host-rendered extension dialogs) is removed with it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- The RPC `rendered_components` client capability. Hosts no longer render extension component factories: `setWidget` with a component factory, `setHeader` and `setFooter` send nothing over RPC, and `set_client_info` `width` has no effect. A client that still advertises the capability is accepted and receives ordinary records. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
 ## [2026.9.29-3] - 2026-09-29
 

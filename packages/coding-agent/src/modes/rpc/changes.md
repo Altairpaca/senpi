@@ -34,6 +34,36 @@
 
 - LOW: the `UnknownCommandError` branch of the `prompt` catch in `connection-handler.ts`.
 
+## 2026-09-29 - Remove the `rendered_components` capability and host-side component rendering
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RENDERED_COMPONENTS_CAPABILITY` is gone. A client that still sends the name in `set_client_info` is accepted; the name is an unknown capability and is ignored.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `setWidget` forwards `undefined`/string-array content only; a component factory emits nothing. `setHeader`/`setFooter` are no-ops. The live renderers, retained factories, footer data providers, `footerDataProviderFactory`, the handler's `rerenderComponents` and the `set_client_info` width handling are removed. `RpcConnectionOptions.sharedWidth` becomes `clientInfo { setCapabilities, connectionId }`, which only registers the sender's capabilities.
+- `packages/coding-agent/src/modes/rpc/widget-line-renderer.ts`: deleted.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: `RENDERED_COMPONENT_RECORD`, the per-record `rendered` provenance, `hasCapableConnection`, rendered-only replay on capability upgrade and the capability filter in `targets` are removed. Snapshot replay sends every remembered record.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: no longer strips a rendered marker or passes it to `targets`; `hasCapableConnection` is removed.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the per-session width map and every `rerenderComponents` fan-out (capability registration, connection release, owner detach) are removed.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: `RpcSessionBinding.rerenderComponents` is removed.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `setHeader` / `setFooter` member of `RpcExtensionUIRequest` is removed; no host produces it any more, and its only consumer was the removed TUI proxy.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the socket host no longer filters `rendered_components` out of the host-environment capabilities.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker-signals.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-credit.ts`: `WorkerDisplay`, `respondDisplay`, the `display` control message and the worker `width` message are removed. `bind` carries `capabilities`; `command` carries no display; a worker's `capabilities` registration is acknowledged with a plain grant.
+
+### Why
+
+The capability, the factory rendering and the shared width existed only for the interactive shared-host proxy client, which is being removed (session gateway plan, IS-1). No other client advertises it: the desktop declares nothing and omo advertises only `extension_events`.
+
+### Why an extension could not handle it
+
+The capability gate, record fanout and worker protocol are RPC host internals; no extension participates in them.
+
+### Expected merge conflict zones
+
+- The `setWidget`/`setHeader`/`setFooter` members of the RPC UI context and the `set_client_info` case in `connection-handler.ts`.
+- The binding options object in `SessionCommandRouter`'s open path and `releaseConnection`/`releaseOwnerAttachment`.
+- The `HostToSessionWorker`/`SessionWorkerToHost` unions.
+- The `RpcExtensionUIRequest` union in `rpc-types.ts`.
+
 ## 2026-09-28 - `warm`: load a host's prompt path without opening a session (senpi#2314)
 
 ### What changed

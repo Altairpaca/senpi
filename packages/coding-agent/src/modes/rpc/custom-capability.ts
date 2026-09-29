@@ -20,7 +20,6 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 /** The capability string a client sends in its handshake to opt into the notice. */
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
-export const RENDERED_COMPONENTS_CAPABILITY = "rendered_components";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
