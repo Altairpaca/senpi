@@ -1,3 +1,28 @@
+## 2026-09-29 - Free keyless engine chain, per-engine cooldown, SearXNG (senpi#2339)
+
+### What changed
+
+- `websearch/providers/{startpage,mojeek,ecosia,google-html,exa-mcp,searxng}.ts` (new): keyless engines. The four results-page scrapers read a parsed document (`normalizeDocument`) and send one stable Chrome navigation fingerprint (`browserHeaders` in `providers/shared.ts`). Parsing uses `linkedom` (already a coding-agent dependency) behind the lazy boundary `websearch/html-document.lazy.ts`, so the CLI's startup graph never reaches it (`test/startup-import-graph.test.ts`); `normalizeSearchResponse` is therefore async. `exa-mcp` calls Exa's hosted MCP endpoint (`https://mcp.exa.ai/mcp`, tool `web_search_exa`) on its anonymous tier, without a key. `searxng` queries a user-configured instance's `/search?format=json`.
+- `providers/duckduckgo-html.ts`: posts the no-JS form (`q`, `kl=us-en`) with the browser fingerprint instead of a bare GET, and recognizes the anomaly page.
+- `providers/shared.ts` `ProviderModule` gains optional `responseFormat` (`json` | `html` | `event-stream`), `detectChallenge`, `responseError` and `prepareRequest` (Startpage's homepage-token handshake). `BuiltSearchRequest.form` carries a pre-encoded form body for form posts.
+- `search.ts`: `performProviderSearch` runs the handshake, checks for a challenge page before status handling, and records `blocked` (`challenge` | `rate_limited` | `forbidden` | `network`) plus `Retry-After`. `SearchRoutingState.cooldowns` holds a per-engine exponential cooldown (1 min base, doubling, 15 min cap, cleared by a success) for keyless engines only; a cooling engine is recorded as a `skipped` attempt and shown in the routing line. `tool.ts` carries the cooldown map across routing-state resets so it lasts the session.
+- `config.ts`: the no-config default becomes `duckduckgo-html -> exa-mcp -> startpage -> mojeek -> ecosia -> google-html` (the two engines that answer plain fetch from a residential connection first, the challenge-prone results-page scrapers after them) (source `default:free-engines`); `KEYLESS_PROVIDERS` replaces the DuckDuckGo-only key exemption; `searxng` requires `baseUrl` and is validated by `isAllowedSearxngBaseUrl` (`provider-endpoints.ts`), which additionally accepts `http:` for loopback, private-address, single-label and `.local`/`.lan`/`.internal`/`.home.arpa` hosts. Every other provider keeps the public-HTTPS-only guard.
+- `renderers.ts`: attempts render `skipped` / `challenged` states.
+
+### Why
+
+- With no config the only engine was DuckDuckGo, so one rate limit or bot page failed every search in sessions without a native route, and the bot page surfaced as "returned no results" (senpi#2339).
+- SearXNG's local `http:` allowance: the URL comes from the user's own config file, not from the model, and a search sends only the query; a public host still needs https so queries never travel in cleartext.
+
+### Why an extension could not handle it
+
+- The provider registry, default config and routing state are private to this builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: `websearch/search.ts` `performProviderSearch` and the `performSearch` loop, if upstream pi-websearch changes them.
+- LOW: one line per provider in `types.ts`, `config.ts` `PROVIDERS`, `provider-endpoints.ts`, `providers.ts`.
+
 ## 2026-09-29 - Native web search runs on a cheaper same-provider model, with the session model as fallback (senpi#2340)
 
 ### What changed
@@ -37,8 +62,8 @@
 - `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/response-stream.ts` (new): folds the SSE stream into `{ output }`; `error`/`response.failed` events become `error.message`.
 - `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts` (new): `POST <root>/models/<model>:generateContent` with `x-goog-api-key`, the `google_search` tool, domain filters folded into the query; results are `groundingMetadata.groundingChunks[].web` (`uri`, `title`), snippets from `groundingSupports`. No grounding chunks means zero results.
 - `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/session-login-entries.ts` (new) and `websearch/tool.ts`: a `websearch.json` `chatgpt-subscription` or `google` entry without `apiKey` resolves the matching senpi login (same-provider model, the entry's `model` preferred; `google` resolves only the `google` API-key login, never Vertex) and is sent to that login's endpoint; an entry with no matching login is dropped, and a config left empty that way returns an explicit error.
-- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`, `websearch/config.ts`, `websearch/provider-endpoints.ts`, `websearch/providers.ts`, `websearch/providers/shared.ts`: the two provider ids, their defaults, `headers` on entries (never read from `websearch.json`), apiKey-optional validation for both, `ProviderModule.parseBody`, `parseSearchPayload`, and `withConfigHeaders`.
-- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search.ts`: bodies parse through `parseSearchPayload`; a successful response with zero results and an `error` field reports that error instead of "returned no results".
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`, `websearch/config.ts`, `websearch/provider-endpoints.ts`, `websearch/providers.ts`, `websearch/providers/shared.ts`: the two provider ids, their defaults, `headers` on entries (never read from `websearch.json`), apiKey-optional validation for both, `ProviderModule.parseBody`, `parseProviderBody`, and `withConfigHeaders`.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search.ts`: `responsePayload` asks the provider's own `parseBody` first (the subscription's full SSE stream), before the `responseFormat` handling added by senpi#2339; a successful response with zero results and an `error` field reports that error instead of "returned no results".
 
 ### Why
 
@@ -52,6 +77,7 @@
 
 - MEDIUM: `nativeMapping` head, `mappingEndpointUrl` call sites and the end of `buildNativeEntryForModel` in `websearch/native.ts` (senpi#2340 edits the same file).
 - LOW: one line each in `types.ts`, `config.ts` `PROVIDERS`, `provider-endpoints.ts`, `providers.ts`; the payload/zero-result block in `search.ts`; the native-route call in `tool.ts`.
+
 
 ## 2026-09-29 - Answer-text URLs are not search sources (senpi#2337)
 

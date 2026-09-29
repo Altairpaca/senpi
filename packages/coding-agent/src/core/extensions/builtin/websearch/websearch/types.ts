@@ -16,7 +16,16 @@ export type SearchProvider =
 	| "perplexity"
 	| "xai"
 	| "kimi"
-	| "kagi";
+	| "kagi"
+	| "startpage"
+	| "mojeek"
+	| "ecosia"
+	| "google-html"
+	| "exa-mcp"
+	| "searxng";
+
+/** Why a keyless engine refused a search; each reason puts the engine on a cooldown. */
+export type SearchBlockReason = "challenge" | "rate_limited" | "forbidden" | "network";
 
 export type SearchContextSize = "low" | "medium" | "high";
 export type CodexSearchMode = "cached" | "live";
@@ -75,6 +84,8 @@ export interface BuiltSearchRequest {
 		headers: Record<string, string>;
 	};
 	body?: JsonObject;
+	/** A pre-encoded `application/x-www-form-urlencoded` body, sent instead of `body`. */
+	form?: string;
 }
 
 export interface SearchResultItem {
@@ -98,6 +109,9 @@ export interface SearchDetails {
 	attempts?: SearchAttempt[];
 	answer?: string;
 	error?: string;
+	blocked?: SearchBlockReason;
+	/** Seconds from a `Retry-After` response header. */
+	retryAfterSeconds?: number;
 }
 
 export interface SearchProgressDetails {
@@ -135,6 +149,9 @@ export interface SearchAttempt {
 	durationMs: number;
 	resultsCount: number;
 	error?: string;
+	blocked?: SearchBlockReason;
+	/** The engine was not queried because it is cooling down after an earlier block. */
+	skipped?: boolean;
 }
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];

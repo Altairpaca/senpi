@@ -17,25 +17,30 @@ describe("regression #2337: answer-text URLs are not web search sources", () => 
 		vi.unstubAllGlobals();
 	});
 
-	it.each(["openai", "codex", "xai"] as const)("%s ignores URLs the model wrote without searching", (provider) => {
-		expect(normalizeSearchResponse(provider, ANSWER_ONLY)).toEqual([]);
-	});
+	it.each(["openai", "codex", "xai"] as const)(
+		"%s ignores URLs the model wrote without searching",
+		async (provider) => {
+			expect(await normalizeSearchResponse(provider, ANSWER_ONLY)).toEqual([]);
+		},
+	);
 
-	it("keeps sources a web_search_call returned", () => {
+	it("keeps sources a web_search_call returned", async () => {
 		const payload: JsonObject = {
 			output: [
 				{ type: "web_search_call", action: { sources: [{ url: "https://found.example.com/a" }] } },
 				...(ANSWER_ONLY.output as JsonObject[]),
 			],
 		};
-		expect(normalizeSearchResponse("openai", payload).map((item) => item.url)).toEqual([
+		expect((await normalizeSearchResponse("openai", payload)).map((item) => item.url)).toEqual([
 			"https://found.example.com/a",
 		]);
 	});
 
-	it("keeps xAI server citations", () => {
+	it("keeps xAI server citations", async () => {
 		const payload: JsonObject = { ...ANSWER_ONLY, citations: ["https://cited.example.com/x"] };
-		expect(normalizeSearchResponse("xai", payload).map((item) => item.url)).toEqual(["https://cited.example.com/x"]);
+		expect((await normalizeSearchResponse("xai", payload)).map((item) => item.url)).toEqual([
+			"https://cited.example.com/x",
+		]);
 	});
 
 	it("falls back to the next provider when the answer has no search output", async () => {
