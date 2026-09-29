@@ -1,3 +1,23 @@
+## 2026-09-29 - Legacy `.pi` project resources follow project trust
+
+### What changed
+
+- `packages/coding-agent/src/core/package-manager.ts`: `addAutoDiscoveredResources` discovers the legacy `<cwd>/.pi` project directories (extensions, skills, prompts, themes, hooks) only when the project is trusted, the same guard the config-dir blocks already use.
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources` checks the same trust-requiring entries under the legacy `<cwd>/.pi` directory as under the config dir, so a project whose only project resources are in `.pi/` asks for a trust decision.
+
+### Why
+
+- Project trust gating guarded only the config-dir (`.senpi`) blocks; the legacy `.pi` discovery added earlier sat outside that guard, and the trust check did not look at `.pi`, so `.pi` project resources loaded whatever the trust decision was.
+
+### Why an extension could not handle it
+
+- Project resource discovery and the launch-time trust decision run in the host before any extension is bound; an extension cannot withhold resources the loader already discovered.
+
+### Expected merge conflict zones
+
+- LOW: the `if (projectTrusted && resolve(legacyProjectBaseDir) !== resolve(projectBaseDir))` condition in `addAutoDiscoveredResources` in `packages/coding-agent/src/core/package-manager.ts`.
+- LOW: the config-dir check at the top of `hasTrustRequiringProjectResources` and the new `LEGACY_PROJECT_CONFIG_DIR_NAME` constant in `packages/coding-agent/src/core/trust-manager.ts`.
+
 ## 2026-09-29 - A refused delivery write, a part-written async header and a release's header write never leave a session stuck
 
 ### What changed
