@@ -1,3 +1,23 @@
+## 2026-09-30 - GPT-6.1 Sol becomes the OpenAI provider default; warning covers it (senpi#2390)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.openai` and `defaultModelPerProvider["chatgpt-subscription"]` move from `gpt-6-sol` to `gpt-6.1-sol`. Nothing else in the resolver changes; a registry without the id falls through to first-available as before (`test/provider-default-model-selection.test.ts` keeps a GPT-6-Sol-only and a GPT-5.6-Sol-only case).
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: `SENSITIVE_MODEL_ID_PATTERN` matches `gpt-6(?:\.\d+)?-sol`, so `gpt-6.1-sol` and its `-fast` / `-pro` / gateway-prefixed forms warn at `xhigh` and `max` like GPT-6 Sol; `gpt-6.1` alone and `gpt-6.1-solaris` stay out.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29 and openai/codex made it the default catalog model (priority 1) the same day; senpi followed the same pattern when GPT-6 Sol replaced GPT-5.6 Sol. The warning keys on the Sol tier, which now has a point release.
+
+### Why an extension could not handle it
+
+The provider default table is consulted during initial model selection before extensions are bound; the warning matcher is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `defaultModelPerProvider` table (fork-only entries around `openai` / `chatgpt-subscription`).
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file, no upstream counterpart.
+
 ## 2026-09-29 - The prompt surface is a per-session property (senpi#2377)
 
 ### What changed
