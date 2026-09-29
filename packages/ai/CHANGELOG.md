@@ -6,7 +6,7 @@
 
 ### Added
 
-- Added `ultrafast` as an OpenAI Responses and ChatGPT Subscription request tier, with GPT-6 Astra pricing and support for all five reasoning efforts (`low` through `max`). ([#2399](https://github.com/code-yeongyu/senpi/issues/2399))
+- Added `ultrafast` as an OpenAI Responses and ChatGPT Subscription request tier, with GPT-6 Astra pricing and support for all five reasoning efforts (`low` through `max`). ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
 
 ### Changed
 

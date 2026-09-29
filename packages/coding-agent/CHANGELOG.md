@@ -6,7 +6,7 @@
 
 ### Added
 
-- Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. ([#2399](https://github.com/code-yeongyu/senpi/issues/2399))
+- Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
 
 ### Changed
 
