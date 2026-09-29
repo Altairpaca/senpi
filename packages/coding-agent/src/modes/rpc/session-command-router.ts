@@ -113,7 +113,6 @@ export class SessionCommandRouter {
 	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
-	private readonly widths = new Map<string, Map<string, number>>();
 	private readonly pendingCapabilities = new Map<string, string[]>();
 	private readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 	private readonly idleNow: () => number;
@@ -442,7 +441,6 @@ export class SessionCommandRouter {
 			owned.delete(sessionId);
 			if (owned.size === 0) this.sessionsByConnection.delete(connection);
 		}
-		this.widths.delete(sessionId);
 	}
 
 	private stopSweep(): void {
@@ -551,35 +549,14 @@ export class SessionCommandRouter {
 								owner !== undefined
 									? (this.pendingCapabilities.get(owner) ?? this.connectionOptions?.capabilities ?? [])
 									: this.connectionOptions?.capabilities,
-							sharedWidth: {
-								getWidth: () => {
-									const widths = this.widths.get(openedSession.sessionId);
-									return widths?.size ? Math.min(...widths.values()) : 80;
-								},
-								setWidth: (connectionId, width) => {
-									if (connectionId !== undefined) {
-										const widths = this.widths.get(openedSession.sessionId) ?? new Map<string, number>();
-										widths.set(connectionId, width);
-										this.widths.set(openedSession.sessionId, widths);
-									}
-								},
-								clearWidth: (connectionId) => {
-									const widths = this.widths.get(openedSession.sessionId);
-									if (connectionId !== undefined) widths?.delete(connectionId);
-								},
+							clientInfo: {
 								setCapabilities: (connectionId, capabilities) => {
 									if (connectionId !== undefined) {
 										this.writer.setConnectionCapabilities(connectionId, capabilities);
 										this.pendingCapabilities.set(connectionId, [...capabilities]);
-										for (const binding of this.bindings.values()) binding.rerenderComponents?.();
 									}
 								},
-								hasRenderedComponents: (sessionId) => this.writer.hasCapableConnection(sessionId),
-
 								connectionId: () => this.writer.currentConnection(),
-								onChange: () => {
-									for (const binding of this.bindings.values()) binding.rerenderComponents?.();
-								},
 							},
 						},
 					),
@@ -647,8 +624,6 @@ export class SessionCommandRouter {
 		this.writer.clearConnectionCapabilities(connectionId);
 		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
-		for (const widths of this.widths.values()) widths.delete(connectionId);
-		for (const binding of this.bindings.values()) binding.rerenderComponents?.();
 		const opens = this.opensByConnection.get(connectionId);
 		const owned = this.sessionsByConnection.get(connectionId);
 		this.sessionsByConnection.delete(connectionId);
@@ -822,17 +797,9 @@ export class SessionCommandRouter {
 		}
 	}
 
-	/** Detaches the closing connection's UI/width state; a rerender failure must not abort the close. */
+	/** Detaches the closing connection from the session's record fanout. */
 	private releaseOwnerAttachment(owner: string, sessionId: string): void {
-		this.widths.get(sessionId)?.delete(owner);
 		this.writer.detachConnectionFromSession(owner, sessionId);
-		for (const binding of this.bindings.values()) {
-			try {
-				binding.rerenderComponents?.();
-			} catch (cause) {
-				process.stderr.write(`senpi rpc rerender after close of session ${sessionId} failed: ${String(cause)}\n`);
-			}
-		}
 		const owned = this.sessionsByConnection.get(owner);
 		const count = owned?.get(sessionId);
 		if (!owned || count === undefined) return;

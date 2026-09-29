@@ -56,7 +56,6 @@ async function closeFixture() {
 				break;
 			case "close":
 			case "cancel_ui":
-			case "display":
 				break;
 			default: {
 				const exhaustive: never = message;

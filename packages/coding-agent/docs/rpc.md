@@ -1,7 +1,5 @@
 # RPC Mode
 
-Shared-host clients may advertise the `rendered_components` capability to receive factory-rendered widget, header, and footer records. In a shared session, component rendering uses the minimum width reported by currently attached connections, defaulting to 80 when none report a width; disconnected connections no longer contribute.
-
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these
@@ -634,17 +632,14 @@ requests (select, confirm, input, and editor) are requester-only; other extensio
 attached connections. To observe a foreign session, open it by its existing
 `sessionPath`; the host attaches that connection during `open_session`.
 
-### Client information and rendered components
+### Client information
 
-Clients may send `set_client_info` with `{ sessionId, width, capabilities? }`. Advertising `rendered_components` registers
-that connection to receive factory-rendered `setWidget`, `setHeader`, and `setFooter` records. Those records are filtered
-per connection; array/undefined widget records and dialog requests retain their existing delivery semantics. Width is
-shared per session using the minimum of attached clients, and a closed or dropped connection no longer contributes its
-width or capability registration. Snapshot replay preserves rendered-component provenance and applies the same capability
-filter to late joiners; a client that registers `rendered_components` while a snapshot is active receives its retained
-factory-rendered records. On a shared socket host, `rendered_components` is registration-only: it is never inherited from the host environment and must be sent in `set_client_info` for each client connection. Registration applies to the sessions attached by that connection; closing one session removes only that session's width and capability association, while socket disposal removes all associations. Clients must re-register `width` and `capabilities` after every reconnect. When the last
-capable connection leaves a still-attached binding, live component renderers and footer data providers are disposed but
-their factories are retained; a later capable connection recreates and re-renders them.
+Clients may send `set_client_info` with `{ sessionId?, width, capabilities? }`. `capabilities` registers the connection's
+opt-in client capabilities (see [Client capabilities](#client-capabilities)); a name the host does not know is ignored,
+never refused. Registration belongs to the connection that sent it: socket disposal removes it, and clients must
+re-register `capabilities` after every reconnect. `width` is accepted for compatibility and has no effect: the host
+renders no extension components, so a component factory passed to `setWidget`, `setHeader`, or `setFooter` never
+reaches the wire.
 
 ### Session kind and context (`open_session`)
 
@@ -1033,8 +1028,7 @@ they do not each reset that budget. Interrupt requests have a five-second deadli
 by count and bytes without imposing a new timeout on long-running commands. The desktop's 60-second open/readmission
 window is a separate client-side wait: the host normally reports its earlier 30-second failure within that window,
 but a slow transport can delay delivery. Neither timeout proves worker exit or permits concurrent reopening.
-Display updates coalesce to one pending update and one latest value; UI cancellation and close have separate control
-messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Over a
+UI cancellation coalesces to one pending request, and close has its own control message. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Over a
 socket host, credit returns as soon as every destination of that session has ACCEPTED the record into its own bounded
 queue (64 MiB per connection), not when the peer's kernel has drained it: a client that is merely busy cannot withhold
 the producing worker's credit. On the shared stdio lane credit still waits for stdout backpressure. A five-second credit
@@ -1064,7 +1058,7 @@ told to resynchronize, and a newly affected or reconnected peer receives its own
 episode. Clients receiving a notice must stop issuing closes, drain output, and resynchronize unacknowledged requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
 Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
 
-The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
+The classic handler, extension UI bridge and provider scope run inside the owning worker; only
 plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
 file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
 `src/modes/rpc/session-worker.ts` as an explicit entrypoint. Bun 1.4.2 supports `--compile --splitting`
@@ -2944,13 +2938,14 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 There are two categories of extension UI methods:
 
 - **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
+- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
-- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops. `setFooter()` and `setHeader()` render factory components for clients advertising `rendered_components`.
+- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()`, `setHeader()`, and `setFooter()` are no-ops
+- `setWidget()` forwards string-array widgets only; a component factory emits nothing
 - `getEditorText()` returns `""`
 - `getToolsExpanded()` returns `false`
 - `pasteToEditor()` delegates to `setEditorText()` (no paste/collapse handling)
@@ -3077,22 +3072,7 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 }
 ```
 
-Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Component factories are rendered by the host using the attached client's terminal width.
-
-#### setHeader / setFooter
-
-Set or clear the extension header or footer using rendered text lines. Clients that do not understand these additive methods ignore them.
-
-```json
-{
-  "type": "extension_ui_request",
-  "id": "uuid-10",
-  "method": "setHeader",
-  "widgetLines": ["Header line"]
-}
-```
-
-Omit `widgetLines` to restore the built-in surface. Attached clients send `set_client_info` with their terminal width after attach and on resize; hosts default to width 80 when no width is supplied.
+Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string-array widgets are sent; a component factory needs a terminal to render into and produces no record.
 
 #### setTitle
 

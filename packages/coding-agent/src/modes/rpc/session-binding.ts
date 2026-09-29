@@ -14,7 +14,6 @@ import type { RpcSessionEntry } from "./session-registry.ts";
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
 	cancelPendingExtensionUiRequests?(): void;
-	rerenderComponents?(): void;
 	dispose(): Promise<void>;
 }
 
@@ -27,7 +26,7 @@ export async function createRpcSessionBinding(
 	entry: RpcSessionEntry,
 	writer: SessionEventWriter,
 	requestClose: () => void,
-	options: Pick<RpcConnectionOptions, "capabilities" | "sharedWidth"> = {},
+	options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {},
 ): Promise<RpcSessionBinding> {
 	if (entry.worker) return entry.worker.bind(sessionId, writer, requestClose, options);
 	if (!entry.runtime) throw new Error("Session runtime was not created");
@@ -78,7 +77,6 @@ export async function createRpcSessionBinding(
 		handle: (command) => runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command))),
 		cancelPendingExtensionUiRequests: () =>
 			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
-		rerenderComponents: () => runWithProviderScope(entry.scope, () => handler.rerenderComponents()),
 		dispose: () => {
 			toolSpans.closeAll();
 			return runWithProviderScope(entry.scope, () => handler.dispose());
