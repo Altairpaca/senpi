@@ -15,7 +15,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir } from "fs/promises";
+import { appendFile, open, readdir, rm } from "fs/promises";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -871,6 +871,13 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
+const SETUP_ONLY_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+	"session",
+	"model_change",
+	"model_change_rejected",
+	"thinking_level_change",
+]);
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -878,6 +885,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private headerWrite: Promise<void> | undefined;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	// Runtime-only identity tracking lets AgentSession compare messages to a
@@ -1205,6 +1213,67 @@ export class SessionManager {
 		return this.residentStore.stats();
 	}
 
+	/**
+	 * Writes the buffered header (and anything buffered behind it) through an exclusive create, as
+	 * the first assistant message would, and appends every later entry immediately. A session that
+	 * is exposed to other processes needs its id on disk first: a reopen of a missing file mints a
+	 * new id. The write is asynchronous (the session path never blocks on the filesystem); entries
+	 * persisted while it runs are appended by it before the transcript counts as flushed.
+	 */
+	persistHeaderNow(): Promise<void> {
+		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? Promise.resolve();
+		const sessionFile = this.sessionFile;
+		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+			this.headerWrite = undefined;
+		});
+		return this.headerWrite;
+	}
+
+	isTranscriptFlushed(): boolean {
+		return this.flushed;
+	}
+
+	/**
+	 * Removes the session file when nothing happened in it - the header plus model/thinking setup
+	 * entries only - and returns to buffering, so a later entry cannot recreate a header-less file.
+	 */
+	async discardHeaderOnlyFile(): Promise<boolean> {
+		await this.headerWrite;
+		if (!this.persist || !this.sessionFile || !this.flushed) return false;
+		if (!this.fileEntries.every((entry) => SETUP_ONLY_ENTRY_TYPES.has(entry.type))) return false;
+		await rm(this.sessionFile, { force: true });
+		this.flushed = false;
+		return true;
+	}
+
+	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
+		reserveSessionWrite(sessionFile);
+		const entries = this.fileEntries;
+		const serialize = (batch: readonly FileEntry[]): string =>
+			batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join("");
+		let written = 0;
+		const handle = await open(sessionFile, "wx");
+		try {
+			while (written < entries.length) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await handle.writeFile(serialize(batch));
+			}
+		} finally {
+			await handle.close();
+		}
+		// Entries persisted while the handle closed: append until a pass finds nothing new.
+		while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
+			const batch = entries.slice(written);
+			written += batch.length;
+			await appendFile(sessionFile, serialize(batch));
+		}
+		// Synchronous with the last check above: no entry can land between it and the flag.
+		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
+			this.flushed = true;
+		}
+	}
+
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
@@ -1222,6 +1291,8 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
+			// An asynchronous header write owns the file until it finishes, and appends this entry.
+			if (this.headerWrite) return;
 			const fd = openSync(this.sessionFile, "wx");
 			try {
 				for (const e of this.fileEntries) {
@@ -1511,6 +1582,28 @@ export class SessionManager {
 		};
 		this._appendEntry(entry);
 		return entry.id;
+	}
+
+	/**
+	 * `appendCustomEntry` for an entry that must reach the file or not exist: when writing it throws, the
+	 * entry is taken back out and the leaf returns to its parent before the error propagates, so no later
+	 * entry chains onto one the file never received.
+	 */
+	appendCustomEntryOrNothing(customType: string, data?: unknown): string {
+		const previousLeafId = this.leafId;
+		const count = this.fileEntries.length;
+		try {
+			return this.appendCustomEntry(customType, data);
+		} catch (error) {
+			for (const retracted of this.fileEntries.splice(count)) {
+				this.byId.delete(retracted.id);
+				this.entryOrdersById.delete(retracted.id);
+				this.fullEntryCount--;
+			}
+			this.leafId = previousLeafId;
+			this.mutationCount++;
+			throw error;
+		}
 	}
 
 	/** Append a session info entry (e.g., display name). Returns entry id. */

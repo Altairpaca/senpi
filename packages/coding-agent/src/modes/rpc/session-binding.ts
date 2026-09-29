@@ -14,6 +14,8 @@ import type { RpcSessionEntry } from "./session-registry.ts";
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
 	cancelPendingExtensionUiRequests?(): void;
+	/** `prompt` calls this binding started that have not settled, preflight included. */
+	pendingPrompts?(): readonly Promise<unknown>[];
 	dispose(): Promise<void>;
 }
 
@@ -77,6 +79,7 @@ export async function createRpcSessionBinding(
 		handle: (command) => runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command))),
 		cancelPendingExtensionUiRequests: () =>
 			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
+		pendingPrompts: () => handler.pendingPrompts(),
 		dispose: () => {
 			toolSpans.closeAll();
 			return runWithProviderScope(entry.scope, () => handler.dispose());

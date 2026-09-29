@@ -206,6 +206,7 @@ import {
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
 import { DEFAULT_TAIL_BUDGET, DEFAULT_WARM_CHUNK_SIZE } from "./components/progressive-transcript-container.ts";
+import { builtInMessageRenderer } from "./components/remote-delivery-message.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -259,6 +260,8 @@ import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
+import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
+import type { TuiControlContext } from "./session-control-lifecycle.ts";
 import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
@@ -704,6 +707,7 @@ interface InteractiveUserInput {
 	pendingEchoId: string | undefined;
 	/** Typed after leading whitespace: send `/...` text to the model even when no command handles it. */
 	unknownCommandAsText?: boolean;
+	ticket?: SubmissionTicket;
 }
 
 /** Local copy of pi-tui's image-marker pattern so submission scanning never mutates a shared /g regex. */
@@ -902,6 +906,10 @@ export class InteractiveMode {
 	 * {@link reconcilePendingImages}.
 	 */
 	private pendingImages = new Map<number, ImageContent>();
+	/** Lets an extension expose this session on a control endpoint; the endpoint module loads on first use. */
+	private readonly sessionControlHost: TuiSessionControlHost = new TuiSessionControlHost(() =>
+		this.sessionControlContext(),
+	);
 	/**
 	 * Images pre-resolved by handleFollowUp's non-streaming branch, which hands
 	 * off through the public string-only `onSubmit(text)` API. Set BEFORE that
@@ -1664,6 +1672,7 @@ export class InteractiveMode {
 		// Enable the remaining input handlers only after managed-tool setup completes.
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -1846,6 +1855,8 @@ export class InteractiveMode {
 					continue;
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
+			} finally {
+				userInput.ticket?.release();
 			}
 		}
 	}
@@ -2574,6 +2585,8 @@ export class InteractiveMode {
 	 * Initialize the extension system with TUI-based UI context.
 	 */
 	private async bindCurrentSessionExtensions(): Promise<void> {
+		await this.sessionControlHost?.disposeActive();
+		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
 		await this.session.bindExtensions({
 			uiContext,
@@ -3867,8 +3880,33 @@ export class InteractiveMode {
 		return completion.promise;
 	}
 
+	private sessionControlContext(): Omit<TuiControlContext, "editorRevision"> {
+		return {
+			session: this.session,
+			agentDir: this.session.agentDir,
+			surface: {
+				draftHold: () => (this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold()),
+				blockingQuestion: () => this.askUserQuestion !== undefined,
+				pendingQuestionIds: () => [...this.pendingQuestions.keys()],
+				answerQuestion: (requestId, response) => {
+					const state = this.pendingQuestions.get(requestId);
+					state?.finish(response);
+					return state !== undefined;
+				},
+				notice: (line) => this.showWarning(line),
+			},
+		};
+	}
+
+	/** What the user is composing, if anything: a held external delivery waits for it. */
+	private composerHold(): "attachment" | "draft" | undefined {
+		if (this.pendingImages.size > 0) return "attachment";
+		return this.editor.getText().trim() === "" ? undefined : "draft";
+	}
+
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
 	private refreshAsyncWidget(): void {
+		this.sessionControlHost?.questionsChanged();
 		this.syncQuestionMouseCapture();
 		this.applyTerminalTitle();
 		const state = this.shownQuestion;
@@ -4710,7 +4748,13 @@ export class InteractiveMode {
 				}
 				if (text === "/answer" || text.startsWith("/answer ")) {
 					this.editor.setText("");
-					await this.handleAnswerCommand(text.slice("/answer".length).trim());
+					// `/answer skip` submits its text after an await: hold deliveries until it has.
+					const hold = this.session.externalAdmission?.beginInput({ command: true });
+					try {
+						await this.handleAnswerCommand(text.slice("/answer".length).trim());
+					} finally {
+						hold?.end();
+					}
 					return;
 				}
 				if (text === "/hotkeys") {
@@ -4849,23 +4893,31 @@ export class InteractiveMode {
 				// behavior here applies only to ordinary text, prompt template expansion,
 				// and queueing.
 				if (this.session.isStreaming) {
+					const ticket = this.sessionControlHost?.claimHandoff();
 					// Resolve BEFORE setText(""): the editor's prune chain fires
 					// onImageMarkersChanged([]) and destroys pendingImages.
 					const images = preResolvedImages ?? this.takeSubmissionImages(text);
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
 					const pendingEchoId = this.beginUserEcho(text, images);
+					const echoOptions = this.optimisticUserEchoes.promptOptions(pendingEchoId);
 					try {
 						await this.session.prompt(text, {
 							streamingBehavior: "steer",
 							...(images.length > 0 ? { images } : {}),
 							...(unknownCommandAsText ? { unknownCommandAsText } : {}),
-							...this.optimisticUserEchoes.promptOptions(pendingEchoId),
+							...echoOptions,
+							promptDisposition: (disposition) => {
+								echoOptions.promptDisposition(disposition);
+								ticket?.release();
+							},
 						});
 					} catch (error) {
 						this.optimisticUserEchoes.reject(pendingEchoId);
 						if (error instanceof UnknownCommandError && this.reportUnknownCommandRejection(error, text)) return;
 						throw error;
+					} finally {
+						ticket?.release();
 					}
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -4878,11 +4930,13 @@ export class InteractiveMode {
 
 				const images = preResolvedImages ?? this.takeSubmissionImages(text);
 				const pendingEchoId = this.beginUserEcho(text, images);
+				const ticket = this.sessionControlHost?.claimHandoff();
 				const submission: InteractiveUserInput = {
 					text,
 					pendingEchoId,
 					...(images.length > 0 ? { images } : {}),
 					...(unknownCommandAsText ? { unknownCommandAsText } : {}),
+					...(ticket ? { ticket } : {}),
 				};
 				if (this.onInputCallback) {
 					this.onInputCallback(submission);
@@ -5768,7 +5822,9 @@ export class InteractiveMode {
 			}
 			case "custom": {
 				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
+					const renderer =
+						this.session.extensionRunner.getMessageRenderer(message.customType) ??
+						builtInMessageRenderer(message.customType);
 					const component = new CustomMessageComponent(
 						message,
 						renderer,
@@ -6240,6 +6296,7 @@ export class InteractiveMode {
 			preflightResult: echoOptions.preflightResult,
 			promptDisposition: (disposition) => {
 				echoOptions.promptDisposition(disposition);
+				userInput.ticket?.release();
 				// Clear the retained dock on a handled prompt only when it was the last
 				// buffered input; a still-queued follow-up remounts it on agent_start, so
 				// clearing here would bounce the editor/footer.
@@ -6302,6 +6359,7 @@ export class InteractiveMode {
 			// terminal. If the terminal is gone, the restore writes below emit EIO,
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
+			await this.sessionControlHost?.disposeActive();
 			await this.runtimeHost.dispose();
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
@@ -6319,6 +6377,7 @@ export class InteractiveMode {
 
 		this.stop({ restoreStderr: false });
 		try {
+			await this.sessionControlHost?.disposeActive();
 			await this.runtimeHost.dispose();
 		} finally {
 			restoreInteractiveStderr();
@@ -6941,6 +7000,9 @@ export class InteractiveMode {
 	}
 
 	private updatePendingMessagesDisplay(): void {
+		this.sessionControlHost?.noteBufferedElsewhere(
+			this.compactionQueuedMessages.length + this.compactionInFlightMessages.length > 0,
+		);
 		this.pendingMessagesContainer.clear();
 		const { steering: steeringMessages, followUp: followUpMessages } = this.getAllQueuedMessages();
 		if (steeringMessages.length > 0 || followUpMessages.length > 0) {

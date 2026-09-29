@@ -8,15 +8,29 @@
 
 ### Added
 
+- Extensions can expose an interactive session to other local sessions: `pi.session.registerControlEndpoint({ inboxDir, drain })` (POSIX TUI only; anything else answers `unsupported`) serves a secret-authenticated control socket listed by `senpi host status --all` as `endpoint_kind: "tui"`, with read-mostly commands (`get_protocol_info`, `list_sessions`, `get_state`, `get_messages`, `set_session_name`, `subscribe`, `wake`, `extension_ui_response`) and never `prompt`/`steer`/`follow_up`. Delivered messages enter through `pi.session.admitExternalMessage()`, which admits each `delivery_id` exactly once (`started` / `queued` / `steered`), waits while you are typing (`held_draft`), refuses a stale turn (`turn_conflict`), and records the id in the transcript; they render as a "remote message" block, never as your own input. `pi.session.admissionGate()`, `listAdmittedDeliveries()`, `persistHeaderNow()` and the `session_control_wake` event (idle, submission, draft cleared, command, inbox, emitted, continue) complete the surface. A TUI with no registrant opens no socket. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- A multi-session host can hand a session to a local terminal: `release_session { sessionId, reason: "takeover" }` records `session_released` in the transcript, ends the session on the host without replaying anything and frees its file, so `senpi --session <path>` continues it locally. It hands over only a quiet session: while a turn runs or is about to start (`turn_active`), or while a bash, compaction or another request for the session is in flight (`session_busy`), it refuses and names the busy signals, or with `interrupt: true` aborts that work, waits for it to be recorded, and then releases, answering in `dropped` the queued gateway deliveries (to redeliver) and your queued messages (to restore) it took out of the session; a delivery that arrives while the session is being released is refused and stays with its sender; a release refused after its interrupt (for example because a client attached meanwhile) leaves the session accepting deliveries again and still reports what it took; a refusal caused by queued messages says `interrupt: true` recovers them; a release whose transcript entry cannot be written (read-only file, full disk) answers `release_failed` and leaves the session working on the host instead of never answering; it also refuses while clients are attached (`attached`, or `force: true`; they then receive `session_closed { reason: "released" }`). ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- A multi-session host answers `wake { sessionId, delivery_ids? }` with the same contract as a terminal control endpoint: an extension on a host session registers with `pi.session.registerControlEndpoint({ inboxDir, drain })` and its drain runs on idle, on inbox changes and on each `wake`, which answers what that pass admitted. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- `senpi host status --all` rows carry `endpoint_kind`, `alive` and `reason` (`live_unresponsive` for an endpoint whose process runs but does not answer, `dead` once every recorded process is gone) and `owner` (for a `tui` row: the terminal's pid, cwd and the session it holds); `session_rows` carry `cwd` and `name`. Each endpoint is probed by kind: a `tui` endpoint for at most 1.5 s, so a suspended terminal no longer holds the listing for the 10 s host budget. New library exports `classifyEndpointLiveness`, `listHostEndpoints`, `readAllHostStatus` and `gcHostEndpoints(agentDir, { kinds })`, which reaps only endpoints of the listed kinds; a terminal reaps dead `tui` endpoints this way before it registers its own. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
 ### Changed
 
 - Installing `@code-yeongyu/senpi` is smaller and faster: the package now declares its real dependencies instead of shipping its whole dependency tree inside the tarball, so bun no longer installs every dependency twice and npm no longer unpacks a 27,000-file tarball. Commands, library exports and features are unchanged. ([#2360](https://github.com/code-yeongyu/senpi/issues/2360))
 
 - The published packages no longer ship sourcemaps (they pointed at sources that are not published), and `@code-yeongyu/senpi` stops declaring three dependencies nothing used (`glob`, `@opentelemetry/api`, `proxy-from-env`), so installs are smaller again. ([#2362](https://github.com/code-yeongyu/senpi/issues/2362))
 
+- `endpoint.json` records `registry_version: 1` and `endpoint_kind` (`rpc_host` | `tui`). A record written by an older build reads as `rpc_host`, and nothing rewrites it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- `senpi host ensure|handoff|stop --socket` against a terminal control endpoint (`endpoint_kind: "tui"`, or a `t-*.sock` name) refuses with exit 3 `reason: "unsupported_endpoint_kind"` without connecting to it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
 ### Fixed
 
 - Opening a session saved by an older senpi version no longer risks losing it. Opening such a session rewrites the file in the current format, and that rewrite used to overwrite the file in place, so a full disk or an I/O error part-way through left the transcript truncated. The rewrite now writes a complete copy next to the file and swaps it in only once it is on disk; if writing fails, the original session stays exactly as it was and the error is reported.
+
+- A session event listener no longer misses an event because the listener registered just before it unsubscribed while that event was being delivered. `AgentSession.subscribe()` listeners each receive every event emitted while they are registered, so a terminal session's control endpoint no longer misses its idle wake that way. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
 ### Removed
 

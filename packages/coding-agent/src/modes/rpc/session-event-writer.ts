@@ -437,10 +437,23 @@ export class SessionEventWriter {
 	 * no close response to answer.
 	 */
 	parkSession(sessionId: string, sessionPath: string): void {
+		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath });
+	}
+
+	/**
+	 * Seal a session `release_session` handed to a runtime outside this host and publish
+	 * `session_closed { reason: "released", sessionPath }`. Unlike a park the file must NOT be reopened
+	 * here - another process now writes it. Delivered like a park; the releasing caller's own answer is
+	 * the `release_session` response, so there is no close response either.
+	 */
+	releaseSession(sessionId: string, sessionPath: string): void {
+		this.sealWithLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
+	}
+
+	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
 		if (this.sealedSessions.has(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
-		const lifecycle: RpcSessionParkedEvent = { type: "session_parked", sessionId, sessionPath };
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
 		else if (this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));

@@ -18,6 +18,82 @@
 
 - LOW: the body of `_rewriteFile` plus the new `_serializedFileEntries` generator right after it, and one import line in `session-manager.ts`.
 
+## 2026-09-29 - A listener that unsubscribes during an emit no longer hides that event from the next listener
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_emit` iterates a copy of `_eventListeners`. `unsubscribe()` splices the live array, so a listener that removed itself inside an emit shifted the next listener into the slot the loop had already passed, and that listener never saw the event. Every listener registered when the emit starts now receives it.
+
+### Why
+
+- A self-removing `agent_start` or `agent_idle` listener placed just before the control endpoint's subscription swallowed the endpoint's idle wake (a held delivery waited for the next edge), and one placed before a manual continue's listener pushed `.` acceptance back to the end of the turn (session gateway, todo 27). `ExternalAdmission`'s listener `Set`s and the control feed's `Map` are unaffected: deleting the current entry of a `Set` or `Map` during `for...of` does not skip the next one.
+
+### Why an extension could not handle it
+
+- The listener list and its emit loop are private to `AgentSession`; the skipped listener is the one that cannot see the event.
+
+### Expected merge conflict zones
+
+- LOW: the loop header in `_emit`.
+
+## 2026-09-29 - `SessionManager.appendCustomEntryOrNothing`: a custom entry on disk or not at all
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `appendCustomEntryOrNothing(customType, data)` appends like `appendCustomEntry`, but when writing the entry throws it takes the entry back out (`fileEntries`, `byId`, `entryOrdersById`, `fullEntryCount`), returns the leaf to its parent and bumps `mutationCount` before rethrowing. Additive: one method after `appendCustomEntry`; `appendCustomEntry` and `_appendEntry` are unchanged.
+
+### Why
+
+`release_session` (modes/rpc) writes a `session_released` entry before handing the file over. When that write failed (EACCES, ENOSPC, a removed directory) the entry stayed in memory, and the next entry written on the session the host kept had a parent that was never on disk (gate re-review r4 of todo 8).
+
+### Why an extension could not handle it
+
+The entry list and leaf are private to `SessionManager`.
+
+### Expected merge conflict zones
+
+- The method block after `appendCustomEntry` in `session-manager.ts`.
+
+## 2026-09-29 - `ExternalAdmission.close()`: admission ends when a host hands the session over
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts`: `close(reason)` makes every later `admit()` throw `reason` and change nothing; `reopen()` undoes it. Additive: two methods, one field, and a first-line guard in `admit`; nothing else in the class changed.
+
+### Why
+
+`release_session` (modes/rpc) hands a session to another writer. A drain pass that was already running when the release claimed the session could still admit a delivery until the runtime was disposed, so its entry, the reply and a stop-state landed after `session_released`. The release now closes admission in the same synchronous step as its claim; the delivery stays with its sender, which redelivers it to the new owner.
+
+### Why an extension could not handle it
+
+The drain is the extension; it cannot know the host is about to tear its session down.
+
+### Expected merge conflict zones
+
+- The field list, the method after `onEmitted`, and the first line of `admit` in `external-admission.ts`.
+
+## 2026-09-29 - Atomic external-message admission, its ledger, and a durable header on demand
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts` (new): `ExternalAdmission` - `admit({ delivery_id, text, deliverAs, expected_turn_id? })` decides and acts in one synchronous call: `already_admitted` when this runtime holds the id (either queue, or a started turn not yet written) or already wrote it; `held_draft` while the composer holds a draft/attachment (nothing enqueued); `turn_conflict` when `expected_turn_id` is stale, or a mid-turn steer names none; `started` when idle (one `sendCustomMessage(..., { triggerTurn: true })`); mid-turn `steered` (one `agent.steer`) or `queued` (one `agent.followUp`). The message is a `session_control_delivery` custom message whose `details.delivery_id` is written to the transcript entry. `list()` is the process-lifetime ledger `{ pending, emitted }`; `gate()` is the read-only `{ can_admit, hold_reason?, editor_revision, turn_epoch }`; `onEmitted` fires when a delivery's entry is persisted.
+- `packages/coding-agent/src/core/agent-session.ts`: owns `externalAdmission` (busy = a run is active or a prompt claimed its start); `_promptAgent` advances `turn_epoch` when a run begins; the custom-message `message_end` persistence reports the entry to the ledger; `clearQueue()` drops queued deliveries from it; `bindCore` binds `sessionControl` (`session-control-actions.ts`, new); `setControlEndpointHost(host)` lets the interactive mode provide `registerControlEndpoint`.
+- `packages/coding-agent/src/core/agent-session.ts` (manual continue): a bare `.` reports acceptance (`promptDisposition("handled")` + `preflightResult(true)`, unchanged values) once the runtime took the continuation - after its turn's `agent_start`, or at once when it was queued into a running turn - instead of after the whole continued turn, so the admission hold and the TUI's submission ticket end like an ordinary prompt's and a mid-turn follow-up delivery is `queued`, not `held_draft`. A continuation that never starts reports at the end, as before.
+- `packages/coding-agent/src/core/session-manager.ts`: `persistHeaderNow(): Promise<void>` writes the buffered header (and anything buffered behind it) asynchronously through an exclusive create (`fs/promises` `open("wx")`), then sets `flushed`, after which every entry appends immediately. While that write runs, `_persist` leaves the file to it (the `!flushed` branch returns early) and the write appends every entry persisted meanwhile - including while its handle closes - before it sets the flag in the same synchronous step as its last check, so the session path gains no synchronous filesystem call (`test/suite/no-sync-in-session-path.test.ts`). `isTranscriptFlushed()`; `async discardHeaderOnlyFile()` waits for a pending header write, then removes a file that holds only the header and model/thinking setup entries and returns to buffering (so a later entry cannot recreate a header-less file).
+
+### Why
+
+Session gateway: a delivery from another session must be applied exactly once per process (the drain retries on every edge), must never jump ahead of or into the user's draft, and must leave a durable, greppable proof on disk (`delivery_id` in the session JSONL). A registered session's id must be on disk before it is visible, because reopening a missing file mints a new id.
+
+### Why an extension could not handle it
+
+Whether the runtime already holds a message in its steering or follow-up queue, when a run begins, and when the transcript entry is written are all internal to `AgentSession` and `SessionManager`; `pi.sendMessage` gives an extension neither the answer nor atomicity.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `_pendingCustomMessages` field block, the `_isAgentRunActive = true` line in `_promptAgent`, the custom branch of `message_end` persistence in `_processAgentEvent`, `clearQueue()`, the end of the `bindCore` actions literal, and `setControlEndpointHost` beside `get sessionName`.
+- `session-manager.ts`: the methods before `_persist` and its `!this.flushed` branch; `SETUP_ONLY_ENTRY_TYPES` before the class.
+
 ## 2026-09-29 - A rejected request re-asks the compaction owner before its retry (senpi#2329)
 
 ### What changed

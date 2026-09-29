@@ -29,6 +29,7 @@ import { readDrainVerdicts } from "./session-drain.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
+import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
@@ -127,6 +128,8 @@ export class SessionCommandRouter {
 	private drainExitRequested = false;
 	private readonly handoffClosed = new Set<string>();
 	private readonly activeRequests = new Map<string | undefined, number>();
+	/** Called after any request for that session settles; a release waits here for the others to finish. */
+	private readonly requestSettledListeners = new Map<string, Set<() => void>>();
 	private readonly onHandoffParked?: RpcSessionIdlePolicy["onHandoffParked"];
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
@@ -251,6 +254,8 @@ export class SessionCommandRouter {
 			const remaining = (this.activeRequests.get(sessionId) ?? 1) - 1;
 			if (remaining > 0) this.activeRequests.set(sessionId, remaining);
 			else this.activeRequests.delete(sessionId);
+			if (sessionId !== undefined)
+				for (const listener of this.requestSettledListeners.get(sessionId) ?? []) listener();
 			if (this.draining) this.sweepDrain();
 		});
 	}
@@ -309,6 +314,21 @@ export class SessionCommandRouter {
 		}
 		if (command.type === "open_session") return this.openWithBarrier(command);
 		if (command.type === "close_session") return this.close(command);
+		if (command.type === "release_session")
+			return releaseSession(
+				{
+					draining: () => this.draining,
+					hostInstance: this.defaults.hostContext?.host_instance,
+					lookup: (sessionId) => this.registry.getForCommand(sessionId, "release_session"),
+					code: (cause) => this.code(cause),
+					// The release is itself one of the session's in-flight requests.
+					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
+					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
+					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					tearDown: (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath),
+				},
+				command,
+			);
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
 			if (connection !== undefined) {
@@ -433,6 +453,39 @@ export class SessionCommandRouter {
 		// epoch, so nothing can emit under this id again: drop the writer's
 		// per-session bookkeeping instead of retaining it for the host's life.
 		this.writer.forgetSession(sessionId);
+	}
+
+	/** Resolves once the only request in flight for `sessionId` is the caller's own. */
+	private otherRequestsSettled(sessionId: string): Promise<void> {
+		return new Promise((resolve) => {
+			const listeners = this.requestSettledListeners.get(sessionId) ?? new Set<() => void>();
+			const check = (): void => {
+				if ((this.activeRequests.get(sessionId) ?? 0) > 1) return;
+				listeners.delete(check);
+				if (listeners.size === 0) this.requestSettledListeners.delete(sessionId);
+				resolve();
+			};
+			listeners.add(check);
+			this.requestSettledListeners.set(sessionId, listeners);
+			check();
+		});
+	}
+
+	/**
+	 * The park teardown of `evictIdleSession`, claimed synchronously and sealed as released: every
+	 * attachment is drained, the runtime disposed and the path reservation freed before this resolves.
+	 */
+	private async tearDownReleased(sessionId: string, sessionPath: string): Promise<boolean> {
+		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
+		if (!claim) return false;
+		const binding = this.bindings.get(sessionId);
+		binding?.cancelPendingExtensionUiRequests?.();
+		this.forgetSessionOwnership(sessionId);
+		if (claim.finalizer)
+			await this.finalizeClose(sessionId, binding, () => this.writer.releaseSession(sessionId, sessionPath));
+		else await this.finalizations.get(sessionId)?.promise;
+		this.writer.forgetSession(sessionId);
+		return true;
 	}
 
 	/** Drops per-connection records for a handle the host closed on its own. */

@@ -307,7 +307,8 @@ directory can never read each other's state:
 <agentDir>/rpc-host-daemon/                    flat directory (shared; also a legacy host's own state)
   layout.json                                  { "layout": 2, "dir": "<sha256(canonical socket)[:16]>" }
   <sha256(canonical socket)[:16]>/             0700
-    endpoint.json                              { layout: 2, socket, created_at } - durable identity
+    endpoint.json                              { layout: 2, registry_version: 1, endpoint_kind, socket,
+                                                 created_at } - durable identity
     host.pid                                   POINTER: { layout, instance_id, generation_dir, writer }
     settings.json                              what the supervisor reads at boot
     daemon.lock  stderr.log
@@ -347,7 +348,10 @@ and starts no host in that case.
 is the hash of that spelling's canonical form). It is
 written `0600` when the directory is created and re-asserted under the ensure lock. It is written whole to a
 temporary name and linked into place, so no reader ever sees half a file, and a valid one is never rewritten, so
-`created_at` is the endpoint's first ensure. Under the lock the ensure does replace a file that does not name a
+`created_at` is the endpoint's first ensure. `endpoint_kind` is `rpc_host` for a multi-session host and `tui`
+for an interactive terminal's control endpoint; the first writer's kind stands like the rest of the record. A
+record written before `registry_version`/`endpoint_kind` existed (`{ layout, socket, created_at }`) reads as
+`rpc_host` and is never rewritten to add them. Under the lock the ensure does replace a file that does not name a
 socket hashing to this directory (torn by a crash of an older build, or foreign): left alone, such a file would
 leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
@@ -450,7 +454,7 @@ which prints the bare socket path).
   - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
     contract below), else `null`.
   - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions
-    { include_workers: true }` reply as `{ id, kind, session_path, attachments, context }`. `session_path` is
+    { include_workers: true }` reply as `{ id, kind, session_path, cwd, name, attachments, context }`. `session_path` is
     the host's canonical path, the key a client matches a session by; `context` is the published labels
     including the host's own `host_socket`/`host_instance`, `null` where none were published.
   - `claims_live`: session-path claims in `reservations/` whose owner process is still running, `0` when the
@@ -464,7 +468,20 @@ which prints the bare socket path).
   `{ endpoints: [<status row>, ...] }`, each row the single-socket report above plus `dir` (the endpoint's
   daemon directory) and `identity` (what named its socket: `endpoint` = `endpoint.json`, `settings` = the
   boot `settings.json`, `generation-settings` = a generation's own `settings.json`; each accepted only when
-  that socket hashes to the directory it was found in). A directory none of them names is still listed with
+  that socket hashes to the directory it was found in), `endpoint_kind` (`rpc_host` | `tui`, from
+  `endpoint.json`; `rpc_host` for a legacy record or any other source), `alive`, `reason` and `owner`. `alive` is `true`
+  exactly when the endpoint is routable - its socket ITSELF answered `get_protocol_info` naming an instance its
+  directory recorded under `generations/` (a socket that answers without naming one is not routable, whatever
+  generation the directory last recorded; the row's `instanceId` may still show that recorded id) - and `reason`
+  is then `null`; otherwise `reason` is `live_unresponsive`
+  (a recorded process is still running, or something answered that the directory did not record: a
+  suspended terminal, a host past its budget) or `dead` (nothing answered and every recorded process is
+  gone, or its pid now names a process with another start time - the same test `gc` applies to
+  generations). A `tui` row is probed for at most 1.5 s whatever budget the hosts get, so a stopped
+  terminal is reported `live_unresponsive` without stalling the listing. A `tui` endpoint is sent
+  `get_protocol_info` and `list_sessions` only - the two commands both endpoint kinds answer - and its row
+  carries `owner: { pid, cwd, session: { id, path, name } | null }`: the terminal's recorded pid and the one
+  session it lists (`cwd`/`session` are `null` when it did not answer). `owner` is `null` on a host row. A directory none of them names is still listed with
   `socket: null` and `identity: "unknown"`, built from the directory alone - the ensure lock is keyed by a
   longer hash of the socket's transport address and cannot be rebuilt from the 16-hex name, so it can be
   shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
@@ -499,6 +516,17 @@ which prints the bare socket path).
   An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
   its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
   An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.
+  The library call `gcHostEndpoints(agentDir, { kinds: ["tui"] })` narrows a run to endpoints of those
+  `endpoint_kind`s (a terminal reaping dead `tui` endpoints at its own startup): every other endpoint, and
+  the legacy flat directory unless `rpc_host` is listed, is neither judged nor reported, and the ones it
+  judges face the same three-part evidence. `classifyEndpointLiveness(entry)` returns the `alive`/`reason`
+  verdict above for one `listHostEndpoints` entry, probing it once under its kind's budget; it reads only.
+- `ensure`, `handoff` and `stop` never act on a terminal control endpoint: a `--socket` whose directory's
+  `endpoint.json` says `endpoint_kind: "tui"`, or whose name is a terminal socket's (`t-<16hex>.sock`, which a
+  terminal that exited leaves unrecorded), is refused with exit 3 `{ action: "refuse", reason:
+  "unsupported_endpoint_kind", socket, endpoint_kind: "tui", host: null }` from disk alone, before any
+  connection - whatever `--policy`, `--drain` or `--force` says. A terminal owns its endpoint; `gc` reaps a dead
+  one on the same evidence as a host's.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
   overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no
@@ -913,6 +941,152 @@ What the host does enforce are lifecycle windows, and they only ever return memo
 Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
 so they hold even for embedders and hand-started hosts that have no supervisor.
 
+### Interactive sessions expose a control endpoint
+
+An interactive terminal session is its own process with its own local session; nothing joins it to a host. Another
+local session reaches it only through a control endpoint, and only when an extension of that terminal registers
+one with `pi.session.registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` (see
+[pi.session](extensions.md#pisession)). OmO's thread component registers one at startup; a plain `senpi` with no
+registrant opens no socket and writes no registry directory.
+
+- **Platform.** POSIX terminals only. On win32 the registration answers
+  `{ status: "unsupported", reason: "unsupported_platform" }` and registers nothing. On a multi-session host the
+  same call binds nothing - the host's public socket is the endpoint - see "Waking a host session (`wake`)".
+- **Socket and auth.** The endpoint listens on `<agentDir>/rpc/tui/t-<16hex>.sock` (16 hex of the SHA-256 of a
+  fresh instance id). When that path is longer than a Unix socket path allows, it moves to
+  `/tmp/senpi-rpc-<8hex>/tui/`, which must be a private directory of this user. The directory is 0700 and the
+  socket 0600. A 32-byte secret is written 0600 beside the socket, and every connection must send it first, the
+  handshake every RPC socket shares; a wrong secret is disconnected before a line is read. After that it is
+  ordinary RPC framing: one LF-terminated JSON object per request, one response carrying its `id`.
+- **Registration order.** Registering first writes the session header (so the session id is durable), reaps dead
+  `tui` endpoints (`senpi host gc` scoped to `kinds: ["tui"]`), binds the socket and only then writes the
+  registry directory under the ensure lock, generation record before `endpoint.json`. A listed endpoint is one
+  that answers; a failed step undoes the earlier ones and answers `{ status: "failed", reason }`.
+- **`endpoint_kind`.** The registry record is `{ layout: 2, registry_version: 1, endpoint_kind: "tui", socket,
+  created_at }` (see "Daemon state directory (layout 2)"). `senpi host status --all` lists the terminal with
+  `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
+  the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
+  before connecting, because a terminal endpoint is owned by its terminal process.
+- **Commands.** The command set is read-mostly. Anything not listed below is answered `unsupported` as data. No
+  command can prompt, steer, queue a follow-up, open a session, run a command or change a model.
+  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0` and the endpoint's
+    `instanceId`.
+  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
+  - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
+    `editor_has_draft` and `state_version`.
+  - `get_messages`.
+  - `set_session_name { name }`: a blank name is refused.
+  - `subscribe { cursor? }`: a feed of `session_control_event { seq, kind, data }` records, where `kind` is
+    `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
+    session went idle, with `turn_epoch`). Resubscribing with the last `seq` replays what the 256-record ring
+    still holds after it.
+  - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
+  - `extension_ui_response`: answers only a question this session asked and still waits on
+    (`unknown_request` / `invalid_response` otherwise).
+  - `prompt`, `steer` and `follow_up` are `unsupported`.
+- **Admission.** A message from another session enters only through the registrant's drain, which calls
+  `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
+  decides and acts:
+  - `started`: the session was idle, and the delivery starts a turn.
+  - `queued`: the session is mid-turn and `deliverAs: "followUp"`; the delivery goes on the follow-up queue once.
+  - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
+    queue once.
+  - `turn_conflict`: the epoch is stale, or a steer names none.
+  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
+    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `already_admitted`: this process already holds or already wrote that `delivery_id`.
+
+  The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
+  carry the `delivery_id`. `listAdmittedDeliveries()` reports `pending` (held by the runtime) and `emitted`
+  (entry written) for the life of the process.
+- **Wake.** The drain runs on edges only, never on a timer, as the extension event `session_control_wake`. The
+  edges are: the session went idle (`idle`), the user's last submission reached the runtime (`submission`),
+  the editor was cleared without a submission (`draft_cleared`), a `wake` command (`command`), an entry created
+  or deleted in `inboxDir` (`inbox`), an admitted delivery reaching the transcript (`emitted`), and the
+  terminal continuing after a stop (`continue`). One pass runs at a time; edges that arrive during a pass merge
+  into exactly one more pass. A first `inbox` pass runs right after registration.
+- **Exit.** A clean exit unregisters the endpoint. A session whose file holds only its header is deleted, unless
+  `isSessionReferenced()` answers `true`.
+
+A session that lives on a multi-session host is taken over by a terminal with `release_session` (see "Handing a
+session over (`release_session`)"); a terminal's own session is never handed over through its endpoint.
+
+### Endpoint kinds: hosts and terminals
+
+An agent directory's endpoint registry (`rpc-host-daemon/<16hex>/endpoint.json`) names two kinds of endpoint.
+`rpc_host` is a multi-session host, everything in this section. `tui` is ONE interactive terminal whose extension
+registered a control endpoint (see "Interactive sessions expose a control endpoint" above). Both kinds appear in
+`senpi host status --all` and are reaped by `senpi host gc` on the same evidence; only a host is ever ensured,
+handed off, drained or stopped (see "The `senpi host` command").
+
+### Waking a host session (`wake`)
+
+`wake { sessionId, delivery_ids? }` is session-scoped like `prompt`, and has the contract of a terminal endpoint's
+`wake`, so a sender wakes every recipient kind with one command. An extension on a host session registers the
+same way it does in a terminal - `pi.session.registerControlEndpoint({ inboxDir, drain })` - and on a host that
+registration binds nothing: the host's public socket is the endpoint (`registered.socket` is its `host_socket`).
+The drain then runs on the session's `session_control_wake` edges - `agent_idle`, an admitted delivery reaching
+the transcript, an entry created or deleted in `inboxDir`, and this command - one pass at a time, edges that
+arrive during a pass coalescing into one more. `wake` answers `{ admitted: [{ delivery_id, kind }] }`, the outcome
+of the pass that covered it (`delivery_ids` appear on that pass's event). With no drain registered it still
+emits `session_control_wake` into the session's extensions and answers `{ admitted: [] }`. A host without a
+public socket (stdio) answers a registration `{ status: "unsupported", reason: "unsupported_mode" }`: nothing
+outside its parent could reach it. `pi.session.admitExternalMessage` and `listAdmittedDeliveries` work on host
+sessions exactly as in a terminal.
+
+### Handing a session over (`release_session`)
+
+`release_session { sessionId, reason: "takeover", interrupt?, force? }` hands a session to a runtime outside the
+host - `omo daemon adopt` resumes it in a local terminal with `senpi --session <session_path>` (a path; `--resume`
+is the picker). It is a teardown, not a transfer: nothing is replayed. The host appends one `custom` entry
+`session_released` (`{ reason, interrupted, attachments, host_instance, released_at }`, a bookkeeping entry the
+model never sees) to the transcript - writing the header first if the file was still buffered - then drains
+every attachment, disposes the runtime, releases the path reservation (in-process and the cross-generation claim
+in `reservations/`) and answers `{ released: true, session_path, attachments, dropped }`. From then on `list_sessions`
+no longer lists it and the handle answers `unknown_session`.
+
+- It hands over only a QUIET session: no agent run, no `prompt` still in preflight (its command already answered,
+  its run not started), no queued user steer/follow-up (`queued`: still owed a turn even after the stream it was
+  aimed at ended), no admitted delivery not yet written, no bash, compaction or barrier-held session work
+  (the fields the handoff park judges by), and no other request for that session in flight on any connection.
+  Otherwise it is refused, changing nothing: `turn_active` when a turn is running or about to start (`busy`
+  contains `turn`, `prompt`, `queued` or `delivery`), `session_busy` for other work (`bash`, `compaction`, `session_work`,
+  `activity`, `request`); `errorData { attachments, busy: [...] }` names every signal. The refused work runs to
+  its end on the host, which keeps the path.
+- With `interrupt: true` a busy session first has its queues emptied, then its run and any bash aborted (a turn
+  that a pending prompt starts meanwhile is aborted too), and external admission closed; the release waits up to
+  10 s for the run to go idle, for the other requests and prompts to settle - the cancelled bash is recorded then,
+  before the release - and checks again. Still busy answers the same refusal with `errorData.interrupted: true`
+  and `errorData.dropped`; otherwise the entry records `interrupted: true`. Every refusal after the interrupt
+  (still busy, `attached` because a client attached while it waited, `unknown_session`, `session_closing`)
+  reopens admission on the session the host keeps and carries `interrupted: true` and `dropped` in `errorData`,
+  since the queues were already emptied.
+- A refusal whose `busy` names `queued` also carries `errorData.retry_with: { interrupt: true }` and a `hint`:
+  queued user input is owed a turn even when none is running (an aborted run leaves it queued), and only an
+  interrupt release takes it out and hands it back in `dropped.user_messages`.
+- Nothing queued vanishes silently. `dropped: { deliveries, user_messages }` (always present; empty without
+  `interrupt`) lists what the interrupt took out of the queues: `deliveries` are the ids of admitted deliveries
+  that were never written - they are no longer in the session's ledger and not on disk, so their sender delivers
+  them again to the next owner - and `user_messages` is the user's queued steer and follow-up text in enqueue
+  order. The host only hands them back; what the adopting client does with them is its own decision (for example,
+  resubmit them in order as queued prompts).
+- The final check, closing external admission and the close claim run in one synchronous step: a command for the
+  session routed after it finds the session closing (`session_closing`); a drain pass still running admits
+  nothing more (`pi.session.admitExternalMessage` throws, the delivery stays with its sender); and work started
+  before it is seen by the check. Nothing is written to the file after `session_released`.
+- While clients are attached (`attachments > 0` - e.g. a Desktop thread) it is refused with `attached` and
+  `errorData { attachments }`; with `force: true` those clients receive
+  `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written
+  elsewhere and must NOT be reopened on this host.
+- A draining host answers `host_draining`; a worker-isolate session or one with no file answers
+  `release_unsupported`.
+- A hand-over that fails after it began - the header or the `session_released` entry cannot be written
+  (`EACCES`, `ENOSPC`, a removed directory), or the teardown throws - answers `release_failed` with
+  `errorData { detail }` (the error message), plus `interrupted: true` and `dropped` after an interrupt. When
+  the entry could not be written the session stays on this host as it was: admission reopened, no
+  `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
+  after it claimed the session leaves it closing.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the
@@ -1086,6 +1260,8 @@ containment, or containment of arbitrary native code. They are not an extension 
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 
@@ -1103,7 +1279,13 @@ In the response `error` field, machine-matchable:
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
-- `host_draining` (`open_session` on a connection whose generation is parking for a handoff; the successor already owns the public path, so re-resolve it and open there rather than retrying this connection)
+- `host_draining` (`open_session` or `release_session` on a connection whose generation is parking for a handoff; the successor already owns the public path, so re-resolve it and open or release there rather than retrying this connection)
+- `turn_active` (`release_session` while a turn runs or is about to start - a prompt in preflight, an admitted delivery not yet written - without `interrupt: true`; `errorData { attachments, busy }`)
+- `session_busy` (`release_session` while other session work runs - bash, compaction, barrier-held work, another request for the session - without `interrupt: true`; `errorData { attachments, busy }`)
+- `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)
+- `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
+- `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
+- `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `open_failed: <detail>`
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
@@ -2227,6 +2409,53 @@ Response:
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
 
+#### wake
+
+Runs the session's registered inbox drain once (multi-session hosts: session-scoped; terminal control endpoints: the endpoint's one session). See "Waking a host session (`wake`)".
+
+```json
+{"type": "wake", "sessionId": "rpc-1", "delivery_ids": ["d2"]}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "wake",
+  "success": true,
+  "data": { "admitted": [{ "delivery_id": "d2", "kind": "started" }] }
+}
+```
+
+`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
+
+#### release_session
+
+Multi-session hosts only. Hands the session to a runtime outside the host; see "Handing a session over (`release_session`)".
+
+```json
+{"type": "release_session", "sessionId": "rpc-1", "reason": "takeover"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "release_session",
+  "success": true,
+  "data": {
+    "released": true,
+    "session_path": "/path/to/session.jsonl",
+    "attachments": 0,
+    "dropped": { "deliveries": [], "user_messages": [] }
+  }
+}
+```
+
+`dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner, and hand `user_messages` to the adopting client, which decides what to do with them (for example, resubmit them in order as queued prompts).
+
+Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
+
 ### Commands
 
 #### get_commands
@@ -2419,6 +2648,7 @@ When a multi-session host ends a routing handle it may name why:
 | `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session is closed, not parked |
 | `replaced` | The routing handle ended because the live session behind it was replaced |
 | `handoff_parked` | A generation handoff drained this host; reopen with `open_session { sessionPath }` |
+| `released` | `release_session` handed the session to a runtime outside this host. Carries `sessionPath`, the file that runtime now writes: do NOT reopen it here |
 | `error` | The session failed (worker death, output overflow) and the host sealed it |
 
 The field is absent on older hosts and on older records. Decoders must not require it. A retained session that hits the

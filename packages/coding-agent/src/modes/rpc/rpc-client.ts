@@ -63,6 +63,7 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "./socket-transport.ts";
+import { socketNeedsHandshake } from "./tui-socket.ts";
 
 // ============================================================================
 // Types
@@ -338,7 +339,7 @@ export class RpcClient {
 	}
 
 	private async startSocket(path: string): Promise<void> {
-		const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(path)) : undefined;
+		const secret = socketNeedsHandshake(path) ? await readSocketSecret(socketSecretPath(path)) : undefined;
 		const socket = createConnection(resolveSocketTransportAddress(path, process.platform, secret));
 		this.socket = socket;
 		await new Promise<void>((resolve, reject) => {

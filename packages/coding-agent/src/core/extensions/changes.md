@@ -1,5 +1,29 @@
 # Core Extensions Changes
 
+## 2026-09-29 - `pi.session`: external-message admission, its ledger, the durable header and the control endpoint; `session_control_wake`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts` (new): the contract - `SessionControlActions`, `RegisterControlEndpointOptions` (`inboxDir`, `drain`, optional `isSessionReferenced`), `SessionControlRegistration` (`registered { socket, dispose }` | `unsupported { unsupported_platform | unsupported_mode }` | `failed { reason }`), `SessionControlWakeEvent { reason, reasons, delivery_ids? }`, the admission input/result/gate/ledger types and `SESSION_CONTROL_DELIVERY_TYPE`. Re-exported from `types.ts`, `extensions/index.ts` and the package root.
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.session: SessionControlActions` (`registerControlEndpoint`, `admissionGate`, `admitExternalMessage`, `listAdmittedDeliveries`, `persistHeaderNow`); the `session_control_wake` event in `ExtensionEvent` and its `on` overload; optional `ExtensionActions.sessionControl`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the runtime starts with a throwing pre-bind `sessionControl` stub; `pi.session.*` asserts the instance is active and delegates to the bound actions.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindCore` copies `sessionControl` when the host supplies it.
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports the new types.
+
+### Why
+
+The session gateway applies other sessions' messages through one seam inside the target (the OmO thread component): it needs an atomic, idempotent admission call, the runtime's ledger to reconcile claims, a durable session id before exposure, and an endpoint plus edge-driven wakes so an idle target drains without a timer. A plain senpi TUI never registers, so it binds no socket and writes no registry entry.
+
+### Why an extension could not handle it
+
+The atomicity and the ledger live in the session runtime's queues and persistence, and the endpoint needs the TUI's editor, question and stop/continue state; none of it is reachable from the existing API.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `ExtensionEvent` union after `AgentSettledEvent`, the `on` overload after `agent_settled`, the end of `ExtensionAPI` after `events`, the end of `ExtensionActions`, the `session-control-types.ts` import/export lines.
+- `loader.ts`: the runtime stub literal after `setSessionFastMode`, the API literal before `rpc`.
+- `runner.ts`: the `bindCore` action copies.
+
 ## 2026-09-29 - Turns requested during `session_start` dispatch start after every handler (senpi#1972)
 
 ### What changed

@@ -1,3 +1,144 @@
+## 2026-09-29 - `release_session`: a failed hand-over answers `release_failed` and leaves the session hosted
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: one `try/catch/finally` in `releaseSession` covers both paths from the first admission `close()` (the interrupt's, or the claim's) to the answer: a throw is answered `release_failed` with `errorData { detail, interrupted?, dropped? }` instead of rejecting, and every answer other than a release reopens admission. `claimAndRelease` reopens what it closed when the header or entry write throws, and writes the entry with `SessionManager.appendCustomEntryOrNothing`, so a failed write leaves no phantom entry. The interrupt's queue-taking is synchronous and happens before any await, so `dropped` survives any later throw.
+- `packages/coding-agent/src/modes/rpc/session-release-interrupt.ts` (new): `takeQueuedInput`, `abortAndSettle`, `RELEASE_SETTLE_MS`, `ReleaseDropped` - moved out of `session-release.ts` (formerly `interruptAndSettle`).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_RELEASE_FAILED` (`release_failed`).
+- Tests: `test/suite/rpc-release-session-failure.test.ts` (new, real host, the `session_released` write made to throw EACCES): plain release answers `release_failed`, no entry in memory, a later delivery is admitted and written chained to entries on disk, a retried release succeeds; after an interrupt the refusal carries `interrupted` and the dropped user text. `test/suite/rpc-release-gateway-fixture.ts` (new): the gateway extension fixture shared by the release suites.
+
+### Why
+
+Gate re-review r4 of todo 8: a write failure inside the claim step left admission closed for good on the non-interrupt path and left the release unanswered on both paths, losing the text an interrupt had taken.
+
+### Why an extension could not handle it
+
+The release decision and its answer are the router's.
+
+### Expected merge conflict zones
+
+- `releaseSession` / `claimAndRelease` in `session-release.ts`; the error-code block in `rpc-types.ts`.
+
+## 2026-09-29 - `release_session`: admission closes at the claim; `interrupt` empties the queues and reports `dropped`
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: the final busy check, `externalAdmission.close(RELEASED_ADMISSION_CLOSED)` and the close claim are one synchronous step, so a drain pass still running admits nothing into a session being torn down. `interruptAndSettle` now runs `session.clearQueue({ abortWillFollow: true })` before aborting (queued deliveries leave the ledger unwritten - the sender redelivers them - and user queued text is kept) and closes admission while it settles; every answer after the interrupt's `close()` other than a release reopens admission (`try/finally`; the still-busy, `attached`, `unknown_session` and `session_closing` refusals alike) and carries `interrupted: true` and `dropped` in `errorData`, since the queues were already emptied. The success reply always carries `dropped: { deliveries, user_messages }` (empty without `interrupt`). A refusal whose `busy` names `queued` carries `retry_with: { interrupt: true }` and `hint` (`RELEASE_QUEUED_HINT`).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `dropped` on the `release_session` response.
+- `test/suite/rpc-release-host-support.ts` (new): a real in-process host (production router, registry, writer, binding) over real `AgentSession`s on the faux provider. `test/suite/rpc-release-session-delivery.test.ts` (new): a drain that admits in the teardown window is refused and nothing follows `session_released`; interrupt with a queued delivery releases and reports it; interrupt with queued user steer/follow-up reports both texts; an interrupted release refused `attached` (a client attached during the settle) reopens admission and reports the dropped user text; a plain `queued` refusal names `retry_with`. The rig's fake session gains `clearQueue` and `externalAdmission.close/reopen`.
+
+### Why
+
+Gate re-review r2 of todo 8: a drain pass in flight at the claim wrote a delivery, its reply and a stop-state after `session_released`; and `interrupt` never released a session holding a queued gateway delivery (`abort()` leaves the queue, so `busy: ["delivery"]` stayed forever). Queued user text dropped by an interrupt must not vanish silently, so it is handed back. Gate re-review r3: the refusal after the settle (`attached` et al.) left admission closed for the host's life and lost the cleared user text.
+
+### Why an extension could not handle it
+
+The release decision and teardown are the router's; the queues belong to `AgentSession`.
+
+### Expected merge conflict zones
+
+- `releaseSession` (the claim step) and `interruptAndSettle` in `session-release.ts`; the `release_session` response type in `rpc-types.ts`.
+
+## 2026-09-29 - `release_session` hands over only a quiet session (bash, prompt preflight, other requests)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: the busy check is no longer `isStreaming`. `busySignals` reports `turn` (run), `prompt` (a binding `prompt` call not settled - its command answers before its run starts), `delivery` (admitted, unwritten), `bash`, `compaction`, `session_work`, `activity` (the handoff predicate `isHandoffBusy`, for any source added later) and `request` (another router request for the session in flight). Busy is refused `turn_active` (turn/prompt/delivery) or `session_busy` (the rest) with `errorData { attachments, busy }`. With `interrupt`, `interruptAndSettle` aborts bash and the run (and any run a pending prompt starts meanwhile), waits up to `RELEASE_SETTLE_MS` for idle, other requests and prompts, then re-checks; only that final check and the close claim are synchronous.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the release port gains `otherRequests` (`activeRequests` minus the release), `otherRequestsSettled` (a per-session listener fired when a request settles) and `pendingPrompts` (from the binding).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` / `session-binding.ts`: the handler keeps its unsettled `prompt` calls (`pendingPrompts()`), exposed on the binding.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RPC_ERROR_SESSION_BUSY` (`session_busy`).
+- `test/suite/rpc-inprocess-host-support.ts`: the fake runtime runs a user bash (`startBash`/`finishBash`; `abortBash` records a cancelled `bashExecution` when it settles, like `executeBash`), reports admitted deliveries, and the rig can send any command and give its binding `pendingPrompts`. `test/suite/rpc-release-session-busy.test.ts` (new).
+
+### Why
+
+Gate review of todo 8: a user bash (not an agent run) passed the `isStreaming` check, and its cancelled `bashExecution` was appended after `released:true`, interleaving with the adopting writer; a `prompt` routed just before the release was still in preflight, so both callers were told success and the user message landed after `session_released`. A takeover must leave the host with nothing that can still write the file.
+
+### Why an extension could not handle it
+
+The release decision is the router's own command handling; an extension sees neither the router's in-flight requests nor the binding's prompt calls.
+
+### Expected merge conflict zones
+
+- `busySignals` / `interruptAndSettle` in `session-release.ts`; the release port literal and `otherRequestsSettled` in `session-command-router.ts`; the `prompt` case and the returned handler object in `connection-handler.ts`.
+
+## 2026-09-29 - `tui` rows in `host status --all`, lifecycle refusal of `tui` endpoints, `wake` and `release_session` on host sessions
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `probeHostStatus(options, read)` returns `{ report, answered, listing }` - the report `readHostStatus` returns (now a wrapper), the raw `get_protocol_info` answer (`undefined` when nothing answered), and every listed row.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: `alive` is judged from `answered.instanceId`, never from the report's `instanceId`, which falls back to the RECORDED generation - a socket that answered without naming an instance was reported routable. Rows gain `owner` (`{ pid, cwd, session: { id, path, name } | null }` on `tui` rows, `null` on host rows); a `tui` row is still sent `get_protocol_info` and `list_sessions` only.
+- `packages/coding-agent/src/modes/rpc/host-status-rows.ts`: `HostSessionRow` gains `cwd` and `name` from the listing (additive in `session_rows`).
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `endpointKindOfSocket(socket, agentDir)` - `tui` for a `t-<16hex>.sock` name or an `endpoint.json` that says so; reads disk only.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `ensure`, `handoff` and `stop` refuse a `tui` socket with `{ action: "refuse", reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" }` exit 3 before any probe or connection.
+- `packages/coding-agent/src/modes/rpc/host-session-control.ts` (new): `HostSessionControl`, the `ControlEndpointHost` a host session binds - a registration installs the drain on a `WakeScheduler` fed by `agent_idle`, emitted deliveries, the inbox watch and the `wake` command, and answers `registered` with the host's `host_socket` (`unsupported_mode` without one); `wake(ids)` answers the covering pass's admissions, `admitted: []` (after emitting `session_control_wake`) with no drain.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: installs a fresh `HostSessionControl` on every (re)bound session before `bindExtensions`, disposes it on rebind/dispose, and answers the session-scoped `wake { delivery_ids? }`.
+- `packages/coding-agent/src/modes/rpc/session-release.ts` (new): `releaseSession(port, command)` - `release_session { sessionId, reason: "takeover", interrupt?, force? }` refuses `invalid_release_reason`, `host_draining`, `release_unsupported` (worker runtime / no file), `attached` (`errorData.attachments`) and `turn_active`; with `interrupt` it aborts first. Then, with no await between the last check and the close claim, it writes the header if buffered, appends a `custom` `session_released` entry and runs the router's park teardown; answers `{ released: true, session_path, attachments }`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: routes `release_session` to `releaseSession` with a port over its registry, drain flag and `tearDownReleased` (the `evictIdleSession` claim-drain-finalize sequence, sealed with `writer.releaseSession`).
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `releaseSession(sessionId, sessionPath)` seals the session with `session_closed { reason: "released", sessionPath }` and no close response; `parkSession` shares the same private sealing path.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `wake` and `release_session` commands and responses, `RpcSessionClosedReason` `released`, and the error codes `turn_active`, `attached`, `invalid_release_reason`, `release_unsupported`, `host_draining`.
+- `test/suite/rpc-host-status-tui.test.ts`, `rpc-wake.test.ts`, `rpc-host-lifecycle-tui-refusal.test.ts`, `rpc-release-session.test.ts` (new); `rpc-endpoint-registry-fixtures.ts` gains `scriptedSocket`.
+
+### Why
+
+Session gateway (todo 8): the omo engine must wake a host-resident session exactly as it wakes a terminal, and `omo daemon adopt` must take a host-resident session into a local terminal now that the shared-host `attach` is gone - which needs the host to let go of the file (no second writer) and say so. Terminal endpoints share the registry with hosts, so the host operator commands must refuse them before touching them, and `status --all` must say which terminal owns which session. The routability fix closes the todo-6 review finding: the verdict must come from what the socket said.
+
+### Why an extension could not handle it
+
+The router, the per-session connection handler, the host status reader and the `senpi host` runner are the RPC host's own wire surface and CLI; an extension sees none of them, and a release has to tear down the runtime its extension instance lives in.
+
+### Expected merge conflict zones
+
+- The `close_session` / `release_session` branch at the top of `dispatch` and the new `tearDownReleased` beside `forgetSessionOwnership` in `session-command-router.ts`.
+- The control-host lines after `sessionQuestionBridges.set` in `rebindSession`, the `wake` case after `abort_branch_summary`, and the head of `dispose` in `connection-handler.ts`.
+- The head of `runHostRequest` in `host-runner.ts`; `endpointStatus` in `host-status-all.ts`; the tail of `readHostStatus` in `host-status.ts`.
+- `parkSession` in `session-event-writer.ts`; the command/response unions and error-code list in `rpc-types.ts`.
+
+## 2026-09-29 - Clients authenticate to `tui` control sockets; the session state projection is its own module
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tui-socket.ts` (new): `tuiSocketName(instanceId)` = `t-<sha256(instanceId)[:16]>.sock`, `isTuiControlSocket(path)`, and `socketNeedsHandshake(path, platform)` - win32, as before, or any `t-*.sock`.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: read the socket's `.secret` and send the handshake whenever `socketNeedsHandshake` says so, so `host status --all`, `classifyEndpointLiveness` and `RpcClient` reach a TUI endpoint on POSIX. A POSIX host socket still gets no handshake, byte for byte as before.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` (new): `buildRpcSessionState` moved out of `connection-handler.ts` unchanged; `connection-handler.ts` imports it and re-exports it, so existing importers are unaffected. The TUI control endpoint answers `get_state` through it without loading the connection handler.
+
+### Why
+
+A TUI control endpoint authenticates every connection with its secret on every platform (the handshake from `socket-transport.ts`), so a client that did not send it would read every live TUI as `live_unresponsive`. Sharing one state projection keeps `get_state` identical across hosts, workers and terminals.
+
+### Why an extension could not handle it
+
+The probe and the RPC client are the host CLI's own transport code.
+
+### Expected merge conflict zones
+
+- The secret branch at the top of `connectAndAsk` in `host-probe.ts` and of `startSocket` in `rpc-client.ts`.
+- The import block and the former `buildRpcSessionState` location in `connection-handler.ts`.
+
+## 2026-09-29 - One endpoint registry: `endpoint_kind` in `endpoint.json`, kind-aware status probes, a liveness verdict, a `kinds` gc filter
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-paths.ts`: the `endpoint.json` schema grows additively to `{ layout: 2, registry_version: 1, endpoint_kind: "rpc_host" | "tui", socket, created_at }` (`ENDPOINT_REGISTRY_VERSION`, `EndpointKind`). `ensureEndpointIdentity(paths, socket, { repair?, kind? })` writes the kind (default `rpc_host`) into the same record; the write itself (temporary file + `link()`, first writer wins, `repair` only under the ensure lock) is unchanged, so a later ensure never turns a `tui` record into a host's. `createDaemonDirectories(paths, { kind? })` is what a `tui` registrant calls.
+- `packages/coding-agent/src/modes/rpc/host-endpoints.ts`: `HostEndpointEntry` gains `endpoint_kind`, read from `endpoint.json`; a legacy `{ layout, socket, created_at }` record, the `settings.json` sources and an unaddressable directory read as `rpc_host`. Nothing is rewritten on read.
+- `packages/coding-agent/src/modes/rpc/host-endpoint-liveness.ts` (new): `classifyEndpointLiveness(entry, { timeoutMs? })` -> `"routable" | "live_unresponsive" | "dead"`. Routable only when `get_protocol_info` answers with an instance id recorded under `generations/`; dead only when nothing answered and no recorded generation is live by the existing pid + `processStartTime` test (`anyGenerationLive`, the same test `host gc` applies); everything else live_unresponsive. `judgeEndpointLiveness(paths, answered)` is the same verdict for a reader that already probed. `TUI_PROBE_TIMEOUT_MS` (1500) and `endpointProbeTimeoutMs(kind, requested?)`: a `tui` endpoint never gets more than 1.5 s, a host keeps the 10 s default.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: every `status --all` row (`HostEndpointStatus`) gains `endpoint_kind`, `alive` (routable) and `reason` (`live_unresponsive` | `dead` | `null`). A `tui` row is read under `endpointProbeTimeoutMs("tui", timeoutMs)`, so one silent terminal costs the listing 1.5 s and is reported `reachable: false, alive: false, reason: "live_unresponsive"`. Still `prune: false`: the listing removes nothing.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `HostGcOptions.kinds` - `gcHostEndpoints(agentDir, { kinds: ["tui"] })` judges and reports only endpoints of those kinds (the legacy flat directory only when `rpc_host` is listed); each judged endpoint still goes through the three-part evidence inside its ensure lock.
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: `anyGenerationLive` is exported (unchanged) for the liveness verdict.
+- `test/suite/rpc-endpoint-registry.test.ts`, `test/suite/rpc-host-endpoint-liveness.test.ts` and their `rpc-endpoint-registry-fixtures.ts` (new); the `endpoint.json` shape assertions in `rpc-host-endpoint-identity*.test.ts`, `rpc-host-daemon-dir.test.ts`, `rpc-host-status-all.test.ts` and `suite/host-cli.test.ts` are extended with the new fields.
+
+### Why
+
+Standalone TUI sessions are about to publish control endpoints (session gateway, IS-7): the same `<agentDir>/rpc-host-daemon/<16hex>/` registry must list them beside the `p-*`/`i-*` shards and the legacy socket, so every reader (`host status --all`, omo, the Desktop, thread tools) enumerates one list. A client must tell a TUI from a host (lifecycle commands refuse TUIs), a suspended terminal (`^Z`) must not stall a listing for 10 s nor be reaped, and a TUI must be able to reap dead TUI endpoints at startup without judging host directories it did not start.
+
+### Why an extension could not handle it
+
+The registry, its reader and `host gc` are the RPC host's own on-disk state and CLI; no extension hook sees them.
+
+### Expected merge conflict zones
+
+- `ensureEndpointIdentity`'s record literal and `createDaemonDirectories`' signature in `host-daemon-paths.ts`.
+- `identifyEndpoint` in `host-endpoints.ts`, `endpointStatus` in `host-status-all.ts`, the head of `gcHostEndpoints` in `host-gc.ts`.
+
 ## 2026-09-29 - Auth status mirrors `ambient` (senpi#2327)
 
 ### What changed
