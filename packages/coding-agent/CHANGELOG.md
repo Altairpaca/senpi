@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `web_search` through OpenAI's hosted search (the `openai` and `codex` providers, native OpenAI routes) and xAI no longer lists URLs the model wrote in its answer as sources. Only pages the search returned count, so an answer that never searched is a failed attempt and the next provider is tried instead of an invented link being reported as a result. ([#2337](https://github.com/code-yeongyu/senpi/issues/2337))
+
 ### Removed
 
 ## [2026.9.29] - 2026-09-29
