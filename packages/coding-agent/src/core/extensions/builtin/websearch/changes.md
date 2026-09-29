@@ -1,3 +1,21 @@
+## 2026-09-29 - Answer-text URLs are not search sources (senpi#2337)
+
+### What changed
+
+- `websearch/providers/openai-responses.ts`: `normalizeResponsesPayload` no longer falls back to regex-extracted URLs from the answer text (`resultsFromTextUrls` removed). Results come only from `url_citation` annotations, `web_search_call` action sources, and, for xAI, the server `citations` array.
+
+### Why
+
+- A response with no `web_search_call` was reported as a successful search whose sources were whatever URLs the model typed, including invented ones, and the router never fell back.
+
+### Why an extension could not handle it
+
+- The normalizer is private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `normalizeResponsesPayload` if upstream pi-websearch keeps the text-URL fallback.
+
 ## 2026-09-28 - Native web search uses the credential's own API host (senpi#2309)
 
 ### What changed
