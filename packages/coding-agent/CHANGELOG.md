@@ -10,6 +10,8 @@
 
 - Installing `@code-yeongyu/senpi` is smaller and faster: the package now declares its real dependencies instead of shipping its whole dependency tree inside the tarball, so bun no longer installs every dependency twice and npm no longer unpacks a 27,000-file tarball. Commands, library exports and features are unchanged. ([#2360](https://github.com/code-yeongyu/senpi/issues/2360))
 
+- The published packages no longer ship sourcemaps (they pointed at sources that are not published), and `@code-yeongyu/senpi` stops declaring three dependencies nothing used (`glob`, `@opentelemetry/api`, `proxy-from-env`), so installs are smaller again. ([#2362](https://github.com/code-yeongyu/senpi/issues/2362))
+
 ### Fixed
 
 ### Removed

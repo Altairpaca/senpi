@@ -70,6 +70,8 @@ function writeRepository(root) {
 	);
 	writeFile(join(root, "packages", "protocol", "dist", "index.js"), "export const protocol = 1;\n");
 	writeFile(join(root, "packages", "protocol", "dist", "index.d.ts"));
+	writeFile(join(root, "packages", "protocol", "dist", "index.js.map"), "{}\n");
+	writeFile(join(root, "packages", "client", "dist", "client.d.ts.map"), "{}\n");
 	writeFile(
 		codingAgentPath(root, "dist", "client", "remote-session.d.ts"),
 		[
@@ -93,6 +95,9 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		// Then: the built client/protocol output is vendored, the stale tree is gone, and
 		// every emitted import of the unpublished names is a relative vendor path.
 		assert.equal(existsSync(codingAgentPath(tempDir, "vendor", "stale")), false);
+		// Sourcemaps reference unpublished sources and are never vendored (senpi#2362).
+		assert.equal(existsSync(codingAgentPath(tempDir, "vendor", "pi-protocol", "index.js.map")), false);
+		assert.equal(existsSync(codingAgentPath(tempDir, "vendor", "pi-client", "client.d.ts.map")), false);
 		assert.equal(
 			readFileSync(codingAgentPath(tempDir, "vendor", "pi-protocol", "index.js"), "utf8"),
 			"export const protocol = 1;\n",

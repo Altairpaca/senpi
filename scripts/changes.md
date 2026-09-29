@@ -1,3 +1,22 @@
+## 2026-09-29 - Published packages ship no sourcemaps (senpi#2362)
+
+### What changed
+
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi pack gate and every published alias package check reject any `*.map` in the tarball.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: the vendored client/protocol copy skips `*.map`.
+
+### Why
+
+- The maps reference workspace `src/` files that are never published, so they cannot resolve for consumers; they were 17.9 MiB of the senpi tarball alone.
+
+### Why an extension could not handle it
+
+- Publish tooling.
+
+### Expected merge conflict zones
+
+- LOW: `assertPublishedWorkspacePackFiles`, `assertSenpiPackedWorkspaceFiles`, `copyVendoredTypeWorkspaces`.
+
 ## 2026-09-29 - Publish the real @code-yeongyu/senpi dependency manifest instead of a flattened bundle (senpi#2360)
 
 ### What changed

@@ -104,6 +104,19 @@ describe("assertPublishedWorkspacePackFiles", () => {
 		assert.match(warnings[0], /native\/prebuilds\/linux-x64\/senpi_pty\.linux-x64\.node/);
 	});
 
+	for (const packageName of [AGENT_CORE, "@earendil-works/pi-telemetry"]) {
+		it(`rejects a ${packageName} tarball that ships sourcemaps (senpi#2362)`, () => {
+			// Given: every published package, not only senpi, must leave its maps out.
+			const tarball = packed([...AGENT_CORE_FILES, "dist/index.js.map"]);
+
+			// When / Then
+			assert.throws(
+				() => assertPublishedWorkspacePackFiles(tarball, packageName),
+				/must not ship sourcemaps \(found 1, e\.g\. dist\/index\.js\.map\)/,
+			);
+		});
+	}
+
 	it("ignores packages outside the published workspace checks", () => {
 		assert.doesNotThrow(() => assertPublishedWorkspacePackFiles(packed([]), "@earendil-works/pi-client"));
 	});

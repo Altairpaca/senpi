@@ -1,3 +1,21 @@
+## 2026-09-29 - Drop unused declarations and published sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `glob`, `@opentelemetry/api` and `proxy-from-env` are no longer declared (no import anywhere in senpi or its shipped `.js`/`.d.ts`, and no peer requirement); `files` excludes `dist/**/*.map`. Locks regenerated with `bun run refresh-lock`.
+
+### Why
+
+- Smaller install and tarball with no behavior change; see `scripts/changes.md`.
+
+### Why an extension could not handle it
+
+- Package manifest and publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` block and `files` list in `packages/coding-agent/package.json`.
+
 ## 2026-09-29 - Publish the real dependency manifest (senpi#2360)
 
 ### What changed

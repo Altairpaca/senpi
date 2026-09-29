@@ -62,6 +62,19 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		});
 	}
 
+	for (const path of ["dist/index.js.map", "dist/index.d.ts.map", "vendor/pi-client/index.js.map"]) {
+		it(`rejects a tarball that ships the sourcemap ${path} (senpi#2362)`, () => {
+			// Given: published maps point at workspace sources that are never published.
+			const packed = packedFiles([path]);
+
+			// When / Then
+			assert.throws(
+				() => assertSenpiPackedWorkspaceFiles(packed, stagedManifest()),
+				new RegExp(`senpi package tarball must not ship sourcemaps \\(found 1, e\\.g\\. ${path.replaceAll(".", "\\.")}\\)`),
+			);
+		});
+	}
+
 	it("rejects a packed tarball that ships npm-shrinkwrap.json", () => {
 		// Given: a shipped shrinkwrap overrides consumer resolution of the whole tree.
 		const packed = packedFiles(["npm-shrinkwrap.json"]);
