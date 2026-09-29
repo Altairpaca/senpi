@@ -27,6 +27,7 @@ import {
 	RPC_ERROR_ATTACHED,
 	RPC_ERROR_HOST_DRAINING,
 	RPC_ERROR_INVALID_RELEASE_REASON,
+	RPC_ERROR_RELEASE_FAILED,
 	RPC_ERROR_RELEASE_UNSUPPORTED,
 	RPC_ERROR_SESSION_BUSY,
 	RPC_ERROR_SESSION_CLOSING,
@@ -35,20 +36,18 @@ import {
 	type RpcResponse,
 } from "./rpc-types.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
+import {
+	abortAndSettle,
+	NOTHING_DROPPED,
+	type ReleaseDropped,
+	type ReleaseSettlePort,
+	takeQueuedInput,
+} from "./session-release-interrupt.ts";
 
 /** `customType` of the transcript entry a release appends. */
 export const SESSION_RELEASED_ENTRY_TYPE = "session_released";
 
-/** How long an `interrupt` release waits for the aborted work to settle before it re-checks. */
-export const RELEASE_SETTLE_MS = 10_000;
-
 export type ReleaseSessionCommand = Extract<RpcCommand, { type: "release_session" }>;
-
-/** What an `interrupt` release took out of the queues: delivery ids to redeliver, user text to restore. */
-export interface ReleaseDropped {
-	readonly deliveries: readonly string[];
-	readonly user_messages: readonly string[];
-}
 
 /** What `pi.session.admitExternalMessage` throws once a release has closed admission. */
 export const RELEASED_ADMISSION_CLOSED =
@@ -57,8 +56,6 @@ export const RELEASED_ADMISSION_CLOSED =
 /** `errorData.hint` of a refusal whose `busy` names `queued`: only an interrupt hands that input back. */
 export const RELEASE_QUEUED_HINT =
 	"queued user input is still owed a turn; release with interrupt: true to take it out and receive it in dropped.user_messages";
-
-const NOTHING_DROPPED: ReleaseDropped = { deliveries: [], user_messages: [] };
 
 export type ReleaseBusySignal =
 	| "turn"
@@ -72,7 +69,7 @@ export type ReleaseBusySignal =
 	| "request";
 
 /** What the router lends a release: its lookup, its request accounting, and the park teardown. */
-export interface SessionReleasePort {
+export interface SessionReleasePort extends ReleaseSettlePort {
 	readonly draining: () => boolean;
 	readonly hostInstance: string | undefined;
 	/** The live entry, or a throw carrying the wire code (`unknown_session`, `session_closing`). */
@@ -80,9 +77,6 @@ export interface SessionReleasePort {
 	code(cause: unknown): string;
 	/** Requests for the session in flight on any connection, the release itself not counted. */
 	otherRequests(sessionId: string): number;
-	otherRequestsSettled(sessionId: string): Promise<void>;
-	/** `prompt` calls the session's binding started that have not settled, preflight included. */
-	pendingPrompts(sessionId: string): readonly Promise<unknown>[];
 	/**
 	 * Claims every attachment and tears the session down, sealing it as released. Its claim is taken
 	 * before its first await. `false` when another close already owns the entry.
@@ -102,17 +96,28 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	const first = releasable(port, command, undefined);
 	if (!("session" in first)) return first;
 	const busy = busySignals(port, command.sessionId, first.session);
-	if (busy.length === 0) return claimAndRelease(port, command, false, NOTHING_DROPPED);
-	if (command.interrupt !== true) {
+	const interrupted = busy.length > 0;
+	if (interrupted && command.interrupt !== true) {
 		return refusal(command.id, busyCode(busy), { attachments: first.attachments, ...busyData(busy) });
 	}
-	// From this close() on, every answer except a release reopens admission on the session the host keeps.
+	// Admission closes below (for the interrupt, or at the claim). Every answer except a release reopens it
+	// on the session the host keeps, and a throw is answered `release_failed` rather than left unanswered.
 	const admission = first.session.externalAdmission;
-	admission.close(RELEASED_ADMISSION_CLOSED);
+	let dropped = NOTHING_DROPPED;
 	let answer: RpcResponse | undefined;
 	try {
-		const dropped = await interruptAndSettle(port, command.sessionId, first.session);
-		answer = await claimAndRelease(port, command, true, dropped);
+		if (interrupted) {
+			admission.close(RELEASED_ADMISSION_CLOSED);
+			dropped = takeQueuedInput(first.session);
+			await abortAndSettle(port, command.sessionId, first.session);
+		}
+		answer = await claimAndRelease(port, command, interrupted, dropped);
+		return answer;
+	} catch (cause) {
+		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
+			detail: cause instanceof Error ? cause.message : String(cause),
+			...(interrupted ? { interrupted: true, dropped } : {}),
+		});
 		return answer;
 	} finally {
 		if (answer?.success !== true) admission.reopen();
@@ -143,16 +148,23 @@ async function claimAndRelease(
 	}
 	// From here to the close claim nothing awaits: a drain pass still running admits nothing more, so a
 	// delivery it had not admitted stays with its sender and reaches the next owner.
-	ready.session.externalAdmission.close(RELEASED_ADMISSION_CLOSED);
-	const manager = ready.session.sessionManager;
-	manager.persistHeaderNow();
-	manager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
-		reason: command.reason,
-		interrupted,
-		attachments: ready.attachments,
-		host_instance: port.hostInstance ?? null,
-		released_at: new Date().toISOString(),
-	});
+	const admission = ready.session.externalAdmission;
+	admission.close(RELEASED_ADMISSION_CLOSED);
+	try {
+		const manager = ready.session.sessionManager;
+		manager.persistHeaderNow();
+		// On disk or not at all: a failed write leaves no entry a later append could chain onto.
+		manager.appendCustomEntryOrNothing(SESSION_RELEASED_ENTRY_TYPE, {
+			reason: command.reason,
+			interrupted,
+			attachments: ready.attachments,
+			host_instance: port.hostInstance ?? null,
+			released_at: new Date().toISOString(),
+		});
+	} catch (cause) {
+		admission.reopen();
+		throw cause;
+	}
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
 		return refusal(command.id, RPC_ERROR_SESSION_CLOSING, taken);
 	}
@@ -194,45 +206,6 @@ function busyCode(signals: readonly ReleaseBusySignal[]): string {
 	)
 		? RPC_ERROR_TURN_ACTIVE
 		: RPC_ERROR_SESSION_BUSY;
-}
-
-async function interruptAndSettle(
-	port: SessionReleasePort,
-	sessionId: string,
-	session: AgentSession,
-): Promise<ReleaseDropped> {
-	// Queued input never runs here again: queued deliveries leave the ledger (unwritten, so their sender
-	// redelivers them to the next owner) and the user's queued text is handed back in the reply.
-	const admittedBefore = session.externalAdmission.list().pending;
-	const cleared = session.clearQueue({ abortWillFollow: true });
-	const stillAdmitted = new Set(session.externalAdmission.list().pending);
-	const dropped: ReleaseDropped = {
-		deliveries: admittedBefore.filter((deliveryId) => !stillAdmitted.has(deliveryId)),
-		user_messages: cleared.ordered.map((queued) => queued.text),
-	};
-	session.abortBash();
-	// A prompt still in preflight, or an admitted delivery, may start its run after the abort below.
-	const stopStarts = session.subscribe((event) => {
-		if (event.type === "agent_start") void session.abort();
-	});
-	let deadline: ReturnType<typeof setTimeout> | undefined;
-	const expired = new Promise<void>((resolve) => {
-		deadline = setTimeout(resolve, RELEASE_SETTLE_MS);
-	});
-	try {
-		await Promise.race([
-			Promise.allSettled([
-				session.abort().then(() => session.waitForIdle()),
-				port.otherRequestsSettled(sessionId),
-				...port.pendingPrompts(sessionId),
-			]),
-			expired,
-		]);
-	} finally {
-		clearTimeout(deadline);
-		stopStarts();
-	}
-	return dropped;
 }
 
 /** `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`. */

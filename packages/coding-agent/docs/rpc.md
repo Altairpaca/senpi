@@ -1012,6 +1012,12 @@ no longer lists it and the handle answers `unknown_session`.
   elsewhere and must NOT be reopened on this host.
 - A draining host answers `host_draining`; a worker-isolate session or one with no file answers
   `release_unsupported`.
+- A hand-over that fails after it began - the header or the `session_released` entry cannot be written
+  (`EACCES`, `ENOSPC`, a removed directory), or the teardown throws - answers `release_failed` with
+  `errorData { detail }` (the error message), plus `interrupted: true` and `dropped` after an interrupt. When
+  the entry could not be written the session stays on this host as it was: admission reopened, no
+  `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
+  after it claimed the session leaves it closing.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
@@ -1211,6 +1217,7 @@ In the response `error` field, machine-matchable:
 - `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)
 - `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
+- `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `open_failed: <detail>`
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
@@ -2379,7 +2386,7 @@ Response:
 
 `dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner and restore `user_messages` into its editor.
 
-Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `host_draining`, `session_closing` or `unknown_session`.
+Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
 
 ### Commands
 

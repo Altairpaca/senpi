@@ -5,89 +5,12 @@
  * delivery stays with its sender; `interrupt` takes queued deliveries and queued user text out of the
  * session and hands both back in `dropped`, so neither vanishes nor lands on disk.
  */
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import type { ExtensionFactory, SessionControlAdmission } from "../../src/core/extensions/types.ts";
 import { RELEASE_QUEUED_HINT, RELEASED_ADMISSION_CLOSED } from "../../src/modes/rpc/session-release.ts";
+import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { afterReleased, heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
-
-interface Gate {
-	readonly entered: () => void;
-	readonly go: Promise<void>;
-}
-
-function gate(): { held: Gate; entered: Promise<void>; go: () => void } {
-	let entered!: () => void;
-	const enteredPromise = new Promise<void>((resolve) => {
-		entered = resolve;
-	});
-	let go!: () => void;
-	const goPromise = new Promise<void>((resolve) => {
-		go = resolve;
-	});
-	return { held: { entered, go: goPromise }, entered: enteredPromise, go };
-}
-
-function gatewayFixture() {
-	let armed: Gate | undefined;
-	let heldInput: Gate | undefined;
-	const outcomes: string[] = [];
-	let inboxDir = "";
-	const extension: ExtensionFactory = (pi) => {
-		pi.on("input", async () => {
-			const hold = heldInput;
-			heldInput = undefined;
-			if (hold === undefined) return;
-			hold.entered();
-			await hold.go;
-		});
-		pi.on("session_start", async (_event, ctx) => {
-			inboxDir = join(`${ctx.sessionManager.getSessionFile() ?? "session"}.inbox`);
-			await pi.session.registerControlEndpoint({
-				inboxDir,
-				drain: async (event) => {
-					const admitted: SessionControlAdmission[] = [];
-					const late = armed;
-					if (late !== undefined && event.reasons.includes("inbox")) {
-						armed = undefined;
-						late.entered();
-						await late.go;
-					}
-					for (const deliveryId of [...(event.delivery_ids ?? []), ...(late ? ["late-1"] : [])]) {
-						try {
-							const result = pi.session.admitExternalMessage({
-								delivery_id: deliveryId,
-								text: `DELIVERY ${deliveryId}`,
-								deliverAs: "followUp",
-							});
-							outcomes.push(`${deliveryId}:${result.kind}`);
-							admitted.push({ delivery_id: deliveryId, kind: result.kind });
-						} catch (error) {
-							outcomes.push(`${deliveryId}:refused:${error instanceof Error ? error.message : String(error)}`);
-						}
-					}
-					return { admitted };
-				},
-			});
-		});
-	};
-	return {
-		extension,
-		outcomes,
-		armLateDrain(): { entered: Promise<void>; go: () => void; wake: () => void } {
-			const late = gate();
-			armed = late.held;
-			return { entered: late.entered, go: late.go, wake: () => writeFileSync(join(inboxDir, "late-1"), "marker") };
-		},
-		holdNextInput(): { entered: Promise<void>; go: () => void } {
-			const input = gate();
-			heldInput = input.held;
-			return { entered: input.entered, go: input.go };
-		},
-	};
-}
 
 describe("release_session and gateway deliveries (real host)", () => {
 	it("a drain pass that admits during the teardown is refused: nothing follows session_released", async () => {
@@ -189,7 +112,7 @@ describe("release_session and gateway deliveries (real host)", () => {
 		await input.entered;
 
 		// When: the release interrupts, and a client attaches while it waits for the held prompt.
-		const aborted = nextEvent(session, "session_abort");
+		const aborted = nextEvent(session, "agent_end");
 		const reply = host.release(sessionId, { interrupt: true });
 		await aborted;
 		expect(await host.attach(sessionPath)).toMatchObject({ success: true, data: { attached: true } });

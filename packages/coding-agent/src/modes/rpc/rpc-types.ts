@@ -274,6 +274,13 @@ export const RPC_ERROR_ATTACHED = "attached";
 export const RPC_ERROR_INVALID_RELEASE_REASON = "invalid_release_reason";
 /** `release_session` for a session this host cannot hand over: `errorData.detail` is `worker_runtime` or `no_session_file`. */
 export const RPC_ERROR_RELEASE_UNSUPPORTED = "release_unsupported";
+/**
+ * `release_session` whose hand-over failed after it began (writing the `session_released` entry or the
+ * teardown threw): `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt.
+ * When the entry could not be written the session stays on this host, admission open and no entry left in
+ * memory; a teardown that fails after it claimed the session leaves it closing.
+ */
+export const RPC_ERROR_RELEASE_FAILED = "release_failed";
 /** A draining host parks every session itself; `release_session` and `open_session` are refused meanwhile. */
 export const RPC_ERROR_HOST_DRAINING = "host_draining";
 
@@ -306,6 +313,7 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_ATTACHED
 	| typeof RPC_ERROR_INVALID_RELEASE_REASON
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
+	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
 
 /** Every established command accepts an additive routing envelope. */

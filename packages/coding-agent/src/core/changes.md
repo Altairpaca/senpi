@@ -18,6 +18,24 @@
 
 - LOW: the body of `_rewriteFile` plus the new `_serializedFileEntries` generator right after it, and one import line in `session-manager.ts`.
 
+## 2026-09-29 - `SessionManager.appendCustomEntryOrNothing`: a custom entry on disk or not at all
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `appendCustomEntryOrNothing(customType, data)` appends like `appendCustomEntry`, but when writing the entry throws it takes the entry back out (`fileEntries`, `byId`, `entryOrdersById`, `fullEntryCount`), returns the leaf to its parent and bumps `mutationCount` before rethrowing. Additive: one method after `appendCustomEntry`; `appendCustomEntry` and `_appendEntry` are unchanged.
+
+### Why
+
+`release_session` (modes/rpc) writes a `session_released` entry before handing the file over. When that write failed (EACCES, ENOSPC, a removed directory) the entry stayed in memory, and the next entry written on the session the host kept had a parent that was never on disk (gate re-review r4 of todo 8).
+
+### Why an extension could not handle it
+
+The entry list and leaf are private to `SessionManager`.
+
+### Expected merge conflict zones
+
+- The method block after `appendCustomEntry` in `session-manager.ts`.
+
 ## 2026-09-29 - `ExternalAdmission.close()`: admission ends when a host hands the session over
 
 ### What changed

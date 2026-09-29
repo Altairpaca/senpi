@@ -7,12 +7,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	type FauxProviderRegistration,
-	type FauxResponseStep,
-	fauxAssistantMessage,
-	registerFauxProvider,
-} from "@earendil-works/pi-ai/compat";
+import { type FauxResponseStep, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/compat";
 import type { AgentSession } from "../../src/core/agent-session.ts";
 import {
 	type CreateAgentSessionRuntimeFactory,
@@ -48,27 +43,20 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-release-host-"));
 	const cwd = join(dir, "cwd");
 	await mkdir(cwd);
-	const faux: FauxProviderRegistration = registerFauxProvider();
+	// As for a daemon, the agent dir holds nothing the test writes: its config-reload watcher reloads a
+	// session on a JSON change there.
+	const agentDir = join(dir, "agent");
+	await mkdir(agentDir);
+	// A NATIVE faux provider registered from each session's own extension load: every session runs in its
+	// own `ProviderScope`, and a scoped lookup sees that scope's overlay and the builtins only.
+	const faux = fauxProvider({ models: [{ id: "faux-1", reasoning: false }] });
 	const model = faux.getModel();
-	const authStorage = AuthStorage.inMemory();
-	await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
-	const modelRuntime = await ModelRuntime.create({ credentials: authStorage, modelsPath: join(dir, "models.json") });
-	modelRuntime.registerProvider(model.provider, {
-		baseUrl: model.baseUrl,
-		api: model.api,
-		models: [
-			{
-				id: model.id,
-				name: model.name,
-				api: model.api,
-				reasoning: model.reasoning,
-				input: model.input,
-				cost: model.cost,
-				contextWindow: model.contextWindow,
-				maxTokens: model.maxTokens,
-				baseUrl: model.baseUrl,
-			},
-		],
+	const registerFaux: ExtensionFactory = (pi) => {
+		pi.registerProvider(faux.provider);
+	};
+	const modelRuntime = await ModelRuntime.create({
+		credentials: AuthStorage.inMemory(),
+		modelsPath: join(dir, "models.json"),
 	});
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd: sessionCwd,
@@ -76,11 +64,11 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 		sessionStartEvent,
 	}) => {
 		const services = await createAgentSessionServices({
-			agentDir: dir,
+			agentDir,
 			cwd: sessionCwd,
 			modelRuntime,
 			resourceLoaderOptions: {
-				extensionFactories: [extension],
+				extensionFactories: [registerFaux, extension],
 				noSkills: true,
 				noPromptTemplates: true,
 				noThemes: true,
@@ -92,7 +80,7 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 			diagnostics: services.diagnostics,
 		};
 	};
-	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, closeGraceMs: 2_000 });
+	const registry = new RpcSessionRegistry({ agentDir, createRuntime, closeGraceMs: 2_000 });
 	const records: WireRecord[] = [];
 	const answerWaiters = new Map<string, (record: WireRecord) => void>();
 	const receive = (line: string): void => {
@@ -168,7 +156,6 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 		},
 		async [Symbol.asyncDispose]() {
 			await router.dispose();
-			faux.unregister();
 			await rm(dir, { recursive: true, force: true });
 		},
 	};
