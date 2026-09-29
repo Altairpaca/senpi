@@ -1915,6 +1915,8 @@ pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
 
 When not streaming, the message is sent immediately and triggers a new turn; from a `session_start` handler, that turn starts once every extension's `session_start` handler has returned. When streaming without `deliverAs`, throws an error.
 
+From a command handler, send the text before the handler returns: messages another session delivers are held behind the user's own input only until the command's handler settles, so text sent after that (a detached timer, a background task) can land behind a delivered message.
+
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
 ### pi.appendEntry(customType, data?)

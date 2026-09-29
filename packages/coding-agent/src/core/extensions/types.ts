@@ -2025,7 +2025,7 @@ export interface ExtensionAPI {
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
 
-	/** Register a custom command. */
+	/** Register a custom command. Submit any text (`sendUserMessage`) inside the handler: text sent after it returns is not held behind the user's input. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
 
 	/** Register a keyboard shortcut. */
@@ -2090,6 +2090,7 @@ export interface ExtensionAPI {
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
+	 * From a command handler, send before the handler returns: text sent after it returned is not held behind the user's input.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],

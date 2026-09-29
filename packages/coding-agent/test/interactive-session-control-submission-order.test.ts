@@ -329,3 +329,52 @@ describe("commands that may submit text after an await hold admission until they
 		expect(order[1]).toBe("delivery:d1");
 	});
 });
+
+describe("manual continue", () => {
+	it("releases the hold once its turn starts: a mid-turn follow-up is queued and the editor reads empty", async () => {
+		const harness = await createHarness({ persistSession: true });
+		cleanups.push(() => harness.cleanup());
+		const gate = Promise.withResolvers<void>();
+		harness.setResponses([
+			fauxAssistantMessage("first reply"),
+			async () => {
+				await gate.promise;
+				return fauxAssistantMessage("continued");
+			},
+			fauxAssistantMessage("after the follow-up"),
+		]);
+		await harness.session.bindExtensions({});
+		const tui = await terminal(harness, new Map());
+		const firstTurn = tui.loop(1);
+		tui.submit("hello");
+		await firstTurn;
+		await harness.session.waitForIdle();
+
+		// Unsubscribe after the emit: removing a listener while `agent_start` is being emitted
+		// would make the session skip the listener registered after it.
+		const started = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type !== "agent_start") return;
+				queueMicrotask(unsubscribe);
+				resolve();
+			});
+		});
+		const continued = tui.loop(1);
+		tui.submit(".");
+		await started;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(await controlData(tui.socket, { type: "get_state" })).toMatchObject({ editor_has_draft: false });
+		const admission = harness.session.externalAdmission.admit({
+			delivery_id: "f1",
+			text: "remote follow-up",
+			deliverAs: "followUp",
+		});
+		expect(admission.kind).toBe("queued");
+
+		gate.resolve();
+		await continued;
+		await harness.session.waitForIdle();
+		expect(transcript(harness)).toEqual(["user:hello", "delivery:f1"]);
+	});
+});

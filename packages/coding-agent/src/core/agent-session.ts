@@ -90,11 +90,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
-import {
-	AgentSettledDelivery,
-	type DeferredAgentSettledAction,
-	type DeferredTurnClaim,
-} from "./agent-settled-delivery.ts";
+import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
@@ -4057,19 +4053,42 @@ export class AgentSession {
 					hasImages: (options?.images?.length ?? 0) > 0,
 				})
 			) {
-				await this.sendCustomMessage(
-					{
-						customType: MANUAL_CONTINUE_CUSTOM_TYPE,
-						content: MANUAL_CONTINUE_DIRECTIVE,
-						display: false,
-					},
-					{
-						triggerTurn: true,
-						deliverAs: options?.streamingBehavior === "followUp" ? "followUp" : "steer",
-					},
-				);
-				promptDisposition?.("handled");
-				preflightResult?.(true);
+				// Report acceptance once the runtime took the continuation - its turn started (as
+				// subscribers see it: after that turn's agent_start) or it was queued into a running
+				// turn - like an ordinary prompt, not after the whole continued turn.
+				let accepted = false;
+				const reportAccepted = (): void => {
+					if (accepted) return;
+					accepted = true;
+					promptDisposition?.("handled");
+					preflightResult?.(true);
+				};
+				let turnStarted = false;
+				const turnClaim = new DeferredTurnClaim();
+				void turnClaim.disposition.then((disposition) => {
+					if (disposition === "delegated") reportAccepted();
+					else if (disposition === "started") turnStarted = true;
+				});
+				const unsubscribe = this.subscribe((event) => {
+					if (event.type === "agent_start" && turnStarted) reportAccepted();
+				});
+				try {
+					await this.sendCustomMessage(
+						{
+							customType: MANUAL_CONTINUE_CUSTOM_TYPE,
+							content: MANUAL_CONTINUE_DIRECTIVE,
+							display: false,
+						},
+						{
+							triggerTurn: true,
+							deliverAs: options?.streamingBehavior === "followUp" ? "followUp" : "steer",
+						},
+						turnClaim,
+					);
+				} finally {
+					unsubscribe();
+				}
+				reportAccepted();
 				return;
 			}
 
