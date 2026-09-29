@@ -4,7 +4,8 @@
 
 - `packages/coding-agent/src/core/auth-providers.ts`: new `authMethodStatus(modelRegistry, info, providerHasApiKeyRow)`. A stored credential counts only for the row of its own type (`oauth` or `api_key`); every non-stored source (runtime `--api-key`, environment, models.json, fallback) is a key and counts for the provider's `api_key` row, or for its only row when it has no `api_key` row.
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` builds each row's `status` with `authMethodStatus` instead of the provider-level `getProviderAuthStatus(id)`.
-- Tests: `test/suite/rpc-auth-and-connection-handler.test.ts` "gives each auth method row of a provider its own status" (stored OAuth lights only the OAuth row; a key saved through `login_api_key` lights only the API-key row).
+- `login_api_key` and `logout` await `modelRegistry.refresh()` before answering, so a client that re-reads `get_auth_providers` on the response sees the new state (it used to get the pre-change snapshot).
+- Tests: `test/suite/rpc-auth-and-connection-handler.test.ts` "gives each auth method row of a provider its own status" (stored OAuth lights only the OAuth row; right after the `login_api_key` / `logout` response, with no extra refresh, the API-key row reads connected / disconnected). Real-CLI QA: on `main`, a stored OAuth credential reported both rows connected, and the status read right after `login_api_key` was stale.
 
 ### Why
 

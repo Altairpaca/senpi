@@ -72,10 +72,17 @@ describe("RPC auth and connection handler contracts", () => {
 			JSON.stringify({ id: "key", type: "login_api_key", provider: "anthropic", key: "sk-scripted" }),
 		);
 		await collected.waitFor((message) => message.id === "key");
-		await modelRegistry.refresh();
+		// No refresh here: the login_api_key response itself must mean the status is current.
 		expect(await rowsFor("anthropic")).toEqual({
 			oauth: { configured: false },
 			api_key: { configured: true, source: "stored" },
+		});
+
+		await handler.handleInputLine(JSON.stringify({ id: "out", type: "logout", provider: "anthropic" }));
+		await collected.waitFor((message) => message.id === "out");
+		expect(await rowsFor("anthropic")).toEqual({
+			oauth: { configured: false },
+			api_key: { configured: false },
 		});
 		await handler.dispose();
 	});

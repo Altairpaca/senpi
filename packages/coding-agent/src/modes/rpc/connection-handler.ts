@@ -1613,13 +1613,15 @@ export function createRpcConnectionHandler(
 
 			case "login_api_key": {
 				session.modelRegistry.authStorage.set(command.provider, { type: "api_key", key: command.key });
-				session.modelRegistry.refresh();
+				// Answer after the registry sees the key: a client re-reading auth status on this
+				// response must not get the pre-login snapshot (#2384).
+				await session.modelRegistry.refresh();
 				return success(id, "login_api_key");
 			}
 
 			case "logout": {
 				session.modelRegistry.authStorage.logout(command.provider);
-				session.modelRegistry.refresh();
+				await session.modelRegistry.refresh();
 				return success(id, "logout");
 			}
 
