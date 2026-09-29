@@ -216,6 +216,7 @@ import type {
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
+import { ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import {
 	isManualContinueSubmission,
@@ -255,6 +256,7 @@ import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
+import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
@@ -959,6 +961,18 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
+	readonly externalAdmission = new ExternalAdmission({
+		isBusy: () => this._isAgentRunActive || this._promptStartPending,
+		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
+		start: (message) =>
+			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
+				this._sessionLogger.warn("external_delivery_start_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}),
+	});
+	private _controlEndpointHost: ControlEndpointHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
 	// the stale-usage exemption and schedule the continuation itself.
@@ -2008,6 +2022,7 @@ export class AgentSession {
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
+		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		this._requiredCompactionAdmissionError = undefined;
 		this.agent.abortServerSideFallback =
@@ -2476,6 +2491,7 @@ export class AgentSession {
 					event.message.details,
 				);
 				this._incrementMessageRevision();
+				this.externalAdmission.observePersisted(event.message);
 			} else if (
 				event.message.role === "user" ||
 				event.message.role === "assistant" ||
@@ -3653,6 +3669,11 @@ export class AgentSession {
 	}
 
 	/** Current session display name, if set */
+	/** Installed by the interactive mode before it binds extensions; `pi.session.registerControlEndpoint` needs one. */
+	setControlEndpointHost(host: ControlEndpointHost | undefined): void {
+		this._controlEndpointHost = host;
+	}
+
 	get sessionName(): string | undefined {
 		return this.sessionManager.getSessionName();
 	}
@@ -4977,6 +4998,7 @@ export class AgentSession {
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
+		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
 		Object.defineProperty(cleared, "ordered", {
@@ -7860,6 +7882,11 @@ export class AgentSession {
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
 				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
+				sessionControl: createSessionControlActions({
+					admission: this.externalAdmission,
+					sessionManager: this.sessionManager,
+					host: () => this._controlEndpointHost,
+				}),
 			},
 			{
 				getModel: () => this.model,

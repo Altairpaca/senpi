@@ -206,6 +206,7 @@ import {
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
 import { DEFAULT_TAIL_BUDGET, DEFAULT_WARM_CHUNK_SIZE } from "./components/progressive-transcript-container.ts";
+import { builtInMessageRenderer } from "./components/remote-delivery-message.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -259,6 +260,7 @@ import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
+import { TuiSessionControlHost } from "./session-control-host.ts";
 import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
@@ -902,6 +904,23 @@ export class InteractiveMode {
 	 * {@link reconcilePendingImages}.
 	 */
 	private pendingImages = new Map<number, ImageContent>();
+	/** Lets an extension expose this session on a control endpoint; the endpoint module loads on first use. */
+	private readonly sessionControlHost: TuiSessionControlHost = new TuiSessionControlHost(() => ({
+		session: this.session,
+		agentDir: this.session.agentDir,
+		surface: {
+			draftHold: (): "attachment" | "draft" | undefined =>
+				this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold(),
+			blockingQuestion: () => this.askUserQuestion !== undefined,
+			pendingQuestionIds: () => [...this.pendingQuestions.keys()],
+			answerQuestion: (requestId, response) => {
+				const state = this.pendingQuestions.get(requestId);
+				state?.finish(response);
+				return state !== undefined;
+			},
+			notice: (line) => this.showWarning(line),
+		},
+	}));
 	/**
 	 * Images pre-resolved by handleFollowUp's non-streaming branch, which hands
 	 * off through the public string-only `onSubmit(text)` API. Set BEFORE that
@@ -1664,6 +1683,7 @@ export class InteractiveMode {
 		// Enable the remaining input handlers only after managed-tool setup completes.
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -1838,7 +1858,9 @@ export class InteractiveMode {
 		while (true) {
 			const userInput = await this.getUserInput();
 			try {
-				await this.session.prompt(userInput.text, this.buildMainLoopPromptOptions(userInput));
+				await this.runSubmittedPrompt(
+					this.session.prompt(userInput.text, this.buildMainLoopPromptOptions(userInput)),
+				);
 			} catch (error: unknown) {
 				this.optimisticUserEchoes.reject(userInput.pendingEchoId);
 				this.clearStatusIndicator("working");
@@ -2574,6 +2596,8 @@ export class InteractiveMode {
 	 * Initialize the extension system with TUI-based UI context.
 	 */
 	private async bindCurrentSessionExtensions(): Promise<void> {
+		await this.sessionControlHost?.disposeActive();
+		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
 		await this.session.bindExtensions({
 			uiContext,
@@ -3868,7 +3892,19 @@ export class InteractiveMode {
 	}
 
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
+	/** The main loop's prompt for a submitted input; the session control host holds deliveries until it is taken. */
+	private runSubmittedPrompt(prompt: Promise<void>): Promise<void> {
+		return this.sessionControlHost ? this.sessionControlHost.runPrompt(prompt) : prompt;
+	}
+
+	/** What the user is composing, if anything: a held external delivery waits for it. */
+	private composerHold(): "attachment" | "draft" | undefined {
+		if (this.pendingImages.size > 0) return "attachment";
+		return this.editor.getText().trim() === "" ? undefined : "draft";
+	}
+
 	private refreshAsyncWidget(): void {
+		this.sessionControlHost?.questionsChanged();
 		this.syncQuestionMouseCapture();
 		this.applyTerminalTitle();
 		const state = this.shownQuestion;
@@ -5768,7 +5804,9 @@ export class InteractiveMode {
 			}
 			case "custom": {
 				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
+					const renderer =
+						this.session.extensionRunner.getMessageRenderer(message.customType) ??
+						builtInMessageRenderer(message.customType);
 					const component = new CustomMessageComponent(
 						message,
 						renderer,
@@ -6302,6 +6340,7 @@ export class InteractiveMode {
 			// terminal. If the terminal is gone, the restore writes below emit EIO,
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
+			await this.sessionControlHost?.disposeActive();
 			await this.runtimeHost.dispose();
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
@@ -6319,6 +6358,7 @@ export class InteractiveMode {
 
 		this.stop({ restoreStderr: false });
 		try {
+			await this.sessionControlHost?.disposeActive();
 			await this.runtimeHost.dispose();
 		} finally {
 			restoreInteractiveStderr();

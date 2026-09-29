@@ -90,10 +90,12 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
+import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 export type { BuildSystemPromptOptions } from "../system-prompt.ts";
+export * from "./session-control-types.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 
 export type ServiceTier = "auto" | "flex" | "priority";
@@ -1668,6 +1670,7 @@ export type ExtensionEvent =
 	| AgentStartEvent
 	| AgentEndEvent
 	| AgentSettledEvent
+	| SessionControlWakeEvent
 	| UIPromptStartEvent
 	| UIPromptEndEvent
 	| TurnStartEvent
@@ -1967,6 +1970,7 @@ export interface ExtensionAPI {
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
+	on(event: "session_control_wake", handler: ExtensionHandler<SessionControlWakeEvent>): void;
 	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): void;
 	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
@@ -2258,6 +2262,9 @@ export interface ExtensionAPI {
 
 	/** Shared event bus for extension communication. */
 	events: EventBus;
+
+	/** Session control: external-message admission, its ledger, the durable header and the control endpoint. */
+	readonly session: SessionControlActions;
 }
 
 export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
@@ -2569,6 +2576,8 @@ export interface ExtensionActions {
 	setSessionModel: SetModelHandler;
 	setSessionThinkingLevel: SetThinkingLevelHandler;
 	setSessionFastMode: SetSessionFastModeHandler;
+	/** Bound by `AgentSession`; a runtime bound without it keeps the pre-bind stub. */
+	sessionControl?: SessionControlActions;
 }
 
 /**

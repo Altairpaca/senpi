@@ -871,6 +871,13 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
+const SETUP_ONLY_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+	"session",
+	"model_change",
+	"model_change_rejected",
+	"thinking_level_change",
+]);
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -1205,6 +1212,45 @@ export class SessionManager {
 		return this.residentStore.stats();
 	}
 
+	/**
+	 * Writes the buffered header (and anything buffered behind it) through the same exclusive create
+	 * the first assistant message would use, and appends every later entry immediately. A session that
+	 * is exposed to other processes needs its id on disk first: a reopen of a missing file mints a new id.
+	 */
+	persistHeaderNow(): void {
+		if (!this.persist || !this.sessionFile || this.flushed) return;
+		reserveSessionWrite(this.sessionFile);
+		this._writeBufferedEntriesExclusively(this.sessionFile);
+		this.flushed = true;
+	}
+
+	isTranscriptFlushed(): boolean {
+		return this.flushed;
+	}
+
+	/**
+	 * Removes the session file when nothing happened in it - the header plus model/thinking setup
+	 * entries only - and returns to buffering, so a later entry cannot recreate a header-less file.
+	 */
+	discardHeaderOnlyFile(): boolean {
+		if (!this.persist || !this.sessionFile || !this.flushed) return false;
+		if (!this.fileEntries.every((entry) => SETUP_ONLY_ENTRY_TYPES.has(entry.type))) return false;
+		rmSync(this.sessionFile, { force: true });
+		this.flushed = false;
+		return true;
+	}
+
+	private _writeBufferedEntriesExclusively(sessionFile: string): void {
+		const fd = openSync(sessionFile, "wx");
+		try {
+			for (const e of this.fileEntries) {
+				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
+			}
+		} finally {
+			closeSync(fd);
+		}
+	}
+
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
@@ -1222,14 +1268,7 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
-				}
-			} finally {
-				closeSync(fd);
-			}
+			this._writeBufferedEntriesExclusively(this.sessionFile);
 			this.flushed = true;
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);

@@ -211,6 +211,7 @@ export {
 	noticeEntryRenderer,
 	noticeMessageRenderer,
 } from "./core/extensions/notice/index.ts";
+export * from "./core/extensions/session-control-types.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
 export { convertToLlm } from "./core/messages.ts";

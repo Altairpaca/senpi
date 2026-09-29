@@ -18,6 +18,27 @@
 
 - LOW: the body of `_rewriteFile` plus the new `_serializedFileEntries` generator right after it, and one import line in `session-manager.ts`.
 
+## 2026-09-29 - Atomic external-message admission, its ledger, and a durable header on demand
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts` (new): `ExternalAdmission` - `admit({ delivery_id, text, deliverAs, expected_turn_id? })` decides and acts in one synchronous call: `already_admitted` when this runtime holds the id (either queue, or a started turn not yet written) or already wrote it; `held_draft` while the composer holds a draft/attachment (nothing enqueued); `turn_conflict` when `expected_turn_id` is stale, or a mid-turn steer names none; `started` when idle (one `sendCustomMessage(..., { triggerTurn: true })`); mid-turn `steered` (one `agent.steer`) or `queued` (one `agent.followUp`). The message is a `session_control_delivery` custom message whose `details.delivery_id` is written to the transcript entry. `list()` is the process-lifetime ledger `{ pending, emitted }`; `gate()` is the read-only `{ can_admit, hold_reason?, editor_revision, turn_epoch }`; `onEmitted` fires when a delivery's entry is persisted.
+- `packages/coding-agent/src/core/agent-session.ts`: owns `externalAdmission` (busy = a run is active or a prompt claimed its start); `_promptAgent` advances `turn_epoch` when a run begins; the custom-message `message_end` persistence reports the entry to the ledger; `clearQueue()` drops queued deliveries from it; `bindCore` binds `sessionControl` (`session-control-actions.ts`, new); `setControlEndpointHost(host)` lets the interactive mode provide `registerControlEndpoint`.
+- `packages/coding-agent/src/core/session-manager.ts`: `persistHeaderNow()` writes the buffered header (and anything buffered behind it) through the existing exclusive create and sets `flushed`, after which every entry appends immediately; `isTranscriptFlushed()`; `discardHeaderOnlyFile()` removes a file that holds only the header and model/thinking setup entries and returns to buffering (so a later entry cannot recreate a header-less file). The first-assistant flush now shares `_writeBufferedEntriesExclusively` with `persistHeaderNow`.
+
+### Why
+
+Session gateway: a delivery from another session must be applied exactly once per process (the drain retries on every edge), must never jump ahead of or into the user's draft, and must leave a durable, greppable proof on disk (`delivery_id` in the session JSONL). A registered session's id must be on disk before it is visible, because reopening a missing file mints a new id.
+
+### Why an extension could not handle it
+
+Whether the runtime already holds a message in its steering or follow-up queue, when a run begins, and when the transcript entry is written are all internal to `AgentSession` and `SessionManager`; `pi.sendMessage` gives an extension neither the answer nor atomicity.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `_pendingCustomMessages` field block, the `_isAgentRunActive = true` line in `_promptAgent`, the custom branch of `message_end` persistence in `_processAgentEvent`, `clearQueue()`, the end of the `bindCore` actions literal, and `setControlEndpointHost` beside `get sessionName`.
+- `session-manager.ts`: the methods before `_persist` and its `!this.flushed` branch; `SETUP_ONLY_ENTRY_TYPES` before the class.
+
 ## 2026-09-29 - A rejected request re-asks the compaction owner before its retry (senpi#2329)
 
 ### What changed

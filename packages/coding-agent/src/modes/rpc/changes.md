@@ -1,3 +1,24 @@
+## 2026-09-29 - Clients authenticate to `tui` control sockets; the session state projection is its own module
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tui-socket.ts` (new): `tuiSocketName(instanceId)` = `t-<sha256(instanceId)[:16]>.sock`, `isTuiControlSocket(path)`, and `socketNeedsHandshake(path, platform)` - win32, as before, or any `t-*.sock`.
+- `packages/coding-agent/src/modes/rpc/host-probe.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts`: read the socket's `.secret` and send the handshake whenever `socketNeedsHandshake` says so, so `host status --all`, `classifyEndpointLiveness` and `RpcClient` reach a TUI endpoint on POSIX. A POSIX host socket still gets no handshake, byte for byte as before.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` (new): `buildRpcSessionState` moved out of `connection-handler.ts` unchanged; `connection-handler.ts` imports it and re-exports it, so existing importers are unaffected. The TUI control endpoint answers `get_state` through it without loading the connection handler.
+
+### Why
+
+A TUI control endpoint authenticates every connection with its secret on every platform (the handshake from `socket-transport.ts`), so a client that did not send it would read every live TUI as `live_unresponsive`. Sharing one state projection keeps `get_state` identical across hosts, workers and terminals.
+
+### Why an extension could not handle it
+
+The probe and the RPC client are the host CLI's own transport code.
+
+### Expected merge conflict zones
+
+- The secret branch at the top of `connectAndAsk` in `host-probe.ts` and of `startSocket` in `rpc-client.ts`.
+- The import block and the former `buildRpcSessionState` location in `connection-handler.ts`.
+
 ## 2026-09-29 - One endpoint registry: `endpoint_kind` in `endpoint.json`, kind-aware status probes, a liveness verdict, a `kinds` gc filter
 
 ### What changed

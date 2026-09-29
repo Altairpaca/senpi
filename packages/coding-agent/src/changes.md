@@ -20,6 +20,24 @@
 
 - MEDIUM: the final `cli-main` import in `cli.ts`; LOW: `getPackageDir()` call sites in `config.ts` near `detectInstallMethod`, `getInferredNpmInstall`, the pnpm global-root regexes and the self-update checks; the Windows quarantine call in `main.ts`; `getActiveManagedInstallRoot` and `prepareWindowsNpmSelfUpdate` in `package-manager-cli.ts`.
 
+## 2026-09-29 - The session control types are public (session gateway)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: `export * from "./core/extensions/session-control-types.ts"` - `SessionControlActions`, `RegisterControlEndpointOptions`, `SessionControlRegistration`, `SessionControlWakeEvent`, the admission input/result/gate/ledger types and `SESSION_CONTROL_DELIVERY_TYPE`. See `src/core/extensions/changes.md` (2026-09-29).
+
+### Why
+
+- omo's thread component registers the endpoint and drains its inbox through `pi.session`, typed from the package root.
+
+### Why an extension could not handle it
+
+- Package exports are the package's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the line after the `./core/extensions/index.ts` export block in `src/index.ts`.
+
 ## 2026-09-29 - The endpoint registry helpers are public (session gateway)
 
 ### What changed
