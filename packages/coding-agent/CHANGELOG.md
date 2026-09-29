@@ -32,6 +32,8 @@
 
 - A session event listener no longer misses an event because the listener registered just before it unsubscribed while that event was being delivered. `AgentSession.subscribe()` listeners each receive every event emitted while they are registered, so a terminal session's control endpoint no longer misses its idle wake that way. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
 
+- Claude models now answer in the user's language: with a "reply in Korean" rule, or when you write in Korean, the routing line, the handoff block's contents, and todo labels come back in that language instead of English. The handoff labels (`Ask`, `For you`, `Now`, `Next`) stay as they are. Thanks to @floweredao for the report. ([#2366](https://github.com/code-yeongyu/senpi/issues/2366))
+
 ### Removed
 
 - Interactive sessions can no longer join a shared RPC host: every interactive launch runs on its own local runtime. The `experimental.sharedHost` setting and the `SENPI_ENABLE_SHARED_HOST` / `SENPI_DISABLE_SHARED_HOST` environment variables (any brand prefix) are gone and are ignored if set, with no notice. On first load, `experimental.sharedHost` is removed from the global settings file; nothing else in the file changes, except that a global `settings.jsonc` loses its comments in that one rewrite. A project `.senpi/settings.json` is never rewritten; the key is ignored there. The TUI's shared-host client (the remote session proxy, its reconnect loop and host-rendered extension dialogs) is removed with it. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))

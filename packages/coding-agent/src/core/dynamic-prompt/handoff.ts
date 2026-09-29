@@ -13,6 +13,14 @@ export interface HandoffSectionOptions {
 	briefUpdatesBetweenHandoffs?: boolean;
 }
 
+/**
+ * The handoff and routing-line templates are English sentences that Claude copies verbatim, which pulls
+ * the whole reply into English (senpi#2366). The labels stay fixed because the ttsr repetitive-turns
+ * detector parses `Ask:` through `For you:` / `Now:` in model output; everything filled in follows the user.
+ */
+export const HANDOFF_LANGUAGE_RULE =
+	"Keep the labels Ask, wanted, For you, Now, and Next exactly as written; write everything else - the routing line, slot contents, todo labels, and the reply itself - in the user's language (the one their instructions name, else the one they write in), with Now and Next repeating the todo labels verbatim.";
+
 export function buildHandoffSection(options: HandoffSectionOptions = {}): string {
 	const nextRule = options.turnEndRuleStatedElsewhere
 		? "The Next you name is executed in this same response with tool calls."
@@ -26,5 +34,5 @@ A handoff is the todo list's creation (in the message that creates it, after the
 
 > Ask: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].
 
-Now and Next are the todo labels verbatim. ${nextRule} ${betweenRule}`;
+${HANDOFF_LANGUAGE_RULE} ${nextRule} ${betweenRule}`;
 }
