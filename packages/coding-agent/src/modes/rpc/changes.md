@@ -1,3 +1,22 @@
+## 2026-09-30 - One question-settle rule for hosts and terminal control endpoints (senpi#2407)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/extension-ui-response.ts`: new `settledQuestionStatus(answers, comment)` (non-blank comment -> `comment-submitted`, else any answer -> `answered`, else `undefined` = `question_incomplete`) and `unansweredQuestionIds(questions, answers)`.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `respond` and the unanswered list use them; behavior unchanged. The terminal control endpoint (`../interactive/session-control-commands.ts`) now uses the same two functions.
+
+### Why
+
+senpi#2407: the terminal endpoint had its own copy of the rule that never produced `comment-submitted`, so a comment-only answer reached the model empty there while the host delivered it.
+
+### Why an extension could not handle it
+
+The host's question bridge and the endpoint's command surface are core.
+
+### Expected merge conflict zones
+
+- `respond` in `connection-question-bridge.ts`.
+
 ## 2026-09-30 - `open_session.promptSurface` accepts `chat` (senpi#2398)
 
 ### What changed

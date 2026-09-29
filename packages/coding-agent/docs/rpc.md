@@ -1004,9 +1004,10 @@ registrant opens no socket and writes no registry directory.
     still holds after it.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
-    (`unknown_request` / `invalid_response` otherwise). `uiRequestId` names the question (a pending
-    question id from the `question` feed); without it, `id` does. The reply carries the frame's `id`,
-    as on a host (see "Extension UI Responses").
+    (`unknown_request` / `question_incomplete` / `invalid_response` otherwise). `uiRequestId` names the
+    question (a pending question id from the `question` feed); without it, `id` does. The answer settles by
+    the host's rule (see `question`) and the reply carries the frame's `id`, as on a host (see "Extension
+    UI Responses").
   - `prompt`, `steer` and `follow_up` are `unsupported`.
 - **Admission.** A message from another session enters only through the registrant's drain, which calls
   `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
@@ -3415,6 +3416,16 @@ Present one or more questions to the user. Requires the `question` client capabi
 
 Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: unanswered question ids are reported back to the model. Send `cancelled: true` to dismiss.
 
+A multi-session host and a terminal control endpoint settle a `question` answer by one rule, so the same frame reaches the model as the same message on either surface:
+
+- `cancelled: true` dismisses the question.
+- Otherwise `answers` and `comment` are read; a `value` or `confirmed` in the same frame belongs to the other dialog methods and is ignored.
+- A non-blank `comment` settles it `comment-submitted`: the model receives `The user responded: <comment>`, then any answered questions and the unanswered ids. A frame that carries its text only as `comment` with `answers: {}` is a complete answer.
+- Without a comment, any entry in `answers` settles it `answered`.
+- Neither a non-blank comment nor an answer is refused `question_incomplete`, and the question stays pending.
+
+A terminal refuses a frame whose `answers` is missing or malformed with `invalid_response`.
+
 While the question is open, the client may send `extension_ui_progress` frames with draft `answers` and `comment`. Each progress frame resets the idle timer; the host emits `question_updated` with the refreshed `deadlineAtMs` and `remainingMs`.
 
 When the question resolves (answered, comment-submitted, timed_out, or cancelled), the host broadcasts `question_resolved` to all connections:
@@ -3460,7 +3471,7 @@ carrying the frame's `id`:
 `success: true` means the answer resolved a pending request. A refusal carries the same `id` and an
 `error`: on a host `question_incomplete` (a `question` answer with neither answers nor a comment),
 `question_already_resolved` (a late answer) or `unknown_extension_ui_request` (no request of that
-session has that id); on a terminal `unknown_request` or `invalid_response`. A single-session stdio
+session has that id); on a terminal `unknown_request`, `question_incomplete` or `invalid_response`. A single-session stdio
 connection answers every response it resolves the same way, and ignores one that matches none of its
 requests. A client may still fire and forget: the reply is an ordinary `response` record.
 
