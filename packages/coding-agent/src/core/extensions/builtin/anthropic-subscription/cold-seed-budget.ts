@@ -31,9 +31,9 @@ export class ColdSeedOverflowError extends Error {
 	readonly contextWindow: number;
 
 	constructor(estimatedTokens: number, contextWindow: number) {
-		// Anthropic's own wording, so every overflow classifier treats it the same way.
+		// pi-ai's OVERFLOW_PATTERNS matches this wording, so overflow recovery takes it like an API rejection.
 		super(
-			`prompt is too long: at least ${estimatedTokens} tokens > ${contextWindow} maximum (conversation re-send estimated before dispatch; not sent)`,
+			`The conversation is too long to resend (about ${estimatedTokens} tokens, limit ${contextWindow}). Compacting it and retrying.`,
 		);
 		this.name = "ColdSeedOverflowError";
 		this.estimatedTokens = estimatedTokens;

@@ -100,6 +100,9 @@ describe("anthropic-subscription cold-seed budget", () => {
 		}).result();
 
 		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toMatch(
+			/^The conversation is too long to resend \(about \d+ tokens, limit 1000\)\. Compacting it and retrying\.$/,
+		);
 		expect(isContextOverflow(result, tight.contextWindow)).toBe(true);
 		expect(result.diagnostics?.map((diagnostic) => diagnostic.type)).toContain(COLD_SEED_OVERFLOW_DIAGNOSTIC);
 		expect(queries.flatMap((query) => query.submitted)).toEqual([]);
