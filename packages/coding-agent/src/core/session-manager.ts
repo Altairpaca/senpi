@@ -25,6 +25,7 @@ import { listSessionFilesInDir, listSessionsFromDir, type SessionListProgress } 
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { discardFailedFirstFlush, truncateToLastCompleteLine } from "./session-write-recovery.ts";
 import {
 	hasOtherLiveSessionWriter,
 	registerSessionWriter,
@@ -886,6 +887,8 @@ export class SessionManager {
 	private persist: boolean;
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
+	// Set when an append to the flushed file failed and may have left a partial last line.
+	private tailMayBeTorn = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	// Runtime-only identity tracking lets AgentSession compare messages to a
@@ -1274,41 +1277,55 @@ export class SessionManager {
 		}
 	}
 
+	/**
+	 * Writes `entry`, which is not in `fileEntries` yet, before memory commits it. A throw means the
+	 * file did not take the entry, so the caller commits nothing and no later entry can chain onto it.
+	 */
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
+		if (this.flushed) {
+			if (this.tailMayBeTorn) {
+				truncateToLastCompleteLine(this.sessionFile);
+				this.tailMayBeTorn = false;
+			}
+			try {
 				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
-			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
+			} catch (error) {
+				this.tailMayBeTorn = true;
+				throw error;
 			}
 			return;
 		}
 
-		if (!this.flushed) {
-			// An asynchronous header write owns the file until it finishes, and appends this entry.
-			if (this.headerWrite) return;
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
-				}
-			} finally {
-				closeSync(fd);
+		// Entries stay in memory only until the branch holds an assistant message; then all are written.
+		const isAssistant = (e: FileEntry) => e.type === "message" && e.message.role === "assistant";
+		if (!isAssistant(entry) && !this.fileEntries.some(isAssistant)) return;
+
+		// An asynchronous header write owns the file until it finishes, and appends this entry.
+		if (this.headerWrite) return;
+		const fd = openSync(this.sessionFile, "wx");
+		try {
+			for (const e of [...this.fileEntries, entry]) {
+				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
 			}
-			this.flushed = true;
-		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
+		} catch (error) {
+			closeSync(fd);
+			discardFailedFirstFlush(this.sessionFile, error);
 		}
+		closeSync(fd);
+		this.flushed = true;
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
 		const residentEntry = this.residentStore.externalize(entry);
+		this._persist(residentEntry);
+		this._commitEntry(residentEntry);
+	}
+
+	private _commitEntry(residentEntry: SessionEntry): void {
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
@@ -1316,7 +1333,6 @@ export class SessionManager {
 		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
-		this._persist(residentEntry);
 	}
 
 	/**
@@ -1616,8 +1632,8 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			name: sanitizedName,
 		};
-		this.sessionNameCache = sanitizedName || undefined;
 		this._appendEntry(entry);
+		this.sessionNameCache = sanitizedName || undefined;
 		return entry.id;
 	}
 
@@ -2007,7 +2023,6 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		const fromId = this.leafId ?? "root";
-		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
 			id: generateId(this.byId),

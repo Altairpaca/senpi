@@ -993,6 +993,9 @@ export class AgentSession {
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
+	// The first message write the session file refused during this run. Queued event work cannot
+	// throw to the prompt, so the run's prompt throws it once the queue settles.
+	private _transcriptWriteFailure: { readonly error: unknown } | undefined;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
 	// that AgentSession initiated required-compaction recovery.
@@ -2021,6 +2024,7 @@ export class AgentSession {
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		this._requiredCompactionAdmissionError = undefined;
+		this._transcriptWriteFailure = undefined;
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		try {
@@ -2031,6 +2035,7 @@ export class AgentSession {
 			await this._agentEventQueue;
 			const requiredCompactionError = this._requiredCompactionAdmissionError;
 			this._requiredCompactionAdmissionError = undefined;
+			const transcriptWriteFailure = this._takeTranscriptWriteFailure();
 			if (requiredCompactionError) {
 				this._sessionLogger.warn("prompt_rejected", {
 					stage: "admission",
@@ -2038,6 +2043,7 @@ export class AgentSession {
 				});
 				throw requiredCompactionError;
 			}
+			if (transcriptWriteFailure) throw transcriptWriteFailure.error;
 		} catch (error) {
 			if (
 				error instanceof Error &&
@@ -2058,6 +2064,12 @@ export class AgentSession {
 			await this._emitAgentSettled();
 			throw error;
 		}
+	}
+
+	private _takeTranscriptWriteFailure(): { readonly error: unknown } | undefined {
+		const failure = this._transcriptWriteFailure;
+		this._transcriptWriteFailure = undefined;
+		return failure;
 	}
 
 	/** Extract text content used to track fork-owned queued user messages. */
@@ -2477,25 +2489,34 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
-			// Check if this is a custom message from extensions
-			if (event.message.role === "custom") {
-				// Persist as CustomMessageEntry
-				this.sessionManager.appendCustomMessageEntry(
-					event.message.customType,
-					event.message.content,
-					event.message.display,
-					event.message.details,
-				);
-				this._incrementMessageRevision();
-				this.externalAdmission.observePersisted(event.message);
-			} else if (
-				event.message.role === "user" ||
-				event.message.role === "assistant" ||
-				event.message.role === "toolResult"
-			) {
-				// Regular LLM message - persist as SessionMessageEntry
-				this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
-				this._incrementMessageRevision();
+			try {
+				// Check if this is a custom message from extensions
+				if (event.message.role === "custom") {
+					// Persist as CustomMessageEntry
+					this.sessionManager.appendCustomMessageEntry(
+						event.message.customType,
+						event.message.content,
+						event.message.display,
+						event.message.details,
+					);
+					this._incrementMessageRevision();
+					this.externalAdmission.observePersisted(event.message);
+				} else if (
+					event.message.role === "user" ||
+					event.message.role === "assistant" ||
+					event.message.role === "toolResult"
+				) {
+					// Regular LLM message - persist as SessionMessageEntry
+					this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
+					this._incrementMessageRevision();
+				}
+			} catch (error) {
+				// The session manager kept nothing, so the turn goes on; the run's prompt reports it.
+				this._sessionLogger.warn("transcript_write_failed", {
+					role: event.message.role,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				this._transcriptWriteFailure ??= { error };
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 

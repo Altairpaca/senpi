@@ -1,3 +1,24 @@
+## 2026-09-29 - A failed session append leaves nothing an entry can chain onto
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_appendEntry` writes the entry (`_persist`) before it commits it to `fileEntries`, `byId`, the leaf, the entry count and the usage totals, so a write that throws (EACCES, ENOSPC, a removed directory) leaves memory exactly as the file has it and the caller gets the error. `_persist` takes the not-yet-committed entry: an append to a flushed file that fails marks the tail as possibly torn and the next append first cuts the file back to its last complete line; a first flush that fails part-way removes the file it created exclusively, so the next flush can create it again. `appendSessionInfo` updates the name cache after the entry is written, and `branchWithSummary` no longer moves the leaf before its entry is written. A successful append writes the same bytes as before.
+- `packages/coding-agent/src/core/session-write-recovery.ts` (new, fork-only): `truncateToLastCompleteLine` and `discardFailedFirstFlush`.
+- `packages/coding-agent/src/core/agent-session.ts`: a message-end write the session manager refused no longer rejects the queued event work where nobody observes it. It is logged (`transcript_write_failed`), the rest of the message-end handling runs, and the run's `prompt` throws the first such error once its event queue settles (`_transcriptWriteFailure`, reset per run like `_requiredCompactionAdmissionError`).
+
+### Why
+
+- `_appendEntry` pushed the entry into memory and only then wrote it. When the write threw, the entry stayed in memory as the leaf, and the next successful append was written with a `parentId` the file never received, so on reload the transcript lost everything after the break. Found while making `release_session` answer `release_failed` (the aborted reply and the stop-state stayed memory-only after a refused write); a refused rename followed by a written `session_released` entry reopened as a one-entry branch with no messages. Inside a turn the throw rejected one queued `_processAgentEvent`, which the next event's handler absorbed, so the prompt resolved as if the turn had been saved.
+
+### Why an extension could not handle it
+
+- Entry ordering, the leaf and the JSONL writes are private to `SessionManager`, and the agent event queue is private to `AgentSession`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_persist` and `_appendEntry` in `session-manager.ts` (restructured, plus `_commitEntry` split out of `_appendEntry`; upstream still writes after committing); one line each in `appendSessionInfo` and `branchWithSummary`.
+- LOW: the `message_end` persistence block in `_processAgentEvent` (wrapped in a try/catch) and the post-queue checks in `_promptAgent` in `agent-session.ts`.
+
 ## 2026-09-29 - Session file rewrites are atomic, so a failed migration keeps the original
 
 ### What changed
