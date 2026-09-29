@@ -994,11 +994,15 @@ registrant opens no socket and writes no registry directory.
   - `turn_conflict`: the epoch is stale, or a steer names none.
   - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
     submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
-  - `already_admitted`: this process already holds or already wrote that `delivery_id`.
+  - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
+    its entry and has taken no later entry since (see `failed` below).
 
   The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
   carry the `delivery_id`. `listAdmittedDeliveries()` reports `pending` (held by the runtime) and `emitted`
-  (entry written) for the life of the process.
+  (entry written) for the life of the process. When the session file refuses a delivery's entry (`EACCES`,
+  `ENOSPC`), the delivery is settled as `failed: [{ delivery_id, error }]` (listed only while non-empty): it is no
+  longer held, so it blocks no later delivery and no release, and it stays with its sender. It becomes admissible
+  again once the file has taken a later entry, so a redelivery never loops against a file that still refuses writes.
 - **Wake.** The drain runs on edges only, never on a timer, as the extension event `session_control_wake`. The
   edges are: the session went idle (`idle`), the user's last submission reached the runtime (`submission`),
   the editor was cleared without a submission (`draft_cleared`), a `wake` command (`command`), an entry created

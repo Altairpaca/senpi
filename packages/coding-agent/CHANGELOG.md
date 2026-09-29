@@ -28,6 +28,12 @@
 
 ### Fixed
 
+- A gateway delivery whose transcript entry the session file refused (`EACCES`, `ENOSPC`) no longer blocks every later delivery to that session. It used to stay pending forever, so the next delivery was queued behind a turn that never came. It is now settled as failed with the error (`listAdmittedDeliveries().failed`), later deliveries start and are saved as soon as the file is writable, and the failed one is accepted again once the file has taken a later entry. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- A session whose first save failed part-way (a full disk) recovers when space returns. The partly written file used to stay behind, so every later save failed with `EEXIST` and the turns kept only in memory were never saved; the file is now removed, and the next save writes everything the session holds. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
+- `release_session` on a session that was never saved answers `release_failed` when its file cannot be created, instead of answering success with no file on disk; the failed write no longer surfaces as an unhandled rejection, which ended a `--mode rpc` host process. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
+
 - Opening a session saved by an older senpi version no longer risks losing it. Opening such a session rewrites the file in the current format, and that rewrite used to overwrite the file in place, so a full disk or an I/O error part-way through left the transcript truncated. The rewrite now writes a complete copy next to the file and swaps it in only once it is on disk; if writing fails, the original session stays exactly as it was and the error is reported.
 
 - A session event listener no longer misses an event because the listener registered just before it unsubscribed while that event was being delivered. `AgentSession.subscribe()` listeners each receive every event emitted while they are registered, so a terminal session's control endpoint no longer misses its idle wake that way. ([#2328](https://github.com/code-yeongyu/senpi/issues/2328))
