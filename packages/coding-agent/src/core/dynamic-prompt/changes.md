@@ -1,5 +1,28 @@
 # changes.md — dynamic-prompt
 
+## 2026-09-29 - App prompt surface: no routing line, tool feedback stays with the agent (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: new `PromptSurface = "terminal" | "app"`.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions.surface?: PromptSurface` (omitted = `terminal`), `DynamicPromptCoreContext.surface` so `corePrompt` overrides render per surface, and `resolvePromptSurface(env)` / `PROMPT_SURFACE_ENV_VAR`: `SENPI_PROMPT_SURFACE=app` selects `app`, anything else (unset included) is `terminal`. The builder threads the surface into `buildIntentGate` and `buildHandoffSection`.
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: on `app` the routing-line paragraph is replaced (not overridden) by one that keeps the implementation-commit rule, the observable stop condition (decided before acting, not written out), and the scaffolding guard, and adds one sentence: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for the agent to act on and reaches the user only when it changes what they get. The intent-family routing rules are unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HandoffSectionOptions.surface`; on `app` the moment list and the language rule drop their references to the routing line. `HANDOFF_LANGUAGE_RULE` (terminal) is unchanged.
+- `packages/coding-agent/src/core/dynamic-prompt/index.ts`: re-exports `PromptSurface`, `resolvePromptSurface`, `PROMPT_SURFACE_ENV_VAR`.
+- Terminal renders are byte-identical to the previous builder for the dynamic prompt and every preset (scratch render diff over all 29 preset names x 2 tool sets, empty).
+
+### Why
+
+- Behind an app (the OmO Desktop) every reply opened with the `> I read this as ...` line and relayed internal tool/hook notices; in a chat UI both read as harness chatter. Category C: the builder had no input saying where replies render, so the only option was one prompt for every surface. The app wording removes the mandate instead of appending an override, so no prompt carries both the instruction and its negation.
+
+### Why an extension could not handle it
+
+- The dynamic prompt and the preset cores render the routing line inside their own sections; an extension could only append a second, contradicting rule.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `surface` threading in `buildDynamicSystemPrompt` and the `TERMINAL_ROUTING` / `APP_ROUTING` split in `buildIntentGate`.
+
 ## 2026-09-29 - The handoff contract names which parts stay fixed and which follow the user's language (senpi#2366)
 
 ### What changed

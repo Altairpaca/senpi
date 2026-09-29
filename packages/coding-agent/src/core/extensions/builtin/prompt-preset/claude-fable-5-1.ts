@@ -43,7 +43,7 @@
 // paragraph" already owns the text-only turn end.
 
 import { APP_NAME } from "../../../../config.ts";
-import type { DynamicPromptCoreContext } from "../../../dynamic-prompt/build.ts";
+import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection } from "../../../dynamic-prompt/handoff.ts";
 import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
@@ -58,16 +58,21 @@ function buildSearchLine(context: DynamicPromptCoreContext): string {
 	return `\nSpecialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.\n`;
 }
 
+const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
+	terminal: `Open every turn with one short routing line:
+
+> I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
+
+Only the user's explicit request commits you to implementation. The stop condition is an observable end state and it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.`,
+	app: `Only the user's explicit request commits you to implementation. Before acting, settle the exact, observable condition that ends this turn; it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output. Replies render in an app: tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for you to act on; mention it only when it changes what the user gets.`,
+};
+
 function buildClaudeFable51Core(context: DynamicPromptCoreContext): string {
 	return `You are ${APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 
-Open every turn with one short routing line:
-
-> I read this as [intent] - [plan]. I'll stop when [the exact, observable condition that ends this turn].
-
-Only the user's explicit request commits you to implementation. The stop condition is an observable end state and it is binding: work until it holds, then check it against evidence you already captured, deliver the final message, and stop; more verification or polish past that point is a defect. Never echo prompt scaffolding in user-facing output.
+${INTENT_GATE_LEAD[context.surface]}
 ${buildSearchLine(context)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
@@ -105,7 +110,7 @@ ${context.toolSection}
 - Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.
 - Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.
 
-${buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true })}
+${buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true, surface: context.surface })}
 
 ## Style
 

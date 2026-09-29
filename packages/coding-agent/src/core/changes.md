@@ -1,3 +1,22 @@
+## 2026-09-29 - The session reads SENPI_PROMPT_SURFACE into its system-prompt options (senpi#2377)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` sets `surface: resolvePromptSurface(process.env)` on `_baseSystemPromptOptions`, the one place the base prompt options are assembled; the dynamic prompt and (through `systemPromptOptions`) the prompt-preset extension read it from there.
+- `packages/coding-agent/src/core/system-prompt.ts`: `BuildSystemPromptOptions.surface?: PromptSurface`, so extensions see the surface on `systemPromptOptions` / `ctx.getSystemPromptOptions()`. `buildSystemPrompt` ignores it.
+
+### Why
+
+- An app host (the OmO Desktop) needs prompts without the terminal routing line. The environment is read once at the option boundary rather than inside section builders, which stay pure.
+
+### Why an extension could not handle it
+
+- The base prompt options are assembled in the session before `before_agent_start`; the fallback dynamic prompt is built there, not in an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `_baseSystemPromptOptions` literal in `_rebuildSystemPrompt` and the dynamic-prompt import in `agent-session.ts`; the `BuildSystemPromptOptions` interface tail in `system-prompt.ts`.
+
 ## 2026-09-29 - A billing-dead fallback target no longer pins or strands the session (senpi#2376)
 
 ### What changed
