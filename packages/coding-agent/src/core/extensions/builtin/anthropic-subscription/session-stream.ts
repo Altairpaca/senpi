@@ -4,6 +4,7 @@ import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { reattachRecoveringCheckpoint } from "./session-checkpoint-recovery.ts";
 import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
 import {
 	type ContinuityObservation,
@@ -13,7 +14,7 @@ import {
 	sanitizeTerminalFailure,
 	stageContinuityDecision,
 } from "./session-observability.ts";
-import { bindingFromEntry, bindingInvalidationReason, getBinding, reattachSession } from "./session-reattach.ts";
+import { bindingFromEntry, bindingInvalidationReason, getBinding } from "./session-reattach.ts";
 import {
 	type AnthropicSubscriptionSessionEntry,
 	closeSession,
@@ -131,13 +132,14 @@ async function createResidentAttempt(
 			: undefined;
 		try {
 			if (!binding) throw new Error("Anthropic Subscription continuity binding is unavailable");
-			entry = await reattachSession({
+			({ entry, from } = await reattachRecoveringCheckpoint({
 				binding,
 				options: auth.options,
 				...(decision.kind === "fork" ? { atUuid: decision.atUuid } : {}),
 				...(input.streamOptions.signal ? { signal: input.streamOptions.signal } : {}),
-			});
-			from = decision.from;
+				currentHashes: hashes,
+				authLane: auth.authLane,
+			}));
 		} catch (error) {
 			if (input.streamOptions.signal?.aborted) throw error;
 			input.onResumeFallback(error);

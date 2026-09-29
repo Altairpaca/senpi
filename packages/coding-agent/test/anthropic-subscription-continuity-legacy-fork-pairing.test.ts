@@ -67,3 +67,23 @@ describe("anthropic-subscription legacy binding fork pairing (senpi#1974)", () =
 		expect(decision).toEqual({ kind: "flatten", reason: "history_rolled_back" });
 	});
 });
+
+describe("anthropic-subscription legacy binding without its newest boundary (senpi#1973)", () => {
+	it("forks at an earlier mapped boundary instead of re-sending everything", () => {
+		const binding = detached({ lastAssistantUuid: null, assistantUuidByIndex: [[2, "a2"]] });
+
+		expect(decideNativeContinuity(input({ binding }))).toEqual({
+			kind: "fork",
+			sdkSessionId: "sdk-1",
+			atUuid: "a2",
+			from: 2,
+			reason: "history_rolled_back",
+		});
+	});
+
+	it("still flattens as a registry miss when no mapped boundary lies inside the shared prefix", () => {
+		const binding = detached({ lastAssistantUuid: null, assistantUuidByIndex: [[3, "a3"]] });
+
+		expect(decideNativeContinuity(input({ binding }))).toEqual({ kind: "flatten", reason: "registry_miss" });
+	});
+});
