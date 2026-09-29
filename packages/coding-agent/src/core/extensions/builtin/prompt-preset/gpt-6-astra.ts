@@ -145,8 +145,15 @@
 // Astra-observed rule was removed on its account.
 
 import { APP_NAME } from "../../../../config.ts";
-import type { DynamicPromptCoreContext, PromptSurface } from "../../../dynamic-prompt/build.ts";
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type DynamicPromptCoreContext,
+	type PromptSurface,
+	type TerminalOrApp,
+	terminalOrApp,
+} from "../../../dynamic-prompt/build.ts";
+import { CHAT_FINAL_MESSAGE, CHAT_REPLY_RULE } from "../../../dynamic-prompt/handoff.ts";
 import { buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
@@ -333,7 +340,7 @@ export const GPT6_ASTRA_RULES = [
 ] as const satisfies readonly Gpt6AstraRule[];
 
 // The rule table carries the terminal wording; the app surface has no routing line to open with or refer back to.
-const INTENT_GATE_LEAD: Record<PromptSurface, string> = {
+const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open a new request with one short routing line:
 
 > I read this as [intent] - [plan]. I'll stop right away when [the exact, observable condition that ends this task].
@@ -342,16 +349,31 @@ The declared stop condition is binding: work until it holds, then stop (see Stop
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",
 };
 
+const APP_STEERING = STEERING.replace(
+	"keep going under the reading you already declared, so the reply opens with the work rather than another routing line;",
+	"keep going under the reading you already settled, so the reply opens with the work;",
+);
+const APP_FINAL_MESSAGE_SHAPE = FINAL_MESSAGE_SHAPE.replace(
+	"what you could not verify and why",
+	GPT_APP_UNVERIFIED_SLOT,
+);
+
+// Chat takes the app wording and replaces the handoff block with the chat reply rule.
 const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string; finalMessageShape: string }> =
 	{
 		terminal: { steering: STEERING, handoffReport: HANDOFF_REPORT, finalMessageShape: FINAL_MESSAGE_SHAPE },
 		app: {
-			steering: STEERING.replace(
-				"keep going under the reading you already declared, so the reply opens with the work rather than another routing line;",
-				"keep going under the reading you already settled, so the reply opens with the work;",
-			),
+			steering: APP_STEERING,
 			handoffReport: HANDOFF_REPORT.replace(GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
-			finalMessageShape: FINAL_MESSAGE_SHAPE.replace("what you could not verify and why", GPT_APP_UNVERIFIED_SLOT),
+			finalMessageShape: APP_FINAL_MESSAGE_SHAPE,
+		},
+		chat: {
+			steering: APP_STEERING,
+			handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
+			finalMessageShape: APP_FINAL_MESSAGE_SHAPE.replace(
+				"The final message is the handoff block and stands alone: the outcome first, then in its You need slot the evidence",
+				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then the evidence`,
+			),
 		},
 	};
 
@@ -360,7 +382,7 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 
 ## Intent Gate
 
-${INTENT_GATE_LEAD[context.surface]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
+${INTENT_GATE_LEAD[terminalOrApp(context.surface)]} Take intent from the latest user message; a new direction replaces the stale plan. Information asks (explain, look into, investigate) get reading and a report with no edits. Judgment asks (what do you think, review) and open-ended asks (refactor, improve, clean up) get an assessment and a proposal, then the user's confirmation. Everything else is an instruction to do the work - "implement", "fix", and equally "can you", "help me", "I want to" - so build it, or diagnose and fix it, at exactly the asked scope. Keep prompt scaffolding out of user-visible output.
 
 ## Initiative
 
@@ -394,7 +416,7 @@ ${TEST_DECISION}
 
 ${buildTestDisciplineSection()}
 
-${context.surface === "app" ? `${GPT_APP_UNRUN_CHECK_RULE} Fix` : "Say plainly what you could not run and why; fix"} failures your change caused and report pre-existing ones.
+${context.surface !== "terminal" ? `${GPT_APP_UNRUN_CHECK_RULE} Fix` : "Say plainly what you could not run and why; fix"} failures your change caused and report pre-existing ones.
 
 ## Scope and Recovery
 
@@ -429,7 +451,7 @@ Code reviews: findings first, ordered by severity with file references, then ope
 
 ## Stop Goal
 
-The task is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks for the change's tier are clean or explained, and the final message is delivered. Until then keep going; when they hold, confirm each item and ${context.surface === "app" ? "your stop condition" : "your declared stop condition"} against evidence already captured, deliver the final message, and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
+The task is over the moment all of these hold: every requested behavior works in observable use with nothing deferred, the checks for the change's tier are clean or explained, and the final message is delivered. Until then keep going; when they hold, confirm each item and ${context.surface !== "terminal" ? "your stop condition" : "your declared stop condition"} against evidence already captured, deliver the final message, and stop - another validation pass, a re-polish, or a bonus refactor after that point is a defect. Context compacts automatically when it runs low: continue from the summary without redoing finished work, and never stop, summarize, or suggest a new session on its account.
 
 ${buildFileOperationsTuning({ toolNames: context.tools.map((tool) => tool.name) })}`;
 }
