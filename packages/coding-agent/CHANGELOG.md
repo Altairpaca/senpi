@@ -6,7 +6,7 @@
 
 ### Added
 
-- Claude Sonnet 5.5 gets its own system prompt preset, `claude-sonnet-5-5`, selected automatically for every Sonnet 5.5 id (`claude-sonnet-5-5`, `claude-sonnet-5.5`, Bedrock and Vertex spellings) and available as `promptPreset: "claude-sonnet-5-5"`. It is the Opus 5.5 core with the deltas Anthropic's Sonnet 5.5 guide documents for coding agents: it keeps working instead of pausing to confirm a plan, asking a question it could answer itself, or stopping after one part of a multipart task; it adds tests, docs or supporting files only where asked or where the repository keeps them and mentions the rest at the end; and before reporting a change done it runs a real check that exercises it, installing missing declared dependencies with the project's own package manager rather than skipping the check. Sonnet 5 stays on the default prompt. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+- Claude Sonnet 5.5 gets its own system prompt preset, `claude-sonnet-5-5`, selected automatically for every Sonnet 5.5 id (`claude-sonnet-5-5`, `claude-sonnet-5.5`, Bedrock and Vertex spellings) and available as `promptPreset: "claude-sonnet-5-5"`. It is the Opus 5.5 core with the deltas Anthropic's Sonnet 5.5 guide documents for coding agents: it keeps working instead of pausing to confirm a plan, asking a question it could answer itself, or stopping after one part of a multipart task; it adds tests, docs or supporting files only where asked or where the repository keeps them and mentions the rest at the end; and before reporting a change done it runs a real check that exercises it, installing missing declared dependencies with the project's own package manager instead of skipping the check. Sonnet 5 stays on the default prompt. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
 
 ### Changed
 
@@ -14,9 +14,13 @@
 
 ### Fixed
 
+- The Together provider's default model is Kimi K3. Together no longer lists Kimi K2.6, so a `together/` session with no model set picked an id the catalog had dropped. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))
+
+- `session.log` lines keep their `sessionId`, so the continuity and close lines of concurrent Claude subscription sessions can be told apart again. The logger's key allowlist had dropped the field. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
+
 - A Claude conversation no longer re-sends its whole history when the resume point it asks for is gone. If Claude Code answers that the message it should branch from no longer exists, or a retry has lost its newest checkpoint, the session now branches from the newest earlier point that Claude Code still has for that conversation and sends only what came after it. Only when no such point exists does it fall back to a full re-send. ([#1973](https://github.com/code-yeongyu/senpi/issues/1973))
 
-- Resuming a Claude conversation whose sent history was rolled back or diverged no longer forks at an assistant message the current history no longer contains. The resume decision now anchors the fork at the newest assistant boundary inside the shared history and re-sends exactly that point's remainder, and when no such boundary exists it rebuilds from the transcript instead of resuming a lineage that keeps an unrelated old-branch assistant ([#1974](https://github.com/code-yeongyu/senpi/issues/1974)).
+- Resuming a Claude conversation whose sent history was rolled back or diverged no longer forks at an assistant message the current history no longer contains. The resume decision now anchors the fork at the newest assistant boundary inside the shared history and re-sends that point's remainder, and when no such boundary exists it rebuilds from the transcript instead of resuming a lineage that keeps an unrelated old-branch assistant ([#1974](https://github.com/code-yeongyu/senpi/issues/1974)).
 
 - On `anthropic-subscription`, changing the thinking level while the model is streaming no longer kills the turn with "query ended before the active turn completed"; the new level applies from the next request. A turn whose every attempt failed is no longer reported as "Session continuity lost - resent the full conversation": nothing was re-sent, and session.log records it as `failed` instead of `flatten`. Continuity and close lines in session.log now carry the session id. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
 
