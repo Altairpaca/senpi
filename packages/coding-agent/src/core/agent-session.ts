@@ -275,7 +275,7 @@ import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker 
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
-import type { BranchSummaryEntry, CompactionEntry, SessionEntry } from "./session-manager.ts";
+import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
 import {
 	buildSessionContext,
 	CURRENT_SESSION_VERSION,
@@ -7705,10 +7705,11 @@ export class AgentSession {
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
 		// A boundary context_edit can omit this assistant or change the context its usage measured.
 		const branch = this.sessionManager.getBranch();
-		const projection = this.sessionManager.buildSessionProjection();
+		let projection: SessionProjection | undefined;
+		const buildProjection = () => (projection ??= this.sessionManager.buildSessionProjection());
 		const usageScope = resolveAssistantUsageScope(
 			branch,
-			projection,
+			buildProjection,
 			this._findPersistedMessageEntryId(assistantMessage),
 		);
 		const overflowEvidenceApplies =
@@ -7833,7 +7834,7 @@ export class AgentSession {
 		} else {
 			const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
 			if (!usageScope.usageMatchesProjection) {
-				contextTokens = estimateProjectedContextTokens(projection, branch).tokens;
+				contextTokens = estimateProjectedContextTokens(buildProjection(), branch).tokens;
 			} else if (assistantMessage.stopReason !== "error" && directContextTokens !== 0) {
 				contextTokens = this._resolveThresholdContextTokens(directContextTokens);
 			} else {

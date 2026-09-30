@@ -16,18 +16,21 @@ export interface AssistantUsageScope {
 /** An assistant without a persisted entry is judged as projected, like the upstream session core. */
 export function resolveAssistantUsageScope(
 	branch: readonly SessionEntry[],
-	projection: SessionProjection,
+	buildProjection: () => SessionProjection,
 	assistantEntryId: string | undefined,
 ): AssistantUsageScope {
 	if (assistantEntryId === undefined) {
 		return { projected: true, usageMatchesProjection: true, retainedForExplicitRecovery: true };
 	}
-	const projected = projection.entries.some(
+	const assistantIndex = branch.findIndex((entry) => entry.id === assistantEntryId);
+	const later = assistantIndex >= 0 ? branch.slice(assistantIndex + 1) : [];
+	if (assistantIndex >= 0 && !later.some((entry) => entry.type === "context_edit" || entry.type === "compaction")) {
+		return { projected: true, usageMatchesProjection: true, retainedForExplicitRecovery: true };
+	}
+	const projected = buildProjection().entries.some(
 		(entry) =>
 			entry.sourceEntry.id === assistantEntryId && entry.messages.some((message) => message.role === "assistant"),
 	);
-	const assistantIndex = branch.findIndex((entry) => entry.id === assistantEntryId);
-	const later = assistantIndex >= 0 ? branch.slice(assistantIndex + 1) : [];
 	const latestEdit = later
 		.filter((entry) => entry.type === "context_edit" && entry.targetId === assistantEntryId)
 		.at(-1);
