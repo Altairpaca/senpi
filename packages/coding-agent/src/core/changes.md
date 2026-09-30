@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/agent-session.ts`: a `turn_end` boundary that commits entries (a retain-none handoff compaction, context edits, custom messages) marks its turn, and the next request's `prepareNextTurnWithContext` re-reads agent state instead of the loop's pre-commit turn context, so the handoff reaches the provider.
+- `packages/coding-agent/src/core/agent-session.ts`: when `agent_before_settle` handlers exist, `_handleAgentEvent` suppresses agent-core's post-run queue drain synchronously at `agent_end` (like required compaction and retry ownership). Input a handler queues then waits for the boundary: an explicit continuation runs first and queued follow-ups wait until it would stop, and input the boundary cannot run stays held instead of starting an untracked run that never settled.
 
 ### Why
 

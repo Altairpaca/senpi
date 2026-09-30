@@ -2558,6 +2558,12 @@ export class AgentSession {
 			if (requiredAutoCompaction) {
 				this.agent.suppressQueuedMessageDrain();
 			}
+			// agent_before_settle (D-15) decides the post-run queue: it continues first (queued follow-ups
+			// wait until that continuation would stop) or keeps input it cannot run. Input its handlers queue
+			// must not start an agent-core drain run before the boundary commits.
+			if (this._extensionRunner.hasHandlers("agent_before_settle")) {
+				this.agent.suppressQueuedMessageDrain();
+			}
 		}
 
 		// Create retry promise synchronously before queueing async processing.
