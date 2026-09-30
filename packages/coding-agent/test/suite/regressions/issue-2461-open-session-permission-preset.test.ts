@@ -45,10 +45,11 @@ async function presetHost(turn: ToolTurn) {
 	const faux = fauxProvider({ api: "fauxperm", provider: "fauxperm" });
 	const model = faux.getModel();
 	const args = JSON.parse(JSON.stringify(turn.args).replaceAll("$OUTSIDE", outside).replaceAll("$CWD", cwd));
-	faux.setResponses([
-		fauxAssistantMessage([fauxToolCall(turn.name, args, { id: "call-1" })], { stopReason: "toolUse" }),
-		fauxAssistantMessage("done"),
-	]);
+	const scriptTurn = (): void =>
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall(turn.name, args, { id: "call-1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
 	const parsed = parseArgs([
 		"--mode",
 		"rpc",
@@ -112,7 +113,12 @@ async function presetHost(turn: ToolTurn) {
 		cwd,
 		outside,
 		records,
+		async warm(): Promise<string> {
+			const warmed = await send({ type: "warm", cwd } as RpcCommand);
+			return String((warmed?.data as { state?: string } | undefined)?.state);
+		},
 		async run(permissionPreset: string): Promise<{ sessionId: string; asked: WireRecord[] }> {
+			scriptTurn();
 			const opened = await send({ type: "open_session", cwd, permissionPreset } as RpcCommand);
 			const sessionId = (opened?.data as { sessionId?: string } | undefined)?.sessionId;
 			if (!sessionId) throw new Error(`open_session failed: ${JSON.stringify(opened)}`);
@@ -138,16 +144,19 @@ async function presetHost(turn: ToolTurn) {
 			listeners.delete(denier);
 			const asked = records.filter(
 				(record) =>
+					record.sessionId === sessionId &&
 					record.type === "extension_ui_request" &&
 					record.method === "select" &&
 					String(record.title ?? "").startsWith("Permission required:"),
 			);
 			return { sessionId, asked };
 		},
-		toolResultText(): string {
+		toolResultText(sessionId?: string): string {
 			const end = records.find(
 				(record) =>
-					record.type === "tool_execution_end" && (record as { toolCallId?: string }).toolCallId === "call-1",
+					record.type === "tool_execution_end" &&
+					(record as { toolCallId?: string }).toolCallId === "call-1" &&
+					(sessionId === undefined || record.sessionId === sessionId),
 			);
 			return JSON.stringify(end ?? {});
 		},
@@ -200,5 +209,27 @@ describe("open_session.permissionPreset decides host-session permissions (#2461)
 		const { asked } = await host.run("ask");
 		expect(asked.map((record) => String(record.title).split("\n")[0])).toEqual(["Permission required: read"]);
 		expect(host.toolResultText()).not.toContain("inside\\n");
+	});
+
+	it("a host warmed before the open still applies accept-edits to the opened session", async () => {
+		const host = await presetHost({ name: "read", args: { path: "$OUTSIDE/secret.txt" } });
+		expect(await host.warm()).toBe("warmed");
+		const { asked } = await host.run("accept-edits");
+		expect(asked.map((record) => String(record.title).split("\n")[0])).toEqual([
+			"Permission required: external_directory",
+		]);
+		expect(host.toolResultText()).not.toContain("outside secret");
+	});
+
+	it("two sessions on one host keep their own presets", async () => {
+		const host = await presetHost({ name: "read", args: { path: "$OUTSIDE/secret.txt" } });
+		const guarded = await host.run("accept-edits");
+		const open = await host.run("full-access");
+		expect(guarded.asked.map((record) => String(record.title).split("\n")[0])).toEqual([
+			"Permission required: external_directory",
+		]);
+		expect(open.asked).toEqual([]);
+		expect(host.toolResultText(guarded.sessionId)).not.toContain("outside secret");
+		expect(host.toolResultText(open.sessionId)).toContain("outside secret");
 	});
 });
