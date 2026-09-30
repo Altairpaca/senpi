@@ -131,7 +131,9 @@ async function presetHost(turn: ToolTurn) {
 				if (record.type !== "extension_ui_request" || record.method !== "select") return;
 				if (!String(record.title ?? "").startsWith("Permission required:")) return;
 				void writer.withConnection("client", () =>
-					router.handle(wireCommand({ type: "extension_ui_response", id: String(record.id), sessionId, value: "Deny" })),
+					router.handle(
+						wireCommand({ type: "extension_ui_response", id: String(record.id), sessionId, value: "Deny" }),
+					),
 				);
 			};
 			listeners.add(denier);
