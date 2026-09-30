@@ -5,7 +5,7 @@
  * prove that a `blocked` goal produces the restart resume prompt, that accepting
  * reactivates it and queues a continuation, and that declining leaves it blocked.
  *
- * Run: npx vitest run test/manual-qa/goal-blocked-resume-restart.test.ts
+ * Run: SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/goal-blocked-resume-restart.test.ts
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

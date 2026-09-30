@@ -1,3 +1,22 @@
+## 2026-09-30 - Keep test/manual-qa out of the default vitest run (senpi#2447)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: `exclude` adds `test/manual-qa/**` unless `SENPI_MANUAL_QA` is set. The vitest defaults are kept via `configDefaults.exclude`.
+- The two `*.test.ts` drivers in `test/manual-qa/` and `test/AGENTS.md` give the opt-in run command: `SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>`.
+
+### Why
+
+- `test/AGENTS.md` says manual-qa is "not part of default suite", but vitest collected `goal-blocked-resume-restart.test.ts` and `persistent-monitor-restart.test.ts` in every `npm test` and CI run. Both are real-surface QA drivers, and the second spawns real PTYs and file watchers.
+
+### Why an extension could not handle it
+
+- Test runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/coding-agent/vitest.config.ts`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired Kimi deferred-tools example
 
 ### What changed
