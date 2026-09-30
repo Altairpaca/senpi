@@ -7529,7 +7529,15 @@ export class AgentSession {
 			return compacted;
 		}
 
-		if (!settings.enabled || !model || !shouldCompact(contextTokens, model.contextWindow, settings)) {
+		// Under a virtual selection, the physical model of the latest response supplies the limits;
+		// before one, the virtual model's declared limits apply, and undeclared limits are unknown.
+		const limitsModel = this._limitsModel();
+		if (
+			!settings.enabled ||
+			!limitsModel ||
+			(isVirtualModel(limitsModel) && limitsModel.contextWindow <= 0) ||
+			!shouldCompact(contextTokens, limitsModel.contextWindow, settings)
+		) {
 			return false;
 		}
 
@@ -7590,8 +7598,9 @@ export class AgentSession {
 		const lateQueuedMessages = this._pendingQueuedInputMessages();
 		if (!messages.some((message) => message.role === "custom") && lateQueuedMessages.length === 0) return;
 
-		const model = this.model;
-		if (!model) return;
+		// Same limits rule as the pre-provider threshold check: a virtual selection without declared limits is unknown until routed.
+		const model = this._limitsModel();
+		if (!model || (isVirtualModel(model) && model.contextWindow <= 0)) return;
 		const settings = this._getCompactionSettings();
 		const reserveTokens = resolveEffectiveReserveTokens(model.contextWindow, settings);
 		const isOversized = (): boolean => {
@@ -7695,11 +7704,12 @@ export class AgentSession {
 				: usageScope.usageMatchesProjection;
 		// Pre-admission ("threshold") runs only before a natural next request: the truncated response's
 		// failed tool results or queued input follow it, so there is no truncated final attempt to retry.
+		// The desired output limit is the one of the model that produced the message (the physical model under a virtual selection).
 		const recoverableLength =
 			inlineReason !== "threshold" &&
 			sameModel &&
 			usageScope.projected &&
-			isRecoverableLength(assistantMessage, this.model?.maxTokens ?? 0);
+			isRecoverableLength(assistantMessage, limitsModel?.maxTokens ?? 0);
 		const isOverflow =
 			(overflowEvidenceApplies &&
 				isContextOverflow(assistantMessage, contextWindow) &&

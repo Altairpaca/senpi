@@ -19,6 +19,24 @@ The boundary commit, the next-request context, the post-run queue owner and comp
 
 - `_dispatchTurnEndBoundary`, the `messages` choice in `_installAgentNextTurnRefresh`, the `agent_end` branch of `_handleAgentEvent`, the overflow/threshold head of `_checkCompaction`, and the estimate in `getContextUsage()`.
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): compaction admission and overflow recovery measure a virtual selection by its limits model
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the threshold check at the end of `_enforceCompactionBeforeProvider` and the oversize check of `_enforceFinalProviderAdmission` read the window of `_limitsModel()` instead of `this.model`. Under a virtual selection that is the physical model of the latest response, before one the virtual model's declared window; a virtual model without declared limits (`contextWindow` 0) is not checked, because its limits are unknown until a request is routed. The recoverable-length test in `_checkCompaction` reads the output limit of the model that produced the message (`limitsModel`, already used there for the window) instead of `this.model.maxTokens`. Physical selections are unchanged (both resolve to `this.model` for them).
+
+### Why
+
+The fork admission compared the transcript against the virtual catalog entry. A virtual model with no declared window has `contextWindow` 0, so `shouldCompact` and the final admission were always oversized and the first prompt under such a selection failed with `RequiredCompactionError` before anything could be routed (`test/virtual-models.test.ts` tree-navigation resume case); one with a declared window was compacted against that window even after a larger physical model answered, contrary to the adopted virtual-model contract (`docs/virtual-models.md`: context usage and compaction use the limits of the physical model that produced the latest response). A virtual model declares no `maxTokens`, so a truncated (`length`) response under a virtual selection was never recognized as recoverable and was not compacted and retried (`test/suite/virtual-models.test.ts` "routes the compact-and-retry after a truncated response as a retry"); upstream reads the producing model's `maxTokens` there.
+
+### Why an extension could not handle it
+
+Pre-provider compaction admission and overflow recovery are the core session's gates around every provider request; an extension cannot change which model's limits they read.
+
+### Expected merge conflict zones
+
+- The final `shouldCompact` guard of `_enforceCompactionBeforeProvider`, the model/reserve lines at the top of `_enforceFinalProviderAdmission`, and the `recoverableLength` line of `_checkCompaction` in `agent-session.ts`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
 
 ### What changed
