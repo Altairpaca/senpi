@@ -10,6 +10,8 @@
 
 - Image models are inherited onto the regular `Provider`/`Models` surface as `ImageModel` with a required `type: "image"`: use `models.getModelOfType("image", ...)`, `models.generateImages()` and `createProvider({ models, images })`. The generated model data schema is version 6, so every entry carries `type` and one upstream ID can have separate chat, image and classifier entries. The fork keeps `ImagesModel`, `ImagesApi` and `KnownImagesApi` as aliases of the new names.
 
+- The inherited `TranscriptContext` is branded, so only `normalizeContext()` produces it and a raw `Context` no longer type-checks where a provider stream or the agent `StreamFn` expects one; it has no `systemPrompt` field because the system prompt travels as the leading system message.
+
 ### Added
 
 - Added inherited transcript-backed mid-conversation system prompt and tool changes, replayed natively on models that accept mid-conversation system messages and collapsed for other providers ([#9548](https://github.com/earendil-works/pi/pull/9548)).

@@ -13,6 +13,8 @@
   },
   ```
 
+- The inherited `StreamFn` now receives the branded `TranscriptContext` instead of `Context`, so custom stream functions find the system prompt as the leading system message of `context.messages` (read it with `getCurrentSystemPrompt()`) because there is no `systemPrompt` field.
+
 ### Added
 
 - Added the inherited `prepareRequest` hook, which runs before every provider request, including the first. Return `{ context: { ...context, messages: persistedMessages } }` to install canonical context after already-selected input is emitted, without another queue poll.

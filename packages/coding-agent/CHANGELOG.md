@@ -16,6 +16,8 @@
 
 - `user_bash` fails closed (inherited): an error or an invalid defined result aborts the command without running later handlers or executing locally. Return `undefined` to continue propagation, otherwise `{ operations }` or `{ result }` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
 
+- `AgentSession.steer()` and `followUp()` now resolve to a `QueuedInputDisposition` and `RpcClient.prompt()` to a `PromptDisposition` instead of `void` (inherited from upstream v0.99.1), so SDK consumers that declare these calls as `Promise<void>` must widen their types.
+
 ### Added
 
 - Added inherited experimental virtual models: extensions register them with `pi.registerVirtualModel()` and pick a physical model and thinking level for each request. The footer shows the routed model, `/session` lists cost per physical model, and `examples/extensions/jev-router.ts` routes with the Jev classifier. See [Virtual Models](docs/virtual-models.md).
