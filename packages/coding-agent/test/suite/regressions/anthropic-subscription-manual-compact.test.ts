@@ -1,5 +1,5 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, wrapStreamWithModelRecovery } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, getCurrentTools, wrapStreamWithModelRecovery } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { CLAUDE_SDK_OAUTH_API_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
 import { decideNativeContinuity } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
@@ -93,7 +93,11 @@ describe("manual compaction on the Claude subscription lane", () => {
 			extensionFactories: [(pi) => registerSessionRegistry(pi), compactionExtension],
 		});
 		const residentStream: StreamFn = (model, context, options) =>
-			wrapStreamWithModelRecovery(streamAnthropicSubscription(model, context, options), model, context.tools ?? []);
+			wrapStreamWithModelRecovery(
+				streamAnthropicSubscription(model, context, options),
+				model,
+				getCurrentTools(context.messages),
+			);
 		harness.agent.streamFunction = residentStream;
 		const sessionId = harness.sessionManager.getSessionId();
 		harness.agent.sessionId = sessionId;
