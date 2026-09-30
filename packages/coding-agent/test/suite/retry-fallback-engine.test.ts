@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
@@ -293,8 +293,8 @@ describe("retry fallback engine", () => {
 			(context) => {
 				fallbackRequestMessages = structuredClone(context.messages);
 				stateAtFallbackRequest = structuredClone(harness.session.state.messages);
-				fallbackRequestSystemPrompt = context.systemPrompt;
-				fallbackRequestToolNames = (context.tools ?? []).map((tool) => tool.name);
+				fallbackRequestSystemPrompt = getCurrentSystemPrompt(context.messages);
+				fallbackRequestToolNames = getCurrentTools(context.messages).map((tool) => tool.name);
 				return fauxAssistantMessage("recovered");
 			},
 		]);

@@ -123,7 +123,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
+| `theme` | string | `"system"` | Theme name (`"system"`, `"dark"`, `"light"`, a `light/dark` pair, or custom). `system` derives colors from the terminal's palette; see [Themes](themes.md#use-your-terminals-colors) |
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean | `false` | Hide startup header |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
@@ -144,6 +144,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling or while the pointer is over its rightmost-column track, `"always"` reserves that column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
 | `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
+| `fullscreenWheelScrollLines` | `"auto"` or number | `"auto"` | Lines per mouse-wheel event in fullscreen mode, from 1 to 100. `"auto"` moves one line per event in local macOS terminals, which already accelerate wheel and trackpad input; elsewhere, and over SSH, it speeds up fast wheel spins to at most 6 lines per event. Alt+wheel moves five times as far |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
 
@@ -500,7 +501,15 @@ On Windows, select `powershell` instead of `bash`, or include both:
 }
 ```
 
-An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
+A list of only `+name` and `-name` entries changes the inherited selection instead of replacing it. This replaces `bash` with `powershell` and enables `grep` on top of the defaults:
+
+```json
+{
+  "defaultTools": ["-bash", "+powershell", "+grep"]
+}
+```
+
+An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools and does not accept `+name` or `-name`, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array of plain names replaces the global array; a project list of only `+name` and `-name` entries applies on top of the global selection.
 
 #### Eval-only tools
 

@@ -4,11 +4,65 @@
 
 ### Breaking Changes
 
+- Changed the inherited provider-facing `ProviderStreams` and `StreamFunction` inputs from `Context` to normalized `TranscriptContext` values. System prompts and tool declarations now live in transcript system messages; custom providers read them with `getCurrentSystemPrompt()` and `getCurrentTools()`. The fork's `activeToolNames` rides on `TranscriptContext` and survives `normalizeContext()` ([#9548](https://github.com/earendil-works/pi/pull/9548)).
+
+- Restricted inherited `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly. `ToolResultMessage<unknown>` resolves to `never`; use `ToolResultMessage` or `ToolResultMessage<JsonValue>`.
+
+- Image models are inherited onto the regular `Provider`/`Models` surface as `ImageModel` with a required `type: "image"`: use `models.getModelOfType("image", ...)`, `models.generateImages()` and `createProvider({ models, images })`. The generated model data schema is version 6, so every entry carries `type` and one upstream ID can have separate chat, image and classifier entries. The fork keeps `ImagesModel`, `ImagesApi` and `KnownImagesApi` as aliases of the new names.
+
 ### Added
+
+- Added inherited transcript-backed mid-conversation system prompt and tool changes, replayed natively on models that accept mid-conversation system messages and collapsed for other providers ([#9548](https://github.com/earendil-works/pi/pull/9548)).
+
+- Added the inherited optional model `type` (`"chat"`, `"image"` or `"classifier"`), `isModelType()` and `getModelType()`, and `getModelsOfType()`, `getModelOfType()`, `getAvailableOfType()`, `getAllModels()` and `getAllAvailable()` on `Models`. Chat models may omit `type`, so existing chat models, providers and stores keep working.
+
+- Added inherited classifier models and `Models.classify()` with a provider-neutral `choice`/`score`/`bool` contract and token usage on `ClassifierResult`. The built-in TypeSafe provider (`TYPESAFE_API_KEY`) serves `jev-latest`; Jev models are also listed on OpenRouter, Cloudflare Workers AI, Vercel AI Gateway and OpenCode Zen, and the `llama-cpp-classify` API answers from llama-server next-token probabilities.
+
+- Added the inherited Meta provider (Model API key `META_API_KEY` and Muse subscription sign-in) with Muse Spark models ([#9096](https://github.com/earendil-works/pi/pull/9096) by [@xl0](https://github.com/xl0)).
+
+- Added inherited `onProviderStreamEvent` to observe parsed provider stream events before normalization, including provider-specific fields that assistant messages do not keep ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+
+- Added the inherited optional `AssistantMessage.thinkingLevel`, which records the thinking level the agent loop requested for a response.
+
+- Added inherited per-model image-input limits and cache-safe resize metadata to the generated catalog ([#9631](https://github.com/earendil-works/pi/issues/9631)).
+
+- Added inherited array-based `models.all.json` and `providers/{id}.all.json` catalog variants that allow one upstream ID per model type; the keyed `models.json` and `providers/{id}.json` stay chat-only.
+
+- Added an inherited runtime chat-model check to the `Models` stream entry points, so non-chat models fail with a clear `ModelsError`.
 
 ### Changed
 
+- ChatGPT Subscription, OpenRouter and Radius browser sign-in share the inherited callback server, which rejects provider authorization-error redirects and falls back to pasting the redirect URL when the callback port is in use. The OAuth page helpers are available as `utils/oauth-page`. The provider id stays `chatgpt-subscription`; the upstream "OpenAI Codex (legacy)" rename and Sign in with ChatGPT on the `openai` provider are not adopted.
+
+- Radius browser sign-in exchanges the authorization code before showing the browser page, so token exchange failures appear in the browser (inherited).
+
 ### Fixed
+
+- Fixed inherited 1-hour Anthropic cache writes reported by Vercel AI Gateway in streaming deltas being priced at the 5-minute rate ([#9210](https://github.com/earendil-works/pi/issues/9210)), and Amazon Bedrock one-hour cache writes priced at the five-minute rate ([#9457](https://github.com/earendil-works/pi/issues/9457)).
+
+- Fixed inherited model-level `samplingParams` being dropped by direct `stream()`/`complete()` calls on OpenAI-compatible APIs ([#9506](https://github.com/earendil-works/pi/issues/9506)).
+
+- Fixed inherited Mistral GLM models producing empty text blocks and split thinking blocks from empty content deltas ([#9674](https://github.com/earendil-works/pi/issues/9674)), and Mistral reasoning models ignoring the requested thinking level ([#9678](https://github.com/earendil-works/pi/issues/9678)).
+
+- Fixed inherited OpenAI Fast mode requests being priced at the standard rate when the response reports `service_tier: "fast"` ([#10034](https://github.com/earendil-works/pi/issues/10034)).
+
+- Fixed inherited OpenCode Zen and OpenCode Go `qwen3.8-flash` thinking being replayed as plain text on later turns ([#10047](https://github.com/earendil-works/pi/issues/10047)).
+
+- Fixed inherited OpenAI Responses streams returning unfinished tool calls as runnable when a server omits `output_index`, such as llama.cpp; those streams now end with an error ([#9974](https://github.com/earendil-works/pi/issues/9974)).
+
+- Fixed inherited GitHub Copilot Claude Opus 5.5 offering unsupported thinking levels when upstream model metadata is incomplete, and GitHub Copilot GPT models using the Chat Completions adapter instead of the Responses adapter ([#9253](https://github.com/earendil-works/pi/pull/9253) by [@petrroll](https://github.com/petrroll)).
+
+- Fixed inherited image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797)).
+
+- Fixed inherited unknown OpenAI-compatible Chat Completions endpoints receiving strict tool schemas unless they advertise support ([#9816](https://github.com/earendil-works/pi/issues/9816)), and Cerebras models advertising unsupported strict tool schemas ([#9804](https://github.com/earendil-works/pi/pull/9804) by [@EdenGottlieb](https://github.com/EdenGottlieb)).
+
+- Fixed inherited z.ai `Prompt too long` errors not being recognized as context overflow ([#9805](https://github.com/earendil-works/pi/issues/9805)), and bodyless HTTP 400/413 errors from non-Cerebras providers being misclassified as context overflow ([#9482](https://github.com/earendil-works/pi/issues/9482)).
+
+- Fixed inherited DeepSeek V4.1 thinking levels on OpenRouter and OpenCode Go ([#9485](https://github.com/earendil-works/pi/issues/9485)), Vercel AI Gateway replaying unsigned thinking as assistant text ([#9676](https://github.com/earendil-works/pi/issues/9676)), and Google Generative AI and Vertex AI using unsupported thinking levels ([#9455](https://github.com/earendil-works/pi/issues/9455)).
+
+- Fixed inherited Anthropic-compatible relays breaking signed thinking replay when they report a different response model ([#9188](https://github.com/earendil-works/pi/issues/9188)).
+
+- Fixed inherited OpenAI-compatible Responses errors to name the actual provider ([#9298](https://github.com/earendil-works/pi/issues/9298)), Baseten requests to send session-affinity headers from `sessionId` ([#9629](https://github.com/earendil-works/pi/issues/9629)), and retry classification for Cloudflare 520 responses ([#9627](https://github.com/earendil-works/pi/issues/9627)) and transient Azure peak-load errors ([#9669](https://github.com/earendil-works/pi/issues/9669)).
 
 ### Removed
 

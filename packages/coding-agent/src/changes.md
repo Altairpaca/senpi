@@ -1,3 +1,66 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): settings, entrypoints and resource loading
+
+### What changed
+
+- `packages/coding-agent/src/bun/runtime-setup.ts`: `packages/coding-agent/src/bun/runtime-setup.ts`: = OURS (`registerBunRuntimeModules`); upstream QuickJS wasm embedding not adopted (only the excluded upstream codemode reads it). No compile-cache work on the Bun path (fork compile cache stays in the Node entry).
+- `packages/coding-agent/src/config.ts`: `packages/coding-agent/src/config.ts`: = OURS (upstream `setEmbeddedQuickJSWasmPath`/`getQuickJSWasmPath`/`getCodemodeWorkerUrl` are codemode-only, D-2).
+- `packages/coding-agent/src/experimental/client.ts`: `packages/coding-agent/src/experimental/client.ts`: = OURS (the fork already waits for the run's terminal event, bounded by `RUN_TAIL_TIMEOUT_MS`; upstream's unbounded duplicate waiter dropped).
+- `packages/coding-agent/src/index.ts`: `packages/coding-agent/src/index.ts`: fork export superset kept (`OAuthCredential`, `McpServerDeclaration`, `ToolPermissionRequest`, `UnknownCommandError`, `connectWebViewService`, `export *` session-control types); adopted upstream `ToolLoadout`, `ToolLoadoutChanges`, `ToolNamespace`, boundary/virtual-model/session-projection/theme type exports and `core/virtual-models.ts` exports (C-EX-10). Dropped: `CacheWarmingDecision/Status`, `CacheWarmingDecisionEvent(Result)`, `CacheWarmingMode` (D-5), `McpServersChangeEvent`, `RegisteredMcpServer`, upstream codemode/mcp/tool-search extension exports (D-2). Upstream core/index.ts additions (all types) are re-exported from here; core/index.ts is not resurrected.
+- `packages/coding-agent/src/main.ts`: `packages/coding-agent/src/main.ts`: = OURS + extension-package warnings mapped into runtime diagnostics in `createCliRuntimeFactory`. No `/bug`, no crash-report hints, no upstream `mcp` subcommand (D-2/D-6); fork startup paths kept (loading indicator, from-source guard, legacy .pi notice, app-server/host/schedule dispatch, moved-session loaders, index-backed exact-id lookup, CLI-side image resize, initialTitlePrompt).
+- `packages/coding-agent/src/experimental/process.ts`: Silent rows read and accepted as merged: `cli/startup-ui.ts` (system theme startup, D-14), `core/keybindings.ts` (descriptions), `core/prompt-templates.ts` (diagnostics result), `core/trust-manager.ts` (adds `mcp.json`; the fork MCP reads project `.senpi/mcp.json`; the `.pi` legacy-trust fix is untouched), `experimental/process.ts` (`--import` URL), `package-manager-cli.ts` (builtin names into config), tests `args`, `package-manager`, `stdout-cleanliness`, `5943-session-start-notify`.
+- `packages/coding-agent/src/package-manager-cli.ts`: Silent rows read and accepted as merged: `cli/startup-ui.ts` (system theme startup, D-14), `core/keybindings.ts` (descriptions), `core/prompt-templates.ts` (diagnostics result), `core/trust-manager.ts` (adds `mcp.json`; the fork MCP reads project `.senpi/mcp.json`; the `.pi` legacy-trust fix is untouched), `experimental/process.ts` (`--import` URL), `package-manager-cli.ts` (builtin names into config), tests `args`, `package-manager`, `stdout-cleanliness`, `5943-session-start-notify`.
+
+### Why
+
+Upstream v0.99.1 settings/resource-loading features are adopted where they carry no excluded subsystem; D-2/D-5/D-6 exclusions remove codemode, MCP, tool-search, cache-warming and /bug surfaces; fork runtime contracts (tool defaults, loader ordering, global-default shims, session profiles) win on conflict.
+
+### Why an extension could not handle it
+
+Settings layering, resource/extension resolution, the package barrel and CLI entrypoints are core loader/bootstrap code that runs before any extension loads.
+
+### Expected merge conflict zones
+
+`settings-manager.ts` Settings interface + deepMergeSettings + getDefaultTools; `resource-loader.ts` constructor, loadCurrentExtensionSet, loadExtensionPaths, loadFinalExtensionSet; `index.ts` extension type export block; `main.ts` createCliRuntimeFactory diagnostics; upstream re-adding cacheWarming/codemode/mcp settings or exports.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): upstream features excluded on record
+
+### What changed
+
+Upstream paths below are not added (or stay deleted) in this sync; `.github/agent/upstream-exclusions.txt` lists them for mechanical re-exclusion after every upstream merge.
+
+- `packages/coding-agent/src/extensions/codemode/execute.lazy.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/execute.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/index.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/renderer.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/tool.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/codemode/worker.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/cli.lazy.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/cli.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/config.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/index.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/log.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/oauth.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/resources.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/runtime.lazy.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/runtime.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/tools.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/mcp/ui.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/tool-search/index.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/tool-search/tool.ts` (not added / kept deleted)
+- `packages/coding-agent/src/extensions/index.ts`: upstream's built-in list reduced to its llama.cpp entry; the codemode, tool-search and MCP entries are excluded with their directories.
+
+### Why
+
+The fork keeps one implementation per capability: its own builtin mcp, tool-search and senpi-codemode instead of upstream's codemode/MCP/tool-search built-ins and packages (plan D-2, owner default Q1); builtin cache-keepalive instead of upstream cache warming, whose default spends paid refreshes (D-5, Q3); report-bug skills instead of `/bug` uploads to Radius (D-6, Q4); no `packages/durable`, which nothing in the fork imports (D-7). Paths the fork had already deleted (core/index.ts, core/radius.ts, session-share.ts, tui latex.ts, providers/openai-codex.ts, npm-shrinkwrap.json) stay deleted.
+
+### Why an extension could not handle it
+
+Exclusion is a repository-level decision about which upstream files exist at all; an extension can add behavior but cannot remove files an upstream merge adds.
+
+### Expected merge conflict zones
+
+Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
 ## 2026-09-29 - The CLI runtime factory passes the launch profile's prompt surface (senpi#2377)
 
 ### What changed

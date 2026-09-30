@@ -1,3 +1,43 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): ai model catalog and generator
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: resolved by L2b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/ai/scripts/model-data.ts`: `model-data.ts` keeps the fork's video input modality (new `isInputModalityList`) and the fork-owned/imported shard filter.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the model catalog and generator take the upstream v6 schema while fork rows (GPT-6 family, chatgpt-subscription, fork-owned shards) win on overlap (plan D-9, D-3).
+
+### Why an extension could not handle it
+
+The generated catalog and its generator are build-time data the runtime loads before any extension exists.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `packages/ai/package.json`: Root `package.json`: fork scripts kept (`build-all.mjs` build, the fork `check` chain with conflict-marker/bun-lock/install-lock/claude-sdk-platform-lock gates, `run-workspaces.mjs` launchers, `refresh-lock`, `preinstall`); devDependencies kept (biome 2.5.14, @types/node 26.6.2, typescript 7.0.2, @typescript/typescript6, tsx 4.23.13, vitest + @vitest/coverage-v8 5.0.1). Adopted from upstream: `generate:models` runs generate-models only (the `generate-image-models` chain dropped for the D-3 image-model unification), and `test:scripts` also runs the adopted upstream `scripts/model-catalog-protocol.test.ts`. Not adopted: codemode/mcp/durable build phases, the tsx removal. `packages/ai/package.json`: `openai` 6.26.0 -> 7.19.0 (hold lifted, D-10); `generate-image-models` script and its `prepublishOnly` step removed (D-3 ADOPT form; task 28 restores both from OURS if the D-3 fallback is taken). Version, internal ranges, fork scripts and deps unchanged.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-30 - GPT-6.1 Sol under Venice's dotless id, plus the Copilot and OpenCode rows models.dev now lists (senpi#2390)
 
 ### What changed

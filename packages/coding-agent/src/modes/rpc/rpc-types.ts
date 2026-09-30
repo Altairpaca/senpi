@@ -9,7 +9,7 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import type { ImageContent, Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-works/pi-ai";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
-import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
@@ -689,13 +689,20 @@ export type RpcResponse =
 	// Prompting (async - events follow)
 	// data.disposition reports how the host disposed the prompt (started/queued/handled)
 	// so proxied optimistic-echo contracts resolve exactly like the local path; older
-	// hosts omit it and clients must degrade to canonical-only rendering.
+	// hosts omit it and clients must degrade to canonical-only rendering. steer/follow_up carry the
+	// per-input disposition (queued/handled) under the same optional contract.
 	| { id?: string; type: "response"; command: "prompt"; success: true; data?: { disposition?: PromptDisposition } }
 	| { id?: string; type: "response"; command: "send_custom_message"; success: true }
 	| { id?: string; type: "response"; command: "append_user_message"; success: true }
 	| { id?: string; type: "response"; command: "append_session_entry"; success: true }
-	| { id?: string; type: "response"; command: "steer"; success: true }
-	| { id?: string; type: "response"; command: "follow_up"; success: true }
+	| { id?: string; type: "response"; command: "steer"; success: true; data?: { disposition?: QueuedInputDisposition } }
+	| {
+			id?: string;
+			type: "response";
+			command: "follow_up";
+			success: true;
+			data?: { disposition?: QueuedInputDisposition };
+	  }
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
 	| { id?: string; type: "response"; command: "reload"; success: true; data: { cancelled: boolean; reason?: string } }

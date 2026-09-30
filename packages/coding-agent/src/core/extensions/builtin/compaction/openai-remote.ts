@@ -6,6 +6,7 @@ import {
 	convertResponsesMessages,
 	getContextProvenance,
 	type Model,
+	normalizeContext,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -937,7 +938,7 @@ export function markOpenAiRemoteReplayBoundary(
 	});
 	const baseline = convertResponsesMessages(
 		options.model,
-		{ messages: convertToLlm(marked) },
+		normalizeContext({ messages: convertToLlm(marked) }),
 		OPENAI_RESPONSES_TOOL_CALL_PROVIDERS,
 		{ ...replayBoundaryConversionOptions(options.model), sealContextProvenance: true },
 	);

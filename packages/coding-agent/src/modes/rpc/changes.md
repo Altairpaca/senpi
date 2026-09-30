@@ -1,3 +1,40 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): shared type roots (contract wave)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: What changed: steer and follow_up responses gain optional per-input disposition (QueuedInputDisposition), matching the fork optional prompt disposition. Why: upstream per-input disposition, under the fork contract that older hosts may omit data. Why an extension could not handle it: RPC wire types are core. Expected merge conflict zones: agent-session import line, prompting response union.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the four shared type roots (plan D-24 contract wave, D-2, D-3, D-16).
+
+### Why an extension could not handle it
+
+They are the public type contracts every provider, the agent loop, extensions and RPC compile against; an extension consumes these types and cannot change them.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): rpc
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: What changed (upstream adopted): `prompt()` returns the `PromptDisposition` after acceptance; `steer()`/`followUp()` return the `QueuedInputDisposition` and throw on a failed response through `getData` (e473b5cd8b); event dispatch iterates a snapshot of the listener list so a listener unsubscribing during dispatch no longer makes later listeners miss the event (92e8d4f02a, #9990) - applied to both fork dispatch loops (`handleLine` and the fork-only `flushPendingSessionEvents` replay of events retained during `open_session`). Fork behavior preserved: `prompt()` overloads (images array or `PromptOptions` with streamingBehavior/thinkingLevel/sessionTitlePrompt/expandPromptTemplates/unknownCommandAsText), synchronous `promptDisposition`/`preflightResult` hooks in wire order, typed `UnknownCommandError` rebuild, `steer`/`followUp` recovery `{ enqueueOrder }` parameter, `appendUserMessage`/`appendSessionEntry`/`sendCustomMessage`, `queued` frames (`onQueued`), per-session event filtering and bounded pending-session buffering, socket transport and identity/windows handling (untouched). Fork deviation: a success response without a disposition (older host) resolves `"handled"` for prompt, steer and follow_up (fork degrade-to-canonical rule), where upstream types the field as required. Why an extension could not handle it: RpcClient is the public programmatic client. Expected merge conflict zones: agent-session type import, `prompt` doc + signature/body, `steer`/`followUp` signatures, `handleLine` event dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: What changed: nothing; the file is the fork's 230-line single-connection stdio entry byte-identical to OURS. Upstream's disposition hunks (e473b5cd8b: `preflightResult(disposition)` -> `success(id, "prompt", { disposition })`, steer/follow_up `success(id, cmd, { disposition })`) target the command loop the fork moved into `connection-handler.ts`, where they are ported (below). Why: the fork split the RPC command loop out of `runRpcMode` so the same handler serves the shared multi-session host and caller-owned transports; `rpc-mode.ts` owns only stdout takeover, stdin wiring, signals and exit. Why an extension could not handle it: the RPC wire loop is core mode code. Expected merge conflict zones: the whole body below the protocol doc comment (upstream still carries the monolithic command switch).
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; rpc ports upstream per-input disposition and RpcClient fixes into the fork split rpc modules with fork response semantics (plan D-15).
+
+### Why an extension could not handle it
+
+The RPC transport and host are process-boundary core, not an extension surface.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-29 - `get_auth_providers`: each login method row carries its own status
 
 ### What changed

@@ -953,6 +953,10 @@ export function createCliRuntimeFactory(
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(settingsManager, "runtime creation"),
 			...collectExtensionLoadDiagnostics(resourceLoader.getExtensions().errors),
+			...(resourceLoader.getExtensions().warnings ?? []).map(({ path, warning }) => ({
+				type: "warning" as const,
+				message: `Extension package "${path}": ${warning}`,
+			})),
 		];
 
 		const modelPatterns = getModelNarrowingPatterns({

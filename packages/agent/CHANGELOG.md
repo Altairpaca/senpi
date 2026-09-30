@@ -4,11 +4,32 @@
 
 ### Breaking Changes
 
+- Removed the inherited `AgentOptions.shouldStopAfterTurn` and `AgentLoopConfig.shouldStopAfterTurn`. Use `finishTurn` and return `{ action: "end" }` to stop after the completed turn. `finishTurn` runs after the assistant message and every tool result are finalized and before `turn_end`, and its decision applies after `turn_end`. It also runs for error and aborted responses, which stay hard exits, so guard them to keep the old normal-response-only behavior:
+
+  ```ts
+  finishTurn: async (turn, signal) => {
+    if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
+    return (await shouldStop(turn, signal)) ? { action: "end" } : undefined;
+  },
+  ```
+
 ### Added
+
+- Added the inherited `prepareRequest` hook, which runs before every provider request, including the first. Return `{ context: { ...context, messages: persistedMessages } }` to install canonical context after already-selected input is emitted, without another queue poll.
+
+- Added the inherited `finishTurn` hook. Return `{ action: "end" }` to end a normal run after `turn_end`, `undefined` to keep normal scheduling, or `{ action: "continue" }` to make sure one more provider request happens.
+
+- Added the inherited `Agent.peekQueuedMessages()`, which previews the next queue-selected batch without consuming it.
+
+- Added the inherited `onProviderStreamEvent` agent option, passed to provider streams so callers can observe parsed provider events before normalization ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+
+- The agent loop records the requested thinking level as `thinkingLevel` on each assistant message (inherited).
 
 ### Changed
 
 ### Fixed
+
+- Fixed inherited harness reads misclassifying text files that begin with `GIF` as images ([#9755](https://github.com/earendil-works/pi/issues/9755)).
 
 ### Removed
 

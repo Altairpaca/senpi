@@ -4,6 +4,8 @@ import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model } from "../src/types.ts";
 import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 interface AnthropicToolChoicePayload {
 	tools?: unknown[];
 	tool_choice?: unknown;
@@ -98,7 +100,7 @@ async function capturePayload(
 	model: Model<"anthropic-messages">,
 	toolChoice: "auto" | "any" | "none" | { type: "tool"; name: string },
 ): Promise<AnthropicToolChoicePayload> {
-	const stream = streamAnthropic(withPayloadCapture(model), context, {
+	const stream = streamAnthropic(withPayloadCapture(model), normalizeContext(context), {
 		apiKey: "fake-key",
 		toolChoice,
 	});
@@ -193,10 +195,14 @@ describe("Anthropic tool_choice compatibility", () => {
 			new HttpStatusError(400, "tool_choice forces tool use is not compatible with this model"),
 		);
 
-		const response = await streamAnthropic(withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")), context, {
-			apiKey: "fake-key",
-			toolChoice: { type: "tool", name: "get_weather" },
-		}).result();
+		const response = await streamAnthropic(
+			withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")),
+			normalizeContext(context),
+			{
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			},
+		).result();
 
 		expect(response.stopReason).toBe("stop");
 		expect(mockState.createCalls).toHaveLength(2);
@@ -209,10 +215,14 @@ describe("Anthropic tool_choice compatibility", () => {
 			new HttpStatusError(400, "Thinking may not be enabled when tool_choice forces tool use."),
 		);
 
-		const response = await streamAnthropic(withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")), context, {
-			apiKey: "fake-key",
-			toolChoice: { type: "tool", name: "get_weather" },
-		}).result();
+		const response = await streamAnthropic(
+			withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")),
+			normalizeContext(context),
+			{
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			},
+		).result();
 
 		expect(response.stopReason).toBe("stop");
 		expect(mockState.createCalls).toHaveLength(2);
@@ -221,7 +231,7 @@ describe("Anthropic tool_choice compatibility", () => {
 
 	it("remembers an unconditional refusal for the model but not one that blames thinking (senpi#2218)", async () => {
 		const forceWeather = (model: Model<"anthropic-messages">) =>
-			streamAnthropic(withPayloadCapture(model), context, {
+			streamAnthropic(withPayloadCapture(model), normalizeContext(context), {
 				apiKey: "fake-key",
 				toolChoice: { type: "tool", name: "get_weather" },
 			}).result();

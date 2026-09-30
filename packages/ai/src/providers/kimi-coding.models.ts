@@ -7,11 +7,19 @@
  * regeneration that upstream no longer describes.
  */
 
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import {
+	type ChatModelCatalog,
+	type ClassifierModelCatalog,
+	flattenChatModelCatalog,
+	flattenClassifierModelCatalog,
+	flattenImageModelCatalog,
+	type ImageModelCatalog,
+} from "../model-catalog.ts";
 
 const values = {
 	"anthropic-messages": {
-		"k3": {
+		"chat:k3": {
+			"type": "chat",
 			"id": "k3",
 			"name": "Kimi K3",
 			"api": "anthropic-messages",
@@ -45,7 +53,8 @@ const values = {
 			"contextWindow": 1048576,
 			"maxTokens": 131072
 		},
-		"k3-256k": {
+		"chat:k3-256k": {
+			"type": "chat",
 			"id": "k3-256k",
 			"name": "Kimi K3-256K",
 			"api": "anthropic-messages",
@@ -77,7 +86,8 @@ const values = {
 				"max": "max"
 			}
 		},
-		"kimi-for-coding": {
+		"chat:kimi-for-coding": {
+			"type": "chat",
 			"id": "kimi-for-coding",
 			"name": "kimi-for-coding",
 			"api": "anthropic-messages",
@@ -110,7 +120,8 @@ const values = {
 				"max": "max"
 			}
 		},
-		"kimi-for-coding-highspeed": {
+		"chat:kimi-for-coding-highspeed": {
+			"type": "chat",
 			"id": "kimi-for-coding-highspeed",
 			"name": "Kimi For Coding HighSpeed",
 			"api": "anthropic-messages",
@@ -133,7 +144,8 @@ const values = {
 			"contextWindow": 262144,
 			"maxTokens": 32768
 		},
-		"kimi-k2-thinking": {
+		"chat:kimi-k2-thinking": {
+			"type": "chat",
 			"id": "kimi-k2-thinking",
 			"name": "Kimi K2 Thinking",
 			"api": "anthropic-messages",
@@ -158,7 +170,15 @@ const values = {
 	}
 } as const;
 
-export const KIMI_CODING_MODELS: ModelCatalog<typeof values, "kimi-coding"> = flattenModelCatalog(
+export const KIMI_CODING_MODELS: ChatModelCatalog<typeof values, "kimi-coding"> = flattenChatModelCatalog(
 	"kimi-coding",
 	values,
 );
+
+export const KIMI_CODING_IMAGE_MODELS: ImageModelCatalog<typeof values, "kimi-coding"> = flattenImageModelCatalog(
+	"kimi-coding",
+	values,
+);
+
+export const KIMI_CODING_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "kimi-coding"> =
+	flattenClassifierModelCatalog("kimi-coding", values);
