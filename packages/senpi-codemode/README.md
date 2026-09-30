@@ -366,6 +366,32 @@ namespace to prevent recursive execution.
 
 ## Validation
 
+The regression gate compares full prompt content (120 dialect/capability/runtime
+combinations), schemas, helper census, live helper witnesses and eager imports,
+and runs the legacy contracts. It requires Bun, Node, Python, Ruby and Julia; a missing
+interpreter fails rather than skipping a runtime. It does not gate wall-clock
+timing or absolute memory footprints; those belong to the paired benchmark.
+Ruby 3.4 and later also require the `base64` gem (`gem install base64 --version 0.3.0 --no-document`).
+
+```bash
+bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
+bun run --cwd packages/senpi-codemode test -- test/gate
+```
+
+Record a baseline with the **head harness** against a checkout of the PR merge
+base, not by running an older harness:
+
+```bash
+bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
+  --baseline test/gate/baseline.json --write-baseline
+```
+
+The report is `gate-report.json` by default (`--report <path>` overrides it).
+`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node;
+it cannot authorize removal or modification of a legacy entry. The test-only
+`SENPI_CODEMODE_GATE_MUTATE=drop-phase` report mutation proves that helper removal
+is rejected. It is read only by the gate, not by production kernels.
+
 ```bash
 cd packages/senpi-codemode
 bun run test

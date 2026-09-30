@@ -6,6 +6,8 @@
 
 ### Added
 
+- An eval regression gate records the full prompt and schema surfaces, helper witnesses across five required runtime legs, eager imports and legacy contract results against a frozen baseline. CI provisions every interpreter and publishes the report. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
 ### Changed
 
 ### Fixed
