@@ -8,7 +8,7 @@ import type {
 	SearchProviderEntry,
 	WebsearchConfig,
 } from "../src/core/extensions/builtin/websearch/websearch/types.ts";
-import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../src/core/extensions/types.ts";
 import { ModelRegistry, type ResolvedRequestAuth } from "../src/core/model-registry.ts";
 import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
 import { createTempAgentDir } from "./support/temp-agent-dir.ts";
@@ -99,7 +99,7 @@ function harness(available: Model<Api>[], auth: (model: Model<Api>) => ResolvedR
 						state.progress.push(update.details);
 					}
 				},
-				toolContext(active, modelRegistry),
+				{ ...toolContext(active, modelRegistry) } as ExtensionToolContext,
 			);
 		},
 	};
