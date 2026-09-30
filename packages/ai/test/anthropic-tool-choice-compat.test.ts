@@ -83,6 +83,16 @@ const context: Context = {
 	],
 };
 
+// Models with upstream native tool changes (decisions.md L2d) also declare upstream's stable
+// deferred placeholder; the caller's tools are every declaration except that placeholder.
+const DEFERRED_TOOL_PLACEHOLDER_NAME = "__pi_deferred_placeholder__";
+
+function callerToolNames(payload: AnthropicToolChoicePayload): unknown[] {
+	return (payload.tools ?? [])
+		.map((tool) => (typeof tool === "object" && tool !== null && "name" in tool ? tool.name : tool))
+		.filter((name) => name !== DEFERRED_TOOL_PLACEHOLDER_NAME);
+}
+
 function withPayloadCapture(model: Model<"anthropic-messages">): Model<"anthropic-messages"> {
 	return { ...model, baseUrl: "http://127.0.0.1:9" };
 }
@@ -125,7 +135,7 @@ describe("Anthropic tool_choice compatibility", () => {
 	it("omits forced any tool_choice for Claude Fable while preserving tools", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), "any");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -135,21 +145,21 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
 	it("keeps auto tool_choice for Claude Fable", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "auto" });
 	});
 
 	it("omits forced any tool_choice for Claude Opus 5.5 while preserving tools", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5-5"), "any");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -162,21 +172,21 @@ describe("Anthropic tool_choice compatibility", () => {
 
 		const payload = await capturePayload(model, { type: "tool", name: "get_weather" });
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
 	it("keeps auto tool_choice for Claude Opus 5.5", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5-5"), "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "auto" });
 	});
 
 	it("keeps forced named tool_choice for Claude Opus 5", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5"), "any");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "any" });
 	});
 
@@ -186,7 +196,7 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "tool", name: "get_weather" });
 	});
 
@@ -270,7 +280,7 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -282,7 +292,7 @@ describe("Anthropic tool_choice compatibility", () => {
 
 		const payload = await capturePayload(model, "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 });
