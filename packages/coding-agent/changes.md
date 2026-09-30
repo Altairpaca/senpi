@@ -1,3 +1,23 @@
+## 2026-09-30 - claude-agent-sdk 0.3.285 (senpi#752)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.284 -> 0.3.285 (Claude Code 2.1.284 -> 2.1.285). `bun.lock`, `package-lock.json` and `install-lock/package-lock.json` regenerated with `bun run refresh-lock`; the platform packages relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- The engine's Claude Code fingerprint floor moves with it (`packages/ai/src/changes.md`), which regression #2033 requires.
+- `test/steering-tool-context.test.ts` and `test/suite/regressions/7084-stored-credential-revision.test.ts`: no bracket string-literal member access (`lint/complexity/useLiteralKeys`). The private `AgentSession` members the steering test drives go through a typed `SteeringInternals` view, as other suite tests reach private members; `state.default` replaces `state["default"]`.
+
+### Why
+
+- The nightly Releasability gate's `Claude Agent SDK currency` job fails while the pin trails npm latest (0.3.285, published 2026-09-29). None of the 0.3.285 changes reaches a surface the subscription lane relies on: senpi passes `tools: []` (the Bash timeout, Artifact and fork-subagent changes are for built-in tools), and it does not call `toggleMcpServer`, `rewind_conversation` or `getSubagentMessages`. `getSessionMessages()` now also returns a user message sent before a process stopped with no reply, which is the orphan tail `verifyRestoredTranscript` already fails closed on (senpi#1973).
+
+### Why an extension could not handle it
+
+- Dependency pin; test-only lint.
+
+### Expected merge conflict zones
+
+- LOW: the pin line and the lock files.
+
 ## 2026-09-29 - Drop unused declarations and published sourcemaps (senpi#2362)
 
 ### What changed
