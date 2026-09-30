@@ -22,6 +22,8 @@
 
 - An answer sent to a terminal session's pending question through its control endpoint now reaches the model with its text. A text-only answer (`answers: {}` plus a `comment`, which relaying clients send) used to arrive as an empty `[Answer to question <id>]`; the terminal now settles every answer by the same rule as a multi-session host, so both surfaces deliver the same message, and a frame with neither answers nor a comment is refused `question_incomplete` instead of resolving empty. ([#2407](https://github.com/code-yeongyu/senpi/issues/2407))
 
+- Resuming a long session no longer makes the transcript jump while older history loads in the background. The part already on screen now stays put, and the full history appears once it has finished loading, in a single repaint (#1076; thanks @effortprogrammer).
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29
