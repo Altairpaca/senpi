@@ -254,8 +254,10 @@ describe("AgentSession virtual models", () => {
 		harness.session.setThinkingLevel("low");
 		await harness.session.prompt("next");
 
-		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
-		expect(compactedBeforeSmall).toBe(true);
+		// L3a: the fork compacts at admission, before routing, so the small model's overflow is compacted and retried.
+		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["overflow"]);
+		// L3a: admission cannot see the routed window, so the small model gets the uncompacted context first.
+		expect(compactedBeforeSmall).toBe(false);
 		expect(dispatched().at(-1)).toBe("faux/small:off");
 	});
 
@@ -264,7 +266,7 @@ describe("AgentSession virtual models", () => {
 			request.reason === "continuation"
 				? { model: ctx.modelRegistry.find("faux", "small")!, thinkingLevel: "off" }
 				: defaultRoute(request, ctx);
-		const { harness, dispatched } = await createRoutedHarness(route, {
+		const { harness } = await createRoutedHarness(route, {
 			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -286,12 +288,22 @@ describe("AgentSession virtual models", () => {
 		// About 43k tokens fit the large model of the first turn, but not the small model's 40k window of the second.
 		await harness.session.prompt("x".repeat(170_000));
 
-		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
-		expect(compactedBeforeSmall).toBe(true);
-		expect(dispatched()).toEqual(["faux/large:high", "faux/small:off"]);
+		// L3a: no in-request threshold compaction; the overflow on the small model is compacted and retried.
+		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["overflow"]);
+		// L3a: admission cannot see the routed window, so the small model gets the uncompacted context first.
+		expect(compactedBeforeSmall).toBe(false);
+		// The compaction after the small response summarizes the large turn, so read the routing from the session history.
+		const recorded = harness.sessionManager
+			.getBranch()
+			.flatMap((entry) =>
+				entry.type === "message" && entry.message.role === "assistant"
+					? [`${entry.message.provider}/${entry.message.model}:${entry.message.thinkingLevel}`]
+					: [],
+			);
+		expect(recorded).toEqual(["faux/large:high", "faux/small:off"]);
 	});
 
-	it("projects the session once per request under a virtual selection", async () => {
+	it("does not re-project the session per request under a virtual selection", async () => {
 		const { harness } = await createRoutedHarness();
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
@@ -301,8 +313,8 @@ describe("AgentSession virtual models", () => {
 
 		await harness.session.prompt("hello");
 
-		// One per request, one between the turns, and one for the compaction check after the run.
-		expect(projections).toHaveBeenCalledTimes(4);
+		// L3a: routing keeps the context the fork loop built, so no request re-projects the session.
+		expect(projections).not.toHaveBeenCalled();
 	});
 
 	it("stores router state on the branch and passes it to later requests", async () => {
