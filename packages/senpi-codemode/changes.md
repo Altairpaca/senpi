@@ -5,7 +5,7 @@
 ### What changed
 
 - `packages/senpi-codemode/src/tool/types.ts`: each action branch declares its own properties. Runs require `language`, `code`, and `summary`, including when `action` is omitted. `list` requires only its action; `peek` and `stop` require `cell_id`.
-- `packages/senpi-codemode/test/eval-schema-required-fields.test.ts`: covers missing run fields, implicit runs, enabled languages, control calls, and branch-local field declarations.
+- `packages/senpi-codemode/test/eval-schema-required-fields.test.ts`: covers missing run fields, implicit runs, enabled languages, control calls, branch-local field declarations, provider schema conversions, and OpenAI strict-mode fallback.
 - `packages/senpi-codemode/scripts/qa-e2e-eval.ts`: expects incomplete runs to fail schema validation before execution. The README describes the action-specific requirements.
 
 ### Why
