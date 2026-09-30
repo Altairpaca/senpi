@@ -1,3 +1,22 @@
+## 2026-09-30 - Host sessions apply the permission preset their client opened them with (#2461)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory`'s `createServices` passes `sessionExtensionFlagValues(parsed.unknownFlags, launchProfile)` as the session's extension flag values instead of the host's own flags alone.
+- `packages/coding-agent/src/core/session-extension-flags.ts` (fork-only): copies the host flags and sets `permission-preset` from `launchProfile.permissionPreset` when the client sent one.
+
+### Why
+
+- `open_session.permissionPreset` was stored in the launch profile and never read, so every host-opened session ran with the host's startup preset (normally `full-access`). The builtin permission extension reads its preset from the `--permission-preset` flag, so the per-session value has to reach it through that flag. Settings still apply below it, as for a CLI preset.
+
+### Why an extension could not handle it
+
+- Extension flag values are fixed when the session's services are created; an extension cannot see the launch profile.
+
+### Expected merge conflict zones
+
+- LOW: the `extensionFlagValues` argument of `createAgentSessionServices` in `main.ts` (one line) and the import block.
+
 ## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
 
 ### What changed

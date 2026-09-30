@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A session opened on a multi-session host now runs with the permission preset its client asked for. `open_session.permissionPreset` was recorded and then ignored, so every host session ran as `full-access`: in the desktop app, "Ask first" and "Work in this project" asked for nothing, and a shell command or a read outside the project ran without approval. ([#2461](https://github.com/code-yeongyu/senpi/issues/2461))
+
 - A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
 
 ### Removed
