@@ -1,3 +1,21 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): generator re-emits Fireworks native tool references
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the Fireworks Anthropic-Messages compat sets `supportsToolReferences: true` again; the regenerated `src/providers/data/fireworks.json` carries it on every Fireworks Messages model.
+
+### Why
+
+The upstream sync auto-merge dropped this fork line from the generator, although the A2 contract keeps `AnthropicMessagesCompat.supportsToolReferences` because fork tool-search native loading and generate-models set it. Without it the shipped catalog silently turned off Fireworks native tool references (`tool_reference` deferral).
+
+### Why an extension could not handle it
+
+The builtin catalog is generated build-time data the runtime loads before any extension exists.
+
+### Expected merge conflict zones
+
+- MEDIUM: `processFireworksModels` `anthropicCompat`; upstream deleted the key, so an upstream edit there drops it again.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): ai model catalog and generator
 
 ### What changed
