@@ -66,6 +66,8 @@
 
 - Fixed inherited OpenAI-compatible Responses errors to name the actual provider ([#9298](https://github.com/earendil-works/pi/issues/9298)), Baseten requests to send session-affinity headers from `sessionId` ([#9629](https://github.com/earendil-works/pi/issues/9629)), and retry classification for Cloudflare 520 responses ([#9627](https://github.com/earendil-works/pi/issues/9627)) and transient Azure peak-load errors ([#9669](https://github.com/earendil-works/pi/issues/9669)).
 
+- Custom OpenAI-compatible models now inherit native `max` reasoning support from any built-in catalog entry with the same id after authoritative discovered/model effort maps are considered, while the existing GPT and Claude id lists remain a floor. Thanks @hunghoang3011. ([#2456](https://github.com/code-yeongyu/senpi/issues/2456))
+
 ### Removed
 ## [2026.9.30] - 2026-09-30
 
