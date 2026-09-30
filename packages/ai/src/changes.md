@@ -1,3 +1,23 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired and renamed AI source paths
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-codex.ts` -> `packages/ai/src/auth/oauth/chatgpt-subscription.ts` and `packages/ai/src/providers/openai-codex.models.ts` -> `packages/ai/src/providers/chatgpt-subscription.models.ts` under fork rename commit `3c816ead49` (D-4).
+- `packages/ai/src/images-models.ts` and `packages/ai/src/providers/openrouter-images.ts` stay deleted by upstream image/classifier unification commit `a328aa89ad`; their live behavior is on `image-models.ts`, `models.ts`, `providers/openrouter.ts`, and `providers/images/register-builtins.ts`.
+
+### Why
+
+The fork uses the user-facing `chatgpt-subscription` provider identity, while upstream v0.99.1 replaced the legacy image collections and provider wrapper with the unified schema-v6 model surface. Keeping the old paths would create duplicate provider and image-model stacks.
+
+### Why an extension could not handle it
+
+OAuth loading, generated model shards, and image provider registration are package-core wiring below the extension API.
+
+### Expected merge conflict zones
+
+- HIGH: upstream continues to edit `openai-codex` paths; port applicable deltas into the `chatgpt-subscription` counterparts.
+- MEDIUM: upstream changes to the unified image surface; keep the legacy `images-models.ts` and `providers/openrouter-images.ts` paths deleted.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): kimi-coding vision rows carry the default image resize profile
 
 ### What changed

@@ -1,5 +1,23 @@
 # changes — evals
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extensions eval layout rename
+
+### What changed
+
+- `packages/evals/src/extensions.eval.ts` -> `packages/evals/evals/extensions.eval.ts`. Upstream layout commit `d7296c063b` deleted the old `src/` suite while introducing `evals/extensions.docs.eval.ts`; the fork comparative host eval was ported to the new `evals/` directory.
+
+### Why
+
+The adopted eval layout keeps runner code under `src/` and executable suites under `evals/`. Retaining the old path would duplicate the extension evaluation outside the configured projects.
+
+### Why an extension could not handle it
+
+Eval discovery and project layout are repository test infrastructure.
+
+### Expected merge conflict zones
+
+- MEDIUM: upstream edits to extension eval discovery or `extensions.docs.eval.ts`; keep the fork host eval beside it under `evals/`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): evals
 
 ### What changed

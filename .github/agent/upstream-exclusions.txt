@@ -32,3 +32,12 @@ packages/tui/src/latex.ts
 packages/tui/test/latex.test.ts
 packages/ai/src/providers/openai-codex.ts
 packages/coding-agent/npm-shrinkwrap.json
+packages/agent/docs/pico/pico-handoff.md
+packages/ai/src/auth/oauth/openai-codex.ts
+packages/ai/src/images-models.ts
+packages/ai/src/providers/openai-codex.models.ts
+packages/ai/src/providers/openrouter-images.ts
+packages/ai/test/openai-codex-oauth.test.ts
+packages/ai/test/openai-codex-stream.test.ts
+packages/coding-agent/examples/extensions/kimi-deferred-tools.ts
+packages/evals/src/extensions.eval.ts

@@ -1,3 +1,21 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired pico handoff
+
+### What changed
+
+- `packages/agent/docs/pico/pico-handoff.md` stays deleted. Upstream commit `4819cc877e` replaced the approved implementation handoff with `pico-simple-handoff.md`, `pico-rendering.md`, and `pico-simple-blockers.md`.
+
+### Why
+
+The old handoff was deleted upstream after its decisions were incorporated into the newer pico documents; restoring it would revive superseded guidance.
+
+### Why an extension could not handle it
+
+This is repository documentation, outside the runtime extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the retired path if a later upstream merge reintroduces it. Keep the newer pico documents as the source of truth.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
 
 ### What changed
