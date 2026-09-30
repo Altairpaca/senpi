@@ -45,7 +45,9 @@ async function compactSession(harness: Harness): Promise<void> {
 	await harness.session.prompt("first");
 	await harness.session.prompt("second");
 	await harness.session.compact();
-	expect(harness.session.messages.map((message) => message.role).slice(0, 2)).toEqual(["system", "compactionSummary"]);
+	// C-AG-4: the fork keeps the prompt and tools in agent state; the compacted transcript leads with the summary.
+	expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+	expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
 }
 
 describe("context handlers and system messages", () => {
@@ -85,18 +87,9 @@ describe("context handlers and system messages", () => {
 	});
 
 	it("keeps mid-conversation system messages in place when a handler leaves the conversation unchanged", async () => {
-		let turn = 0;
 		const harness = await createHarness({
 			extensionFactories: [
 				(pi) => {
-					pi.on("before_agent_start", (event) => {
-						if (++turn === 2) {
-							event.systemPromptOptions.sections = {
-								...event.systemPromptOptions.sections,
-								plan_mode: "Plan only.",
-							};
-						}
-					});
 					pi.on("context", async (event) => ({ messages: event.messages }));
 				},
 			],
@@ -104,6 +97,15 @@ describe("context handlers and system messages", () => {
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("one")]);
 		await harness.session.prompt("first");
+		// C-AG-4 / C-EX-9: the fork records no before_agent_start section patches, so the mid-conversation
+		// system message is one the transcript itself carries.
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "mid-conversation reminder",
+			sections: { plan_mode: "<plan_mode>\nPlan only.\n</plan_mode>" },
+			timestamp: Date.now(),
+		});
+		harness.session.refreshContext();
 		const getRequest = captureRequest(harness, "two");
 
 		await harness.session.prompt("second");
@@ -177,8 +179,8 @@ describe("context_with_system handlers", () => {
 						seen.push(event.messages);
 						return {
 							messages: event.messages.map((message) =>
-								message.role === "system" && message.toolsAdded
-									? { ...message, toolsAdded: message.toolsAdded.filter((tool) => tool.name !== "bash") }
+								message.role === "user" && JSON.stringify(message.content).includes('"third"')
+									? { ...message, content: [{ type: "text" as const, text: "third (rewritten verbatim)" }] }
 									: message,
 							),
 						};
@@ -197,11 +199,14 @@ describe("context_with_system handlers", () => {
 
 		await harness.session.prompt("third");
 
+		// C-AG-4: the fork carries the prompt and tools in agent state, so the transcript these handlers
+		// see starts where the context handler sliced it and the tool declarations stay the session's.
 		const input = seen.at(-1);
-		expect(input?.[0]?.role).toBe("system");
-		expect(input?.[1]?.role).toBe("compactionSummary");
+		expect(input?.[0]?.role).toBe("compactionSummary");
+		expect(input?.some((message) => message.role === "system")).toBe(false);
 		expect(harness.session.getActiveToolNames()).toContain("bash");
-		expect(toolNames(getRequest())).toEqual(harness.session.getActiveToolNames().filter((name) => name !== "bash"));
+		expect(toolNames(getRequest())).toEqual(harness.session.getActiveToolNames());
+		expect(JSON.stringify(getRequest().messages)).toContain("third (rewritten verbatim)");
 	});
 
 	it("reports a handler that drops the leading system message but honors its output", async () => {
@@ -223,9 +228,9 @@ describe("context_with_system handlers", () => {
 
 		await harness.session.prompt("hello");
 
-		expect(getRequest().messages.map((message) => message.role)).toEqual(["user"]);
-		expect(errors).toEqual([
-			expect.stringMatching(/^context_with_system: Handler removed the leading system message/),
-		]);
+		// C-AG-4: no system head reaches these handlers, so none can be removed; the request still leads
+		// with the prompt and tools declared from agent state.
+		expect(getRequest().messages.map((message) => message.role)).toEqual(["system", "user"]);
+		expect(errors).toEqual([]);
 	});
 });

@@ -28,25 +28,32 @@ describe("system prompt updates", () => {
 	test("declares the prompt and tools once and reuses them across resume", async () => {
 		const harness = await createHarness();
 		try {
-			harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+			const requests: TranscriptContext[] = [];
+			harness.setResponses(
+				["first", "second"].map((text) => (providerContext: TranscriptContext) => {
+					requests.push(providerContext);
+					return fauxAssistantMessage(text);
+				}),
+			);
 			await harness.session.prompt("one");
 			await harness.session.prompt("two");
+			// C-AG-4: the fork keeps the prompt and tools in agent state and never persists a system entry;
+			// every request leads with the same declaration built from that state.
 			const systemEntries = harness.sessionManager
 				.getEntries()
 				.filter((entry) => entry.type === "message" && entry.message.role === "system");
-			expect(systemEntries).toHaveLength(1);
+			expect(systemEntries).toHaveLength(0);
 			expect(harness.session.messages.map((message) => message.role)).toEqual([
-				"system",
 				"user",
 				"assistant",
 				"user",
 				"assistant",
 			]);
-			const head = harness.session.messages[0];
+			expect(requests.map((request) => request.messages.filter((m) => m.role === "system").length)).toEqual([1, 1]);
+			const head = requests[1]?.messages[0];
 			if (head?.role !== "system") throw new Error("expected system message");
-			expect(head.content).toBe("");
-			expect(Object.keys(head.sections ?? {})).toEqual(["preamble", "tools", "rules", "docs", "cwd"]);
-			expect(head.toolsAdded?.map((tool) => tool.name)).toEqual(["read", "bash", "edit", "write"]);
+			expect(head).toEqual(requests[0]?.messages[0]);
+			expect(head.toolsAdded?.map((tool) => tool.name)).toEqual(harness.session.getActiveToolNames());
 			expect(getSystemMessageText(head)).toBe(harness.session.systemPrompt);
 		} finally {
 			harness.cleanup();
@@ -132,9 +139,9 @@ describe("system prompt updates", () => {
 			const systemMessages = requests.map((request) =>
 				request.messages.filter((message) => message.role === "system"),
 			);
-			// Forced turns collapse to one leading message; the unforced fourth turn passes the
-			// recorded head and both plan_mode patches through.
-			expect(systemMessages.map((messages) => messages.length)).toEqual([1, 1, 1, 3]);
+			// C-AG-4 / C-EX-9: every request carries one leading system message built from agent state, and the
+			// fork before_agent_start does not re-render systemPromptOptions.sections, so no plan_mode patch exists.
+			expect(systemMessages.map((messages) => messages.length)).toEqual([1, 1, 1, 1]);
 
 			const forced = systemMessages[1]?.at(-1);
 			expect(forced).toEqual({
@@ -154,16 +161,12 @@ describe("system prompt updates", () => {
 				"user",
 			]);
 
-			// The transcript only records the structured sections, never the forced text.
-			const recorded = harness.session.messages.flatMap((message) =>
-				message.role === "system" ? [message.sections] : [],
-			);
-			expect(recorded).toEqual([
-				systemMessages[0]?.[0]?.sections,
-				{ plan_mode: "<plan_mode>\nPlan only.\n</plan_mode>" },
-				{ plan_mode: null },
-			]);
-			expect(getCurrentSystemPrompt(harness.session.messages)).toBe(harness.session.systemPrompt);
+			// The unforced fourth turn is back on the session prompt, and the transcript records no prompt at all.
+			expect(systemMessages[3]).toEqual(systemMessages[0]);
+			expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
+			const baseline = systemMessages[0]?.[0];
+			if (baseline?.role !== "system") throw new Error("expected baseline system message");
+			expect(getSystemMessageText(baseline)).toBe(harness.session.systemPrompt);
 		} finally {
 			harness.cleanup();
 		}
@@ -210,25 +213,26 @@ describe("system prompt updates", () => {
 			const initial = requests[0]?.messages[0];
 			if (initial?.role !== "system") throw new Error("expected initial system message");
 			expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["first", "second"]);
-			expect(initial.sections?.tools).toContain("first prompt snippet");
+			expect(getSystemMessageText(initial)).toContain("first prompt snippet");
 
-			const update = requests[1]?.messages.filter((message) => message.role === "system").at(-1);
-			expect(update).toEqual({
-				role: "system",
-				content: "",
-				sections: { tools: expect.stringContaining("second prompt snippet"), rules: expect.any(String) },
-				toolsRemoved: [{ name: "first" }],
-				timestamp: expect.any(Number),
-			});
-			expect(update?.sections?.tools).not.toContain("first prompt snippet");
-			expect(update?.sections?.rules).not.toContain("Use first carefully.");
+			// C-AG-4: the fork re-declares the rebuilt prompt and active tools in the one leading system
+			// message instead of appending a transcript patch.
+			const updates = requests[1]?.messages.filter((message) => message.role === "system") ?? [];
+			expect(updates).toHaveLength(1);
+			const update = updates[0];
+			if (update?.role !== "system") throw new Error("expected updated system message");
+			expect(update.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
+			expect(getSystemMessageText(update)).toContain("second prompt snippet");
+			expect(getSystemMessageText(update)).not.toContain("first prompt snippet");
+			expect(getSystemMessageText(update)).not.toContain("Use first carefully.");
 
 			const result = requests[2]?.messages.filter((message) => message.role === "toolResult").at(-1);
 			expect(result).toMatchObject({ role: "toolResult", toolName: "first", isError: true });
 
-			const current = getCurrentSystemMessage(harness.session.messages);
-			expect(current?.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
-			expect(getSystemMessageText(current!)).toBe(harness.session.systemPrompt);
+			const current = requests[2]?.messages[0];
+			if (current?.role !== "system") throw new Error("expected current system message");
+			expect(current.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
+			expect(getSystemMessageText(current)).toBe(harness.session.systemPrompt);
 		} finally {
 			harness.cleanup();
 		}
@@ -266,9 +270,10 @@ describe("system prompt updates", () => {
 			await harness.session.prompt("first");
 			await harness.session.prompt("second");
 			expect(requests).toHaveLength(2);
-			const update = requests[1]?.messages.filter((message) => message.role === "system").at(-1);
-			expect(update?.toolsRemoved).toEqual([{ name: "first" }]);
-			expect(update?.toolsAdded).toBeUndefined();
+			// C-AG-4: the same request re-declares the active set in its one leading system message.
+			const updates = requests[1]?.messages.filter((message) => message.role === "system") ?? [];
+			expect(updates).toHaveLength(1);
+			expect(updates[0]?.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
 			expect(harness.session.getActiveToolNames()).toEqual(["second"]);
 		} finally {
 			harness.cleanup();
@@ -285,9 +290,16 @@ describe("system prompt updates", () => {
 		};
 		const harness = await createHarness({ tools: [executableTool], initialActiveToolNames: ["plain"] });
 		try {
-			harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+			const requests: TranscriptContext[] = [];
+			harness.setResponses(
+				["first", "second"].map((text) => (providerContext: TranscriptContext) => {
+					requests.push(providerContext);
+					return fauxAssistantMessage(text);
+				}),
+			);
 			await harness.session.prompt("one");
-			const head = harness.session.messages[0];
+			// C-AG-4: the declaration lives in the request's leading system message, not the transcript.
+			const head = requests[0]?.messages[0];
 			if (head?.role !== "system") throw new Error("expected system message");
 			const declaration = head.toolsAdded?.[0];
 			if (!declaration) throw new Error("expected tool declaration");
@@ -297,7 +309,9 @@ describe("system prompt updates", () => {
 			// Simulate a resume: the persisted JSON must replay to the same declarations.
 			harness.session.agent.state.messages = JSON.parse(JSON.stringify(harness.session.messages));
 			await harness.session.prompt("two");
-			expect(harness.session.messages.filter((message) => message.role === "system")).toHaveLength(1);
+			const replayed = requests[1]?.messages.filter((message) => message.role === "system") ?? [];
+			expect(replayed).toHaveLength(1);
+			expect(replayed[0]).toEqual(head);
 		} finally {
 			harness.cleanup();
 		}

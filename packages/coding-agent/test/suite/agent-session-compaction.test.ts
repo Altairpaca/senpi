@@ -8,6 +8,7 @@ import {
 	getCurrentTools,
 	type SimpleStreamOptions,
 	type TranscriptContext,
+	toToolDeclaration,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -353,8 +354,9 @@ describe("AgentSession compaction characterization", () => {
 		expect(statsAfter.tokens.cacheRead).toBe(statsBefore.tokens.cacheRead + summaryUsage.cacheRead);
 		expect(statsAfter.tokens.cacheWrite).toBe(statsBefore.tokens.cacheWrite + summaryUsage.cacheWrite);
 		expect(statsAfter.cost).toBe(statsBefore.cost + summaryUsage.cost.total);
-		expect(harness.session.messages[0]?.role).toBe("system");
-		expect(harness.session.messages[1]?.role).toBe("compactionSummary");
+		// C-AG-4: the fork keeps the prompt in agent state, so the compacted transcript leads with the summary.
+		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+		expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
 	});
 
 	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
@@ -362,8 +364,9 @@ describe("AgentSession compaction characterization", () => {
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("declared")]);
 		await harness.session.prompt("declare the prompt");
-		const declared = harness.session.messages[0];
-		if (declared?.role !== "system") throw new Error("expected declared system message");
+		// C-AG-4: the fork declares the prompt and tools from agent state and persists no system head,
+		// so the checkpoint folds only the system patches recorded in the transcript.
+		expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
 
 		harness.sessionManager.appendMessage({
 			role: "system",
@@ -397,13 +400,11 @@ describe("AgentSession compaction characterization", () => {
 		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
 		expect(checkpoint.content).toBe("summarized instruction\n\nretained instruction");
 		expect(checkpoint.sections).toEqual({
-			...declared.sections,
 			early: "<early>1</early>",
 			extra: "<extra>late</extra>",
 		});
-		expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(
-			harness.session.getActiveToolNames().filter((name) => name !== "read" && name !== "bash"),
-		);
+		// No transcript-declared tool set exists for the removals to apply to; the session tools are agent state.
+		expect(checkpoint.toolsAdded).toBeUndefined();
 	});
 
 	it("allows a queued prompt to start when manual compaction ends", async () => {
@@ -590,7 +591,10 @@ describe("AgentSession compaction characterization", () => {
 			await harness.session.compact();
 
 			expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).toBe(harness.session.agent.state.systemPrompt);
-			expect(getCurrentTools(requestContext?.messages ?? [])).toEqual(harness.session.agent.state.tools);
+			// C-AG-3: the transcript carries tool declarations, not the executable agent tools.
+			expect(getCurrentTools(requestContext?.messages ?? [])).toEqual(
+				harness.session.agent.state.tools.map(toToolDeclaration),
+			);
 			expect(JSON.stringify(requestContext?.messages)).not.toContain("<conversation>");
 			expect(requestOptions).toMatchObject({
 				cacheRetention: "short",
