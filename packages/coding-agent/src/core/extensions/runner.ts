@@ -1958,7 +1958,12 @@ export class ExtensionRunner {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {
-					const visibleMessages = currentMessages.filter((message) => message.role !== "system");
+					// Without system messages there is nothing to hide or restore, so the handler gets the
+					// working list itself and the list it sees is the list the request carries.
+					const hasSystemMessages = currentMessages.some((message) => message.role === "system");
+					const visibleMessages = hasSystemMessages
+						? currentMessages.filter((message) => message.role !== "system")
+						: currentMessages;
 					const visibleSnapshot = visibleMessages.slice();
 					const event: ContextEvent = { type: "context", messages: visibleMessages };
 					const handlerResult = (await handler(event, this.createContext(ext.path))) as
@@ -1970,7 +1975,9 @@ export class ExtensionRunner {
 						handlerResult?.messages ??
 						(sameMessages(visibleMessages, visibleSnapshot) ? undefined : visibleMessages);
 					if (!returned) continue;
-					currentMessages = restoreSystemMessages(currentMessages, visibleSnapshot, returned);
+					currentMessages = hasSystemMessages
+						? restoreSystemMessages(currentMessages, visibleSnapshot, returned)
+						: returned;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
