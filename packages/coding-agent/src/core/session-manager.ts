@@ -167,10 +167,10 @@ export interface ModelChangeEntry extends SessionEntryBase {
  * switch indistinguishable from one the user never made (#1526).
  *
  * Durability follows the shared session-file contract, it is not special-cased:
- * `_persist` buffers every entry until the branch holds an assistant message,
- * so a refusal recorded before the session's first assistant reply reaches the
- * JSONL only when that reply flushes the buffer. A session that never gets one
- * keeps the record in memory for its lifetime and never writes a file.
+ * `_persist` buffers every entry until the branch holds a user or assistant
+ * message (#10000), so a refusal recorded before the session's first message
+ * reaches the JSONL only when that message flushes the buffer. A session that
+ * never gets one keeps the record in memory for its lifetime and never writes a file.
  */
 export interface ModelChangeRejectedEntry extends SessionEntryBase {
 	type: "model_change_rejected";
