@@ -6,10 +6,7 @@
  * hidden reminder and, under `force`, a named `todo` tool_choice instead of acting on the answer.
  */
 
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { rmSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -18,9 +15,9 @@ import {
 	shouldArmFirstTurn,
 } from "../../../src/core/extensions/builtin/todotools/first-turn.ts";
 import todotoolsExtension from "../../../src/core/extensions/builtin/todotools/index.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { fauxTodotoolsPi, TODO_PAYLOAD } from "../todo-first-turn-harness.ts";
 
 const ANSWER = "[Answer to question q-1]\nShip: yes";
 
@@ -32,13 +29,15 @@ afterEach(() => {
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function userEntry(text: string): SessionEntry {
+function userEntry(
+	content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>,
+): SessionEntry {
 	return {
 		type: "message",
 		id: "u-1",
 		parentId: null,
 		timestamp: "2026-09-30T00:00:00.000Z",
-		message: { role: "user", content: [{ type: "text", text }], timestamp: 0 },
+		message: { role: "user", content, timestamp: 0 },
 	};
 }
 
@@ -56,8 +55,21 @@ describe("shouldArmFirstTurn with ask-user answer frames (senpi#2419)", () => {
 	it.each<[string, Partial<FirstTurnGateInput>, boolean]>([
 		["skips an answer frame", { prompt: ANSWER }, false],
 		["skips a CRLF answer frame", { prompt: "[Answer to question q-1]\r\nShip: yes" }, false],
-		["arms for a work request after an earlier answer frame", { branchEntries: [userEntry(ANSWER)] }, true],
-		["skips a work request after a real user request", { branchEntries: [userEntry("fix it")] }, false],
+		[
+			"arms for a work request after an earlier answer frame",
+			{ branchEntries: [userEntry([{ type: "text", text: ANSWER }])] },
+			true,
+		],
+		[
+			"skips a work request after a real user request",
+			{ branchEntries: [userEntry([{ type: "text", text: "fix it" }])] },
+			false,
+		],
+		[
+			"skips a work request after a text-less (image-only) user message",
+			{ branchEntries: [userEntry([{ type: "image", data: "AAAA", mimeType: "image/png" }])] },
+			false,
+		],
 	])("%s", (_label, override, expected) => {
 		// given
 		const input = { ...ARMED, ...override };
@@ -70,61 +82,14 @@ describe("shouldArmFirstTurn with ask-user answer frames (senpi#2419)", () => {
 	});
 });
 
-type Handler = (event: Record<string, unknown>, ctx: ExtensionContext) => unknown;
-
-function anthropicModel(): Model<Api> {
-	return {
-		id: "claude-opus-5",
-		name: "claude-opus-5",
-		api: "anthropic-messages",
-		provider: "anthropic",
-		baseUrl: "https://example.com/v1",
-		reasoning: true,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 200_000,
-		maxTokens: 32_000,
-	} as Model<Api>;
-}
-
 describe("first-turn tool_choice on an answer frame (senpi#2419)", () => {
 	it("injects no reminder and forces no todo tool_choice when the answer is the first user message", async () => {
 		// given: todotools on its default `force` setting, with no user message on the branch
-		const handlers = new Map<string, Handler[]>();
-		const pi = {
-			registerTool: () => {},
-			registerCommand: () => {},
-			appendEntry: () => {},
-			getActiveTools: () => ["read", "todo"],
-			on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-		} as unknown as ExtensionAPI;
-		todotoolsExtension(pi);
-		const root = mkdtempSync(join(tmpdir(), "todo-answer-frame-"));
-		tempDirs.push(root);
-		mkdirSync(join(root, "agent"));
-		const ctx = {
-			cwd: root,
-			agentDir: join(root, "agent"),
-			mode: "tui",
-			model: anthropicModel(),
-			isProjectTrusted: () => false,
-			sessionManager: { getBranch: () => [] },
-			ui: { setWidget: () => {} },
-		} as unknown as ExtensionContext;
-		const emit = async (type: string, payload: Record<string, unknown>) => {
-			let result: unknown;
-			for (const handler of handlers.get(type) ?? []) result = await handler({ type, ...payload }, ctx);
-			return result;
-		};
+		const faux = fauxTodotoolsPi(tempDirs);
 
 		// when
-		const start = (await emit("before_agent_start", { prompt: ANSWER, trigger: "prompt", systemPrompt: "base" })) as {
-			message?: unknown;
-		};
-		const payload = await emit("before_provider_request", {
-			payload: { tools: [{ name: "read" }, { name: "todo" }] },
-			model: anthropicModel(),
-		});
+		const start = await faux.startTurn(ANSWER);
+		const payload = await faux.providerRequest(TODO_PAYLOAD);
 
 		// then
 		expect(start.message).toBeUndefined();

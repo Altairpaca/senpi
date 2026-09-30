@@ -61,6 +61,7 @@ it in `TODO_TOOL_DESCRIPTION`, the tool guidelines, or a preset.
 `test/suite/todo-*.test.ts` (faux harness from `test/suite/harness.ts` or a captured
 `registerTodoTool` / `registerTodoCommand` with a fake `pi`): `todo-ask-now-next.test.ts`
 covers the Ask/Now/Next contract and `todo-first-turn.test.ts` the first-turn gate and
-tool_choice injection (handlers driven through a faux `pi`). `test/compaction/todo-*.test.ts`
+tool_choice injection (handlers driven through the faux `pi` in `todo-first-turn-harness.ts`, shared
+with `regressions/2419-first-turn-answer-frame.test.ts`). `test/compaction/todo-*.test.ts`
 covers the snapshot bridge, and `test/suite/fixtures/task-management-section.txt` is the
 golden copy of `TASK_MANAGEMENT_SECTION`. No real providers.

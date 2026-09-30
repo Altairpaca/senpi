@@ -6,7 +6,7 @@
 
 - `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` `shouldArmFirstTurn`: returns `false` when the prompt parses as an ask-user answer frame (`parseAskUserAnswerFrame` from `../ask-user/format.ts`, the parser `todo-ask.ts` already uses), and the "no user request on the branch" check skips user messages that are answer frames.
 - `packages/coding-agent/src/core/extensions/builtin/todotools/todo-ask.ts`: `firstTextBlock` is exported so the gate reads a user message's text the same way Ask capture does.
-- `test/suite/regressions/2419-first-turn-answer-frame.test.ts`: gate rows for an answer frame (LF and CRLF) and for a work request after an earlier answer; a faux-`pi` case where an answer frame gets no reminder and no forced `todo` tool_choice; a real-session case (an extension-triggered bootstrap, then an answer, then a work request) where only the work request arms.
+- `test/suite/regressions/2419-first-turn-answer-frame.test.ts`: gate rows for an answer frame (LF and CRLF), for a work request after an earlier answer, and for a text-less (image-only) user message still counting as a request; a faux-`pi` case where an answer frame gets no reminder and no forced `todo` tool_choice; a real-session case (an extension-triggered bootstrap, then an answer, then a work request) where only the work request arms. The faux `pi` scaffolding is shared with `test/suite/todo-first-turn.test.ts` through `test/suite/todo-first-turn-harness.ts`.
 
 ### Why
 
