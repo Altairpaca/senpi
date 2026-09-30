@@ -108,7 +108,11 @@ describe("DefaultResourceLoader", () => {
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
-				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+				// In-memory settings bypass agentDir/settings.json, so disable the default-on bundled codemode here too (L7a).
+				settingsManager: SettingsManager.inMemory({
+					packages: [packageRoot],
+					disabledBuiltinExtensions: ["codemode"],
+				}),
 			});
 			await loader.reload();
 
@@ -1203,6 +1207,12 @@ export default function(pi) {
 
 		it("should leave out replaceable extensions whose names another extension registers", async () => {
 			// A third-party MCP extension registering /mcp replaces the built-in one instead of both running.
+			// The fork registry builtin mcp (D-2, not replaceable) also registers /mcp; disable it so only the
+			// replaceable factory below stands in for the built-in (L7a).
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				`${JSON.stringify({ disabledBuiltinExtensions: ["codemode", "mcp"] })}\n`,
+			);
 			const globalExtDir = join(agentDir, "extensions");
 			mkdirSync(globalExtDir, { recursive: true });
 			writeFileSync(
