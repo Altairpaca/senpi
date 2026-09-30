@@ -11,6 +11,13 @@ import type {
 
 export type ModelGroups = Record<string, Record<string, object>>;
 
+const MAX_EFFORT_MODEL_IDS = new Set<string>();
+
+/** Exact-id lookup, matching getBuiltinModel(): provider namespaces remain part of the model id. */
+export function builtinCatalogAdvertisesMax(modelId: string): boolean {
+	return MAX_EFFORT_MODEL_IDS.has(modelId);
+}
+
 type ModelKey<TGroups extends ModelGroups> = {
 	[TApi in keyof TGroups]: keyof TGroups[TApi];
 }[keyof TGroups] &
@@ -63,7 +70,11 @@ export function flattenChatModelCatalog<const TProvider extends ProviderId, cons
 	_provider: TProvider,
 	groups: TGroups,
 ): ChatModelCatalog<TGroups, TProvider> {
-	return flattenModelCatalog(groups, "chat") as ChatModelCatalog<TGroups, TProvider>;
+	const catalog = flattenModelCatalog(groups, "chat") as ChatModelCatalog<TGroups, TProvider>;
+	for (const model of Object.values(catalog) as Model<Api>[]) {
+		if (typeof model.thinkingLevelMap?.max === "string") MAX_EFFORT_MODEL_IDS.add(model.id);
+	}
+	return catalog;
 }
 
 export function flattenImageModelCatalog<const TProvider extends ProviderId, const TGroups extends ModelGroups>(

@@ -214,6 +214,27 @@ Image model types and the images API registry are ai-package core consumed by th
 
 Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
 
+## 2026-09-30 - Derive custom-provider max effort from discovery and the built-in catalog (senpi#2456)
+
+### What changed
+
+- `packages/ai/src/models.ts` now resolves max effort in four steps: valid endpoint-discovery efforts first (their authoritative `thinkingLevelMap`, including an explicit no-max result), then any model-owned map, then any built-in catalog entry with the exact same model id that advertises max, then the unchanged `OPENAI_MAX_MODEL_IDS` / `MAX_MODEL_IDS` floors.
+- `packages/ai/src/model-catalog.ts` records max-capable exact ids while the regenerated chat catalogs are flattened through `flattenChatModelCatalog`. This reuses the shipped catalog loader; provider-qualified ids remain qualified, exactly as `getBuiltinModel()` lookup treats them.
+- `packages/ai/test/fixture-model-catalog.ts` injects stable max and no-max chat rows through `flattenChatModelCatalog`, so catalog regeneration cannot invalidate the regressions. `packages/ai/test/supports-xhigh.test.ts` covers a map-less custom model, an unknown map-less id, and the unchanged GPT/Claude floors; `packages/coding-agent/test/suite/models-discover.test.ts` covers an authoritative discovered low/high ladder for the injected max-capable id.
+
+### Why
+
+A custom OpenAI-compatible `kimi-k3` row without a `thinkingLevelMap` fell through to hand-kept id lists that did not include Kimi, so configured max and xhigh were clamped to high even though multiple built-in catalog entries advertise native max. Adding another hand-kept id would leave capability metadata split across two sources and repeat the bug for the next catalog model.
+
+### Why an extension could not handle it
+
+Reasoning-level availability is resolved in the core model capability path before extensions can safely repair every UI, clamp, and wire-adapter caller.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/models.ts` max-tier capability detection and `packages/ai/src/model-catalog.ts` chat-catalog flattening.
+- LOW: `packages/ai/test/supports-xhigh.test.ts` and `packages/coding-agent/test/suite/models-discover.test.ts` capability regressions.
+
 ## 2026-09-30 - GPT-6.1 Sol id inference: xhigh/max on, off vetoed for map-less rows (senpi#2390)
 
 ### What changed
