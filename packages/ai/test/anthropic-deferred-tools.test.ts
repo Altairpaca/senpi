@@ -14,8 +14,15 @@ interface AnthropicToolPayload {
 
 interface AnthropicContentBlock {
 	type: string;
+	text?: string;
 	tool_use_id?: string;
 	content?: string | Array<{ type: string; tool_name?: string }>;
+	source?: {
+		type: string;
+		media_type: string;
+		data: string;
+	};
+	cache_control?: { type: string };
 	is_error?: boolean;
 }
 
@@ -93,16 +100,66 @@ async function capturePayload(context: Context): Promise<AnthropicPayload> {
 	return captured;
 }
 
-function findToolResults(payload: AnthropicPayload): AnthropicContentBlock[] {
+function findToolResultContent(payload: AnthropicPayload): AnthropicContentBlock[] {
 	for (const message of payload.messages) {
 		if (Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result")) {
-			return message.content.filter((block) => block.type === "tool_result");
+			return message.content;
 		}
 	}
 	throw new Error("No tool result in payload");
 }
 
+function findToolResults(payload: AnthropicPayload): AnthropicContentBlock[] {
+	return findToolResultContent(payload).filter((block) => block.type === "tool_result");
+}
+
 describe("Anthropic deferred tools", () => {
+	it("preserves tool output as sibling content after emitting references", async () => {
+		const context = makeContext();
+		const assistant = context.messages[1] as AssistantMessage;
+		assistant.content = [
+			{ type: "toolCall", id: "call_1", name: "base_tool", arguments: {} },
+			{ type: "toolCall", id: "call_2", name: "base_tool", arguments: {} },
+		];
+		const firstResult = context.messages[2] as ToolResultMessage;
+		firstResult.content = [
+			{ type: "text", text: "work completed" },
+			{ type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+		];
+		context.messages.splice(3, 0, {
+			...makeToolResult([]),
+			toolCallId: "call_2",
+			content: [{ type: "text", text: "second result" }],
+		});
+
+		const payload = await capturePayload(context);
+
+		expect(findToolResultContent(payload)).toMatchObject([
+			{
+				type: "tool_result",
+				tool_use_id: "call_1",
+				content: [{ type: "tool_reference", tool_name: "late_tool" }],
+			},
+			{ type: "tool_result", tool_use_id: "call_2", content: "second result" },
+			{ type: "text", text: "work completed" },
+			{
+				type: "image",
+				source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
+			},
+			{ type: "text", text: "Hello", cache_control: { type: "ephemeral" } },
+		]);
+	});
+
+	it("keeps a tool immediate when it was used before its marker", async () => {
+		const context = makeContext();
+		const assistant = context.messages[1] as AssistantMessage;
+		assistant.content = [{ type: "toolCall", id: "call_1", name: "late_tool", arguments: {} }];
+		const payload = await capturePayload(context);
+
+		expect(payload.tools?.map((tool) => tool.name)).toEqual(["base_tool", "late_tool"]);
+		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
+	});
+
 	it("keeps a tool immediate when its marker rides a discarded fallback result", async () => {
 		const context = makeContext();
 		const assistant = context.messages[1] as AssistantMessage;
