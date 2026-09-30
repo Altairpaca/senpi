@@ -4,6 +4,13 @@ import { describe, expect, it } from "vitest";
 import { clampThinkingLevel, getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
 import type { Model } from "../src/model.ts";
 import type { Api } from "../src/types.ts";
+import {
+	FIXTURE_MAX_MODEL_ID,
+	FIXTURE_NO_MAX_MODEL_ID,
+	installMaxEffortFixtureCatalog,
+} from "./fixture-model-catalog.ts";
+
+installMaxEffortFixtureCatalog();
 
 /** A custom-provider model with no thinkingLevelMap unless supplied in overrides. */
 function maplessModel<TApi extends Api>(api: TApi, id: string, overrides: Partial<Model<TApi>> = {}): Model<TApi> {
@@ -223,16 +230,16 @@ describe("supportsXhigh tier detection for map-less models", () => {
 		expect(getSupportedThinkingLevels({ ...maplessWithId("gpt-5.6-sol"), api: "openai-responses" })).toContain("max");
 	});
 
-	it("derives max for a map-less gpt-5.6-terra model from the built-in catalog", () => {
-		expect(getSupportedThinkingLevels({ ...maplessWithId("gpt-5.6-terra"), api: "openai-responses" })).toContain(
-			"max",
-		);
+	it("does not derive max when an exact-id fixture catalog entry omits it", () => {
+		expect(
+			getSupportedThinkingLevels({ ...maplessWithId(FIXTURE_NO_MAX_MODEL_ID), api: "openai-responses" }),
+		).not.toContain("max");
 	});
 });
 
 describe("supportsMax tier detection for map-less models", () => {
-	it("derives max support for a custom map-less Kimi K3 from the built-in catalog", () => {
-		const model = maplessModel("openai-completions", "kimi-k3");
+	it("derives max support for a custom map-less model from injected catalog metadata", () => {
+		const model = maplessModel("openai-completions", FIXTURE_MAX_MODEL_ID);
 
 		expect(supportsMax(model)).toBe(true);
 		expect(clampThinkingLevel(model, "max")).toBe("max");
@@ -246,8 +253,8 @@ describe("supportsMax tier detection for map-less models", () => {
 		expect(clampThinkingLevel(model, "max")).toBe("high");
 	});
 
-	it("keeps valid discovered efforts authoritative over a catalog max", () => {
-		const model = maplessModel("openai-completions", "kimi-k3", {
+	it("keeps valid discovered efforts authoritative over a fixture catalog max", () => {
+		const model = maplessModel("openai-completions", FIXTURE_MAX_MODEL_ID, {
 			thinkingLevelMap: { off: null, minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: null },
 		});
 

@@ -4,7 +4,7 @@
 
 - `packages/ai/src/models.ts` now resolves max effort in four steps: valid endpoint-discovery efforts first (their authoritative `thinkingLevelMap`, including an explicit no-max result), then any model-owned map, then any built-in catalog entry with the exact same model id that advertises max, then the unchanged `OPENAI_MAX_MODEL_IDS` / `MAX_MODEL_IDS` floors.
 - `packages/ai/src/model-catalog.ts` records max-capable exact ids while the existing built-in catalogs are flattened. This reuses the shipped catalog loader; provider-qualified ids remain qualified, exactly as `getBuiltinModel()` lookup treats them.
-- `packages/ai/test/supports-xhigh.test.ts` covers a map-less custom `kimi-k3`, an unknown map-less id, and the unchanged GPT/Claude floors. `packages/coding-agent/test/suite/models-discover.test.ts` covers an authoritative discovered low/high ladder for `kimi-k3`, which must clamp max to high despite the catalog max.
+- `packages/ai/test/fixture-model-catalog.ts` injects stable max and no-max rows through `flattenModelCatalog`, so catalog regeneration cannot invalidate the regressions. `packages/ai/test/supports-xhigh.test.ts` covers a map-less custom model, an unknown map-less id, and the unchanged GPT/Claude floors; `packages/coding-agent/test/suite/models-discover.test.ts` covers an authoritative discovered low/high ladder for the injected max-capable id.
 
 ### Why
 
