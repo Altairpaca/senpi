@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
+
 ### Removed
 
 ## [2026.9.30] - 2026-09-30
