@@ -1,3 +1,21 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): experimental micro default model uses the fork provider id
+
+### What changed
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the upstream-new micro runtime's `DEFAULT_MODEL` names the provider `chatgpt-subscription` instead of the upstream `openai-codex`; its README says the same.
+
+### Why
+
+The fork renamed the ChatGPT subscription provider to `chatgpt-subscription` (sync decision D-4; `openai-codex` survives only as the legacy alias in `legacy-provider-ids.ts`), and `test/suite/anthropic-subscription-naming.test.ts` rejects any shipped string literal carrying the legacy id. The upstream file arrived with the old id, so a new micro session looked up a provider name the fork no longer ships.
+
+### Why an extension could not handle it
+
+The default is a module constant the experimental micro entry reads before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_MODEL` line in `experimental/micro/runtime.ts` whenever upstream changes the micro default model; keep the `chatgpt-subscription` provider id.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
 
 ### What changed
