@@ -30,7 +30,7 @@ describe("max thinking level", () => {
 		expect(clampThinkingLevel(model, "max")).toBe("high");
 	});
 
-	it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-luna", "gpt-6-sol"] as const)(
+	it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] as const)(
 		"exposes xhigh and max for openai-codex/%s",
 		(modelId) => {
 			const model = getModel("chatgpt-subscription", modelId);
@@ -47,6 +47,14 @@ describe("max thinking level", () => {
 			]);
 		},
 	);
+
+	// D-9: the fork chatgpt-subscription GPT-6 rows win, and the GPT-6 ladder has no `minimal` (gpt-6-family-catalog).
+	it.each(["gpt-6-luna", "gpt-6-sol"] as const)("exposes xhigh and max for openai-codex/%s", (modelId) => {
+		const model = getModel("chatgpt-subscription", modelId);
+		expect(model).toBeDefined();
+		expect(model?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max" });
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+	});
 
 	it("supports a hole between high and max", () => {
 		const model: Model<"openai-completions"> = {
