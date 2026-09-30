@@ -1,3 +1,27 @@
+## 2026-09-30 - A usage limit worded as text switches pooled accounts and cools the spent one until its reset (senpi#1768)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/usage-limit.ts` (fork-only, new): `isAccountUsageLimitText(text)` recognises an account usage limit that reaches the pool with no HTTP status: the shared `USAGE_LIMIT_EXHAUSTION` markers (`usage_limit_reached`, `usage_not_included`, "The usage limit has been reached"), "hit/reached your ... limit" (ChatGPT, Claude session/weekly/5-hour), "Monthly usage limit reached", `GoUsageLimitError` / `FreeUsageLimitError`, `blocking_limit`, `rapid_refill_breaker`, "quota exceeded". The "approaching your usage limit" warning does not match.
+- `packages/coding-agent/src/core/credential-pool/reset-time.ts` (fork-only, new): `usageLimitResetMs(text, nowMs)` reads the reset time from a JSON `resets_at` (epoch seconds) or `reset_after_seconds` field, relative prose ("resets in 3 hours", "try again in 2h"), or a clock time ("resets 12am (Asia/Seoul)", "resets Oct 2, 9am", "try again at 12:00 AM"; no zone means local time). Past times give 0; malformed ones give nothing.
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: `classifyCredentialFailure` sends such a limit to the rate-limit failover branch unless the text is overflow prose, and for a usage limit floors the cooldown on the reset time (the error's reset headers, then the text) when the existing retry hint finds none. It takes an optional `nowMs`. `RATE_LIMIT_TEXT` is unchanged from before #1769.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: the classifier gets the pool's clock (`nowMs: now()`).
+
+### Why
+
+- A provider that reports a spent subscription only in words classified `fail_request`, so a second logged-in account was never tried and nothing was blocked; the request fell straight to the model fallback chain (senpi#1768).
+- A spent account is out until its reset, so a fixed 60 s cooldown sent the next requests back into it; the reset time now sets that account's cooldown, capped at 48 h, and the pool still moves to the next account at once.
+- Only the pool's cooldown reads the new reset forms. `extract429RetryAfterMs` in `@earendil-works/pi-ai` is untouched, so model-fallback and same-model retry timing are unchanged (senpi#1771 stays open for that layer).
+
+### Why an extension could not handle it
+
+Credential rotation and its failure classifier are core runtime; no extension hook sees a provider failure before the pool decides.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: the rate-limit branch condition and its hint expression.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: the `classify` wrapper's context.
+
 ## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
 
 ### What changed
