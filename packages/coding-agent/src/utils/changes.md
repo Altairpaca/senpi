@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: `utils/paths.ts`: `isLocalPath` treats `builtin:` as non-local. `utils/paths.ts`: `getFileContentRevision`.
+- `packages/coding-agent/src/utils/shell.ts`: `utils/shell.ts`: `sanitizeBinaryOutput` body is upstream's single-regex strip. `utils/shell.ts`: SYNC kill path kept (`killWindowsProcessTree`, `killProcessTree`, `killTrackedDetachedChildren`; landmine L32) plus the existing spawn-error (ENOENT/EACCES) guard; the `hasUnsafeDisplayCharacter` fast path stays in front of the upstream regex.
+- `packages/coding-agent/src/utils/syntax-highlight.ts`: `utils/syntax-highlight.ts`: `json` joins the eager highlight.js languages. `utils/syntax-highlight.ts`: extensionless highlight.js specifiers.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-17 - Detect managed tools by stat, not by spawn (senpi#1781)
 
 ### What changed

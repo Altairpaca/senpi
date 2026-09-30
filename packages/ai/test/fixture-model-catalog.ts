@@ -1,4 +1,4 @@
-import { flattenModelCatalog } from "../src/model-catalog.ts";
+import { flattenChatModelCatalog } from "../src/model-catalog.ts";
 import type { Model, ThinkingLevelMap } from "../src/types.ts";
 
 export const FIXTURE_MAX_MODEL_ID = "fixture-native-max-model";
@@ -10,6 +10,7 @@ function fixtureModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"op
 		name: id,
 		api: "openai-completions",
 		provider: "fixture-catalog",
+		type: "chat",
 		baseUrl: "https://example.invalid",
 		reasoning: true,
 		thinkingLevelMap,
@@ -22,10 +23,14 @@ function fixtureModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"op
 
 /** Register synthetic rows through the same flattening seam used by every built-in catalog. */
 export function installMaxEffortFixtureCatalog(): void {
-	flattenModelCatalog("fixture-catalog", {
+	flattenChatModelCatalog("fixture-catalog", {
 		"openai-completions": {
-			[FIXTURE_MAX_MODEL_ID]: fixtureModel(FIXTURE_MAX_MODEL_ID, { low: "low", high: "high", max: "max" }),
-			[FIXTURE_NO_MAX_MODEL_ID]: fixtureModel(FIXTURE_NO_MAX_MODEL_ID, {
+			[`chat:${FIXTURE_MAX_MODEL_ID}`]: fixtureModel(FIXTURE_MAX_MODEL_ID, {
+				low: "low",
+				high: "high",
+				max: "max",
+			}),
+			[`chat:${FIXTURE_NO_MAX_MODEL_ID}`]: fixtureModel(FIXTURE_NO_MAX_MODEL_ID, {
 				low: "low",
 				high: "high",
 				max: null,
