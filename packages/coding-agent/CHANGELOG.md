@@ -22,6 +22,8 @@
 
 - An answer sent to a terminal session's pending question through its control endpoint now reaches the model with its text. A text-only answer (`answers: {}` plus a `comment`, which relaying clients send) used to arrive as an empty `[Answer to question <id>]`; the terminal now settles every answer by the same rule as a multi-session host, so both surfaces deliver the same message, and a frame with neither answers nor a comment is refused `question_incomplete` instead of resolving empty. ([#2407](https://github.com/code-yeongyu/senpi/issues/2407))
 
+- Answering a pending question no longer gets the first-turn todo reminder or a forced `todo` tool call when the question came from a turn the user did not type, such as a first-launch onboarding greeting or a request delivered through the session control endpoint. The model now acts on the answer, and the first request the user types afterwards still opens with a phased todo list. ([#2419](https://github.com/code-yeongyu/senpi/issues/2419))
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29

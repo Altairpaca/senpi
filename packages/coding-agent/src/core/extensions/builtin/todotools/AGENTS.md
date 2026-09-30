@@ -34,7 +34,8 @@ task in phase order that is not Now.
 ## FIRST-TURN PLAN OPENER
 
 `first-turn.ts` arms on a session's first work request (not a preview, not a `?`/`!`
-question, no user message yet on the branch, no tasks, `todo` active, not `print`/`json`,
+question, not an ask-user answer frame, no user request yet on the branch (answer frames do
+not count, senpi#2419), `todo` active, not `print`/`json`, not an extension-triggered turn,
 `todo.firstTurnPlan` not `off`). `before_agent_start` then adds the hidden
 `senpi.todo-first-turn` reminder; under `force`, `before_provider_request` names `todo` in
 `tool_choice` on that run's requests until the first assistant `message_end` (or
