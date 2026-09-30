@@ -1,3 +1,21 @@
+## 2026-09-30 - Print mode selects its answer after deferred turns settle (#1431)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: await the existing session-work settlement before selecting the final assistant answer and exit status.
+
+### Why
+
+- An extension command can start a deferred turn and return before its provider response arrives. Text mode previously selected its answer before waiting, so the command produced empty or stale output even though the deferred turn completed before process exit. This extracts the remaining print-output slice of #1431; ordinary prompt settlement and JSON event streaming retain their existing behavior.
+
+### Why an extension could not handle it
+
+- The final stdout selection and exit status belong to the core print-mode runner, after extension commands return.
+
+### Expected merge conflict zones
+
+- LOW: the settlement call immediately before final text selection in `packages/coding-agent/src/modes/print-mode.ts`.
+
 ## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
 
 ### What changed
