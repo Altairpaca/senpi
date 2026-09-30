@@ -8,6 +8,8 @@ import {
 import { allAccountsBlockedGuidance } from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
 
 // 2026-09-30 12:00 in Asia/Seoul, so reset prose resolves to fixed cooldowns.
+// A zoneless reset reads as the host's local time, so its distance, and whether
+// it passes the 48 h cap, depends on the zone the suite runs in.
 const NOW_MS = Date.UTC(2026, 8, 30, 3, 0, 0);
 const HOUR_MS = 3_600_000;
 const FABLE_RESET_MS = new Date(2026, 9, 2, 9, 0, 0, 0).getTime() - NOW_MS;
@@ -117,7 +119,11 @@ describe("credential error taxonomy", () => {
 		(_label, message, cooldownMs?: number) => {
 			expect(classifyCredentialFailure(new Error(message), { nowMs: NOW_MS })).toEqual({
 				kind: "failover",
-				block: { reason: "rate_limit", cooldownMs: cooldownMs ?? COOLDOWN_BASE_MS, retryAfterWasCapped: false },
+				block: {
+					reason: "rate_limit",
+					cooldownMs: Math.min(cooldownMs ?? COOLDOWN_BASE_MS, COOLDOWN_CAP_MS),
+					retryAfterWasCapped: (cooldownMs ?? COOLDOWN_BASE_MS) > COOLDOWN_CAP_MS,
+				},
 			});
 		},
 	);

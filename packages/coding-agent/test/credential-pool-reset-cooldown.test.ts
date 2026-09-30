@@ -62,7 +62,12 @@ describe("a usage limit's reset time becomes that account's cooldown (senpi#1768
 
 	test("a month-day reset without a zone reads as local time", () => {
 		const error = new Error("You've hit your Fable weekly limit \u00b7 resets Oct 2, 9am");
-		expect(cooldownOf(error).cooldownMs).toBe(localWallClockMs(9, 2, 9) - NOW_MS);
+		// Local time differs per host zone, so the 48 h cap may or may not apply.
+		const untilReset = localWallClockMs(9, 2, 9) - NOW_MS;
+		expect(cooldownOf(error)).toEqual({
+			cooldownMs: Math.min(untilReset, COOLDOWN_CAP_MS),
+			retryAfterWasCapped: untilReset > COOLDOWN_CAP_MS,
+		});
 	});
 
 	test("a reset far in the future is capped, and the account still fails over", () => {
