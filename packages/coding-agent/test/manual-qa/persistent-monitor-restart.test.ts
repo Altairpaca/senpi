@@ -2,6 +2,8 @@
  * Real-surface terminal persistence QA: two fresh extension generations over one
  * on-disk session sidecar. No OS-level senpi process is spawned; PTYs and file
  * watchers are real.
+ *
+ * Run: SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/persistent-monitor-restart.test.ts
  */
 
 import { existsSync } from "node:fs";
