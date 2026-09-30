@@ -1,3 +1,21 @@
+## 2026-09-30 - Terminal setting maxDurableMonitors (senpi#2420)
+
+### What changed
+
+- `packages/coding-agent/src/core/terminal-settings.ts`: `TerminalSettings` gains `maxDurableMonitors?: number | "unlimited"` (default `"unlimited"`), the optional per-session cap on persistent monitors that the terminal extension resolves and enforces (see `extensions/builtin/terminal/changes.md`).
+
+### Why
+
+Persistent monitors had a fixed cap of 5; the cap is now off by default and this setting brings one back for anyone who wants it.
+
+### Why an extension could not handle it
+
+`TerminalSettings` is the core settings type every `terminal.*` key is declared on.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/terminal-settings.ts`: the persistent-terminal block of `TerminalSettings`.
+
 ## 2026-09-30 - Upstream sync repair: actionable boundaries against the fork session core
 
 ### What changed
