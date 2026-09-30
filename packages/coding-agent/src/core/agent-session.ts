@@ -8168,6 +8168,9 @@ export class AgentSession {
 		this._claimCompactionController(autoCompactionController, "auto");
 		const endBeforeExecution = (): false => {
 			this._emit({ type: "compaction_start", reason, requestId });
+			return endStarted();
+		};
+		const endStarted = (): false => {
 			if (reason === "overflow" && this._autoCompactionAbortController === autoCompactionController) {
 				this._overflowRecoveryAttempted = false;
 			}
@@ -8188,6 +8191,10 @@ export class AgentSession {
 			return false;
 		};
 
+		// A superseded operation owns no public events (the newer one owns its own
+		// start/end); an abort of this very controller still ends it as aborted.
+		const isSuperseded = (): boolean => this._autoCompactionAbortController !== autoCompactionController;
+
 		try {
 			if (!this.model) {
 				return endBeforeExecution();
@@ -8195,15 +8202,22 @@ export class AgentSession {
 
 			try {
 				// Resolve once before admission so a pending auth refresh remains a
-				// cancellable boundary. _executeCompaction resolves the policy-specific
+				// cancellable boundary: the controller signal lets abort()/abortCompaction()
+				// cancel it (#9777). _executeCompaction resolves the policy-specific
 				// auth after extension compaction hooks have had a chance to provide a
 				// summary without credentials.
-				await this._modelRuntime.getAuth(this.model);
-			} catch {
-				if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
-				return endBeforeExecution();
+				await this._modelRuntime.getAuth(this.model, { signal: autoCompactionController.signal });
+			} catch (error) {
+				if (isSuperseded()) return false;
+				if (autoCompactionController.signal.aborted) return endBeforeExecution();
+				// A failed auth is a compaction failure, reported like an execution error;
+				// only this controller's abort (not the error's name or text) marks it aborted.
+				this._emit({ type: "compaction_start", reason, requestId });
+				if (isSuperseded()) return false;
+				throw new CompactionExecutionError(error, true, false);
 			}
-			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
+			if (isSuperseded()) return false;
+			if (autoCompactionController.signal.aborted) return endBeforeExecution();
 
 			const preparation = prepareCompaction(
 				this.sessionManager.getBranch(),
@@ -8213,8 +8227,10 @@ export class AgentSession {
 			if (!preparation) {
 				return endBeforeExecution();
 			}
-			if (!this._ownsCompactionController(autoCompactionController, "auto")) return false;
 			this._emit({ type: "compaction_start", reason, requestId });
+			// A synchronous compaction_start listener can supersede or abort this operation.
+			if (isSuperseded()) return false;
+			if (autoCompactionController.signal.aborted) return endStarted();
 
 			const execution = await this._executeCompaction({
 				controller: autoCompactionController,
