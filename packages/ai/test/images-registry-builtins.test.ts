@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { IMAGE_MODELS } from "../src/image-models.generated.ts";
 import { generateImages } from "../src/images.ts";
 import { getImagesApiProvider } from "../src/images-api-registry.ts";
-import type { ImagesContext, ImagesModel } from "../src/types.ts";
+import { IMAGE_MODELS } from "../src/models.generated.ts";
+import type { ImageModel, ImagesContext } from "../src/types.ts";
 
-const model: ImagesModel<"openai-images"> = {
+const model: ImageModel<"openai-images"> = {
+	type: "image",
 	id: "gpt-image-2",
 	name: "GPT Image 2",
 	api: "openai-images",

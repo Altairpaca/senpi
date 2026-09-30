@@ -58,7 +58,7 @@ export function buildPromptBlocks(
 				if (text.length > 0) pushText(text);
 				continue;
 			}
-			if (message.role === "configurationUpdate") continue;
+			if (message.role === "configurationUpdate" || message.role === "system") continue;
 			pushPrefix(
 				`TOOL RESULT (historical ${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):`,
 			);
