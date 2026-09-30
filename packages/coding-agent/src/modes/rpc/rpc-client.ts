@@ -11,8 +11,10 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
 export class RpcCommandError extends Error {
@@ -30,8 +32,15 @@ export class RpcCommandError extends Error {
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import {
+	armRequestDeadline,
+	OPEN_AFTER_QUEUED_DEADLINE_MS,
+	openStalledMessage,
+	REQUEST_DEADLINE_MS,
+} from "./rpc-request-deadline.ts";
 import type {
 	EditAssistantMessageResult,
+	EditUserMessageResult,
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
@@ -39,19 +48,23 @@ import type {
 	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcOpenQueuedEvent,
 	RpcProviderAccount,
 	RpcResponse,
 	RpcSessionModelEntry,
+	RpcSessionParkedEvent,
 	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
+import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
 	sendSocketHandshake,
 	socketSecretPath,
 } from "./socket-transport.ts";
+import { socketNeedsHandshake } from "./tui-socket.ts";
 
 // ============================================================================
 // Types
@@ -98,6 +111,7 @@ type PromptOptions = {
 	preflightResult?: (success: boolean) => void;
 	sessionTitlePrompt?: string | false;
 	expandPromptTemplates?: boolean;
+	unknownCommandAsText?: boolean;
 };
 
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
@@ -112,6 +126,13 @@ export type RpcClientEvent =
 	// `{ cancelled }`, and a replacement may be driven by another client or an
 	// extension, so this is the only channel delivering the new identity.
 	| RpcSessionReplacedEvent
+	// The host parked a retained session at its idle window. Part of the public union
+	// because it REPLACES `session_closed` for that handle: a client that treats it as
+	// a close loses the session it was told to reopen by path.
+	| RpcSessionParkedEvent
+	// The host accepted an open_session and says where it is queued; the client also uses it to
+	// switch that open to its post-acknowledgement deadline (senpi#2209).
+	| RpcOpenQueuedEvent
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -168,6 +189,7 @@ export class RpcClient {
 			reject: (error: Error) => void;
 			onResponse?: (response: RpcResponse) => void;
 			onReject?: (error: Error) => void;
+			onQueued?: (position: unknown) => void;
 		}
 	> = new Map();
 	private requestId = 0;
@@ -318,7 +340,7 @@ export class RpcClient {
 	}
 
 	private async startSocket(path: string): Promise<void> {
-		const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(path)) : undefined;
+		const secret = socketNeedsHandshake(path) ? await readSocketSecret(socketSecretPath(path)) : undefined;
 		const socket = createConnection(resolveSocketTransportAddress(path, process.platform, secret));
 		this.socket = socket;
 		await new Promise<void>((resolve, reject) => {
@@ -387,6 +409,12 @@ export class RpcClient {
 		modelId?: string;
 		thinkingLevel?: ThinkingLevel;
 		permissionPreset?: string;
+		/** Keep the session alive when its last client disconnects; needs the host's `retain_on_disconnect`. */
+		retain_on_disconnect?: boolean;
+		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
+		auto_title?: boolean;
+		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
+		promptSurface?: PromptSurface;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
@@ -432,6 +460,8 @@ export class RpcClient {
 			cwd: string;
 			name?: string;
 			status: "opening" | "open" | "closing" | "closed";
+			/** Live client attachments; absent from hosts older than the `retain_on_disconnect` capability. */
+			attachments?: number;
 		}>
 	> {
 		const response = await this.send({ type: "list_sessions" }, false);
@@ -443,6 +473,7 @@ export class RpcClient {
 				cwd: string;
 				name?: string;
 				status: "opening" | "open" | "closing" | "closed";
+				attachments?: number;
 			}>;
 		}>(response).sessions;
 	}
@@ -475,6 +506,7 @@ export class RpcClient {
 				...(options.expandPromptTemplates !== undefined
 					? { expandPromptTemplates: options.expandPromptTemplates }
 					: {}),
+				...(options.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 			},
 			true,
 			{
@@ -493,7 +525,12 @@ export class RpcClient {
 			},
 		);
 		if (!response.success) {
-			throw new Error((response as Extract<RpcResponse, { success: false }>).error);
+			const failure = response as Extract<RpcResponse, { success: false }>;
+			const unknownCommand =
+				failure.errorCode === RPC_ERROR_UNKNOWN_COMMAND
+					? unknownCommandErrorFromWire(failure.errorData)
+					: undefined;
+			throw unknownCommand ?? new Error(failure.error);
 		}
 	}
 
@@ -673,7 +710,7 @@ export class RpcClient {
 	}
 
 	/**
-	 * Turn OpenAI Codex fast mode (the `priority` service tier) on or off for the active model.
+	 * Turn ChatGPT Subscription fast mode (the `priority` service tier) on or off for the active model.
 	 *
 	 * The choice is remembered per model, so a later session on the same model starts the same
 	 * way. Throws when the request is refused: a non-Codex model, or an active `:priority` model
@@ -754,8 +791,21 @@ export class RpcClient {
 
 	async navigateTree(
 		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-	): Promise<{ cancelled: boolean; editorText?: string; aborted?: boolean; summaryEntry?: unknown }> {
+		options?: {
+			intent?: "select" | "resume";
+			summarize?: boolean;
+			customInstructions?: string;
+			replaceInstructions?: boolean;
+			label?: string;
+			expectedLeafId?: string;
+		},
+	): Promise<{
+		cancelled: boolean;
+		leafId: string | null;
+		editorText?: string;
+		aborted?: boolean;
+		summaryEntry?: unknown;
+	}> {
 		const response = await this.send({ type: "navigate_tree", targetId, ...options });
 		return this.getData(response);
 	}
@@ -866,6 +916,26 @@ export class RpcClient {
 			customInstructions: options.customInstructions,
 		});
 		return this.getData<EditAssistantMessageResult>(response);
+	}
+
+	/**
+	 * Replace a user prompt without starting a turn. Address the message by entryId and pass the
+	 * separately observed leafId as expectedLeafId. Refusals reject with RpcCommandError.
+	 */
+	async editUserMessage(
+		entryId: string,
+		text: string,
+		options: { expectedLeafId?: string; summarize?: boolean; customInstructions?: string } = {},
+	): Promise<EditUserMessageResult> {
+		const response = await this.send({
+			type: "edit_user_message",
+			entryId,
+			text,
+			expectedLeafId: options.expectedLeafId,
+			summarize: options.summarize,
+			customInstructions: options.customInstructions,
+		});
+		return this.getData<EditUserMessageResult>(response);
 	}
 
 	/**
@@ -986,7 +1056,9 @@ export class RpcClient {
 					event.type === "bash_end" ||
 					event.type === "extension_ui_request" ||
 					// Connection-level, not part of the agent's event stream.
-					event.type === "session_replaced"
+					event.type === "session_replaced" ||
+					event.type === "session_parked" ||
+					event.type === "queued"
 				)
 					return;
 				events.push(event);
@@ -1027,6 +1099,9 @@ export class RpcClient {
 				pending.resolve(data as RpcResponse);
 				return;
 			}
+
+			if (data.type === "queued" && typeof data.for_request === "string")
+				this.pendingRequests.get(data.for_request)?.onQueued?.(data.position);
 
 			// Otherwise it's an event. During open_session, retain tagged events until
 			// the response establishes the lease so startup hooks are not lost.
@@ -1124,23 +1199,32 @@ export class RpcClient {
 			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
 		}
 		return new Promise((resolve, reject) => {
-			const timeout = setTimeout(() => {
-				const pending = this.pendingRequests.get(id);
-				this.pendingRequests.delete(id);
-				const timeoutError = new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`);
-				pending?.onReject?.(timeoutError);
-				reject(timeoutError);
-			}, 30000);
+			const deadline = armRequestDeadline(
+				REQUEST_DEADLINE_MS,
+				() => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`,
+				(timeoutError) => {
+					const pending = this.pendingRequests.get(id);
+					this.pendingRequests.delete(id);
+					pending?.onReject?.(timeoutError);
+					reject(timeoutError);
+				},
+			);
 
 			this.pendingRequests.set(id, {
 				resolve: (response) => {
-					clearTimeout(timeout);
+					deadline.clear();
 					resolve(response);
 				},
 				reject: (error) => {
-					clearTimeout(timeout);
+					deadline.clear();
 					reject(error);
 				},
+				...(command.type === "open_session"
+					? {
+							onQueued: (position: unknown) =>
+								deadline.extend(OPEN_AFTER_QUEUED_DEADLINE_MS, () => openStalledMessage(position)),
+						}
+					: {}),
 				...(hooks?.onResponse ? { onResponse: hooks.onResponse } : {}),
 				...(hooks?.onReject ? { onReject: hooks.onReject } : {}),
 			});

@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
+	BetaInputTransformation,
 	BetaStopReason,
-	BetaThinkingDroppedInputTransformation,
 	BetaTool,
 	BetaCacheControlEphemeral as CacheControlEphemeral,
 	BetaContentBlockParam as ContentBlockParam,
@@ -12,6 +12,7 @@ import type {
 	BetaRefusalStopDetails as RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { calculateCost } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	AnthropicRefusalFallback,
@@ -38,13 +39,30 @@ import type {
 } from "../types.ts";
 import { isVideoMimeType } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import {
+	claudeCodeVersionTooOldHint,
+	getClaudeCodeVersion,
+	isClaudeCodeVersionTooOldError,
+	recoverClaudeCodeVersion,
+} from "../utils/claude-code-version.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import {
+	formatGitHubCopilotToolLimitError,
+	limitGitHubCopilotTools,
+	recordGitHubCopilotToolLimit,
+} from "../utils/github-copilot-tool-limit.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
+import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
+import {
+	anthropicProviderDiagnosticFromError,
+	anthropicProviderDiagnosticFromSseData,
+	awaitProviderTransport,
+} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
@@ -58,12 +76,13 @@ import {
 	type ServerFallbackReceipt,
 } from "../utils/server-fallback-receipt.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
+import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { resolveRootObjectSchema } from "../utils/tool-schema-compat.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import {
 	ANTHROPIC_RESERVED_BODY_KEYS,
@@ -117,8 +136,11 @@ function getCacheControl(
 	};
 }
 
-// Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.251";
+// Stealth mode: Mimic Claude Code's identity and tool naming exactly.
+// The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
+// (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
+// (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
+const claudeCodeVersion = "2.1.284";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -275,7 +297,14 @@ const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
  * this as `compat.supportsDisabledThinking: false`, but `models.json` entries and third-party
  * gateway rows carry no generated compat, so the family fact has to live here as well.
  */
-const DISABLED_THINKING_REJECTING_MODEL_MARKERS = ["fable-5", "mythos-5"] as const;
+const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
+	"fable-5",
+	"mythos-5",
+	"opus-5-5",
+	"opus-5.5",
+	"sonnet-5-5",
+	"sonnet-5.5",
+] as const;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",
 	"opus-4.6",
@@ -1120,7 +1149,7 @@ async function* iterateAnthropicEvents(
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new Error(errorText);
+			throw attachProviderDiagnostic(new Error(errorText), anthropicProviderDiagnosticFromSseData(sse.data));
 		}
 
 		if (!ANTHROPIC_MESSAGE_EVENTS.has(sse.event ?? "")) {
@@ -1182,13 +1211,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		const requestSignal = combinedAbort.signal;
 		try {
 			let client: Anthropic;
-			let isOAuth: boolean;
+			let isOAuth = false;
+			let advertisedClaudeCodeVersion: string | undefined;
 			let usageModel = model;
-			let inputTransformations: BetaThinkingDroppedInputTransformation[] | undefined;
+			let inputTransformations: BetaInputTransformation[] | undefined;
+			let openClient: (() => void) | undefined;
 
 			if (options?.client) {
 				client = options.client;
-				isOAuth = false;
 			} else {
 				const apiKey = options?.apiKey;
 				const optionsHeaders = providerHeadersToRecord(options?.headers);
@@ -1210,21 +1240,53 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				);
 				const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 
-				const created = createClient(
-					model,
-					apiKey,
-					options?.interleavedThinking ?? true,
-					shouldUseFineGrainedToolStreamingBeta(model, context),
-					options?.refusalFallbacks !== undefined,
-					optionsHeaders,
-					options?.fetch,
-					copilotDynamicHeaders,
-					cacheSessionId,
+				openClient = () => {
+					const created = createClient(
+						model,
+						apiKey,
+						options?.interleavedThinking ?? true,
+						shouldUseFineGrainedToolStreamingBeta(model, context),
+						options?.refusalFallbacks !== undefined,
+						optionsHeaders,
+						options?.fetch,
+						copilotDynamicHeaders,
+						cacheSessionId,
+						options?.env,
+					);
+					client = created.client;
+					isOAuth = created.isOAuthToken;
+					advertisedClaudeCodeVersion = created.claudeCodeVersion;
+				};
+				openClient();
+			}
+			// One retry per request: a `claude_code_version_too_old` 400 names the version Anthropic
+			// wants, so the fingerprint is raised and the same request goes out again with it.
+			let claudeCodeVersionRetried = false;
+			const retryWithNewerClaudeCode = async (error: unknown): Promise<boolean> => {
+				if (
+					claudeCodeVersionRetried ||
+					openClient === undefined ||
+					advertisedClaudeCodeVersion === undefined ||
+					!isClaudeCodeVersionTooOldError(error)
+				) {
+					return false;
+				}
+				const next = await recoverClaudeCodeVersion(
+					error,
+					claudeCodeVersion,
+					advertisedClaudeCodeVersion,
 					options?.env,
 				);
-				client = created.client;
-				isOAuth = created.isOAuthToken;
-			}
+				if (next === undefined) return false;
+				claudeCodeVersionRetried = true;
+				openClient();
+				return true;
+			};
+			const noteTooOldClaudeCode = (error: unknown): void => {
+				if (advertisedClaudeCodeVersion !== undefined && isClaudeCodeVersionTooOldError(error)) {
+					error.message = `${error.message}\n${claudeCodeVersionTooOldHint(advertisedClaudeCodeVersion)}`;
+				}
+			};
 			const fallbackKey = unsignedThinkingFallbackKey(model, options?.sessionId);
 			let unsignedThinkingReplay: UnsignedThinkingReplay =
 				fallbackKey && unsignedThinkingTextReplayFallbacks.has(fallbackKey)
@@ -1243,27 +1305,30 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
+				const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+				if (limitedTools.omittedCount > 0) {
+					params = { ...params, tools: limitedTools.tools };
+					recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
+				}
 				const requestOptions = {
 					...(requestSignal ? { signal: requestSignal } : {}),
 					...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 					maxRetries: 0,
 					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
 				};
-				try {
-					const response = await client.beta.messages
-						.create({ ...params, stream: true }, requestOptions)
-						.asResponse();
-					return { params, response };
-				} catch (error) {
-					if (isForcedToolChoiceUnsupportedError(error, isForcedAnthropicToolChoice(params.tool_choice))) {
-						params = omitToolChoiceParam(params);
-						const response = await client.beta.messages
-							.create({ ...params, stream: true }, requestOptions)
-							.asResponse();
-						return { params, response };
-					}
-					throw error;
-				}
+				const send = (body: MessageCreateParamsStreaming) =>
+					awaitProviderTransport(
+						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
+						anthropicProviderDiagnosticFromError,
+					);
+				const sent = await sendWithForcedToolChoiceFallback({
+					target: model,
+					params,
+					acceptsForcedToolChoice: getAnthropicCompat(model).supportsForcedToolChoice,
+					isForced: isForcedAnthropicToolChoice,
+					send,
+				});
+				return { params: sent.params, response: sent.result };
 			};
 			let requestOutcome: { params: MessageCreateParamsStreaming; response: Response };
 			try {
@@ -1277,6 +1342,15 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
 								return createRequest();
 							}
+							if (await retryWithNewerClaudeCode(error)) {
+								try {
+									return await createRequest();
+								} catch (retryError) {
+									noteTooOldClaudeCode(retryError);
+									throw retryError;
+								}
+							}
+							noteTooOldClaudeCode(error);
 							throw error;
 						}
 					},
@@ -1612,7 +1686,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					...(failure.shouldRetry !== undefined ? { shouldRetry: failure.shouldRetry } : {}),
 				},
 			});
-			output.errorMessage = errorMessage;
+			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
+			output.errorMessage = withGitHubCopilotFailureNote(
+				formatGitHubCopilotToolLimitError(output, errorMessage),
+				model.provider,
+				error,
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -1772,7 +1852,7 @@ function createClient(
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
 	env?: ProviderEnv,
-): { client: Anthropic; isOAuthToken: boolean } {
+): { client: Anthropic; isOAuthToken: boolean; claudeCodeVersion?: string } {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model);
 	const betaFeatures: string[] = [];
@@ -1842,6 +1922,7 @@ function createClient(
 
 	// OAuth: Bearer auth, Claude Code identity headers
 	if (apiKey && isOAuthToken(apiKey)) {
+		const advertisedClaudeCodeVersion = getClaudeCodeVersion(claudeCodeVersion, env);
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
@@ -1856,7 +1937,7 @@ function createClient(
 						accept: "application/json",
 						"anthropic-dangerous-direct-browser-access": "true",
 						"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
-						"user-agent": `claude-cli/${claudeCodeVersion}`,
+						"user-agent": `claude-cli/${advertisedClaudeCodeVersion}`,
 						"x-app": "cli",
 					},
 					model.headers,
@@ -1865,7 +1946,7 @@ function createClient(
 			),
 		});
 
-		return { client, isOAuthToken: true };
+		return { client, isOAuthToken: true, claudeCodeVersion: advertisedClaudeCodeVersion };
 	}
 
 	// API key auth

@@ -205,6 +205,10 @@
 					"$ref": "#/$defs/colorValue",
 					"description": "Markdown link URL"
 				},
+				"skillMention": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Resolved $skill mention in the prompt editor, rendered bold (falls back to mdLink when omitted)"
+				},
 				"mdCode": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Markdown inline code"

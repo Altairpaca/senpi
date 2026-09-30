@@ -2,6 +2,8 @@
 
 export { sanitizeTerminalLabel } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
+// The shared-daemon command surface: one JSON line, one exit code, for launchers without a shell
+export { runHostCommand } from "./cli/host-command.ts";
 // Config paths
 export {
 	CONFIG_DIR_NAME,
@@ -49,6 +51,16 @@ export {
 	serializeConversation,
 	shouldCompact,
 } from "./core/compaction/index.ts";
+// Engine build identity: the ordinal clients compare instead of version strings
+export {
+	compareEngineOrdinal,
+	type EngineBuildIdentity,
+	type EngineBuildInput,
+	type EngineOrdinal,
+	type EngineOrdinalScheme,
+	engineBuildIdentity,
+	engineBuildIdentityFrom,
+} from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
 // Extension system
 export type {
@@ -72,6 +84,7 @@ export type {
 	CustomToolCallEvent,
 	EditToolCallEvent,
 	EntryRenderer,
+	EntryRendererOptions,
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
@@ -105,6 +118,7 @@ export type {
 	InputEvent,
 	InputEventResult,
 	InputSource,
+	KernelPreludeContribution,
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
@@ -134,6 +148,8 @@ export type {
 	SessionBeforeTreeEvent,
 	SessionCompactEvent,
 	SessionInfoChangedEvent,
+	SessionParkedEvent,
+	SessionResumedEvent,
 	SessionShutdownEvent,
 	SessionStartEvent,
 	SessionTreeEvent,
@@ -149,6 +165,7 @@ export type {
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
 	ToolInfo,
+	ToolPermissionRequest,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	TurnEndEvent,
@@ -179,7 +196,12 @@ export {
 	wrapRegisteredTool,
 	wrapRegisteredTools,
 } from "./core/extensions/index.ts";
-export { type ExtensionKernelTools, kernelToolsStorage } from "./core/extensions/kernel-tools-context.ts";
+export {
+	type ExtensionKernelTools,
+	type KernelToolInvokeOptions,
+	type KernelToolInvokeScope,
+	kernelToolsStorage,
+} from "./core/extensions/kernel-tools-context.ts";
 // Notice primitives
 export {
 	buildNoticeBox,
@@ -189,6 +211,7 @@ export {
 	noticeEntryRenderer,
 	noticeMessageRenderer,
 } from "./core/extensions/notice/index.ts";
+export * from "./core/extensions/session-control-types.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
 export { convertToLlm } from "./core/messages.ts";
@@ -217,6 +240,13 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.ts";
 export { DefaultPackageManager } from "./core/package-manager.ts";
+// Process memory footprint (phys_footprint / RssAnon / PrivateUsage), read without spawning
+export {
+	type ProcessFootprint,
+	type ProcessFootprintMeasure,
+	readOwnFootprint,
+	readProcessFootprint,
+} from "./core/process-footprint.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
@@ -361,22 +391,78 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
+export { UnknownCommandError, type UnknownCommandReason } from "./core/unknown-command.ts";
+// Main-thread Bun.WebView service for eval kernels running in worker threads
+export { connectWebViewService, type WebViewServiceConnection } from "./core/webview/webview-broker.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
 export {
+	classifyEndpointLiveness,
 	createHostDaemonPaths,
+	DEFAULT_HOST_LAUNCH_SPEC,
+	daemonDirectoryName,
+	decideHostAction,
+	ENDPOINT_REGISTRY_VERSION,
+	type EndpointKind,
+	type EndpointLiveness,
 	type EnsuredHost,
 	type EnsureHostOptions,
+	endpointProbeTimeoutMs,
 	ensureHost,
+	GENERATION_HANDOFF_CAPABILITY,
+	gcHostEndpoints,
+	type HandoffHostOptions,
+	type HandoffRefusal,
+	type HandoffResult,
+	HOST_EXIT_ERROR,
+	HOST_EXIT_FALLBACK,
+	HOST_EXIT_OK,
+	HOST_EXIT_REFUSED,
+	HOST_EXIT_USAGE,
+	HOST_PROTOCOL_VERSION,
+	type HostAction,
 	type HostDaemonPaths,
+	type HostDecision,
+	type HostDecisionClient,
+	type HostDecisionPolicy,
+	type HostDecisionWarning,
+	type HostEndpointEntry,
+	type HostEndpointIdentitySource,
+	type HostEndpointStatus,
+	HostEnsureRefusedError,
+	type HostGcOptions,
+	type HostGcResult,
+	type HostGenerationRow,
+	type HostLaunchSpec,
+	type HostLaunchSpecCore,
+	HostLaunchSpecError,
+	type HostLaunchSpecRefusal,
+	type HostOutcome,
+	type HostProtocolInfo,
+	type HostRefusalReason,
+	type HostRequest,
+	type HostSessionCounts,
+	type HostStatusOptions,
+	type HostStatusReport,
+	type HostTarget,
+	type HostUpgradePolicy,
+	handoffHost,
 	InteractiveMode,
 	type InteractiveModeOptions,
 	isTransportGoneError,
 	type JsonAgentSessionEvent,
+	listHostEndpoints,
+	loadHostLaunchSpec,
 	type ModelInfo,
 	PINNED_HOST_CLIENT_CAPABILITIES,
 	type PrintModeOptions,
+	type ProbeHostOptions,
+	parseHostLaunchSpec,
+	parseHostProtocolInfo,
+	probeHost,
+	REQUIRED_HOST_CAPABILITIES,
+	type ResolvedHostLaunchSpec,
 	RpcClient,
 	type RpcClientEvent,
 	RpcClientOpenInFlightError,
@@ -389,8 +475,19 @@ export {
 	type RpcResponse,
 	type RpcSessionState,
 	RpcTransportGoneError,
+	readAllHostStatus,
+	readHostStatus,
+	runHostRequest,
 	runPrintMode,
 	runRpcMode,
+	type ShardKind,
+	type StopHostOptions,
+	type StopHostResult,
+	shardKey,
+	shardSocketPath,
+	shardSocketPathForKey,
+	stopHost,
+	TUI_PROBE_TIMEOUT_MS,
 } from "./modes/index.ts";
 // UI components for extensions
 export {
@@ -443,6 +540,8 @@ export {
 	Theme,
 	type ThemeColor,
 } from "./modes/interactive/theme/theme.ts";
+// Exact-pid collection of children whose owning thread is gone (#1962)
+export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";

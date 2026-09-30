@@ -1,4 +1,6 @@
+import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
 import type { KernelSpawnProcess } from "./process.ts";
 import type { PythonTransportResult } from "./transport.ts";
@@ -14,13 +16,11 @@ export interface PythonKernelStartOptions {
 	readonly startupTimeoutMs?: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
+	/** Post-cell collection, notice, and ceiling thresholds sent on `init`; absent leaves memory unmanaged. */
+	readonly memory?: KernelMemoryThresholds;
 }
 
-export interface PythonKernelRunOptions {
-	readonly cellId: string;
-	readonly code: string;
-	readonly timeoutMs?: number;
-}
+export type PythonKernelRunOptions = EvalKernelRunInput;
 
 export type ResultMessage = PythonTransportResult;
 

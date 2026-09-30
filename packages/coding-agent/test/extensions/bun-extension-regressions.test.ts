@@ -175,14 +175,28 @@ assert.deepEqual(factory(), ${JSON.stringify(expected)});
 
 	it("preserves import attributes when a native file loader handles an asset", () => {
 		// Given
-		const root = fixture('import value from "./asset.bin" with { type: "file" }; export default () => value;');
-		writeFileSync(join(root, "asset.bin"), "asset-bytes");
-		// When / Then
+		const root = fixture('import value from "./helper.json" with { type: "file" }; export default () => value;');
+		writeFileSync(join(root, "helper.json"), '{"value":41}');
+		// When / Then: a file Bun parses by default, so the assertion fails when the attribute is dropped.
 		run(
 			root,
 			`
 const factory = await createBunExtensionImporter({}).import(entry, { default: true });
-assert.equal(factory(), realpathSync(join(root, "asset.bin")));
+assert.equal(factory(), realpathSync(join(root, "helper.json")));
+`,
+		);
+	});
+
+	it("preserves import attributes when an extension computes the specifier", () => {
+		// Given: the keyword rewrite keeps attributes on the call, so the runtime import must forward them.
+		const root = fixture('export default (name: string) => import(name, { with: { type: "file" } });');
+		writeFileSync(join(root, "helper.json"), '{"value":41}');
+		// When / Then: the attribute wins over the loader the extension would get by default.
+		run(
+			root,
+			`
+const factory = await createBunExtensionImporter({}).import(entry, { default: true });
+assert.equal((await factory("./helper.json")).default, realpathSync(join(root, "helper.json")));
 `,
 		);
 	});

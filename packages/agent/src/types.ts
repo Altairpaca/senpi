@@ -8,6 +8,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderDiagnostic,
 	SimpleStreamOptions,
 	TextContent,
 	ThinkingSelection,
@@ -411,6 +412,8 @@ export interface AgentState {
 	/** Available tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
+	/** Tool list the provider receives when it differs from `tools`; see {@link AgentContext.declaredTools}. */
+	declaredTools?: AgentTool<any>[];
 	/** Conversation transcript. Assigning a new array copies the top-level array. */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
@@ -426,6 +429,8 @@ export interface AgentState {
 	readonly pendingToolCalls: ReadonlySet<string>;
 	/** Error message from the most recent failed or aborted assistant turn, if any. */
 	readonly errorMessage?: string;
+	/** Structured provider failure family of the turn that set `errorMessage`, when its provider adapter supplied one. */
+	readonly providerDiagnostic?: ProviderDiagnostic;
 }
 
 /** Final or partial result produced by a tool. */
@@ -494,6 +499,12 @@ export interface AgentContext {
 	messages: AgentMessage[];
 	/** Tools available for this run. */
 	tools?: AgentTool<any>[];
+	/**
+	 * Superset of `tools` to declare to the provider, keeping the tool prefix byte-stable while the
+	 * callable set changes (senpi#2095). Honored only for models that accept an allowed-tools
+	 * restriction; tool calls still resolve against `tools` alone.
+	 */
+	declaredTools?: AgentTool<any>[];
 }
 
 /**

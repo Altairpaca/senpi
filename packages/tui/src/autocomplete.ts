@@ -2,8 +2,13 @@ import { spawn } from "child_process";
 import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
-import { getDollarInvocationContext, getDollarInvocationSuggestions } from "./dollar-invocation-autocomplete.ts";
-import { getSlashCommandSuggestions } from "./slash-command-autocomplete.ts";
+import {
+	findDollarSkillMentions,
+	getDollarInvocationContext,
+	getDollarInvocationSuggestions,
+	knownSkillNames,
+} from "./dollar-invocation-autocomplete.ts";
+import { getSlashCommandSuggestions, isSlashNamespaceItem } from "./slash-command-autocomplete.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 
@@ -226,6 +231,11 @@ export interface AutocompleteItem {
 	value: string;
 	label: string;
 	description?: string;
+	/**
+	 * The command declares an argument hint: confirming the row completes `/name ` and waits for
+	 * arguments instead of submitting.
+	 */
+	awaitsArguments?: boolean;
 }
 
 type Awaitable<T> = T | Promise<T>;
@@ -242,6 +252,12 @@ export interface SlashCommand {
 export interface AutocompleteSuggestions {
 	items: AutocompleteItem[];
 	prefix: string; // What we're matching against (e.g., "/" or "src/")
+}
+
+/** Line-local character range, `end` exclusive. */
+export interface MentionRange {
+	readonly start: number;
+	readonly end: number;
 }
 
 export interface AutocompleteProvider {
@@ -273,6 +289,12 @@ export interface AutocompleteProvider {
 
 	// Check if file completion should trigger for explicit Tab completion
 	shouldTriggerFileCompletion?(lines: string[], cursorLine: number, cursorCol: number): boolean;
+
+	/**
+	 * Ranges on one logical line that resolve to a known mention (for example
+	 * a `$skill` token). The editor styles them through `EditorTheme.mention`.
+	 */
+	getMentionRanges?(line: string): readonly MentionRange[];
 }
 
 // Combined provider that handles both slash commands and file paths
@@ -285,6 +307,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		this.commands = commands;
 		this.basePath = basePath;
 		this.fdPath = fdPath;
+	}
+
+	getMentionRanges(line: string): readonly MentionRange[] {
+		return findDollarSkillMentions(line, knownSkillNames(this.commands)).map(({ start, end }) => ({ start, end }));
 	}
 
 	async getSuggestions(
@@ -431,15 +457,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			(beforePrefix.trim() === "" ||
 				(prefix.startsWith("/skill:") && this.isLeadingKnownSkillCommandRun(beforePrefix)));
 		if (isSlashCommand) {
-			// This is a command name completion
-			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
+			// This is a command name completion. A namespace (`skill:`) gets no trailing space so the
+			// editor can list that namespace's commands right after it.
+			const separator = isSlashNamespaceItem(item.value) ? "" : " ";
+			const newLine = `${beforePrefix}/${item.value}${separator}${adjustedAfterCursor}`;
 			const newLines = [...lines];
 			newLines[cursorLine] = newLine;
 
 			return {
 				lines: newLines,
 				cursorLine,
-				cursorCol: beforePrefix.length + item.value.length + 2, // +2 for "/" and space
+				cursorCol: beforePrefix.length + 1 + item.value.length + separator.length,
 			};
 		}
 

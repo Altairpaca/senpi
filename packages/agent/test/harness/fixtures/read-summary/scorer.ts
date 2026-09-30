@@ -13,15 +13,18 @@ export type Sample = {
 	readonly candidateTokens: number;
 	readonly retainedExact: boolean;
 };
+export type CandidateEngine = "heuristic" | "wasm";
 export type Measurement = {
 	readonly samples: readonly Sample[];
 	readonly referenceAvailable: boolean;
 	readonly tokenizerExact: boolean;
 	readonly embeddedBytes: number;
 	readonly budget: number;
+	/** Which fold-boundary engine produced `folds`/`candidateTokens`. Default: the heuristic folder. */
+	readonly engine?: CandidateEngine;
 };
 export type Selection = {
-	readonly engine: "heuristic" | "raw";
+	readonly engine: CandidateEngine | "raw";
 	readonly status: "conclusive" | "inconclusive" | "pending_owner";
 	readonly reason: string;
 	readonly medianSaving?: number;
@@ -99,10 +102,11 @@ export function selectEngine(measurement: Measurement): Selection {
 	const referenceMedianSaving = reference[2];
 	const positive = samples.reduce((sum, sample) => sum + sample.rawTokens - sample.candidateTokens, 0) > 0;
 	const wins = positive && (referenceMedianSaving <= 0 || medianSaving >= referenceMedianSaving * 0.9);
+	// A measured shortfall is a decided outcome, not a pending decision: the owner approved WASM in #1685.
 	return {
-		engine: wins ? "heuristic" : "raw",
-		status: wins ? "conclusive" : "pending_owner",
-		reason: wins ? "safe_quality_threshold_met" : "wasm_candidate_pending_owner",
+		engine: wins ? (measurement.engine ?? "heuristic") : "raw",
+		status: "conclusive",
+		reason: wins ? "safe_quality_threshold_met" : "candidate_below_reference_threshold",
 		medianSaving,
 		referenceMedianSaving,
 	};

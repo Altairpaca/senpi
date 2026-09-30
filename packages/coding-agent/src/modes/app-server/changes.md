@@ -1,4 +1,81 @@
+## 2026-09-29 - turn/start refuses an unknown command with structured data (senpi#2348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/turns.ts`: when the prompt is refused as an unknown command before the turn is announced, `startTurn` discards the turn (no `turn/started`, no user item, no turn-log entry) and rejects with `unknownCommandTurnError`. A preflight failure now completes the turn from the prompt's settle path instead of the preflight callback, so the refusal can be recognized first. `params.unknownCommandAsText` is forwarded to `session.prompt`.
+- `packages/coding-agent/src/modes/app-server/threads/unknown-command-refusal.ts` (new): JSON-RPC `-32602` with `data: { errorCode: "unknown_command", command, suggestions, reason }`.
+- `packages/coding-agent/src/modes/app-server/threads/turn-log.ts`: `discardTurn`.
+- `packages/coding-agent/src/modes/app-server/threads/turn-runtime.ts`: `TurnEngineSession.prompt` options gain `unknownCommandAsText`.
+- `packages/coding-agent/src/modes/app-server/turn-adapter.ts`, `protocol/turn.ts`: `turn/start` accepts the senpi extension field `unknownCommandAsText`.
+
+### Why
+
+- App-server clients got a generic `-32603`, a started-then-failed turn, and no way to confirm the text.
+
+### Why an extension could not handle it
+
+- Turn lifecycle and the JSON-RPC error envelope are owned by the app-server turn engine.
+
+### Expected merge conflict zones
+
+- None expected: app-server is fork-only.
+
+## 2026-09-28 - app-server loads `--extension` sources into every thread (omo#9117)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/cli-args.ts`: `app-server` and every `app-server daemon` verb accept repeated `--extension <path>`.
+- `packages/coding-agent/src/modes/app-server/extension-paths.ts`: local paths resolve against the invoking cwd, the same rule as the global `--extension` flag.
+- `packages/coding-agent/src/modes/app-server/runtime.ts`: `createAppServerRuntime` takes `extensionPaths`; thread create/resume/fork build a `DefaultResourceLoader` with them, and `skills/list` loaders see them too.
+- `packages/coding-agent/src/modes/app-server/daemon.ts`, `daemon/spawn.ts`, `daemon/probe.ts`: the daemon child is launched with the extensions and `settings.json` records them; `restart` reuses the recorded list unless the command names new ones. `spawnDaemon` moved to `daemon/spawn.ts` unchanged apart from the launch intent.
+
+### Why
+
+A product launcher that ships its plugin beside the engine (omo) loads it with `--extension`. `app-server` rejected the flag, and the global prefix form never reaches app-server dispatch, so app-server threads ran without the plugin's tools and events.
+
+### Why an extension could not handle it
+
+Extension loading is decided before any extension runs; the app-server builds each thread session itself.
+
+### Expected merge conflict zones
+
+- LOW: `createAppServerRuntime` signature and the `createSession` wiring in `runtime.ts`; argument loops in `cli-args.ts`.
+
+## 2026-09-22 - normalize legacy provider ids on account payloads (senpi#1989)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/server/account.ts`: `requiredProvider` normalizes the client-supplied provider id, covering the get / pin / remove account methods at their single entry point.
+
+### Why
+
+An older client (a pinned desktop runtime, a stale RPC caller) still sends the LEGACY provider id in its account payloads. That is inbound state written by an earlier version, not a legacy id typed by the user, so it is normalized rather than rejected.
+
+### Why an extension could not handle it
+
+The app-server parses and validates params before any extension sees the request.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/app-server/server/account.ts` `requiredProvider`, against any other param-validation change.
+
 # changes
+
+## 2026-09-17 - Keep a thread's MCP inventory current after deferred attach (senpi#1781)
+
+### What changed
+
+- `threads/mcp-wire-status.ts`: `McpWireStatusAdapter` can adopt a live subscription (`bindLiveUpdates`) and drop it (`dispose`); `McpWireStatusRegistry.removeThread` disposes the thread's adapter.
+- `runtime.ts`: after binding a thread, the adapter subscribes to `McpService.onWireStatusChanged` filtered to that thread id.
+
+### Why
+
+- senpi#1791 stopped `session_start` awaiting MCP attach. The inventory copied immediately after `bindExtensions()` is therefore taken while servers are still booting, and `update()` had no callers, so `mcpServerStatus/list` returned `{ servers: [] }` for the life of the thread and never recovered.
+- The adapter's contract - never read the process-global MCP service during a request - is preserved: this is a push from a subscription the service already emitted on every capture, not a per-request read.
+
+### Expected merge conflict zones
+
+- LOW: the adapter class body and the post-bind block in `createBoundAppServerSession`.
 
 ## 2026-09-12 - App-server turn steering carries its input source
 

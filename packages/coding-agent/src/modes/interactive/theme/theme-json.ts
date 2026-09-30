@@ -39,6 +39,7 @@ const ThemeJsonSchema = Type.Object({
 		selectedBg: ColorValueSchema,
 		searchMatchBg: Type.Optional(ColorValueSchema),
 		searchMatchText: Type.Optional(ColorValueSchema),
+		skillMention: Type.Optional(ColorValueSchema),
 		userMessageBg: ColorValueSchema,
 		userMessageText: ColorValueSchema,
 		customMessageBg: ColorValueSchema,

@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
+import { CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageDir, isBunBinary } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
+import { resolveInstallPath } from "../runtime-snapshot/marker.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
 
@@ -19,6 +20,9 @@ import {
 	globalDefaultExtensionFactories,
 	globalDefaultExtensionIds,
 } from "./extensions/builtin/index.ts";
+import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
+import { createMcpExtension } from "./extensions/builtin/mcp/index.ts";
+import { McpService } from "./extensions/builtin/mcp/service.ts";
 import {
 	clearExtensionCache,
 	createExtensionRuntime,
@@ -30,15 +34,20 @@ import type {
 	Extension,
 	ExtensionFactory,
 	ExtensionRuntime,
+	ExtensionSessionProfile,
 	InlineExtension,
 	LoadExtensionsResult,
 	LoadedHookSources,
+	SessionContext,
+	SessionKind,
 } from "./extensions/types.ts";
+import { EMPTY_SESSION_CONTEXT } from "./extensions/types.ts";
 import { findGitPaths } from "./footer-data-provider.ts";
 import { dedupePathsByPackageIdentity, findNearestPackageIdentity } from "./package-identity.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
+import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-memo.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
@@ -166,10 +175,13 @@ function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
  * session. Canonicalizing collapses both spellings to one path.
  */
 export function canonicalizeGlobalDefaultExtensionModulePath(modulePath: string): string {
+	// A session running from its runtime snapshot names the snapshot's copy; the shim outlives
+	// that snapshot and is shared by every build's sessions, so it names the install instead.
+	const installPath = resolveInstallPath(modulePath, findNodePackageDir(dirname(modulePath)));
 	try {
-		return realpathSync(modulePath);
+		return realpathSync(installPath);
 	} catch {
-		return modulePath;
+		return installPath;
 	}
 }
 
@@ -323,7 +335,10 @@ export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager?: SettingsManager;
-	sharedHostEnabled?: boolean;
+	/** Visibility class of the session these resources are loaded for; defaults to `interactive`. */
+	sessionKind?: SessionKind;
+	/** Opaque labels the session was opened with; defaults to `{}`. */
+	sessionContext?: SessionContext;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
@@ -331,6 +346,7 @@ export interface DefaultResourceLoaderOptions {
 	additionalThemePaths?: string[];
 	additionalHookPaths?: string[];
 	extensionFactories?: InlineExtension[];
+	mcpRegistry?: HostMcpRegistry;
 	noExtensions?: boolean;
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
@@ -360,7 +376,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
-	private sharedHostEnabled: boolean;
+	/** The per-session facts every extension of this session is loaded with. */
+	private extensionSession: ExtensionSessionProfile;
 	private eventBus: EventBus;
 	private packageManager: DefaultPackageManager;
 	private additionalExtensionPaths: string[];
@@ -423,7 +440,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
-		this.sharedHostEnabled = options.sharedHostEnabled ?? this.settingsManager.getExperimentalSharedHost();
+		this.extensionSession = {
+			sessionKind: options.sessionKind ?? "interactive",
+			sessionContext: options.sessionContext ?? EMPTY_SESSION_CONTEXT,
+		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -435,7 +455,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.additionalHookPaths = options.additionalHookPaths ?? [];
-		this.builtinExtensionFactories = builtinExtensions;
+		this.builtinExtensionFactories =
+			options.mcpRegistry === undefined
+				? builtinExtensions
+				: builtinExtensions.map((extension) =>
+						extension.id === "mcp"
+							? {
+									...extension,
+									factory: (pi) =>
+										createMcpExtension(new McpService({ mcpRegistry: options.mcpRegistry }))(pi),
+								}
+							: extension,
+					);
 		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
@@ -571,24 +602,28 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	async loadProjectTrustExtensions(): Promise<LoadExtensionsResult> {
+	async loadProjectTrustExtensions(options: { readonly refresh?: boolean } = {}): Promise<LoadExtensionsResult> {
 		// Force untrusted project settings for the bootstrap pass. This keeps project-local
 		// extensions/packages out while still loading user/global and temporary CLI extensions.
 		this.settingsManager.setProjectTrusted(false);
 		await this.settingsManager.reload();
-		return this.loadCurrentExtensionSet({ includeInlineFactories: true });
+		return this.loadCurrentExtensionSet({ includeInlineFactories: true, ...options });
 	}
 
 	async reload(options?: ResourceLoaderReloadOptions): Promise<void> {
 		resetTimings("extensions");
 
-		if (this.loaded) {
+		// A re-load of this loader is the signal that disk may have changed - it
+		// discards the extension cache, and it must not read package resolution
+		// through the host memo either (a package's own manifest is not in the key).
+		const refresh = this.loaded;
+		if (refresh) {
 			clearExtensionCache();
 		}
 		this.ensureGlobalDefaultExtensions();
 		let preTrustExtensions: LoadExtensionsResult | undefined;
 		if (options?.resolveProjectTrust) {
-			preTrustExtensions = await this.loadProjectTrustExtensions();
+			preTrustExtensions = await this.loadProjectTrustExtensions({ refresh });
 			const projectTrusted = await options.resolveProjectTrust({ extensionsResult: preTrustExtensions });
 			this.settingsManager.setProjectTrusted(projectTrusted);
 		}
@@ -599,10 +634,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (!settingsAreFresh) {
 			await this.settingsManager.reload();
 		}
-		const resolvedPaths = await this.packageManager.resolve();
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
+		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh });
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -795,22 +827,41 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private buildGlobalDefaultExtensionLoadOptions(): {
+	private resolvePackagePaths(options: { readonly refresh?: boolean } = {}) {
+		return memoizeResolvedPaths(
+			resolvedPathsMemoKey({
+				agentDir: this.agentDir,
+				cwd: this.cwd,
+				projectTrusted: this.settingsManager.isProjectTrusted(),
+				globalSettings: this.settingsManager.getGlobalSettings(),
+				projectSettings: this.settingsManager.getProjectSettings(),
+				additionalExtensionPaths: this.additionalExtensionPaths,
+			}),
+			async () => ({
+				resolvedPaths: await this.packageManager.resolve(),
+				cliExtensionPaths: await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
+					temporary: true,
+				}),
+			}),
+			options,
+		);
+	}
+
+	private buildGlobalDefaultExtensionLoadOptions(): ExtensionSessionProfile & {
 		factoryResolver: ExtensionFactoryResolver;
-		sharedHostEnabled: boolean;
 	} {
 		return {
 			factoryResolver: (_extensionPath, resolvedPath) =>
 				resolveGeneratedGlobalDefaultExtensionFactory(resolvedPath, this.agentDir),
-			sharedHostEnabled: this.sharedHostEnabled,
+			...this.extensionSession,
 		};
 	}
 
-	private async loadCurrentExtensionSet(options: { includeInlineFactories: boolean }): Promise<LoadExtensionsResult> {
-		const resolvedPaths = await this.packageManager.resolve();
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
+	private async loadCurrentExtensionSet(options: {
+		includeInlineFactories: boolean;
+		readonly refresh?: boolean;
+	}): Promise<LoadExtensionsResult> {
+		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh: options.refresh });
 		const enabledExtensions = resolvedPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const cliEnabledExtensions = cliExtensionPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const extensionPaths = this.noExtensions
@@ -827,7 +878,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return extensionsResult;
 		}
 
-		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, this.sharedHostEnabled);
+		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
 		extensionsResult.errors.push(...inlineExtensions.errors);
 		return extensionsResult;
@@ -849,7 +900,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				undefined,
 				this.buildGlobalDefaultExtensionLoadOptions(),
 			);
-			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, this.sharedHostEnabled);
+			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
 			this.rebuildExtensionFlagDefaults(extensionsResult);
 			extensionsResult.errors.push(...inlineExtensions.errors);
@@ -1307,10 +1358,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
-	private async loadExtensionFactories(
-		runtime: ExtensionRuntime,
-		sharedHostEnabled: boolean,
-	): Promise<{
+	private async loadExtensionFactories(runtime: ExtensionRuntime): Promise<{
 		extensions: Extension[];
 		errors: Array<{ path: string; error: string }>;
 	}> {
@@ -1331,7 +1379,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					this.eventBus,
 					runtime,
 					extensionPath,
-					sharedHostEnabled,
+					this.extensionSession,
 				);
 				extensions.push(extension);
 			} catch (error) {
@@ -1354,9 +1402,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 					});
 					continue;
 				}
-				const bundledResult = await loadExtensions(entries, this.cwd, this.eventBus, runtime, {
-					sharedHostEnabled,
-				});
+				const bundledResult = await loadExtensions(
+					entries,
+					this.cwd,
+					this.eventBus,
+					runtime,
+					this.extensionSession,
+				);
 				for (const extension of bundledResult.extensions) {
 					if (isBunBinary) extension.path = `<builtin:${bundledExtension.id}>`;
 					extensions.push(extension);
@@ -1382,7 +1434,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					this.eventBus,
 					runtime,
 					extensionPath,
-					sharedHostEnabled,
+					this.extensionSession,
 				);
 				extension.hidden = isNamed && input.hidden;
 				extensions.push(extension);

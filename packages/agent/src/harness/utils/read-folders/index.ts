@@ -1,19 +1,23 @@
 import { scanBraces } from "./brace-scanner.ts";
-import type { ReadFolder, ReadFolderInput, ReadFolderResult, ReadFoldRange, ReadLineRange } from "./types.ts";
+import { composeFoldResult } from "./compose.ts";
+import type { ReadFolder, ReadFolderInput, ReadFolderResult } from "./types.ts";
 
 export * from "./types.ts";
 
-/** Frozen row-17 selection, not a runtime registry that can enable unmeasured grammars. */
+/** Frozen measured selection, not a runtime registry that can enable unmeasured grammars. */
 export const READ_FOLDER_SELECTION = Object.freeze({
-	head: "0830b8c466e1f0689fa7f6f33cb7cfcd188b5407",
-	selectionSha256: "b10b790182c83603cdc66f7e0d3b88464456ad49a45e621aea140d9c033f13a6",
-	wasm: false,
-	rawReasons: Object.freeze({ ts: "wasm_candidate_pending_owner", js: "wasm_candidate_pending_owner" } as const),
+	head: "6da8ef1361ef73928df8685e071f2a1826d3b17e",
+	selectionSha256: "d7c502a1597e652f584877c0004ba6cde7c9393c8661ccbc388e3661ae66a634",
+	wasm: true,
+	rawReasons: Object.freeze({
+		ts: "wasm_candidate_below_threshold",
+		tsx: "wasm_candidate_below_threshold",
+	} as const),
 	languages: Object.freeze({
 		ts: "raw",
-		js: "raw",
+		js: "wasm",
 		json: "heuristic",
-		tsx: "unsupported",
+		tsx: "raw",
 		python: "unsupported",
 		rust: "unsupported",
 		go: "unsupported",
@@ -22,8 +26,10 @@ export const READ_FOLDER_SELECTION = Object.freeze({
 	} as const),
 } as const);
 
-type Language = keyof typeof READ_FOLDER_SELECTION.languages;
-function languageForPath(path: string): Language | undefined {
+export type ReadSummaryLanguage = keyof typeof READ_FOLDER_SELECTION.languages;
+/** Every engine a frozen selection may name, independent of which ones the current receipt uses. */
+export type ReadSummaryEngine = "raw" | "heuristic" | "wasm" | "unsupported" | "prose_exempt";
+export function languageForPath(path: string): ReadSummaryLanguage | undefined {
 	const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
 	if (!name.includes(".")) return undefined;
 	switch (name.slice(name.lastIndexOf(".") + 1)) {
@@ -54,33 +60,24 @@ function languageForPath(path: string): Language | undefined {
 	}
 }
 
-/** Reader eligibility stays bound to the frozen selection even with a custom folder. */
-export function isReadSummaryPath(path: string): boolean {
+/** The frozen engine for a path's language, independent of which folder object a caller supplies. */
+export function readSummaryEngineForPath(path: string): ReadSummaryEngine | undefined {
 	const language = languageForPath(path);
-	return language !== undefined && READ_FOLDER_SELECTION.languages[language] === "heuristic";
+	if (language === undefined) return undefined;
+	const engine: ReadSummaryEngine = READ_FOLDER_SELECTION.languages[language];
+	return engine;
 }
 
-function hierarchy(ranges: readonly ReadLineRange[]): readonly ReadFoldRange[] | undefined {
-	// Builder-owned arrays; no caller-owned ranges are sorted or mutated.
-	type Node = ReadLineRange & { readonly children: Node[] };
-	const roots: Node[] = [];
-	const stack: Node[] = [];
-	for (const range of [...ranges].sort((a, b) => a.startLine - b.startLine || b.endLine - a.endLine)) {
-		while (stack.length && range.startLine > stack[stack.length - 1].endLine) stack.pop();
-		const parent = stack[stack.length - 1];
-		if (parent && range.startLine === parent.startLine && range.endLine === parent.endLine) continue;
-		if (parent && (range.startLine <= parent.startLine || range.endLine >= parent.endLine)) return undefined;
-		const node: Node = { ...range, children: [] };
-		(parent ? parent.children : roots).push(node);
-		stack.push(node);
-	}
-	return roots;
+/** Reader eligibility stays bound to the frozen selection even with a custom folder. */
+export function isReadSummaryPath(path: string): boolean {
+	const engine = readSummaryEngineForPath(path);
+	return engine === "heuristic" || engine === "wasm";
 }
 
 function fold({ path, text, settings }: ReadFolderInput): ReadFolderResult {
 	const language = languageForPath(path);
 	if (!language) return { status: "unsupported", reason: "unsupported_language" };
-	const engine = READ_FOLDER_SELECTION.languages[language];
+	const engine: ReadSummaryEngine = READ_FOLDER_SELECTION.languages[language];
 	switch (engine) {
 		case "unsupported":
 			return { status: "unsupported", reason: "unsupported_language" };
@@ -88,6 +85,7 @@ function fold({ path, text, settings }: ReadFolderInput): ReadFolderResult {
 			return { status: "unsupported", reason: "prose_exempt" };
 		case "raw": // Retain the pure candidate for safety/quality measurement, never default-read eligibility.
 		case "heuristic":
+		case "wasm": // The heuristic scan is the tree-sitter engine's fallback, so it stays callable here.
 			break;
 		default:
 			return engine satisfies never;
@@ -103,19 +101,7 @@ function fold({ path, text, settings }: ReadFolderInput): ReadFolderResult {
 			throw error;
 		}
 	}
-	const scan = scanBraces(text, language, settings);
-	switch (scan.status) {
-		case "parse_failure":
-			return scan;
-		case "parsed": {
-			const ranges = hierarchy(scan.ranges);
-			return ranges
-				? { status: "parsed", text, ranges }
-				: { status: "parse_failure", reason: "ambiguous_line_boundaries" };
-		}
-		default:
-			return scan satisfies never;
-	}
+	return composeFoldResult(text, scanBraces(text, language, settings));
 }
 
 export const selectedReadFolder: ReadFolder = Object.freeze({ id: "measured-brace", version: "3", fold });

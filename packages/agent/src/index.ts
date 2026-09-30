@@ -146,10 +146,13 @@ export {
 } from "./harness/types.ts";
 export { applyShellOutputUpdate } from "./harness/utils/output-capture.ts";
 export * from "./harness/utils/read-folders/index.ts";
+export * from "./harness/utils/read-folders/prepare.ts";
 export * from "./harness/utils/segmented-read-view.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
 export * from "./proxy.ts";
 export * from "./search/index.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
+export { prepareToolArguments } from "./tool-arguments.ts";
+export { resolveToolNameAlias } from "./tool-name-alias.ts";
 export * from "./types.ts";

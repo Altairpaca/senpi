@@ -1,3 +1,4 @@
+import type { ExtensionKernelTools, KernelToolInvokeOptions, KernelToolInvokeScope } from "@code-yeongyu/senpi";
 import type { KernelToolErrorCode, KernelToolHostDenial, KernelToolHostDenialReason } from "./kernel-tools-errors.ts";
 
 export type { KernelToolErrorCode, KernelToolHostDenial, KernelToolHostDenialReason };
@@ -31,36 +32,22 @@ export type KernelToolsDescribeResult = {
 	readonly results: readonly KernelToolsDescribeEntry[];
 };
 
-/**
- * Host tools a kernel-tool invocation's nested calls may reach: `allow` narrows to exactly those
- * names, `deny` refuses the named ones, and `deny` wins where both name the same tool.
- */
-export type KernelToolsHostScope = {
-	readonly allow?: readonly string[];
-	readonly deny?: readonly string[];
-};
-
-/** Execution scope for one `invoke`; never persisted, dropped when that call settles (#1731). */
-export type KernelToolsInvokeScope = {
-	readonly tools?: KernelToolsHostScope;
-};
-
-export type KernelToolsInvokeOptions = {
-	readonly signal?: AbortSignal;
-	readonly scope?: KernelToolsInvokeScope;
-};
+/** Host declaration (#1731); aliases so this package cannot drift from `@code-yeongyu/senpi`. */
+export type KernelToolsHostScope = NonNullable<KernelToolInvokeScope["tools"]>;
+export type KernelToolsInvokeScope = KernelToolInvokeScope;
+export type KernelToolsInvokeOptions = KernelToolInvokeOptions;
 
 /** Stable capability markers a consumer gates on before sending an option this runtime may not know. */
-export type KernelToolsCapabilities = {
-	readonly invokeScope: true;
-};
+export type KernelToolsCapabilities = ExtensionKernelTools["capabilities"];
 
-export const KERNEL_TOOLS_CAPABILITIES: KernelToolsCapabilities = Object.freeze({ invokeScope: true });
+export const KERNEL_TOOLS_CAPABILITIES = Object.freeze({
+	invokeScope: true as const,
+}) satisfies ExtensionKernelTools["capabilities"];
 
 export type KernelToolsCapability = {
-	readonly capabilities: KernelToolsCapabilities;
+	readonly capabilities: ExtensionKernelTools["capabilities"];
 	describe(names: readonly string[]): Promise<KernelToolsDescribeResult>;
-	invoke(request: KernelToolsInvokeRequest, options?: AbortSignal | KernelToolsInvokeOptions): Promise<unknown>;
+	invoke: ExtensionKernelTools["invoke"];
 };
 
 export const KERNEL_TOOLS_UNSUPPORTED = {

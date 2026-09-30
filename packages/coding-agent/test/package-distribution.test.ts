@@ -6,6 +6,7 @@ interface CodingAgentPackageJson {
 	main: string;
 	files: string[];
 	exports: Record<string, Record<string, string>>;
+	scripts: Record<string, string>;
 }
 
 const packageJson = JSON.parse(
@@ -15,11 +16,30 @@ const packageJson = JSON.parse(
 describe("package distribution entrypoints", () => {
 	test("uses the bundle for executables and modular output for libraries", () => {
 		expect(packageJson.bin.pi).toBe("dist/bundle/cli.js");
-		expect(packageJson.bin.senpi).toBe("dist/cli.js");
+		expect(packageJson.bin.senpi).toBe("dist/bundle/cli.js");
 		expect(packageJson.main).toBe("./dist/index.js");
 		expect(packageJson.exports["."].import).toBe("./dist/index.js");
 		expect(packageJson.exports["./client"].import).toBe("./dist/client/index.js");
 		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/rpc-entry.js");
+	});
+
+	// Naming the executables one by one is how `bin.senpi` drifted: upstream moved `pi` onto the
+	// bundle and the fork's own command kept the module graph the bundle exists to replace, which
+	// costs a launch roughly five seconds of pre-main evaluation. Assert the rule instead of the
+	// names, so a third executable cannot inherit the same gap.
+	test("every declared executable boots the bundled entry", () => {
+		for (const [name, target] of Object.entries(packageJson.bin)) {
+			expect(`${name} -> ${target}`).toBe(`${name} -> dist/bundle/cli.js`);
+		}
+	});
+
+	// The release build is the only producer of `dist/bundle/`: `bin.pi` points into it, the
+	// packed tarball ships whatever `dist` holds, and nothing else in the repo runs the bundler.
+	// Wiring it into the package `build` script is what makes a published tarball executable.
+	test("builds the bundle that bin.pi resolves to as part of the package build", () => {
+		expect(packageJson.scripts["build:bundle"]).toContain("scripts/build-coding-agent-bundle.mjs");
+		expect(packageJson.scripts.build).toContain("build:bundle");
+		expect(packageJson.files).toContain("dist");
 	});
 
 	// Regression for #9132, expressed on the fork's distribution shape: internal experimental

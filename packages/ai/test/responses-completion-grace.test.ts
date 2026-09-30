@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	closeOpenAICodexWebSocketSessions,
-	resetOpenAICodexWebSocketDebugStats,
+	closeChatGptSubscriptionWebSocketSessions,
+	resetChatGptSubscriptionWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import {
@@ -47,8 +47,8 @@ const completed = { type: "response.completed" };
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	closeOpenAICodexWebSocketSessions();
-	resetOpenAICodexWebSocketDebugStats();
+	closeChatGptSubscriptionWebSocketSessions();
+	resetChatGptSubscriptionWebSocketDebugStats();
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
@@ -120,7 +120,7 @@ describe("completion stall through the Codex SSE stream", () => {
 		id: "gpt-5.6-sol",
 		name: "GPT-5.6 Sol",
 		api: "openai-codex-responses",
-		provider: "openai-codex",
+		provider: "chatgpt-subscription",
 		baseUrl: "https://chatgpt.com/backend-api",
 		reasoning: true,
 		input: ["text"],

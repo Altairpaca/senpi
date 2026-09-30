@@ -14,6 +14,15 @@ export type ClientResult =
 	| { readonly kind: "attached"; readonly serverId: string; readonly sessionId: string }
 	| { readonly kind: "prompted"; readonly serverId: string; readonly sessionId: string; readonly text: string };
 
+/**
+ * Upper bound on the wait for the trailing event of an accepted prompt. The transcript stream and
+ * the prompt response are separate channels, so the response can land while the run's last events
+ * are still in flight; the server forwards both in worker emission order, which makes this wait
+ * resolve immediately in practice. The bound only covers a transcript stream that stops producing
+ * (a dropped attachment mid-run), where returning the partial result beats hanging the command.
+ */
+const RUN_TAIL_TIMEOUT_MS = 10_000;
+
 export interface RunClientOptions {
 	/** Directory searched when --connect is omitted. Defaults to PI_SERVER_DIR or ~/.pi/server. */
 	readonly directory?: string;
@@ -81,13 +90,19 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 
 		const agent = match.agent;
 		const completedText = new Map<string, string>();
+		const settledRuns = new Set<string>();
 		let deliveryTail = Promise.resolve();
+		let onRunSettled: (() => void) | undefined;
 		const unsubscribe = match.transcript.state.subscribe((value, _context, delivery) => {
 			if (delivery.kind !== "update" || value.event === null) return;
 			const event = value.event;
 			deliveryTail = deliveryTail.then(async () => {
 				if (event.type === "message_end" && event.runId !== undefined && event.message.role === "assistant") {
 					completedText.set(event.runId, messageText(event.message));
+				}
+				if (event.type === "run_end" || event.type === "run_suspend") {
+					settledRuns.add(event.runId);
+					onRunSettled?.();
 				}
 				await options.onEvent?.(event);
 			});
@@ -99,6 +114,22 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 		let response: AgentOperationResponse;
 		try {
 			response = await agent.prompt({ message: command.prompt, images: null }, BACKGROUND_CONTEXT);
+			// The response only reports the operation's outcome. Keep the subscription until the run's
+			// own terminal event has been delivered, so neither the caller's event stream nor the
+			// assistant text is truncated by tearing the subscription down on the other channel.
+			if (response.accepted && !settledRuns.has(response.operationId)) {
+				const operationId = response.operationId;
+				await new Promise<void>((resolveTail) => {
+					const timer = setTimeout(resolveTail, RUN_TAIL_TIMEOUT_MS);
+					timer.unref();
+					onRunSettled = () => {
+						if (!settledRuns.has(operationId)) return;
+						clearTimeout(timer);
+						resolveTail();
+					};
+				});
+				onRunSettled = undefined;
+			}
 		} finally {
 			unsubscribe();
 			await deliveryTail;

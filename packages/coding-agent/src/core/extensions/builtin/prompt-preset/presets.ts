@@ -7,6 +7,8 @@ import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
 import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
 import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
+import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
+import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
@@ -22,8 +24,10 @@ import { buildGpt5Prompt } from "./gpt-5.ts";
 import { buildGpt6AstraPrompt } from "./gpt-6-astra.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildGrok46Prompt } from "./grok-4.6.ts";
+import { buildGrok47Prompt } from "./grok-4.7.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
+import { buildKimiK28Prompt } from "./kimi-k2-8.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
 import { type PromptPresetName, type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
@@ -44,17 +48,23 @@ function normalizeModelId(modelId: string): string {
 	return modelId.toLowerCase().replace(/\s+/g, "-");
 }
 
-// GPT-6 Astra id shapes verified against the OpenAI model page, codex's
-// models.json, and Bedrock's catalog (2026-09-04): gpt-6-astra, gpt-6-astra-fast,
-// dated snapshots, openai/gpt-6-astra, openai.gpt-6-astra, global.openai.gpt-6-astra,
-// and the display name "GPT-6 Astra". Bare "gpt-6" and "astra" stay out: the guide
-// names no other GPT-6 model, and a future sibling deserves its own preset.
-function hasGpt6AstraSignal(value: string): boolean {
-	return /(?:^|[/@:._-])gpt[._-]?6[._-]astra(?:$|[/@:._-])/.test(normalizeModelId(value));
+// The GPT-6 family (Astra, 6.1 Sol, Sol, Luna) shares one prompting guide
+// (developers.openai.com/api/docs/guides/latest-model, 2026-09-23; GPT-6.1 Sol added
+// 2026-09-29), so every tier renders the gpt-6-astra preset; the preset keeps that name
+// because settings.json already pins it. Id shapes verified against the OpenAI model
+// pages, codex's models.json, models.dev, OpenRouter, Vercel and Bedrock's catalog:
+// gpt-6-sol, gpt-6.1-sol, gpt-6.1-sol-fast, gpt-6-luna-fast, dated snapshots,
+// openai/gpt-6-sol, openai/gpt-6.1-sol, openai-gpt-6-luna, global.openai.gpt-6-astra, Venice's
+// dotless openai-gpt-61-sol (it spells every point release that way: openai-gpt-56-sol), and
+// the display names "GPT-6 Sol" / "GPT-6.1 Sol" / "GPT-6 Luna". Bare "gpt-6", "gpt-6.1",
+// "gpt-61", "gpt-6-mini" and a lone tier word stay out: an unknown sibling deserves its own
+// decision, and the dotless form is accepted only with a single digit right after the 6.
+function hasGpt6FamilySignal(value: string): boolean {
+	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)?[._-](?:astra|sol|luna)(?:$|[/@:._-])/.test(normalizeModelId(value));
 }
 
-function isGpt6AstraModel(model: ModelWithPromptPresetMetadata): boolean {
-	return hasGpt6AstraSignal(model.id) || (model.name !== undefined && hasGpt6AstraSignal(model.name));
+function isGpt6FamilyModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGpt6FamilySignal(model.id) || (model.name !== undefined && hasGpt6FamilySignal(model.name));
 }
 
 type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5" | "gpt-5.6";
@@ -87,12 +97,29 @@ function isKimiK26Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK26Signal(model.id) || (model.name !== undefined && hasKimiK26Signal(model.name));
 }
 
+// Kimi Code addresses its models by rolling product ids rather than version tags:
+// Moonshot upgraded `kimi-for-coding` to K2.8 Preview in place on 2026-09-11 and
+// left `kimi-for-coding-highspeed` on K2.7 Code HighSpeed.
+// https://www.kimi.com/code/docs/en/kimi-code/models.html (checked 2026-09-18)
+const KIMI_CODE_K27_MODEL_ID = "kimi-for-coding-highspeed";
+const KIMI_CODE_K28_MODEL_ID = "kimi-for-coding";
+
 function hasKimiK27Signal(value: string): boolean {
-	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)7(?:$|[/@._:-])/.test(normalizeModelId(value));
+	const normalized = normalizeModelId(value);
+	return normalized === KIMI_CODE_K27_MODEL_ID || /(?:^|[/@._-])kimi-k2(?:[._-]|p)7(?:$|[/@._:-])/.test(normalized);
 }
 
 function isKimiK27Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK27Signal(model.id) || (model.name !== undefined && hasKimiK27Signal(model.name));
+}
+
+function hasKimiK28Signal(value: string): boolean {
+	const normalized = normalizeModelId(value);
+	return normalized === KIMI_CODE_K28_MODEL_ID || /(?:^|[/@._-])kimi-k2(?:[._-]|p)8(?:$|[/@._:-])/.test(normalized);
+}
+
+function isKimiK28Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasKimiK28Signal(model.id) || (model.name !== undefined && hasKimiK28Signal(model.name));
 }
 
 function hasKimiK3Signal(value: string): boolean {
@@ -104,8 +131,9 @@ function isKimiK3Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK3Signal(model.id) || (model.name !== undefined && hasKimiK3Signal(model.name));
 }
 
+// Exactly the SWE-2 lanes Devin's Cascade serves; every other swe-2 uid is refused upstream (#2306).
 function hasSWE2Signal(value: string): boolean {
-	return /(?:^|[/@:._-])swe-2-(?:high|max|low|high-lite)(?:$|[/@:._-])/.test(normalizeModelId(value));
+	return /(?:^|[/@:._-])swe-2-(?:medium|high|max)(?:$|[/@:._])/.test(normalizeModelId(value));
 }
 
 function isSWE2Model(model: ModelWithPromptPresetMetadata): boolean {
@@ -209,6 +237,16 @@ function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
 }
 
+function hasGrok47Signal(value: string): boolean {
+	// Same id shapes as hasGrok46Signal with a 4.7 minor version, including venice's dashed
+	// grok-4-7. Keep 4.6 / 4.5 / 4.3 / 4.20 / 3 out.
+	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?7(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGrok47Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGrok47Signal(model.id) || (model.name !== undefined && hasGrok47Signal(model.name));
+}
+
 // Claude Mythos shares each Fable release's prompting guide ("Prompting Claude
 // Fable 5.1" covers Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5"
 // covers Fable 5 and Mythos 5), so Mythos ids route to the matching Fable preset.
@@ -225,8 +263,23 @@ function isClaudeFable5Model(modelId: string): boolean {
 	return CLAUDE_FABLE_5_MARKERS.some((marker) => normalized.includes(marker));
 }
 
+const CLAUDE_OPUS_55_MARKERS = ["opus-5-5", "opus-5.5"] as const;
+
+function isClaudeOpus55Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_OPUS_55_MARKERS.some((marker) => normalized.includes(marker));
+}
+
 function isClaudeOpus5Model(modelId: string): boolean {
 	return normalizeModelId(modelId).includes("opus-5");
+}
+
+// Sonnet 5 keeps the default dynamic prompt; only the 5.5 release has a tuned core.
+const CLAUDE_SONNET_55_MARKERS = ["sonnet-5-5", "sonnet-5.5"] as const;
+
+function isClaudeSonnet55Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_SONNET_55_MARKERS.some((marker) => normalized.includes(marker));
 }
 
 type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
@@ -261,7 +314,7 @@ export function resolvePresetName(
 		return modelPromptPreset;
 	}
 
-	if (isGpt6AstraModel(model)) {
+	if (isGpt6FamilyModel(model)) {
 		return "gpt-6-astra";
 	}
 	const gpt5Version = extractGpt5Version(model.id);
@@ -270,6 +323,9 @@ export function resolvePresetName(
 	}
 	if (isSWE2Model(model) || isKimiK3Model(model)) {
 		return "kimi-k3";
+	}
+	if (isKimiK28Model(model)) {
+		return "kimi-k2-8";
 	}
 	if (isKimiK27Model(model)) {
 		return "kimi-k2-7";
@@ -284,8 +340,15 @@ export function resolvePresetName(
 	if (isClaudeFable5Model(model.id)) {
 		return "claude-fable-5";
 	}
+	// The dotted release must resolve before the generic opus-5 substring.
+	if (isClaudeOpus55Model(model.id)) {
+		return "claude-opus-5-5";
+	}
 	if (isClaudeOpus5Model(model.id)) {
 		return "claude-opus-5";
+	}
+	if (isClaudeSonnet55Model(model.id)) {
+		return "claude-sonnet-5-5";
 	}
 	const claudeVersion = extractClaudeOpusVersion(model.id);
 	if (claudeVersion) {
@@ -309,6 +372,9 @@ export function resolvePresetName(
 	}
 	if (isDeepseekV4ProModel(model)) {
 		return "deepseek-v4-pro";
+	}
+	if (isGrok47Model(model)) {
+		return "grok-4.7";
 	}
 	if (isGrok46Model(model)) {
 		return "grok-4.6";
@@ -347,12 +413,16 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildDeepseekV41FlashPrompt(options) };
 		case "deepseek-v4-pro":
 			return { name, prompt: buildDeepseekV4ProPrompt(options) };
+		case "grok-4.7":
+			return { name, prompt: buildGrok47Prompt(options) };
 		case "grok-4.6":
 			return { name, prompt: buildGrok46Prompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
 		case "kimi-k3":
 			return { name, prompt: buildKimiK3Prompt(options) };
+		case "kimi-k2-8":
+			return { name, prompt: buildKimiK28Prompt(options) };
 		case "kimi-k2-7":
 			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":
@@ -361,6 +431,10 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildClaudeFable51Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
+		case "claude-opus-5-5":
+			return { name, prompt: buildClaudeOpus55Prompt(options) };
+		case "claude-sonnet-5-5":
+			return { name, prompt: buildClaudeSonnet55Prompt(options) };
 		case "claude-opus-5":
 			return { name, prompt: buildClaudeOpus5Prompt(options) };
 		case "claude-opus-4-8":
@@ -382,6 +456,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 		promptGuidelines: options.promptGuidelines ?? [],
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
+		surface: options.surface ?? "terminal",
 	};
 }
 

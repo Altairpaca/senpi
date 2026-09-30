@@ -89,10 +89,13 @@ import type {
 } from "../tools/index.ts";
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
+import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 export type { BuildSystemPromptOptions } from "../system-prompt.ts";
+export * from "./session-control-types.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 
 export type ServiceTier = "auto" | "flex" | "priority";
@@ -489,19 +492,7 @@ export interface ExtensionContext {
 	 * Transient parent JS kernel-tool capability. Present only while a supported
 	 * JavaScript eval owns the host-tool context; absent on older runtimes.
 	 */
-	readonly kernelTools?: {
-		describe(names: readonly string[]): Promise<unknown>;
-		invoke(
-			request: {
-				name: string;
-				kernel_generation: number;
-				definition_revision: number;
-				args: unknown;
-				call_id: string;
-			},
-			signal?: AbortSignal,
-		): Promise<unknown>;
-	};
+	readonly kernelTools?: ExtensionKernelTools;
 	/** Abort the current agent operation */
 	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */
@@ -557,6 +548,18 @@ export interface ExtensionContext {
 	 * boundary. Persisted session messages are never modified.
 	 */
 	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
+	/**
+	 * The provider request prefix the next user turn will send, with an empty conversation:
+	 * the system prompt composed through a `before_agent_start` preview pass, the session's
+	 * tools in request order, and the request options (auth, reasoning, service tier, payload
+	 * hooks) resolved the way the turn resolves them.
+	 *
+	 * The preview pass invokes only handlers registered with `{ previewSafe: true }`, so the
+	 * result is `skipped` when any `before_agent_start` handler is not preview-safe, when no
+	 * model is selected, and when `signal` aborts or a user prompt starts composing its turn
+	 * before the prefix is built.
+	 */
+	getPromptCachePrefixRequest?(options?: PromptCachePrefixRequestOptions): Promise<PromptCachePrefixResult>;
 	/** Start user-visible compaction feedback before an extension has a precomputed summary to apply. */
 	beginCompaction?(options: BeginCompactionOptions): AbortSignal | undefined;
 	/** Stream user-visible compaction content while an extension-generated summary is available. */
@@ -590,11 +593,37 @@ export interface ExtensionContext {
 	updateToolHookStatus?(statusMessage: string): void;
 }
 
+/** Provider request prefix of the next user turn (see `ExtensionContext.getPromptCachePrefixRequest`). */
+export interface PromptCachePrefixRequest {
+	readonly model: Model<Api>;
+	readonly context: Context;
+	readonly options: SimpleStreamOptions;
+}
+
+export interface PromptCachePrefixRequestOptions {
+	/** Aborting stops the preview pass before its next handler and resolves the build as `skipped`. */
+	readonly signal?: AbortSignal;
+}
+
+/** Outcome of `ExtensionContext.getPromptCachePrefixRequest`. */
+export type PromptCachePrefixResult =
+	| { readonly status: "ready"; readonly request: PromptCachePrefixRequest }
+	| { readonly status: "skipped"; readonly reason: string };
+
 /** Request-local transformations shared by normal and compaction provider calls. */
 export interface ProviderRequestPreparation {
 	messages: AgentMessage[];
 	transformPayload(payload: unknown): Promise<unknown>;
 	transformHeaders(headers: ProviderHeaders): Promise<ProviderHeaders>;
+}
+
+export interface ExtensionTreeNavigationOptions {
+	summarize?: boolean;
+	customInstructions?: string;
+	replaceInstructions?: boolean;
+	label?: string;
+	/** The caller's last observed leaf, not the selected message's entry ID. */
+	expectedLeafId?: string;
 }
 
 /**
@@ -620,10 +649,10 @@ export interface ExtensionCommandContext extends ExtensionContext {
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	): Promise<{ cancelled: boolean }>;
 
-	/** Navigate to a different point in the session tree. */
+	/** Navigate by entry ID; the positional targetId form remains supported unchanged. */
 	navigateTree(
-		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
+		targetId: string | ({ entryId: string } & ExtensionTreeNavigationOptions),
+		options?: ExtensionTreeNavigationOptions,
 	): Promise<{ cancelled: boolean }>;
 
 	/**
@@ -633,6 +662,17 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	 * Rejects with the same typed errors as `AgentSession.editAssistantMessage`.
 	 */
 	editAssistantMessage(
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	): Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+
+	/**
+	 * Replace a user prompt with an edited copy, preserving attachments and the abandoned branch.
+	 * Uses the same options as editAssistantMessage; starts no turn. Rejects with UserEditError
+	 * (not-found, not-user, empty, stale-leaf) or SessionStreamingError, unchanged from core.
+	 */
+	editUserMessage(
 		entryId: string,
 		text: string,
 		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
@@ -716,6 +756,32 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 export type ToolExposure = "direct" | "search" | "eval";
 
 /**
+ * Globals a tool contributes to the persistent eval kernels while it is active. Each snippet runs before a cell
+ * only when one of `exports` is missing, and calls the tool through the ordinary `tool.<name>()` helper; a
+ * deactivated tool's exports are removed before the next cell. `documentation` is one line rendered into the
+ * eval prompt's helper list while the tool is active.
+ */
+export interface KernelPreludeContribution {
+	/** JavaScript statements that assign every name in `exports` onto `globalThis`. */
+	readonly javascript: string;
+	/** Python statements that bind every name in `exports` in the kernel namespace. */
+	readonly python: string;
+	readonly documentation: string;
+	/** Global names the snippets define; must not shadow a built-in kernel helper such as `display` or `tool`. */
+	readonly exports: readonly string[];
+}
+
+/** One permission request a tool's own parser derives from a call's input (see {@link ToolDefinition.permissionParser}). */
+export interface ToolPermissionRequest {
+	/** Permission class matched against rules, e.g. `"my_tool"` for `my_tool:read=allow`. */
+	readonly permission: string;
+	/** Patterns this call is checked against. */
+	readonly patterns: readonly string[];
+	/** Patterns an "always" approval of this call records. */
+	readonly always: readonly string[];
+}
+
+/**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
@@ -758,6 +824,14 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * prompt-cache prefix.
 	 */
 	promptGuidelines?: string[];
+	/** Optional eval-kernel globals installed while this tool is active; see {@link KernelPreludeContribution}. */
+	kernelPrelude?: KernelPreludeContribution;
+	/**
+	 * Optional permission parsing for this tool: the permission-system checks the returned requests instead of one
+	 * catch-all request named after the tool, so rules can grant tiers such as `my_tool:read=allow`. A built-in
+	 * parser for the same tool name always wins.
+	 */
+	permissionParser?: (input: Record<string, unknown>, cwd: string) => ToolPermissionRequest[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional OpenAI Responses freeform tool metadata. */
@@ -919,6 +993,16 @@ export interface SessionInfoChangedEvent {
 	name: string | undefined;
 }
 
+/** Fired when the last client detaches from a retained in-process RPC session. */
+export interface SessionParkedEvent {
+	type: "session_parked";
+}
+
+/** Fired when the first client reattaches to an open, parked in-process RPC session. */
+export interface SessionResumedEvent {
+	type: "session_resumed";
+}
+
 /** Fired before switching to another session (can be cancelled) */
 export interface SessionBeforeSwitchEvent {
 	type: "session_before_switch";
@@ -1076,6 +1160,8 @@ export interface SessionTreeEvent {
 export type SessionEvent =
 	| SessionStartEvent
 	| SessionInfoChangedEvent
+	| SessionParkedEvent
+	| SessionResumedEvent
 	| SessionBeforeSwitchEvent
 	| SessionBeforeForkEvent
 	| SessionBeforeReloadEvent
@@ -1130,12 +1216,38 @@ export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
 	/** The raw user prompt text (after expansion). */
 	prompt: string;
+	/**
+	 * Who started this turn: `"prompt"` for a user prompt (and a preview of one), `"extension"` for a
+	 * turn an extension triggered with `sendMessage(..., { triggerTurn: true })`, whose `prompt` is
+	 * that custom message's text.
+	 */
+	trigger: "prompt" | "extension";
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
 	/** The fully assembled system prompt string. */
 	systemPrompt: string;
 	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
 	systemPromptOptions: BuildSystemPromptOptions;
+	/**
+	 * `true` when the host composes the next turn's system prompt ahead of any user prompt
+	 * (the session-start prompt-cache prewarm). `prompt` is empty and no turn follows, so a
+	 * handler must return the system prompt it would return for a real turn but must not
+	 * consume one-shot state, start work, or change session state. Only handlers registered
+	 * with `{ previewSafe: true }` receive a preview.
+	 */
+	preview?: boolean;
+}
+
+/** Registration options for `pi.on("before_agent_start", handler, options)`. */
+export interface BeforeAgentStartHandlerOptions {
+	/**
+	 * Declares that the handler has no side effects when `event.preview` is `true`: it only
+	 * computes the system prompt a real turn would get, and consumes no one-shot state,
+	 * starts no work, and changes nothing a later turn observes. Only preview-safe handlers
+	 * run in a preview; while any registered `before_agent_start` handler is not preview-safe,
+	 * the host skips previews (and with them the session-start prompt-cache prewarm).
+	 */
+	previewSafe?: boolean;
 }
 
 /** Fired when an agent loop starts */
@@ -1279,6 +1391,16 @@ export interface ThinkingLevelSelectEvent {
 	type: "thinking_level_select";
 	level: ThinkingLevel;
 	previousLevel: ThinkingLevel;
+}
+
+/**
+ * Fired after the active tool set gains tools: `pi.setActiveTools()`, tool_search promotion, or a
+ * by-name call that lazily activates a deferred tool. Notification-only; `toolNames` lists only the
+ * newly active tools.
+ */
+export interface ToolActivatedEvent {
+	type: "tool_activated";
+	toolNames: string[];
 }
 
 // ============================================================================
@@ -1548,6 +1670,7 @@ export type ExtensionEvent =
 	| AgentStartEvent
 	| AgentEndEvent
 	| AgentSettledEvent
+	| SessionControlWakeEvent
 	| UIPromptStartEvent
 	| UIPromptEndEvent
 	| TurnStartEvent
@@ -1561,6 +1684,7 @@ export type ExtensionEvent =
 	| ModelSelectEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
+	| ToolActivatedEvent
 	| UserBashEvent
 	| InputEvent
 	| InputDispositionEvent
@@ -1707,6 +1831,15 @@ export type EntryRenderer<T = unknown> = (
 	theme: Theme,
 ) => Component | undefined;
 
+export interface EntryRendererOptions<T = unknown> {
+	/**
+	 * Return true when `next` should replace `previous` in place instead of rendering as a
+	 * second card. Only consulted when `previous` is the transcript card directly before
+	 * `next` (nothing visible in between) and both carry this renderer's custom type.
+	 */
+	readonly replaces?: (previous: CustomEntry<T>, next: CustomEntry<T>) => boolean;
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -1726,6 +1859,42 @@ export interface ResolvedCommand extends RegisteredCommand {
 }
 
 // ============================================================================
+// Session identity (per-session facts an extension is loaded with)
+// ============================================================================
+
+/**
+ * Engine-level visibility class of a session, chosen by whoever opened it
+ * (`open_session.kind`). `worker` sessions are machine-driven work (a task child, a
+ * team member) that clients do not list or mirror by default; every other session -
+ * classic launches, interactive opens, and any open that omits the field - is
+ * `interactive`.
+ */
+export type SessionKind = "interactive" | "worker";
+
+/**
+ * Opaque per-session labels the opener attached (`open_session.context`). The engine
+ * never interprets them: they carry no auth, no model and no resource decision, and
+ * exist so ONE host with ONE extension set can let an extension recognize the session
+ * it was loaded for.
+ */
+export type SessionContext = Readonly<Record<string, string>>;
+
+/** What a session opened without `context` sees - shared so no caller invents its own. */
+export const EMPTY_SESSION_CONTEXT: SessionContext = Object.freeze({});
+
+/** The per-session facts an extension factory may branch on at registration time. */
+export interface ExtensionSessionProfile {
+	readonly sessionKind: SessionKind;
+	readonly sessionContext: SessionContext;
+}
+
+/** The profile a classic launch (and any caller that names none) loads extensions with. */
+export const DEFAULT_EXTENSION_SESSION_PROFILE: ExtensionSessionProfile = Object.freeze({
+	sessionKind: "interactive",
+	sessionContext: EMPTY_SESSION_CONTEXT,
+});
+
+// ============================================================================
 // Extension API
 // ============================================================================
 
@@ -1743,8 +1912,18 @@ export interface ExtensionAPI {
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
-	/** Effective shared-host capability for registration-time extension decisions. */
-	readonly sharedHostEnabled: boolean;
+	/**
+	 * Visibility class of the session this extension instance was loaded for
+	 * (`open_session.kind`). `interactive` for classic launches and every open that
+	 * omits the field.
+	 */
+	readonly sessionKind: SessionKind;
+	/**
+	 * Opaque labels the opener attached to this session (`open_session.context`), or
+	 * `{}` when it attached none. One extension set can therefore serve every session
+	 * of a shared host and still gate itself per session.
+	 */
+	readonly sessionContext: SessionContext;
 
 	// =========================================================================
 	// Event Subscription
@@ -1754,6 +1933,8 @@ export interface ExtensionAPI {
 	on(event: "resources_discover", handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>): void;
 	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): void;
 	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): void;
+	on(event: "session_parked", handler: ExtensionHandler<SessionParkedEvent>): void;
+	on(event: "session_resumed", handler: ExtensionHandler<SessionResumedEvent>): void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
@@ -1781,10 +1962,15 @@ export interface ExtensionAPI {
 	): void;
 	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
-	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
+	on(
+		event: "before_agent_start",
+		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
+		options?: BeforeAgentStartHandlerOptions,
+	): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
+	on(event: "session_control_wake", handler: ExtensionHandler<SessionControlWakeEvent>): void;
 	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): void;
 	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
@@ -1798,6 +1984,7 @@ export interface ExtensionAPI {
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): void;
 	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
@@ -1838,7 +2025,7 @@ export interface ExtensionAPI {
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
 
-	/** Register a custom command. */
+	/** Register a custom command. Submit any text (`sendUserMessage`) inside the handler: text sent after it returns is not held behind the user's input. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
 
 	/** Register a keyboard shortcut. */
@@ -1880,7 +2067,11 @@ export interface ExtensionAPI {
 	registerMarkdownTransformer(transformer: MarkdownTransformer): void;
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
-	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+	registerEntryRenderer<T = unknown>(
+		customType: string,
+		renderer: EntryRenderer<T>,
+		options?: EntryRendererOptions<T>,
+	): void;
 
 	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
 	registerReadClassifier(classifier: ReadClassifier): () => void;
@@ -1899,6 +2090,7 @@ export interface ExtensionAPI {
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
+	 * From a command handler, send before the handler returns: text sent after it returned is not held behind the user's input.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
@@ -2071,6 +2263,9 @@ export interface ExtensionAPI {
 
 	/** Shared event bus for extension communication. */
 	events: EventBus;
+
+	/** Session control: external-message admission, its ledger, the durable header and the control endpoint. */
+	readonly session: SessionControlActions;
 }
 
 export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
@@ -2270,7 +2465,10 @@ export type RegisterLazyToolActivatorHandler = (activator: LazyToolActivator) =>
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with normalized exposure metadata and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "label" | "description" | "parameters" | "promptGuidelines" | "kernelPrelude" | "permissionParser"
+> & {
 	sourceInfo: SourceInfo;
 	exposure: ToolExposure;
 	searchText?: string;
@@ -2379,6 +2577,8 @@ export interface ExtensionActions {
 	setSessionModel: SetModelHandler;
 	setSessionThinkingLevel: SetThinkingLevelHandler;
 	setSessionFastMode: SetSessionFastModeHandler;
+	/** Bound by `AgentSession`; a runtime bound without it keeps the pre-bind stub. */
+	sessionControl?: SessionControlActions;
 }
 
 /**
@@ -2423,6 +2623,7 @@ export interface ExtensionContextActions {
 	getSystemPrompt: () => string;
 	getLoadedHookSources: () => LoadedHookSources;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
+	getPromptCachePrefixRequest?: (options?: PromptCachePrefixRequestOptions) => Promise<PromptCachePrefixResult>;
 }
 
 export interface LoadedHookSources {
@@ -2440,7 +2641,7 @@ export interface LoadedHookSources {
 
 /**
  * Actions for ExtensionCommandContext (ctx.* in command handlers).
- * Only needed for interactive mode where extension commands are invokable.
+ * Bound by interactive, print, and RPC modes where extension commands are invokable.
  */
 export interface ExtensionCommandContextActions {
 	waitForIdle: () => Promise<void>;
@@ -2453,15 +2654,13 @@ export interface ExtensionCommandContextActions {
 		entryId: string,
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	) => Promise<{ cancelled: boolean }>;
-	navigateTree: (
-		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-	) => Promise<{ cancelled: boolean }>;
+	navigateTree: (targetId: string, options?: ExtensionTreeNavigationOptions) => Promise<{ cancelled: boolean }>;
 	editAssistantMessage: (
 		entryId: string,
 		text: string,
 		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
 	) => Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+	editUserMessage: ExtensionCommandContext["editUserMessage"];
 	switchSession: (
 		sessionPath: string,
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
@@ -2489,6 +2688,8 @@ export interface Extension {
 	hidden?: boolean;
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
+	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
+	previewSafeHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;
@@ -2498,6 +2699,7 @@ export interface Extension {
 	messageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
+	entryRendererOptions?: Map<string, EntryRendererOptions>;
 	commands: Map<string, RegisteredCommand>;
 	/** Optional for compatibility with extension records created before RPC requests. */
 	rpcHandlers?: Map<string, ExtensionRpcRequestHandler>;

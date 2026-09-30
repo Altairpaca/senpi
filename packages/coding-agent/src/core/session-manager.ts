@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent, ThinkingSelection, Usage } from "@earendil-works/pi-ai";
+import { normalizeProviderId } from "@earendil-works/pi-ai";
 import { randomBytes, randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -14,14 +15,21 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir } from "fs/promises";
+import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
+import type { RepositoryIdentity } from "./repository-identity.ts";
+import { listSessionFilesInDir, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
+import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import {
+	discardFailedFirstFlush,
+	discardFailedFirstFlushAsync,
+	truncateToLastCompleteLine,
+} from "./session-write-recovery.ts";
 import {
 	hasOtherLiveSessionWriter,
 	registerSessionWriter,
@@ -289,6 +297,10 @@ export interface SessionInfo {
 	messageCount: number;
 	firstMessage: string;
 	allMessagesText: string;
+	/** Latest repository identity the session recorded (see `repository-identity`). */
+	repositoryIdentity?: RepositoryIdentity;
+	/** Set on sessions of the current repository recorded at a path that no longer exists. */
+	moved?: boolean;
 }
 
 export type ReadonlySessionManager = Pick<
@@ -498,7 +510,10 @@ function getSessionContextSettings(
 					preFallbackThinkingLevel = thinkingLevel;
 					preFallbackThinkingSelection = thinkingSelection;
 					if (entry.originalProvider && entry.originalModelId) {
-						model = { provider: entry.originalProvider, modelId: entry.originalModelId };
+						// Read boundary (senpi#1989): a session recorded by an earlier
+						// version carries the legacy provider id, so normalize on read.
+						// No rewrite is added here.
+						model = { provider: normalizeProviderId(entry.originalProvider), modelId: entry.originalModelId };
 						isModelSelectionExplicit = true;
 					}
 				}
@@ -517,13 +532,13 @@ function getSessionContextSettings(
 				// model id must not become an authoritative selection; the fallback-original restore
 				// above guards the same way, and a later assistant message still restores the model.
 				if (entry.provider && entry.modelId) {
-					model = { provider: entry.provider, modelId: entry.modelId };
+					model = { provider: normalizeProviderId(entry.provider), modelId: entry.modelId };
 					isModelSelectionExplicit = true;
 				}
 			}
 		} else if (entry.type === "message" && entry.message.role === "assistant" && !isInFallbackWindow) {
-			if (isModelSelectionExplicit && model?.provider === entry.message.provider) continue;
-			model = { provider: entry.message.provider, modelId: entry.message.model };
+			if (isModelSelectionExplicit && model?.provider === normalizeProviderId(entry.message.provider)) continue;
+			model = { provider: normalizeProviderId(entry.message.provider), modelId: entry.message.model };
 			isModelSelectionExplicit = false;
 		}
 	}
@@ -861,6 +876,13 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
+const SETUP_ONLY_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+	"session",
+	"model_change",
+	"model_change_rejected",
+	"thinking_level_change",
+]);
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -868,6 +890,9 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private headerWrite: Promise<void> | undefined;
+	// Set when an append to the flushed file failed and may have left a partial last line.
+	private tailMayBeTorn = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	// Runtime-only identity tracking lets AgentSession compare messages to a
@@ -929,7 +954,7 @@ export class SessionManager {
 		});
 
 		if (sessionFile) {
-			this._setSessionFile(sessionFile, preloadedFileEntries);
+			this._setSessionFile(sessionFile, preloadedFileEntries, newSessionOptions);
 		} else if (preloadedFileEntries?.length) {
 			this._loadEntries(preloadedFileEntries, newSessionOptions);
 		} else {
@@ -959,7 +984,11 @@ export class SessionManager {
 		this._setSessionFile(sessionFile);
 	}
 
-	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+	private _setSessionFile(
+		sessionFile: string,
+		preloadedFileEntries?: FileEntry[],
+		newSessionOptions?: NewSessionOptions,
+	): void {
 		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
@@ -976,7 +1005,8 @@ export class SessionManager {
 				}
 				// The explicit path is already granted above and keeps being written here:
 				// allocating a second path would take a grant no writer ever uses.
-				this._resetToNewSession();
+				// An empty file carries no identity yet, so a caller-supplied id still applies.
+				this._resetToNewSession(newSessionOptions);
 				this._rewriteFile();
 				this.flushed = true;
 				return;
@@ -1004,7 +1034,18 @@ export class SessionManager {
 			this.flushed = true;
 		} else {
 			// Same here: the explicit path from --session stays the only granted one.
-			this._resetToNewSession();
+			// The file does not exist yet, so this open CREATES the session: a caller-supplied
+			// id is the session's identity from here on. An EXISTING file never reaches this
+			// branch, which is why a supplied id can never overwrite a header id.
+			this._resetToNewSession(newSessionOptions);
+			// A host-minted id is referenced by nothing yet, so its file may wait for the first
+			// assistant message. A CALLER-chosen id is already held in the caller's own records:
+			// the file has to answer to it now, or a reopen before the first reply would mint a
+			// different identity and the caller's record would point at nothing (#2010).
+			if (newSessionOptions?.id !== undefined) {
+				this._rewriteFile();
+				this.flushed = true;
+			}
 		}
 	}
 
@@ -1134,13 +1175,12 @@ export class SessionManager {
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
-		const fd = openSync(this.sessionFile, "w");
-		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(entry))}\n`);
-			}
-		} finally {
-			closeSync(fd);
+		replaceFileAtomically(this.sessionFile, this._serializedFileEntries());
+	}
+
+	private *_serializedFileEntries(): Generator<string> {
+		for (const entry of this.fileEntries) {
+			yield `${JSON.stringify(this.residentStore.materialize(entry))}\n`;
 		}
 	}
 
@@ -1180,39 +1220,120 @@ export class SessionManager {
 		return this.residentStore.stats();
 	}
 
+	/**
+	 * Writes the buffered header (and anything buffered behind it) through an exclusive create, as
+	 * the first assistant message would, and appends every later entry immediately. A session that
+	 * is exposed to other processes needs its id on disk first: a reopen of a missing file mints a
+	 * new id. The write is asynchronous (the session path never blocks on the filesystem); entries
+	 * persisted while it runs are appended by it before the transcript counts as flushed.
+	 */
+	persistHeaderNow(): Promise<void> {
+		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? Promise.resolve();
+		const sessionFile = this.sessionFile;
+		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+			this.headerWrite = undefined;
+		});
+		return this.headerWrite;
+	}
+
+	isTranscriptFlushed(): boolean {
+		return this.flushed;
+	}
+
+	/**
+	 * Removes the session file when nothing happened in it - the header plus model/thinking setup
+	 * entries only - and returns to buffering, so a later entry cannot recreate a header-less file.
+	 */
+	async discardHeaderOnlyFile(): Promise<boolean> {
+		await this.headerWrite;
+		if (!this.persist || !this.sessionFile || !this.flushed) return false;
+		if (!this.fileEntries.every((entry) => SETUP_ONLY_ENTRY_TYPES.has(entry.type))) return false;
+		await rm(this.sessionFile, { force: true });
+		this.flushed = false;
+		return true;
+	}
+
+	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
+		reserveSessionWrite(sessionFile);
+		const entries = this.fileEntries;
+		const serialize = (batch: readonly FileEntry[]): string =>
+			batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join("");
+		let written = 0;
+		let handle: FileHandle | undefined = await open(sessionFile, "wx");
+		try {
+			while (written < entries.length) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await handle.writeFile(serialize(batch));
+			}
+			const closing = handle;
+			handle = undefined;
+			await closing.close();
+			// Entries persisted while the handle closed: append until a pass finds nothing new.
+			while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await appendFile(sessionFile, serialize(batch));
+			}
+		} catch (error) {
+			// This write created the file: a part-written one would fail every later first flush with
+			// EEXIST while the entries it was carrying stayed in memory only. Nothing counts as flushed yet.
+			return discardFailedFirstFlushAsync(sessionFile, handle, error);
+		}
+		// Synchronous with the last check above: no entry can land between it and the flag.
+		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
+			this.flushed = true;
+		}
+	}
+
+	/**
+	 * Writes `entry`, which is not in `fileEntries` yet, before memory commits it. A throw means the
+	 * file did not take the entry, so the caller commits nothing and no later entry can chain onto it.
+	 */
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
+		if (this.flushed) {
+			if (this.tailMayBeTorn) {
+				truncateToLastCompleteLine(this.sessionFile);
+				this.tailMayBeTorn = false;
+			}
+			try {
 				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
-			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
+			} catch (error) {
+				this.tailMayBeTorn = true;
+				throw error;
 			}
 			return;
 		}
 
-		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
-				}
-			} finally {
-				closeSync(fd);
+		// Entries stay in memory only until the branch holds an assistant message; then all are written.
+		const isAssistant = (e: FileEntry) => e.type === "message" && e.message.role === "assistant";
+		if (!isAssistant(entry) && !this.fileEntries.some(isAssistant)) return;
+
+		// An asynchronous header write owns the file until it finishes, and appends this entry.
+		if (this.headerWrite) return;
+		const fd = openSync(this.sessionFile, "wx");
+		try {
+			for (const e of [...this.fileEntries, entry]) {
+				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
 			}
-			this.flushed = true;
-		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
+		} catch (error) {
+			discardFailedFirstFlush(this.sessionFile, fd, error);
 		}
+		closeSync(fd);
+		this.flushed = true;
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
 		const residentEntry = this.residentStore.externalize(entry);
+		this._persist(residentEntry);
+		this._commitEntry(residentEntry);
+	}
+
+	private _commitEntry(residentEntry: SessionEntry): void {
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
@@ -1220,7 +1341,6 @@ export class SessionManager {
 		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
-		this._persist(residentEntry);
 	}
 
 	/**
@@ -1498,8 +1618,8 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			name: sanitizedName,
 		};
-		this.sessionNameCache = sanitizedName || undefined;
 		this._appendEntry(entry);
+		this.sessionNameCache = sanitizedName || undefined;
 		return entry.id;
 	}
 
@@ -1889,7 +2009,6 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		const fromId = this.leafId ?? "root";
-		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
 			id: generateId(this.byId),
@@ -2059,8 +2178,10 @@ export class SessionManager {
 	 * @param path Path to session file
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
+	 * @param options Applied only when this open CREATES the session (the path does not exist
+	 * yet, or exists and is empty). An existing session file keeps the id in its header.
 	 */
-	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+	static open(path: string, sessionDir?: string, cwdOverride?: string, options?: NewSessionOptions): SessionManager {
 		const resolvedPath = resolvePath(path);
 		reserveSessionWrite(resolvedPath);
 		let header: SessionHeader | null = null;
@@ -2086,7 +2207,7 @@ export class SessionManager {
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
+		return new SessionManager(cwd, dir, resolvedPath, true, options, preloadedFileEntries);
 	}
 
 	/**
@@ -2230,12 +2351,16 @@ export class SessionManager {
 				}
 			}
 
-			// Process all files with progress tracking
+			// Process each directory through its own summary index, with progress over all files
 			let loaded = 0;
-			const sessions = await listSessionInfos(dirFiles.flat(), () => {
+			const onLoaded = (): void => {
 				loaded++;
 				progress?.(loaded, totalFiles);
-			});
+			};
+			const sessions: SessionInfo[] = [];
+			for (const [index, dir] of dirs.entries()) {
+				sessions.push(...(await listSessionFilesInDir(dir, dirFiles[index] ?? [], onLoaded)));
+			}
 
 			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 			return sessions;

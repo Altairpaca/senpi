@@ -4,7 +4,9 @@ export type PromptPresetName =
 	| "auto"
 	| "claude-fable-5"
 	| "claude-fable-5-1"
+	| "claude-opus-5-5"
 	| "claude-opus-5"
+	| "claude-sonnet-5-5"
 	| "claude-opus-4-8"
 	| "claude-opus-4-7"
 	| "claude-opus-4-6"
@@ -17,7 +19,9 @@ export type PromptPresetName =
 	| "glm-5.3"
 	| "grok-4.5"
 	| "grok-4.6"
+	| "grok-4.7"
 	| "kimi-k3"
+	| "kimi-k2-8"
 	| "kimi-k2-7"
 	| "kimi-k2-6"
 	| "gpt-5"
@@ -34,11 +38,13 @@ export interface PromptPresetSettings {
 
 type SettingsWithPromptPreset = Settings & { promptPreset?: string };
 
-const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
+export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"auto",
 	"claude-fable-5",
 	"claude-fable-5-1",
+	"claude-opus-5-5",
 	"claude-opus-5",
+	"claude-sonnet-5-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
 	"claude-opus-4-6",
@@ -51,7 +57,9 @@ const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"glm-5.3",
 	"grok-4.5",
 	"grok-4.6",
+	"grok-4.7",
 	"kimi-k3",
+	"kimi-k2-8",
 	"kimi-k2-7",
 	"kimi-k2-6",
 	"gpt-5",

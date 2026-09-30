@@ -4,6 +4,7 @@ import type { Context } from "../context.ts";
 import type { AgentHarnessTool } from "../types.ts";
 import { FileError, getOrThrow } from "../types.ts";
 import { type ReadFolder, selectedReadFolder } from "../utils/read-folders/index.ts";
+import { prepareReadFolder } from "../utils/read-folders/prepare.ts";
 import { createDefaultReadSummary } from "../utils/segmented-read-view.ts";
 import {
 	DEFAULT_MAX_BYTES,
@@ -124,12 +125,14 @@ export function createReadTool<TContext extends ExecutionToolContext = Execution
 			}
 
 			const truncation = truncateHead(selectedContent);
+			// A selected grammar loads lazily here, on the first structural read for its language.
+			const folder = await prepareReadFolder(absolutePath, options.folder);
 			const summary = createDefaultReadSummary({
 				path: absolutePath,
 				text: textContent,
 				offset,
 				limit,
-				folder: options.folder,
+				folder,
 				truncated: truncation.truncated,
 			});
 			let outputText: string;

@@ -25,6 +25,10 @@ export interface FixtureOptions {
 	alwaysExpireToolCalls: boolean;
 	bearerToken: string | undefined;
 	spawnGrandchild: boolean;
+	/** Hold every tools/list reply until this file exists; each request is logged to `<path>.requests`. */
+	listToolsGate: string | undefined;
+	/** Append each request's Authorization header (`-` when absent) to this file, one line per request. */
+	authLog: string | undefined;
 }
 
 export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
@@ -55,6 +59,8 @@ export function parseFixtureOptions(argv: readonly string[]): FixtureOptions {
 		alwaysExpireToolCalls: argv.includes("--always-expire-tool-calls"),
 		bearerToken: readStringFlag(argv, "--bearer"),
 		spawnGrandchild: argv.includes("--spawn-grandchild"),
+		listToolsGate: readStringFlag(argv, "--list-tools-gate"),
+		authLog: readStringFlag(argv, "--auth-log"),
 	};
 	validateArgs(argv, options);
 	return options;
@@ -127,6 +133,8 @@ function validateArgs(argv: readonly string[], options: FixtureOptions): void {
 		"--instructions",
 		"--port",
 		"--bearer",
+		"--list-tools-gate",
+		"--auth-log",
 	]);
 	const bare = new Set([
 		"--wedge",

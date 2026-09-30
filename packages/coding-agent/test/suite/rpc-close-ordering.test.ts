@@ -10,9 +10,11 @@ import type { HostToSessionWorker } from "../../src/modes/rpc/session-worker-pro
 import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
 import { createHarness } from "./harness.ts";
 
-vi.mock("node:worker_threads", async () => {
+vi.mock("node:worker_threads", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:worker_threads")>();
 	const { EventEmitter } = await import("node:events");
 	return {
+		...actual,
 		Worker: class extends EventEmitter {
 			postMessage(): void {}
 			terminate(): Promise<number> {
@@ -50,11 +52,11 @@ async function closeFixture() {
 				break;
 			case "bind":
 			case "command":
+			case "prompt_surface":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":
 			case "cancel_ui":
-			case "display":
 				break;
 			default: {
 				const exhaustive: never = message;
@@ -130,7 +132,7 @@ it("publishes successful close only after native exit removes ownership", async 
 	expect(beforeExit).toEqual([]);
 	expect(retained).toBe(1);
 	expect(host.records).toEqual([
-		{ type: "session_closed", sessionId: host.sessionId },
+		{ type: "session_closed", sessionId: host.sessionId, reason: "client_close" },
 		{ id: "close", type: "response", command: "close_session", success: true, data: {}, sessionId: host.sessionId },
 	]);
 	expect(await Promise.all(host.observations)).toEqual(
@@ -169,7 +171,11 @@ it.each(["error", "failure"] as const)(
 		await host.writer.flush();
 		// Then: error identity is retained but no terminal record precedes removal.
 		expect(beforeExit).toEqual([]);
-		expect(host.records).toContainEqual({ type: "session_closed", sessionId: host.sessionId });
+		expect(host.records).toContainEqual({
+			type: "session_closed",
+			sessionId: host.sessionId,
+			reason: "error",
+		});
 		expect(host.records).toContainEqual({
 			type: "response",
 			command: "close_session",

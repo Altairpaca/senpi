@@ -144,9 +144,9 @@ describe("selected read folders (#1639)", () => {
 		expect(Object.isFrozen(agent.selectedReadFolder)).toBe(true);
 		expect(agent.READ_FOLDER_SELECTION.languages).toEqual({
 			ts: "raw",
-			js: "raw",
+			js: "wasm",
 			json: "heuristic",
-			tsx: "unsupported",
+			tsx: "raw",
 			python: "unsupported",
 			rust: "unsupported",
 			go: "unsupported",
@@ -155,10 +155,10 @@ describe("selected read folders (#1639)", () => {
 		});
 		expect(agent.READ_FOLDER_SELECTION.head).toMatch(/^[a-f0-9]{40}$/);
 		expect(agent.READ_FOLDER_SELECTION.rawReasons).toEqual({
-			ts: "wasm_candidate_pending_owner",
-			js: "wasm_candidate_pending_owner",
+			ts: "wasm_candidate_below_threshold",
+			tsx: "wasm_candidate_below_threshold",
 		});
-		expect(agent.READ_FOLDER_SELECTION.wasm).toBe(false);
+		expect(agent.READ_FOLDER_SELECTION.wasm).toBe(true);
 		expect(agent.selectedReadFolder.id).toBe("measured-brace");
 		expect(agent.selectedReadFolder.version).toBe("3");
 	});

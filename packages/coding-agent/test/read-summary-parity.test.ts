@@ -79,11 +79,11 @@ describe("structural read parity (#1639)", () => {
 				),
 			);
 		}));
-	it("keeps requalified JS raw and summarizes selected JSON", () =>
+	it("summarizes selected JavaScript and JSON while TypeScript stays raw (#1685)", () =>
 		privateDir(async (cwd) => {
 			const tools = readers(cwd);
 			for (const [path, text, summary] of [
-				["x.js", source(100), false],
+				["x.js", source(100), true],
 				["x.ts", source(), false],
 				[
 					"x.json",

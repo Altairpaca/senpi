@@ -11,6 +11,7 @@ import {
 } from "./session-exit.ts";
 import { getNativeSessionFactory } from "./session-native.ts";
 import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
+import { RawOutputTail } from "./session-raw-tail.ts";
 import type {
 	CreateNativeTerminalSession,
 	TerminalSessionBackend,
@@ -25,21 +26,7 @@ import type {
 	TerminalSessionTerminateOptions,
 } from "./session-types.ts";
 
-export type {
-	CreateNativeTerminalSession,
-	TerminalSessionBackend,
-	TerminalSessionDataHandler,
-	TerminalSessionDependencies,
-	TerminalSessionExit,
-	TerminalSessionExitError,
-	TerminalSessionExitState,
-	TerminalSessionHandle,
-	TerminalSessionNativeOptions,
-	TerminalSessionOperationResult,
-	TerminalSessionOptions,
-	TerminalSessionSignal,
-	TerminalSessionTerminateOptions,
-} from "./session-types.ts";
+export type * from "./session-types.ts";
 
 /** Default wait for a graceful exit before `terminate()` escalates to SIGKILL. */
 const DEFAULT_TERMINATE_GRACE_MS = 5000;
@@ -54,15 +41,13 @@ export class TerminalSession {
 	private readonly env: Readonly<Record<string, string | undefined>>;
 	private readonly runtimeVersions: import("./session-bun.ts").BunRuntimeVersions;
 	private readonly bunRuntime: import("./session-bun.ts").BunRuntime | undefined;
-	private readonly rawTailLimit: number;
+	private readonly rawOutput: RawOutputTail;
 	private readonly dataHandlers = new Set<TerminalSessionDataHandler>();
 	private readonly exitHandlers = new Set<() => void>();
 	private backendHandle: TerminalSessionHandle | null = null;
 	private backendValue: TerminalSessionBackend | null = null;
 	private exitPromise: Promise<TerminalSessionExit> | null = null;
 	private settledExit: TerminalSessionExit | null = null;
-	private rawTailBuffer = Buffer.alloc(0);
-	private rawByteCount = 0;
 	// Last signal actually handed to the backend. Tracking the signal (instead of a
 	// boolean) keeps repeated kills idempotent while still letting an escalation
 	// (e.g. SIGKILL after an ignored SIGTERM) reach the process.
@@ -81,7 +66,7 @@ export class TerminalSession {
 		this.runtimeVersions =
 			dependencies.runtimeVersions ?? (process.versions as import("./session-bun.ts").BunRuntimeVersions);
 		this.bunRuntime = dependencies.bunRuntime;
-		this.rawTailLimit = normalizeRawTailBytes(options.rawTailBytes);
+		this.rawOutput = new RawOutputTail(normalizeRawTailBytes(options.rawTailBytes));
 	}
 
 	get native(): NativePtyLoadResult {
@@ -95,6 +80,14 @@ export class TerminalSession {
 
 	get backend(): TerminalSessionBackend | null {
 		return this.backendValue;
+	}
+
+	get pid(): number | undefined {
+		return this.backendHandle?.pid;
+	}
+
+	get processGroupId(): number | undefined {
+		return this.backendHandle?.processGroupId;
 	}
 
 	get command(): string {
@@ -118,11 +111,11 @@ export class TerminalSession {
 	}
 
 	get rawTail(): Buffer {
-		return Buffer.from(this.rawTailBuffer);
+		return this.rawOutput.bytes;
 	}
 
 	get rawOutputBytes(): number {
-		return this.rawByteCount;
+		return this.rawOutput.totalBytes;
 	}
 
 	get exitState(): TerminalSessionExitState {
@@ -289,19 +282,8 @@ export class TerminalSession {
 
 	private emitData(chunk: Buffer | Uint8Array | string): void {
 		const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-		this.appendRawTail(buffer);
+		this.rawOutput.append(buffer);
 		for (const handler of this.dataHandlers) handler(buffer);
-	}
-
-	private appendRawTail(chunk: Buffer): void {
-		this.rawByteCount += chunk.byteLength;
-		if (this.rawTailLimit === 0) {
-			this.rawTailBuffer = Buffer.alloc(0);
-			return;
-		}
-		const next = Buffer.concat([this.rawTailBuffer, chunk]);
-		this.rawTailBuffer =
-			next.byteLength <= this.rawTailLimit ? next : next.subarray(next.byteLength - this.rawTailLimit);
 	}
 }
 

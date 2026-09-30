@@ -1,3 +1,4 @@
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -27,22 +28,17 @@ export interface WorkerSnapshot {
 	/** Every canonical path this worker's live session writers still own. */
 	liveSessionPaths: readonly string[];
 	busy: boolean;
+	/** Turn/request activity, excluding durable wake-source holds. */
+	handoffBusy?: boolean;
 	streaming: boolean;
-}
-
-export interface WorkerDisplay {
-	revision: number;
-	width: number;
-	rendered: boolean;
-	capabilities: readonly string[];
 }
 
 export type HostToSessionWorker =
 	| { type: "prepare"; request: number; configuration: CliRuntimeConfiguration; profile: RpcSessionLaunchProfile }
 	| { type: "commit"; request: number }
-	| { type: "bind"; request: number; sessionId: string; display: WorkerDisplay; connection?: string }
-	| { type: "command"; request: number; command: object; connection?: string; display: WorkerDisplay }
-	| { type: "display"; display: WorkerDisplay }
+	| { type: "bind"; request: number; sessionId: string; capabilities: readonly string[]; connection?: string }
+	| { type: "command"; request: number; command: object; connection?: string }
+	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "cancel_ui" }
 	| { type: "close" };
 
@@ -52,16 +48,15 @@ export type SessionWorkerToHost =
 	| { type: "result"; request: number; error?: string }
 	| { type: "reserve"; path: string; signal: SharedArrayBuffer }
 	| { type: "snapshot"; snapshot: WorkerSnapshot; signal: SharedArrayBuffer; settled?: boolean }
-	| { type: "control_done"; control: "display" | "cancel_ui" }
+	| { type: "control_done"; control: "cancel_ui" }
 	| {
 			type: "output";
 			record: object;
 			connection?: string;
 			signal: SharedArrayBuffer;
-			activity: Pick<WorkerSnapshot, "busy" | "streaming">;
+			activity: Pick<WorkerSnapshot, "busy" | "handoffBusy" | "streaming">;
 			snapshot?: WorkerSnapshot;
 	  }
-	| { type: "width"; connection?: string; width: number; signal: SharedArrayBuffer }
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "request_close" }
 	| { type: "failure"; error: string };

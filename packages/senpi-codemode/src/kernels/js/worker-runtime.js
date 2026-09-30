@@ -6,12 +6,17 @@ import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { installShellCapture } from "./worker-shell-capture.js";
+import { bindKernelBun } from "./worker-webview.js";
 import { createWorkpool } from "./workpool.js";
 import { inKernelToolInvoke } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolRegistry, createToolNamespace } from "./kernel-tools-registry.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
+// One stable source URL for the loader/contribution prelude: a per-cell URL makes
+// every cell a distinct eval source string, so the code cache gains one entry
+// per cell for text that is identical until contributions change.
+const PRELUDE_SOURCE_URL = "senpi:kernel-prelude";
 // How long a child gets to honour SIGTERM before SIGKILL. Short, because the
 // cell has already produced its value and the caller is waiting on settle.
 const CHILD_TERMINATION_GRACE_MS = 1_000;
@@ -56,8 +61,8 @@ export class JsWorkerRuntime {
 				if (!isPlainObject(prepared) || typeof prepared.prelude !== "string" || typeof prepared.code !== "string") throw new Error("Invalid prepared JavaScript cell payload");
 				({ prelude, code: cellCode } = prepared);
 			}
-			if (prelude) indirectEval(prelude, `${cellId}:prelude`);
-			const value = await awaitMaybePromise(indirectEval(wrapUserCode(cellCode), cellId));
+			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
+			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), cellId));
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
@@ -305,7 +310,9 @@ export class JsWorkerRuntime {
 				: JSON.parse(String(text))
 			: text;
 		if (!handle) return output;
-		const details = isPlainObject(responseRecord.details) ? responseRecord.details : responseRecord;
+		const details = Object.hasOwn(responseRecord, "id")
+			? responseRecord
+			: isPlainObject(responseRecord.details) ? responseRecord.details : responseRecord;
 		const id = details.id;
 		if (id === undefined || id === null) return { text, output: text, handle: null, id: null, agent: null };
 		const node = {
@@ -317,6 +324,9 @@ export class JsWorkerRuntime {
 			agent: details.agent ?? callArgs.agent ?? null,
 		};
 		if (Object.hasOwn(callArgs, "schema")) node.data = output;
+		if (isPlainObject(responseRecord.details) && Object.hasOwn(responseRecord.details, "isolation")) {
+			node.details = { isolation: responseRecord.details.isolation };
+		}
 		for (const key of ["isolated", "patchPath", "branchName", "nestedPatches", "changesApplied", "isolationSummary"]) {
 			if (details[key] !== undefined) node[key] = details[key];
 		}

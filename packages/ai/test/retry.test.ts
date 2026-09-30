@@ -33,6 +33,8 @@ const anthropicOrphanServerToolMessage =
 	'400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.1: `web_search` tool use with id `srvtoolu_01Gchdhqw1UaCNUuVq2LhMH9` was found without a corresponding `web_search_tool_result` block"},"request_id":"req_011CdQL9JsEk5NWJxWQX4NiG"}';
 const anthropicInvalidMaxTokensMessage =
 	'400 {"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be greater than or equal to 1"}}';
+const gatewayStreamingIndexReplayRejectionMessage =
+	"the reasoning_details at position 1271 entry 0 must not contain streaming index";
 const apitopiaToolSchemaRejectionMessage =
 	'500 data: {"error":{"message":"500 server_error: Invalid request: tools.function.parameters.type is required and must be \\"object\\"","type":"server_error","code":500,"status":500,"statusCode":500,"isRetryable":true}}\n\ndata:[DONE]\n\n';
 const moonshotToolSchemaRejectionMessage =
@@ -320,6 +322,33 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: anthropicOrphanServerToolMessage }),
 			),
 		).toBe(true);
+	});
+
+	it("classifies replayed-reasoning streaming-index rejections as retryable", () => {
+		// A gateway rejects a replayed `reasoning_details` entry that still carries the
+		// streaming-assembly `index`, and the offending bytes live in stored history, so
+		// every later request fails identically. The request builder strips the field
+		// before the retried request is built, so the retry sends a valid payload and
+		// unwedges the session instead of dead-ending it (senpi#2122).
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: gatewayStreamingIndexReplayRejectionMessage,
+				}),
+			),
+		).toBe(true);
+	});
+
+	it("keeps unrelated request-shape rejections terminal", () => {
+		// The streaming-index pattern must not widen into the request-shape class: a
+		// rejected tool schema is the same bytes on every attempt and stays terminal.
+		for (const errorMessage of [apitopiaToolSchemaRejectionMessage, moonshotToolSchemaRejectionMessage]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage })),
+				errorMessage,
+			).toBe(false);
+		}
 	});
 
 	it("retries an empty outcome only when its reasoning was already forwarded live", () => {

@@ -83,12 +83,12 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Startup provider (e.g., `"anthropic"`, `"openai"`; saved with Ctrl+S in `/model`, or edited manually) |
 | `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
-| `recommendedModels` | string[] | `kimi-k3`, `gpt-6-astra`, `gpt-5.6-sol`, `claude-fable-5-1`, `claude-opus-5`, `glm-5.2` | Preferred default model ids in priority order. Built-in thinking levels are kimi-k3/`max`, GPT-6 Astra/`high`, GPT-5.6 Sol/`medium`, claude-fable-5-1/`high`, claude-opus-5/`xhigh`, glm-5.2/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
+| `recommendedModels` | string[] | `kimi-k3`, `gpt-6-astra`, `gpt-5.6-sol`, `claude-fable-5-1`, `claude-opus-5-5`, `glm-5.2` | Preferred default model ids in priority order. Built-in thinking levels are kimi-k3/`max`, GPT-6 Astra/`high`, GPT-5.6 Sol/`medium`, claude-fable-5-1/`high`, claude-opus-5-5/`max`, glm-5.2/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 | `modelThinkingLevels` | object | - | Per-model reasoning effort memory (`"provider/id": "level"`) |
 | `modelLastOnThinkingLevels` | object | - | Per-model last non-off reasoning level, used by `/reasoning on` to restore the previous effort |
 | `modelServiceTiers` | object | - | Per-model service tier memory (`"provider/id": "auto" \| "priority"`) |
-| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
@@ -254,6 +254,8 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `retry.fallbackChains` | `Record<string, string[]>` | `{}` | Ordered exact model-selector to fallback-selector chains |
 | `retry.fallbackRevertPolicy` | `"cooldown-expiry"` \| `"never"` | `"cooldown-expiry"` | Automatic primary-model restoration policy |
 | `retry.abortServerSideFallback` | boolean | `true` | Abort a turn when the provider substitutes a different model after a classifier decline |
+| `fallback.circuitCooldownMs` | number | `60000` | First circuit-breaker cooldown for a chain entry that failed out of its chain; doubles on each consecutive failure; `0` disables the breaker |
+| `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |
 | `retry.maxAgentDelayMs` | number | `60000` | Hard ceiling on agent-level retry delay (60s), applied after the retry profile and jitter |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
 | `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
@@ -291,7 +293,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 #### Model fallback chains
 
-`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5`, so Fable 5.1 and Fable 5 keep a fallback chain whichever provider serves them; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
+`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5:max`, then `claude-opus-5:max`, `claude-opus-4-8:max`, and `claude-opus-4-6:max` - and for `claude-opus-5-5` - `claude-opus-5:max`, then `claude-opus-4-8:max`, then `claude-opus-4-6:max` - so Fable 5.1, Fable 5 and Opus 5.5 keep a fallback chain whichever provider serves them, and a fallback never leaves the Anthropic family; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
 
 ```json
 {
@@ -319,6 +321,28 @@ Billing-class failures — Anthropic's 400 *credit balance is too low*, OpenAI's
 
 Anthropic streaming refusals are identified from typed `stopDetails`. A configured candidate receives an immediate **pinned** fallback switch with a user-visible fallback notice: Senpi does not retry the refusing model and a pinned fallback never auto-reverts. Set `retry.fallbackRevertPolicy` to `"cooldown-expiry"` (the default) to return an unpinned fallback to its primary after the primary's cooldown expires, or `"never"` to keep the fallback until you change models.
 
+#### Fallback circuit breaker
+
+When a chain entry fails with a provider-health failure, Senpi opens a circuit for that entry: a transient failure (timeout, overload, 429, 5xx, transport drop) once its retry budget is spent, or a billing, credit, quota, or budget exhaustion at once, including on the last entry of the chain. Authentication (401/403) and request-shape rejections do not open a circuit. The circuit is shared by every session in the process that uses the same agent directory - sessions started with `/new`, `/resume`, or `/fork`, and in-process subagents - so they skip the entry without sending it a request or spending its retry budget:
+
+- A session whose current model has an open circuit moves to the next chain entry with a closed circuit at the turn boundary (shown as a `transient` model fallback). Mid-turn fallbacks skip open entries the same way.
+- The cooldown starts at `fallback.circuitCooldownMs` and doubles on each consecutive failure, up to `fallback.circuitMaxCooldownMs`. A provider `Retry-After` (seconds or HTTP-date, on 429 and 503 responses) keeps the circuit open until that time when it is longer, and a later failure without a hint never shortens it. An accepted response from the entry closes the circuit and resets the escalation.
+- After the cooldown the circuit is half-open: the first request to use the entry again - a session's turn or a background 429 probe-back - holds its only probe until the probe settles, and every other request keeps skipping it, including the other request lane of the same session. While the circuit tracks an entry, its clock (monotonic, like every cooldown) decides when a fallback returns to it. The probe closes the circuit as soon as the entry streams a response; its first provider-health failure re-opens the circuit with the doubled cooldown and falls back immediately, without same-model retries. A user abort, a request-shaped error, or disposal hands the probe back. A probe that never answers is aborted as a provider failure after the stream-start guard (5 minutes when `retry.provider.streamStartTimeoutMs` is 0).
+- 429 probe-back probes of a demoted primary respect the circuit: none is sent before the provider's retry-after or the cooldown elapses, or while another session holds the probe.
+- The chain never refuses a turn: if every remaining entry is open, the request still goes to the current entry (or the first open candidate) as a probe.
+- Refusals and request-shaped hard errors do not open circuits. Selecting a model yourself closes its circuit.
+
+Circuits are process-local like the rest of the fallback state and are never persisted. Set `fallback.circuitCooldownMs` to `0` to turn the breaker off:
+
+```json
+{
+  "fallback": {
+    "circuitCooldownMs": 60000,
+    "circuitMaxCooldownMs": 1800000
+  }
+}
+```
+
 #### Provider-substituted models
 
 Anthropic's server-side fallback betas can retry a classifier-declined request on a substitute model *inside the same response*, marking the handoff with a `fallback` content block; a gateway may enable this on your behalf. Honoring that response means paying for a model you did not select, and after the first handoff Anthropic routes later turns of the conversation straight to the substitute with no marker at all — reported only as a `fallback_message` entry in `usage.iterations`.
@@ -331,7 +355,7 @@ Set it to `false` to keep the substituted response instead. If a gateway in fron
 
 Fallback decisions are process-local. A `senpi-task` or subagent child process reads its own settings and maintains its own in-memory suppression state; it does not affect its parent process. Disable fallback for one run without changing settings with `--no-model-fallback` or `SENPI_NO_FALLBACK=1`.
 
-For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cooldowns, switches, reverts, manual clears, and validation warnings to `<agentDir>/logs/fallback.log`. The file is mode `0600` and rotates at 5 MB (`fallback.log.1`).
+For diagnostics, Senpi writes sanitized NDJSON records for candidate skips, cooldowns, circuit opens (`circuit_opened`) and turn-boundary circuit skips (`circuit_open_skip`), switches, reverts, manual clears, and validation warnings to `<agentDir>/logs/fallback.log`. `/session` reports what failed requests cost the session: failed-request counts and share, time spent in failed requests, and retries that succeeded after a failure in the same user turn but read nothing from the prompt cache, with their uncached input tokens. Prompts under 2,048 tokens are never counted as cache misses, because providers do not cache prompts that small; the token counts come from the provider's usage report, while tying the miss to the failure is the report's reading of the turn. The file is mode `0600` and rotates at 5 MB (`fallback.log.1`).
 
 ### Message Delivery
 
@@ -363,14 +387,27 @@ When unset, senpi leaves provider payloads unchanged. This setting currently app
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `claudeSdkOauthProvider.enabled` | boolean | `false` | Enable the ambient (host-CLI-derived) lane of `claude-sdk-oauth`. Env override: `SENPI_CLAUDE_SDK_OAUTH_ENABLED`. Explicit senpi-side logins (stored OAuth accounts in `auth.json`, `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts) keep the provider available with this unset |
+| `anthropicSubscriptionProvider.enabled` | boolean | `false` | Enable the ambient (host-CLI-derived) lane of `anthropic-subscription`. Env override: `SENPI_CLAUDE_SDK_OAUTH_ENABLED`. Explicit senpi-side logins (stored OAuth accounts in `auth.json`, `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts) keep the provider available with this unset |
 | `cursorCliOauthProvider.enabled` | boolean | `false` | Enable the `cursor-cli-oauth` fallback lane and automatic native credential bootstrap. Env override: `SENPI_CURSOR_CLI_OAUTH_ENABLED` |
+| `providers.<id>.maxConcurrency` | number | unlimited | Cap the streaming requests senpi keeps in flight against one provider, keyed by registry provider id (`anthropic`, `openai`, ...). `0`, a negative value, a fraction, or an absent key all mean unlimited |
+
+`providers.<id>.maxConcurrency` queues further requests to that provider in arrival order and starts each one as soon as an in-flight response finishes. The slot covers the provider request alone, never a whole agent turn, so a parent session releases it before its tools run and a spawn tree deeper than the cap cannot deadlock behind itself. Providers stay unlimited until you set a positive integer, and changing the cap takes effect immediately, including for requests already queued. A malformed value is reported as a startup warning and read as unlimited.
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "maxConcurrency": 4
+    }
+  }
+}
+```
 
 Both ambient-auth providers are explicit opt-in: a vendor CLI being logged in on the machine is not consent to spend that subscription. Before these gates existed, a logged-in Claude Code or `cursor-agent` CLI made the lane available with no senpi-side action, so subscription usage could flow through a provider you never configured. Env overrides follow the usual precedence (`env > project settings > global settings > default`). See [providers.md](providers.md) for the full lane documentation.
 
 ```json
 {
-  "claudeSdkOauthProvider": {
+  "anthropicSubscriptionProvider": {
     "enabled": true
   },
   "cursorCliOauthProvider": {
@@ -500,6 +537,13 @@ Disable for one run without changing settings with `--no-ask-user` (wins over `a
 
 While a question is pending, the terminal title shows `? <header>` unless an active tool title takes precedence. Settlement restores the previous title layer. Set `askUser.bell: false` to keep the title and question display without a bell.
 
+### Todo
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `todo.firstTurnPlan` | `"force"` \| `"remind"` \| `"off"` | `"force"` | First prompt of a session that is not a question (`?`/`!` ending): `"remind"` adds a hidden reminder to open the turn with a phased `todo` init; `"force"` also sends a named `tool_choice` for `todo` on that first request where the provider accepts one (Anthropic models whose compat allows forced tool choice with thinking off, OpenAI Responses, OpenAI Chat Completions unless `compat.supportsForcedToolChoice` is `false`), otherwise it falls back to the reminder. A provider that refuses the forced choice gets the request once more without it, and that model is not forced again for the rest of the process; `"off"` disables both. Print and JSON modes never arm |
+| `todo.turnEndBackstop` | `boolean` | `true` | When a main-session turn (not print/json, no active goal or continuation) ends text-only while the todo list still has open tasks and the final paragraph does not ask the user a question, queue a hidden `senpi.todo-owed` followUp nudging the next open task. At most two per chain of unattended turns; the third notifies once and stays silent until the next accepted user message |
+
 ### Sessions
 
 | Setting | Type | Default | Description |
@@ -547,11 +591,11 @@ Only `session_shutdown` is bounded; other extension events (including ask-user a
 ```json
 {
   "modelThinkingLevels": {
-    "openai-codex/gpt-5.6-sol": "xhigh",
+    "chatgpt-subscription/gpt-5.6-sol": "xhigh",
     "anthropic/claude-fable-5-1": "high"
   },
   "modelServiceTiers": {
-    "openai-codex/gpt-5.6-sol": "priority"
+    "chatgpt-subscription/gpt-5.6-sol": "priority"
   }
 }
 ```
@@ -592,7 +636,7 @@ The service tier on outgoing requests is resolved as:
 2. The model catalog's `compat.serviceTier`
 3. `openai.serviceTier` (the global OpenAI setting)
 
-The per-model `modelServiceTiers` memory is not part of that resolution: it applies to OpenAI Codex
+The per-model `modelServiceTiers` memory is not part of that resolution: it applies to ChatGPT Subscription
 models only, through fast mode. It acts as the session-start default for `/fast` (a remembered
 `"priority"` starts the session fast) and as an explicit `"auto"` opt-out of a catalog-inherited
 priority tier, which keeps `service_tier` off the wire. Under a `:priority` pin the memory has no

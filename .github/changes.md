@@ -1,5 +1,204 @@
 # changes
 
+## 2026-09-29 - Model catalog publish runs only in the upstream repository (senpi#1522)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: the `publish` job runs only when `github.repository` is `badlogic/pi-mono`, and a new `Check R2 credentials` step skips the R2 upload with a notice when the access key or secret is empty. The `generate` job still builds and validates the catalog in every repository.
+
+### Why
+
+- The upload targets the upstream pi-artifacts R2 bucket, and this fork has no credentials for it, so every scheduled run inside the publication window failed at `aws s3 cp` with `Unable to locate credentials`.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `publish` job `if:` line and the steps before `Publish model catalog to R2` in `publish-model-catalog.yml`.
+
+## 2026-09-29 - Node bundle CI step runs the reinstall regression file (senpi#2358)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/node-bundle-reinstall.test.ts`, which replaces the installed package with a different build under a running RPC session and requires the next prompt to succeed under Node and Bun.
+
+### Why
+
+- A session started before a global reinstall died at its next lazy chunk import; the test keeps the runtime snapshot that prevents it from regressing.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
+## 2026-09-29 - Static checks install Bun for the bun.lock drift gate (senpi#2352)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Static checks` job sets up Bun 1.4.2 before `npm run check`, which now runs `check:bun-lock`.
+
+### Why
+
+- `check:bun-lock` resolves bun.lock with Bun in an isolated island and fails when a fresh `bun install` would rewrite it; the job had no Bun.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Static checks` job steps in `ci.yml`.
+
+## 2026-09-29 - Node bundle CI step runs the Cursor exec regression file (senpi#2334)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/node-bundle-cursor-exec.test.ts`, which drives the built CLI under Node and Bun with an exec-channel provider and checks the tool call runs once.
+
+### Why
+
+- The double execution only exists in the built bundle, where `chunks/cursor-agent.js` carries its own module copies; source-level tests cannot see it.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
+## 2026-09-28 - WebView CI step runs the orphaned-launch regression file (senpi#2272)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `webview-kernel` job's vitest command also lists `test/js-kernel-webview-launch.test.ts`, the real-Chrome regression for a launch whose kernel is released mid-launch.
+
+### Why
+
+- The test lives in its own file so it runs in a process no earlier test has stopped or killed Chrome in: inside the resilience file it wedged GitHub's macOS runners (bisected in #2272; root cause tracked in #2290). The executed-suites check still requires at least 10 passed tests.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Run eval kernel WebView suites (Bun)` step in `ci.yml`.
+
+## 2026-09-28 - Windows CI job for durable scheduled prompts (senpi#2216)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `schedule-windows` job builds the workspace entries and runs `test/suite/schedule-runner.test.ts`, `schedule-extension.test.ts` and `schedule-cli.test.ts` on windows-latest, and is added to the `Check and test` fan-in and its summary.
+
+### Why
+
+- The coding-agent test job is Linux-only and the POSIX CLI suite is skipped on Windows, so rename claims, runner leases, ungated delivery locks, `taskkill` timeouts and `cmd.exe` `--exec` hooks had no coverage on the platform where they behave differently (the quoted `--exec` bug was found by this job).
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the job list before `rpc-windows` and the `check-and-test` `needs` list and summary in `ci.yml`.
+
+## 2026-09-28 - Cross-OS CI job for eval-kernel Bun.WebView (senpi#2248)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `webview-kernel` job runs the Bun-only `senpi-codemode` WebView suites (`js-kernel-webview*.test.ts`) under `bunx --bun vitest` on ubuntu-latest, windows-latest and macos-latest, fails when the JSON report shows they were skipped instead of executed (one Windows skip allowed: the `SIGSTOP` case), and is added to the `Check and test` fan-in.
+
+### Why
+
+- Chrome-backed WebViews from eval cells go through the main-thread service; only a Bun run with a real Chrome on each OS proves it, and Windows (the reported platform) has no other coverage.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the job list before `test-workspaces` and the `check-and-test` `needs` list and summary in `ci.yml`.
+
+## 2026-09-28 - Native prebuilds no longer build the desktop engine (senpi#2128)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the desktop engine build, staging assertion, `file_senpi_desktop_engine` manifest line, desktop crate tests, desktop lifecycle probe, Windows interactive-desktop smoke, and the `crates/senpi-desktop-*` / `packages/desktop-*` path filters are removed; the Rust cache key is `native-<target>`. The PTY and grep prebuilds are unchanged.
+
+### Why
+
+- The engine and its CI live in omo (`desktop-engine.yml`, code-yeongyu/oh-my-openagent#8893).
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the build and stage steps of `native-prebuilds.yml`.
+
+## 2026-09-24 - Build and verify the senpi-desktop-engine binary in the native matrix (senpi#2128)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: every row builds the `senpi-desktop-engine` binary (`cargo zigbuild` on the Linux rows, `cargo build --target` elsewhere) and stages it next to the `.node` files; the Stage step asserts exactly one `senpi-desktop-engine*` file and records `file_senpi_desktop_engine=` in `manifest.txt`; the non-cross rows run the desktop crate tests and a lifecycle probe (`scripts/ci/probe-desktop-engine.mjs`: `--selftest`, `capabilities` reports `fake` / `unavailable`); the win32-x64 row runs `scripts/ci/windows-interactive-desktop-smoke.ps1` (SendInput click + UI Automation read on a WinForms window). Path filters add `crates/senpi-desktop-*/**`, `packages/desktop-*/**`, and `scripts/ci/**`; `Swatinem/rust-cache` keyed per target; `timeout-minutes` 45 -> 75.
+
+### Why
+
+- The desktop engine ships as a per-platform binary; packaging must be exercised on all six targets before any native backend exists, and the Windows desktop QA job needs proof that the hosted runner has an interactive desktop.
+
+### Why an extension could not handle it
+
+- CI workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: fork-only workflow; the path filters, the build/stage steps, and `manifest.txt` fields of `native-prebuilds.yml`.
+
+## 2026-09-23 - Windows Claude Code executable job and SDK currency gate (senpi#2053)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new `claude-executable-windows` job (windows-latest, Node 24 + Bun 1.4.2) runs the Claude executable path-lookup tests and the real-file npm `claude.cmd` shim test under Node and Bun, then fails if the shim test was skipped instead of passing; it is part of the `Check and test` fan-in.
+- `.github/workflows/releasability.yml`: `model-catalog-regen` runs `scripts/check-claude-code-model-support.mjs --strict` after regeneration; new nightly `claude-sdk-currency` job runs it `--sdk-currency` and reports through `report-failure`.
+
+### Why
+
+- The Windows shim resolution only exists on a real Windows host, and no existing Windows job ran the Claude executable tests (oh-my-openagent#8700). A pinned Claude Agent SDK behind the newest release is how new Claude models shipped unusable twice; the nightly gate turns that into a tracked issue without redding PR bases.
+
+### Why an extension could not handle it
+
+- CI workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `Check and test` needs/summary in `ci.yml`; the `report-failure` needs/env/results in `releasability.yml`.
+
+## 2026-09-17 - Run the `senpi host` named-pipe cell on the Windows RPC job (senpi#1782)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-windows` job gains one step, `bunx vitest run test/suite/host-cli-win32.test.ts`, after the socket-transport step. It is the win32 cell of the `senpi host` contract: a second `ensure` reuses the daemon on the named pipe, and `handoff` refuses with `upgrade_unsupported`.
+
+### Why
+
+- Both properties are platform-specific and cannot be observed on POSIX: the endpoint is a pipe derived from the socket path, and a named pipe can be neither renamed nor drained, so the handoff must refuse rather than attempt one. The POSIX suites skip on win32 by construction, so without this step nothing would run that cell.
+
+### Why an extension could not handle it
+
+- CI job definition; it selects which suites run on which runner.
+
+### Expected merge conflict zones
+
+- LOW: the step list of the `rpc-windows` job.
+
 ## 2026-09-14 - Exercise Node worker bundles on Linux
 
 ### What changed

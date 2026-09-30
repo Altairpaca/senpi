@@ -4,6 +4,7 @@ import type {
 	BedrockCompat,
 	CacheRetention,
 	ModelCost,
+	ModelThinkingLevel,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 	ProviderId,
@@ -24,6 +25,11 @@ export interface Model<TApi extends Api> {
 	 * use provider defaults. null marks any level as unsupported.
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
+	/**
+	 * Level to start at when the user has not chosen one for this model, for example the default an
+	 * OpenAI-compatible endpoint advertises. Clamped to the supported levels like any other request.
+	 */
+	defaultThinkingLevel?: ModelThinkingLevel;
 	input: ("text" | "image" | "video")[];
 	cost: ModelCost;
 	contextWindow: number;
@@ -85,5 +91,13 @@ export interface CursorAgentCompat {
 		thinkingMode?: boolean;
 		/** Exact catalog variant sent when no explicit selection exists. */
 		representativeVariantId: string;
+		/**
+		 * Derived-group variant ids: normalized thinking level -> the exact
+		 * server-listed variant id observed in the live catalog. Present only on
+		 * identities derived at runtime from ids the static alias table does not
+		 * list; explicit selections resolve through it before any capability
+		 * lookup (senpi#2038).
+		 */
+		variantIds?: Readonly<Partial<Record<ModelThinkingLevel, string>>>;
 	};
 }

@@ -119,8 +119,46 @@ describe("CombinedAutocompleteProvider dollar invocation suggestions", () => {
 			(await getSuggestions(provider, "explain $deb"))?.items.map((item) => item.value),
 			["$debugging"],
 		);
-		assert.strictEqual(await getSuggestions(provider, "$missing $deb"), null);
 		assert.strictEqual(await getSuggestions(provider, "$deb", 1), null);
+	});
+
+	it("offers skills only once the dollar token is not the first token", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+
+		assert.deepStrictEqual(
+			(await getSuggestions(provider, "explain $"))?.items.map((item) => item.value),
+			["$debugging", "$frontend"],
+		);
+	});
+
+	it("reopens for a later dollar token after an earlier mention or an unknown token", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "fix $debugging then $fro";
+
+		const result = await getSuggestions(provider, line);
+
+		assert.deepStrictEqual(
+			result?.items.map((item) => item.value),
+			["$frontend"],
+		);
+		assert.strictEqual(result?.prefix, "$fro");
+		assert.deepStrictEqual(provider.applyCompletion([line], 0, line.length, result!.items[0]!, result!.prefix), {
+			lines: ["fix $debugging then $frontend "],
+			cursorLine: 0,
+			cursorCol: "fix $debugging then $frontend ".length,
+		});
+		assert.deepStrictEqual(
+			(await getSuggestions(provider, "$missing $deb"))?.items.map((item) => item.value),
+			["$debugging"],
+		);
+	});
+
+	it("closes once the token is exactly a known skill so enter submits", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+
+		assert.strictEqual(await getSuggestions(provider, "$debugging"), null);
+		assert.strictEqual(await getSuggestions(provider, "run $debugging"), null);
+		assert.strictEqual(await getSuggestions(provider, "$frontend $debugging"), null);
 	});
 
 	it("leaves shell variables and positional parameters literal", async () => {

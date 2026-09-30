@@ -46,7 +46,11 @@ export async function readSurface(command, directory, files) {
 			writeFileSync(join(directory, file.path), file.content);
 			const full = await session.read([{ id: `${file.id}-default`, args: { path: file.path } }]);
 			assert.deepEqual(full.identity.folder, { id: "measured-brace", version: "3" });
-			assert.equal(full.identity.selection.wasm, false);
+			// The surface under test must carry the frozen selection, including its grammar engine (#1685).
+			assert.equal(full.identity.selection.languages.json, "heuristic");
+			assert.equal(full.identity.selection.languages.js, "wasm");
+			assert.equal(full.identity.selection.wasm, true);
+			assert.equal(full.identity.parserInitCounters.selectedParserRuntimes, 1);
 			const output = text(full.results[0].result);
 			const elided = output.split("\n").includes("\u2026") ? ranges(output) : [];
 			const requests = [
@@ -102,6 +106,35 @@ export function readSummaryControl() {
 		content,
 		sha256: createHash("sha256").update(content).digest("hex"),
 		language: "json",
+	};
+}
+
+/**
+ * A JavaScript control the dependency-free scan cannot fold: its decorators are not a token the
+ * lexer can prove, so only the grammar engine summarizes it. A summary here means the shipped
+ * surface really loaded its grammar (#1685).
+ */
+export function readSummaryGrammarControl() {
+	const content = Array.from({ length: 12 }, (_, index) =>
+		[
+			`@registry.entry("module-${index}")`,
+			`class Module${index} {`,
+			"  run(input) {",
+			"    const first = input.first;",
+			"    const second = input.second;",
+			"    const third = first + second;",
+			"    const fourth = third * 2;",
+			"    return fourth;",
+			"  }",
+			"}",
+		].join("\n"),
+	).join("\n");
+	return {
+		id: "grammar-control",
+		path: "grammar-control.js",
+		content,
+		sha256: createHash("sha256").update(content).digest("hex"),
+		language: "js",
 	};
 }
 

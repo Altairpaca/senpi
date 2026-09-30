@@ -48,7 +48,7 @@ const ASTRA_MIN_ROWS = 13;
 const CALVER = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
 function parseArgs(argv) {
-	const args = { root: process.cwd(), anthropicSdk: "0.123.0" };
+	const args = { root: process.cwd(), anthropicSdk: "0.127.0" };
 	for (let index = 0; index < argv.length; index += 1) {
 		const flag = argv[index];
 		if (flag === "--root") args.root = argv[(index += 1)];
@@ -168,7 +168,7 @@ function runSourceChecks(root, args, fail) {
 	const pkg = readJson(`${CA}/package.json`);
 	if (pkg) {
 		if (pkg.name !== "@code-yeongyu/senpi") fail(`${CA}/package.json: name is ${pkg.name}`);
-		if (pkg.bin?.senpi !== "dist/cli.js") fail(`${CA}/package.json: bin.senpi is ${pkg.bin?.senpi}`);
+		if (pkg.bin?.senpi !== "dist/bundle/cli.js") fail(`${CA}/package.json: bin.senpi is ${pkg.bin?.senpi}`);
 		if (!CALVER.test(pkg.version ?? "")) fail(`${CA}/package.json: version ${pkg.version} is not CalVer`);
 		for (const entry of [".", "./rpc-entry", "./client"]) {
 			if (pkg.exports?.[entry] === undefined) fail(`${CA}/package.json: exports["${entry}"] missing`);
