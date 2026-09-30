@@ -7696,6 +7696,7 @@ export class AgentSession {
 		// Pre-admission ("threshold") runs only before a natural next request: the truncated response's
 		// failed tool results or queued input follow it, so there is no truncated final attempt to retry.
 		const recoverableLength =
+			inlineReason !== "threshold" &&
 			sameModel &&
 			usageScope.projected &&
 			isRecoverableLength(assistantMessage, this.model?.maxTokens ?? 0);
