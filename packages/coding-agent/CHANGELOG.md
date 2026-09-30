@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the `accept-edits` permission preset: project reads and edits are allowed, while shell commands, outside paths and other tools require approval. Multi-session hosts advertise `permission_preset_accept_edits` so clients can fall back to `ask` on older engines. ([#2430](https://github.com/code-yeongyu/senpi/issues/2430))
+
 - `SENPI_PROMPT_SURFACE=chat` (or `open_session.promptSurface: "chat"`, host capability `prompt_surface_chat`) renders every built-in system prompt for a chat bridge that posts each reply to people in a conversation: everything the `app` surface does, plus no Ask / For you / Now / Next handoff block and no todo or ledger lines in replies; the todo tool stops appending its "Handoff due" cue, and a finalized reply that still carries a routing line, a handoff block or todo-ledger lines has them removed before it is emitted or saved (streamed deltas are not rewritten). Terminal and app prompts are unchanged. ([#2398](https://github.com/code-yeongyu/senpi/issues/2398))
 
 ### Changed
@@ -14,6 +16,8 @@
 
 ### Fixed
 
+- Resuming a session whose pending ask-user question was recorded with arguments that no longer form a valid question set no longer leaves a "0 unanswered" question widget that crashes the TUI (`Cannot read properties of undefined (reading 'question')`) when expanded. The call now settles as `orphaned-after-restart`, the same way a question lost in a restart does, so the model learns it was lost and can ask again. The question overlay also keeps its active question in range for any requested index, and clicking the collapsed widget when every question already has an answer submits those answers instead of opening a question that does not exist. Reported by @copycatcode, thanks. ([omo#9268](https://github.com/code-yeongyu/oh-my-openagent/issues/9268))
+
 - On the `anthropic-subscription` lane, a `write` or `edit` to a file outside the working directory no longer comes back as `File has not been read yet` while senpi still makes the change. Claude Code's built-in Write/Edit ran their own read check before senpi could answer, so one call got a refusal and a success, and a model that retried applied the edit twice. senpi now offers `write` and `edit` to Claude Code as its own tools, so each call runs once and returns one result, as on the direct Anthropic lanes. Existing sessions reattach once to pick up the new tool list. Reported by @haamsuk-collab. ([#2401](https://github.com/code-yeongyu/senpi/issues/2401))
 
 - A running session survives an update that changes how the package's dependencies are laid out (for example a release with `bundledDependencies` followed by one without). Its runtime snapshot used to link each dependency back to the install, so after such an update every PTY tool (bash, monitor) and `eval` failed with `ENOENT` on the missing directory until restart. The snapshot now holds its own copy of every package the install's dependency graph reaches (copy-on-write clones where the filesystem supports them, otherwise hardlinks, otherwise plain copies; type declarations and source maps are left out). The first launch after an update builds it once, which added about 2 to 3 s on macOS in our measurements; every later launch starts as before. ([#2408](https://github.com/code-yeongyu/senpi/issues/2408))
@@ -21,6 +25,8 @@
 - A shared RPC host keeps running the build it started with when the install is replaced. The host supervisor and its host children used to start the install's unbundled `dist/cli-main.js`, even from a runtime snapshot, so an update could break or silently change a running shared host. They now start the snapshot's own bundled CLI and claim the snapshot like a session does, and a new launch still picks up the new build. ([#2409](https://github.com/code-yeongyu/senpi/issues/2409))
 
 - An answer sent to a terminal session's pending question through its control endpoint now reaches the model with its text. A text-only answer (`answers: {}` plus a `comment`, which relaying clients send) used to arrive as an empty `[Answer to question <id>]`; the terminal now settles every answer by the same rule as a multi-session host, so both surfaces deliver the same message, and a frame with neither answers nor a comment is refused `question_incomplete` instead of resolving empty. ([#2407](https://github.com/code-yeongyu/senpi/issues/2407))
+
+- Answering a pending question no longer gets the first-turn todo reminder or a forced `todo` tool call when the question came from a turn the user did not type, such as a first-launch onboarding greeting or a request delivered through the session control endpoint. The model now acts on the answer, and the first request the user types afterwards now opens with a phased todo list. ([#2419](https://github.com/code-yeongyu/senpi/issues/2419))
 
 ### Removed
 
