@@ -2,6 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { estimateTokens } from "../../src/core/compaction/index.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -255,8 +256,16 @@ describe("AgentSession actionable boundaries", () => {
 			],
 		});
 		harnesses.push(harness);
+		// Fork 2026-08-30 (core/changes.md): entry_appended is published only while bound in rpc mode, and
+		// there it also covers the prompt's own message entries; count the two boundary entries.
+		await harness.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
 		harness.session.subscribe((event) => {
-			if (event.type === "entry_appended") snapshots.push(JSON.stringify(harness.session.messages));
+			if (
+				event.type === "entry_appended" &&
+				(event.entry.type === "custom" || event.entry.type === "custom_message")
+			) {
+				snapshots.push(JSON.stringify(harness.session.messages));
+			}
 		});
 		harness.setResponses([fauxAssistantMessage("done")]);
 
@@ -623,7 +632,11 @@ describe("AgentSession actionable boundaries", () => {
 		harness.sessionManager.appendCompaction("summary", retainedId, 10_001);
 		harness.session.refreshContext();
 
-		expect(harness.session.getContextUsage()?.tokens).toBeNull();
+		// Fork 3640c66976 (agent-session-stats.test.ts): with no post-compaction usage the fork estimates the
+		// current messages instead of reporting unknown; the retained 10,001-token usage is not reused.
+		const usage = harness.session.getContextUsage();
+		expect(usage?.tokens).toBe(harness.session.messages.reduce((sum, message) => sum + estimateTokens(message), 0));
+		expect(usage?.tokens).toBeLessThan(10_000);
 	});
 
 	it("persists custom context sent during pre-settlement before continuing", async () => {
@@ -772,7 +785,8 @@ describe("durable length recovery", () => {
 
 		expect(executed).toBe(false);
 		expect(harness.faux.state.callCount).toBe(2);
-		expect(requests[0]).toContain("may be truncated");
+		// Fork agent-loop wording (createIncompleteToolCallErrorMessage, kept by L1) for the same refusal.
+		expect(requests[0]).toContain("hit the output token limit");
 		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "context_edit")).toBe(false);
 	});
 
@@ -810,19 +824,21 @@ describe("durable length recovery", () => {
 
 		await harness.session.prompt("x".repeat(5000));
 
-		const omittedIds = harness.sessionManager
-			.getEntries()
-			.filter((entry) => entry.type === "context_edit")
-			.map((entry) => entry.targetId);
 		const lengthResponses = harness.sessionManager
 			.getEntries()
 			.filter(
 				(entry) =>
 					entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "length",
 			);
+		// L3a decision (decisions.md:127): the fork drops each truncated attempt from agent state and
+		// compacts before retrying it once, instead of a persistent context_edit omission. The reset budget
+		// shows as a second full compact-and-retry for the second truncation.
 		expect(lengthResponses).toHaveLength(2);
-		expect(omittedIds).toEqual(expect.arrayContaining(lengthResponses.map((entry) => entry.id)));
-		expect(harness.faux.state.callCount).toBe(3);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(2);
+		expect(harness.session.messages.some((message) => /^(first|second) partial$/.test(getMessageText(message)))).toBe(
+			false,
+		);
+		expect(harness.faux.state.callCount).toBe(4);
 	});
 
 	it("gives a distinct queued follow-up its own length-recovery budget", async () => {
@@ -865,11 +881,12 @@ describe("durable length recovery", () => {
 					? [entry.id]
 					: [],
 			);
-		const omitted = harness.sessionManager
-			.getEntries()
-			.flatMap((entry) => (entry.type === "context_edit" ? [entry.targetId] : []));
+		// L3a decision (decisions.md:127): each truncated attempt is dropped from agent state and retried after
+		// its own recovery compaction; neither survives in the model context.
 		expect(lengthIds).toHaveLength(2);
-		expect(omitted).toEqual(expect.arrayContaining(lengthIds));
+		expect(
+			harness.session.messages.some((message) => /^(first|follow-up) partial$/.test(getMessageText(message))),
+		).toBe(false);
 		expect(harness.faux.state.callCount).toBe(4);
 	});
 
@@ -914,15 +931,16 @@ describe("durable length recovery", () => {
 		harness.session.refreshContext();
 		harness.setResponses([fauxAssistantMessage("new answer")]);
 
-		await harness.session.prompt("next prompt");
+		// L3a decision (decisions.md:127): the fork recovers the truncated attempt through compaction without a
+		// persistent omission; with that compaction cancelled the admission stays fail-closed (no request sent)
+		// and the replacement recorded for the source entry is left as it was.
+		await expect(harness.session.prompt("next prompt")).rejects.toThrow("compaction did not complete");
 
 		const edits = harness.sessionManager.getEntries().filter((entry) => entry.type === "context_edit");
-		expect(edits.filter((entry) => entry.targetId === partialId).at(-1)?.replacement).toBeNull();
-		expect(
-			harness.sessionManager
-				.buildSessionProjection()
-				.messages.some((message) => getMessageText(message) === "edited partial"),
-		).toBe(false);
+		expect(edits.filter((entry) => entry.targetId === partialId).at(-1)?.replacement).toEqual({
+			content: [{ type: "text", text: "edited partial" }],
+		});
+		expect(harness.faux.state.callCount).toBe(0);
 	});
 
 	it("recovers an explicit overflow error after a retained boundary replacement", async () => {
@@ -967,8 +985,10 @@ describe("durable length recovery", () => {
 
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(overflowId).toBeDefined();
-		const edits = harness.sessionManager.getEntries().filter((entry) => entry.type === "context_edit");
-		expect(edits.filter((entry) => entry.targetId === overflowId).at(-1)?.replacement).toBeNull();
+		// L3a decision (decisions.md:127): the retained error is dropped from agent state and compacted, not
+		// omitted by a context_edit, so the retry context no longer carries it.
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(harness.session.messages.some((message) => getMessageText(message) === "retained error")).toBe(false);
 	});
 
 	it("keeps follow-up work behind an automatic error retry", async () => {
@@ -1046,17 +1066,15 @@ describe("durable length recovery", () => {
 
 		await harness.session.prompt("x".repeat(5000));
 
+		// L3a decision (decisions.md:127): no persistent omission is written; a failed recovery compaction
+		// restores the truncated attempt into agent state from the session and does not retry.
 		const entries = harness.sessionManager.getEntries();
-		expect(entries.some((entry) => entry.type === "context_edit")).toBe(true);
+		expect(entries.some((entry) => entry.type === "context_edit")).toBe(false);
 		expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
 		expect(
 			entries.some((entry) => entry.type === "message" && getMessageText(entry.message) === "partial response"),
 		).toBe(true);
-		expect(
-			harness.sessionManager
-				.buildSessionProjection()
-				.messages.some((message) => getMessageText(message) === "partial response"),
-		).toBe(false);
+		expect(harness.session.messages.some((message) => getMessageText(message) === "partial response")).toBe(true);
 		expect(harness.faux.state.callCount).toBe(2);
 	});
 });
