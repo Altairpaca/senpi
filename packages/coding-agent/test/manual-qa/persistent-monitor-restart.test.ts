@@ -13,7 +13,12 @@ import registerTerminalExtension from "../../src/core/extensions/builtin/termina
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
 import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
 import { whenRestoreDecided } from "../../src/core/extensions/builtin/terminal/restore-session.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionToolContext,
+	ToolDefinition,
+} from "../../src/core/extensions/types.ts";
 
 const harness = vi.hoisted(() => ({
 	/** Every TerminalManifestWriter the extension constructs, so the test can await its own flush. */
@@ -171,28 +176,28 @@ it("restores persistent monitors across two session generations and enforces the
 			{ command: "sleep 30", description: "background bash", run_in_background: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const fileResult = await monitor.execute(
 			"file",
 			{ description: "deploy changes", path: deploy, event: "modify", persistent: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const commandResult = await monitor.execute(
 			"command",
 			{ description: "service log", command: `tail -n 0 -F ${service}`, persistent: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const ephemeralResult = await monitor.execute(
 			"ephemeral deadline",
 			{ description: "temporary wait", command: "sleep 30", timeout_ms: 60_000 },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		commandMonitorId = String(commandResult.details?.monitor_id ?? "");
 		originalRuntimeId = String(commandResult.details?.bash_id ?? "");
@@ -267,9 +272,21 @@ it("restores persistent monitors across two session generations and enforces the
 		if (b) {
 			const kill = b.tools.get("kill_bash");
 			if (kill && backgroundId)
-				await kill.execute("cleanup-background", { bash_id: backgroundId }, undefined, undefined, b.context);
+				await kill.execute(
+					"cleanup-background",
+					{ bash_id: backgroundId },
+					undefined,
+					undefined,
+					b.context as ExtensionToolContext,
+				);
 			if (kill && restoredRuntimeId)
-				await kill.execute("cleanup-monitor", { bash_id: restoredRuntimeId }, undefined, undefined, b.context);
+				await kill.execute(
+					"cleanup-monitor",
+					{ bash_id: restoredRuntimeId },
+					undefined,
+					undefined,
+					b.context as ExtensionToolContext,
+				);
 			await b.fire("session_shutdown", { type: "session_shutdown", reason: "quit" });
 		}
 		if (a && !b) await a.fire("session_shutdown", { type: "session_shutdown", reason: "quit" });

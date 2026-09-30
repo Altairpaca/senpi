@@ -1013,19 +1013,19 @@ export function createRpcConnectionHandler(
 			}
 
 			case "steer": {
-				await session.steer(command.message, command.images, {
+				const disposition = await session.steer(command.message, command.images, {
 					enqueueOrder: command.enqueueOrder,
 					source: "rpc",
 				});
-				return success(id, "steer");
+				return success(id, "steer", { disposition });
 			}
 
 			case "follow_up": {
-				await session.followUp(command.message, command.images, {
+				const disposition = await session.followUp(command.message, command.images, {
 					enqueueOrder: command.enqueueOrder,
 					source: "rpc",
 				});
-				return success(id, "follow_up");
+				return success(id, "follow_up", { disposition });
 			}
 
 			case "abort": {

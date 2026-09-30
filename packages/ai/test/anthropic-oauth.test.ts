@@ -5,6 +5,7 @@ import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 const PREFERRED_CALLBACK_PORT = 53692;
+const nativeFetch = globalThis.fetch;
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -241,6 +242,44 @@ describe("Anthropic OAuth", () => {
 		expect(prompts.some((p) => p.type === "manual_code")).toBe(true);
 		// the prompt's signal is aborted once login settles, so UIs can dismiss it
 		expect(manualSignal?.aborted).toBe(true);
+	});
+
+	it("completes login through the browser callback and shows the sign-in page", async () => {
+		let exchangedCode: string | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+				if (getUrl(input) !== "https://platform.claude.com/v1/oauth/token")
+					return nativeFetch(input as string, init);
+				exchangedCode = getJsonBody(init).code;
+				return jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 });
+			}),
+		);
+
+		let callbackPage: Promise<Response> | undefined;
+		const credential = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type !== "auth_url") return;
+				const authUrl = new URL(event.url);
+				const state = authUrl.searchParams.get("state") ?? "";
+				// The fork listener binds 53692 or an ephemeral port and advertises it in redirect_uri.
+				const redirectUri = new URL(authUrl.searchParams.get("redirect_uri") ?? "");
+				callbackPage = nativeFetch(
+					`http://127.0.0.1:${redirectUri.port}${redirectUri.pathname}?code=browser-code&state=${state}`,
+				);
+			},
+			prompt: (prompt) =>
+				new Promise((_, reject) => {
+					prompt.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+				}),
+		});
+
+		expect(credential.access).toBe("access");
+		expect(exchangedCode).toBe("browser-code");
+		const response = await callbackPage;
+		expect(response?.status).toBe(200);
+		expect(await response?.text()).toContain("Anthropic authentication completed.");
 	});
 });
 

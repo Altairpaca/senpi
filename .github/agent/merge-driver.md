@@ -35,6 +35,13 @@ publish a pull request, push, or release.
 If the upstream release does not require any source, package, changelog, or pin change after
 inspection, write a short report and finish with `MERGE_RESULT: NO_RELEASE_NEEDED`.
 
+After every upstream merge, re-apply the recorded upstream exclusions before resolving
+anything else: run `git rm -rq --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)`
+(`--ignore-unmatch` keeps the step from failing on a path that is already absent), then
+re-check the list against the new upstream tree. Every path on it is an upstream feature the
+fork rejected on record; a new upstream path that belongs to a listed feature is added to the
+list together with its dated `changes.md` exclusion block.
+
 ### 2. Resolve conflicts (fork-aware)
 
 Resolve conflicts using these fork rules plus semantic judgement. For files that are
