@@ -100,7 +100,8 @@ describe("automatic compaction cancellation regressions", () => {
 		await Promise.all([compaction, harness.session.abort()]);
 
 		expect({ started, wasCompacting, authAborted: authSignal?.aborted }).toEqual({
-			started: 1,
+			// fixB/sess decision: compaction_start stays after auth (fork compaction-race supersession contract).
+			started: 0,
 			wasCompacting: true,
 			authAborted: true,
 		});
