@@ -26,7 +26,8 @@ async function createRuntime(requests: ModelRouteRequest[] = []) {
 	});
 	const faux = fauxProvider({
 		models: [
-			{ id: "small", contextWindow: 1000, maxTokens: 100, input: ["text"] },
+			// #1873 admission: the fork refuses a window that cannot hold the system prompt and compaction reserve.
+			{ id: "small", contextWindow: 64_000, maxTokens: 100, input: ["text"] },
 			{ id: "large", contextWindow: 50_000, maxTokens: 5000, input: ["text", "image"], reasoning: true },
 		],
 	});

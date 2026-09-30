@@ -40,9 +40,12 @@ describe("AgentSession virtual models", () => {
 		const requests: ModelRouteRequest[] = [];
 		const harness = await createHarness({
 			...options,
+			// #1873 admission: the fork refuses a window that cannot hold the system prompt, the
+			// compaction reserve and the speculation lead (about 35k tokens here), so the upstream
+			// 1k/50k windows are scaled to 40k/200k and the transcript sizes below with them.
 			models: [
-				{ id: "small", contextWindow: 1000 },
-				{ id: "large", contextWindow: 50_000, maxTokens: 4000, reasoning: true },
+				{ id: "small", contextWindow: 40_000 },
+				{ id: "large", contextWindow: 200_000, maxTokens: 4000, reasoning: true },
 			],
 			tools: [echoTool],
 			extensionFactories: [
@@ -53,7 +56,7 @@ describe("AgentSession virtual models", () => {
 						id: "auto",
 						name: "Auto",
 						thinkingLevels: ["low", "high"],
-						contextWindow: 1000,
+						contextWindow: 40_000,
 						route(request, ctx) {
 							requests.push(request);
 							return route(request, ctx);
@@ -96,7 +99,7 @@ describe("AgentSession virtual models", () => {
 		expect(harness.session.model).toMatchObject({ provider: "router", id: "auto" });
 		expect(harness.session.thinkingLevel).toBe("high");
 		// Limits come from the physical model that produced the latest response, not the virtual model.
-		expect(harness.session.getContextUsage()?.contextWindow).toBe(50_000);
+		expect(harness.session.getContextUsage()?.contextWindow).toBe(200_000);
 	});
 
 	it("retries the first request of a turn on the model routed for that turn", async () => {
@@ -210,8 +213,8 @@ describe("AgentSession virtual models", () => {
 			errorMessage: expect.stringContaining("router unavailable"),
 		});
 		expect(harness.faux.state.callCount).toBe(1);
-		// The failed attempt names the virtual model, whose declared window is 1k; the large model's 50k applies.
-		expect(harness.session.getContextUsage()?.contextWindow).toBe(50_000);
+		// The failed attempt names the virtual model, whose declared window is 40k; the large model's 200k applies.
+		expect(harness.session.getContextUsage()?.contextWindow).toBe(200_000);
 	});
 
 	it("checks compaction against the physical model that produced the response", async () => {
@@ -219,8 +222,8 @@ describe("AgentSession virtual models", () => {
 		harness.setResponses([fauxAssistantMessage("short answer"), fauxAssistantMessage("long answer")]);
 		await harness.session.prompt("hello");
 
-		// About 20k tokens exceed the virtual model's declared 1k window but fit the large model's 50k.
-		await harness.session.prompt("x".repeat(80_000));
+		// About 30k tokens exceed the threshold of the virtual model's declared 40k window but fit the large model's 200k.
+		await harness.session.prompt("x".repeat(120_000));
 
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 	});
@@ -238,7 +241,7 @@ describe("AgentSession virtual models", () => {
 		});
 		let compactedBeforeSmall = false;
 		harness.setResponses([
-			fauxAssistantMessage("y".repeat(8000)),
+			fauxAssistantMessage("y".repeat(170_000)),
 			() => {
 				compactedBeforeSmall = harness.eventsOfType("compaction_end").length === 1;
 				return fauxAssistantMessage("small answer");
@@ -247,7 +250,7 @@ describe("AgentSession virtual models", () => {
 		await harness.session.prompt("hello");
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 
-		// About 2k tokens fit the large model that answered last, but not the small model's 1k window.
+		// About 43k tokens fit the large model that answered last, but not the small model's 40k window.
 		harness.session.setThinkingLevel("low");
 		await harness.session.prompt("next");
 
@@ -280,8 +283,8 @@ describe("AgentSession virtual models", () => {
 			},
 		]);
 
-		// About 2k tokens fit the large model of the first turn, but not the small model of the second.
-		await harness.session.prompt("x".repeat(8000));
+		// About 43k tokens fit the large model of the first turn, but not the small model's 40k window of the second.
+		await harness.session.prompt("x".repeat(170_000));
 
 		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
 		expect(compactedBeforeSmall).toBe(true);
