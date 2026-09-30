@@ -2838,6 +2838,10 @@ export class AgentSession {
 	}
 
 	private _willRetryAfterAgentEnd(messages: AgentMessage[]): boolean {
+		// A user abort suppresses the retry and compaction continuation (#9340).
+		if (this._suppressQueuedContinuationAfterUserAbort) {
+			return false;
+		}
 		const lastAssistant = this._lastAssistantMessage ?? this._findLastAssistantInMessages(messages);
 		if (!lastAssistant) {
 			return false;
@@ -3155,7 +3159,8 @@ export class AgentSession {
 					type: "auto_retry_end",
 					success: false,
 					attempt,
-					finalError: msg.errorMessage,
+					// A user abort cancelled the pending retry, as an abort during backoff does.
+					finalError: userAbortSuppressedQueuedContinuation ? "Retry cancelled" : msg.errorMessage,
 				});
 			}
 			this._resolveRetry();
