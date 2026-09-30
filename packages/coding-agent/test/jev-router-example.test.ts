@@ -47,8 +47,9 @@ describe("jev-router example", () => {
 
 	/** Runs the example against a faux OpenAI Codex provider and a scripted Jev complexity rating. */
 	async function setup(complex: number, tools: AgentTool[]) {
+		// D-4: the fork keeps the Codex models under `chatgpt-subscription` (`openai-codex` is a legacy alias).
 		const codex = fauxProvider({
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].map((id) => ({ id, reasoning: true })),
 		});
 		const typesafe = createProvider({

@@ -22,7 +22,8 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } from "@earendil-works/pi-coding-agent";
 
-const PROVIDER = "openai-codex";
+// senpi ships the OpenAI Codex models under the `chatgpt-subscription` provider; `openai-codex` is its legacy id.
+const PROVIDER = "chatgpt-subscription";
 const SOL = "gpt-5.6-sol";
 const TERRA = "gpt-5.6-terra";
 const LUNA = "gpt-5.6-luna";
