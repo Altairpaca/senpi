@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, parse, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+
+// These modules are virtualized by the host and must not be staged in the sidecar.
+const HOST_PROVIDED_MODULES = new Set(["@code-yeongyu/senpi", "typebox"]);
 
 const [outputRootArgument] = process.argv.slice(2);
 if (!outputRootArgument) {
@@ -21,6 +24,7 @@ const targetRoot = join(
 	"@code-yeongyu",
 	"senpi-codemode",
 );
+const sidecarNodeModulesRoot = join(resolve(outputRootArgument), "node_modules");
 
 if (!Array.isArray(manifest.files)) {
 	throw new Error(`${manifestPath} must declare a files array`);
@@ -45,9 +49,58 @@ for (const entry of manifest.files) {
 	cpSync(sourcePath, join(targetRoot, normalizedEntry), { recursive: true });
 }
 
-// Host API/typebox imports are provided by Jiti virtual modules. The JS rewriter's
-// parser is the sole external runtime dependency not supplied by the host.
-const parserRoot = dirname(createRequire(manifestPath).resolve("@babel/parser/package.json"));
-cpSync(parserRoot, join(targetRoot, "node_modules", "@babel", "parser"), { recursive: true });
+const excludedPackage = process.env.SENPI_SIDECAR_EXCLUDE;
+const copiedPackages = new Set();
+const pendingPackages = Object.keys(manifest.dependencies ?? {}).map((packageName) => [
+	packageName,
+	manifestPath,
+]);
 
-console.log(`[copy-codemode-sidecar] copied ${manifest.files.length + 1} entries and the JS parser to ${targetRoot}`);
+function resolvePackageManifest(packageName, requiringManifestPath) {
+	const requiringRoot = dirname(requiringManifestPath);
+	for (
+		let parentRoot = requiringRoot;
+		parentRoot !== parse(parentRoot).root;
+		parentRoot = dirname(parentRoot)
+	) {
+		const candidate = join(parentRoot, "node_modules", packageName, "package.json");
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+	}
+	return undefined;
+}
+
+while (pendingPackages.length > 0) {
+	const [packageName, requiringManifestPath] = pendingPackages.pop();
+	if (HOST_PROVIDED_MODULES.has(packageName) || copiedPackages.has(packageName)) {
+		continue;
+	}
+	copiedPackages.add(packageName);
+	if (packageName === excludedPackage) {
+		continue;
+	}
+
+	let packageManifestPath;
+	try {
+		packageManifestPath = createRequire(requiringManifestPath).resolve(`${packageName}/package.json`);
+	} catch (error) {
+		if (error?.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+			throw new Error(`Unable to resolve codemode sidecar dependency ${packageName}`, { cause: error });
+		}
+		packageManifestPath = resolvePackageManifest(packageName, requiringManifestPath);
+		if (!packageManifestPath) {
+			throw new Error(`Unable to resolve codemode sidecar dependency ${packageName}`, { cause: error });
+		}
+	}
+	const packageManifest = JSON.parse(readFileSync(packageManifestPath, "utf8"));
+	const packageRoot = dirname(packageManifestPath);
+	cpSync(packageRoot, join(sidecarNodeModulesRoot, packageName), { recursive: true });
+	for (const dependencyName of Object.keys(packageManifest.dependencies ?? {})) {
+		pendingPackages.push([dependencyName, packageManifestPath]);
+	}
+}
+
+console.log(
+	`[copy-codemode-sidecar] copied ${manifest.files.length} entries and ${copiedPackages.size} runtime packages to ${targetRoot}`,
+);
