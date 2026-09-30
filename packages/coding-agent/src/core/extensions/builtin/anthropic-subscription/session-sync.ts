@@ -111,21 +111,6 @@ export function recordSyncedStream(entry: AnthropicSubscriptionSessionEntry, has
 	entry.branchInfo = null;
 }
 
-const GENERATED_DATE_LINE = /\nCurrent date: \d{4}-\d{2}-\d{2}(?=\nCurrent working directory: [^\n]*)/;
-
-/**
- * The generated date line advances at UTC midnight while the conversation is
- * unchanged; hashing it verbatim retires a live session at midnight for no
- * semantic reason. Only that exact date-plus-cwd pair is neutralized - cwd and
- * every other prompt region stay fail-closed. Extension appends legitimately
- * follow the cwd line (oh-my-openagent#7884), so the pair is matched wherever
- * it appears, not only at the end of the prompt.
- */
-function fingerprintSystemPrompt(systemPrompt: Options["systemPrompt"]): unknown {
-	if (typeof systemPrompt !== "string") return systemPrompt ?? null;
-	return systemPrompt.replace(GENERATED_DATE_LINE, "\nCurrent date: <session-date>");
-}
-
 export function configFingerprint(
 	options: Options,
 	context: Context,
@@ -133,7 +118,7 @@ export function configFingerprint(
 	accountName: string,
 ): SessionConfigFingerprint {
 	return {
-		systemPromptHash: digest(fingerprintSystemPrompt(options.systemPrompt)),
+		systemPromptHash: digest(options.systemPrompt ?? null),
 		toolsetHash: digest({
 			tools: options.tools ?? [],
 			reasoning: {

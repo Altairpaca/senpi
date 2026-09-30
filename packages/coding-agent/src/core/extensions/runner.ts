@@ -26,6 +26,7 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -36,6 +37,7 @@ import type {
 	ContextEventResult,
 	ContextUsage,
 	EntryRenderer,
+	EntryRendererOptions,
 	Extension,
 	ExtensionActions,
 	ExtensionCommandContext,
@@ -87,6 +89,7 @@ import type {
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
+import { RUNTIME_EXTENSION_PATH } from "./types.ts";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
@@ -457,6 +460,7 @@ export class ExtensionRunner {
 		runtimeHookSourcePaths: [],
 	});
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
+	private getPromptCachePrefixRequestFn: ExtensionContextActions["getPromptCachePrefixRequest"] = undefined;
 	private getAgentDirFn: () => string = () => getAgentDir();
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
@@ -467,6 +471,13 @@ export class ExtensionRunner {
 	private reloadHandler: ReloadHandler | undefined;
 	private reloadRequestPromise: Promise<void> | undefined;
 	private shutdownHandler: ShutdownHandler = () => {};
+	private readonly sessionStartTurns = new SessionStartTurnGate((error) =>
+		this.emitError({
+			extensionPath: RUNTIME_EXTENSION_PATH,
+			event: "session_start",
+			error: error instanceof Error ? error.message : String(error),
+		}),
+	);
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
@@ -502,8 +513,12 @@ export class ExtensionRunner {
 		},
 	): void {
 		// Copy actions into the shared runtime (all extension APIs reference this)
-		this.runtime.sendMessage = actions.sendMessage;
-		this.runtime.sendUserMessage = actions.sendUserMessage;
+		this.runtime.sendMessage = (message, options) => {
+			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
+			else actions.sendMessage(message, options);
+		};
+		this.runtime.sendUserMessage = (content, options) =>
+			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options));
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -522,6 +537,7 @@ export class ExtensionRunner {
 		this.runtime.setSessionModel = actions.setSessionModel;
 		this.runtime.setSessionThinkingLevel = actions.setSessionThinkingLevel;
 		this.runtime.setSessionFastMode = actions.setSessionFastMode;
+		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
@@ -558,6 +574,7 @@ export class ExtensionRunner {
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
+		this.getPromptCachePrefixRequestFn = contextActions.getPromptCachePrefixRequest;
 
 		for (const extension of this.extensions) {
 			for (const [name, hint] of extension.removedToolHints ?? []) {
@@ -1005,6 +1022,12 @@ export class ExtensionRunner {
 		return undefined;
 	}
 
+	/** Options registered alongside the renderer `getEntryRenderer` returns for this custom type. */
+	getEntryRendererOptions(customType: string): EntryRendererOptions | undefined {
+		const owner = this.extensions.find((ext) => ext.entryRenderers?.has(customType));
+		return owner?.entryRendererOptions?.get(customType);
+	}
+
 	private resolveRegisteredCommands(): ResolvedCommand[] {
 		const commands: RegisteredCommand[] = [];
 		const counts = new Map<string, number>();
@@ -1245,6 +1268,12 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.prepareProviderRequest(messages, excludeBeforeProviderRequestExtensionPath);
 			},
+			getPromptCachePrefixRequest: async (options) => {
+				runner.assertActive();
+				const build = runner.getPromptCachePrefixRequestFn;
+				if (build === undefined) return { status: "skipped", reason: "the host builds no prompt-cache prefix" };
+				return await build(options);
+			},
 			beginCompaction: (options) => {
 				runner.assertActive();
 				compactionSignal = runner.beginCompactionFn?.(options);
@@ -1438,7 +1467,14 @@ export class ExtensionRunner {
 		}
 	}
 
-	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+		// Not async: other events keep the exact microtask timing of a direct dispatch.
+		// Turns requested from any session_start handler start after the last one returns (senpi#1972).
+		if (event.type === "session_start") return this.sessionStartTurns.dispatch(() => this.dispatchEmit(event));
+		return this.dispatchEmit(event);
+	}
+
+	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
 		let result: SessionBeforeEventResult | undefined;
 		// session_shutdown is the one host-bounded event: a hung handler must not hold
 		// Ctrl+C / quit / reload / new / resume hostage. Every other event still awaits
@@ -1826,21 +1862,39 @@ export class ExtensionRunner {
 		return headers;
 	}
 
+	/** Paths of extensions with a `before_agent_start` handler not registered `{ previewSafe: true }`. */
+	getPreviewUnsafeBeforeAgentStartPaths(): string[] {
+		const paths: string[] = [];
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("before_agent_start") ?? [];
+			if (handlers.some((handler) => ext.previewSafeHandlers?.has(handler) !== true)) paths.push(ext.path);
+		}
+		return paths;
+	}
+
 	async emitBeforeAgentStart(
 		prompt: string,
 		images: ImageContent[] | undefined,
 		systemPrompt: string,
 		systemPromptOptions: BuildSystemPromptOptions,
+		options: {
+			readonly preview?: boolean;
+			readonly signal?: AbortSignal;
+			readonly trigger?: BeforeAgentStartEvent["trigger"];
+		} = {},
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
 
-		for (const ext of this.extensions) {
+		dispatch: for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("before_agent_start");
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
+				if (options.signal?.aborted === true) break dispatch;
+				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
+				if (options.preview === true && ext.previewSafeHandlers?.has(handler) !== true) continue;
 				try {
 					// Keep guarded context getters lazy while giving each handler its
 					// own legacy omitted-signal ownership slot.
@@ -1855,9 +1909,11 @@ export class ExtensionRunner {
 					const event: BeforeAgentStartEvent = {
 						type: "before_agent_start",
 						prompt,
+						trigger: options.trigger ?? "prompt",
 						images,
 						systemPrompt: currentSystemPrompt,
 						systemPromptOptions,
+						...(options.preview === true ? { preview: true } : {}),
 					};
 					const handlerResult = await handler(event, ctx);
 

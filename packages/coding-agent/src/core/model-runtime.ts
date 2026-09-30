@@ -3,6 +3,7 @@ import {
 	type Api,
 	type ApiStreamOptions,
 	type AssistantMessage,
+	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	type AuthCheck,
 	type AuthInteraction,
@@ -41,11 +42,13 @@ import {
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
+import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
 import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
@@ -77,6 +80,19 @@ interface ModelRuntimeSnapshot {
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
 }
 
+/**
+ * The Claude Code version the Anthropic OAuth fingerprint advertises is cached beside
+ * models.json, so every runtime on this agent directory shares one background lookup per
+ * six hours. An in-memory runtime (`modelsPath: null`) keeps pi-ai's bundled floor.
+ */
+function installClaudeCodeVersionCache(modelsPath: string | undefined): void {
+	if (modelsPath === undefined) return;
+	installClaudeCodeVersionFileStore({
+		path: join(dirname(modelsPath), "claude-code-version.json"),
+		offline: envValue("OFFLINE") !== undefined,
+	});
+}
+
 export interface CreateModelRuntimeOptions {
 	settingsManager?: SettingsManager;
 	/** Credential storage. Defaults to the file at authPath. */
@@ -104,6 +120,8 @@ export interface ModelRuntimeAuthOverrides extends AuthOperationOptions {
 	minOAuthValidityMs?: number;
 	/** Resolve against one named slot of a pooled credential instead of the flat projection. */
 	slotName?: string;
+	/** An OAuth access token the provider just refused; a stored credential still carrying it is re-exchanged. */
+	rejectedAccess?: string;
 }
 
 /**
@@ -262,6 +280,7 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
+		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -316,6 +335,7 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
+		installClaudeCodeVersionCache(modelsPath);
 		const config = ModelConfig.loadSync(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -736,17 +756,25 @@ export class ModelRuntime implements Models {
 		);
 		if (configured) return configured;
 		const check = this.snapshot.auth.get(providerId);
-		return check ? { configured: true, source: "environment", label: check.source } : { configured: false };
+		if (!check) return { configured: false };
+		return {
+			configured: true,
+			source: "environment",
+			label: check.source,
+			...(check.ambient ? { ambient: true } : {}),
+		};
 	}
 
 	private async prepareRequest<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
 		model: Model<Api>,
 		options: TOptions | undefined,
-		slotAuth?: { apiKey?: string; slotName?: string },
+		slotAuth?: { apiKey?: string; slotName?: string; rejectedAccess?: string },
 	): Promise<{
 		provider: Provider;
 		model: Model<Api>;
 		options: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions;
+		rejectableAccess?: string;
+		rejectedTokenStatuses?: readonly number[];
 	}> {
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
@@ -755,6 +783,7 @@ export class ModelRuntime implements Models {
 			env: options?.env,
 			signal: options?.signal,
 			...(slotAuth?.slotName === undefined ? {} : { slotName: slotAuth.slotName }),
+			...(slotAuth?.rejectedAccess === undefined ? {} : { rejectedAccess: slotAuth.rejectedAccess }),
 		});
 		if (!resolution) throw new ModelsError("auth", providerNotConfiguredMessage(model.provider));
 
@@ -781,7 +810,15 @@ export class ModelRuntime implements Models {
 						...(resolution.auth.baseUrl ? { baseUrl: resolution.auth.baseUrl } : {}),
 					}
 				: model;
+		const rejectedTokenStatuses = provider.auth.oauth?.rejectedTokenStatuses;
+		const storedOAuthAccess =
+			resolution.source === "OAuth" && (slotAuth?.apiKey ?? providerOptions.apiKey) === undefined
+				? resolution.auth.apiKey
+				: undefined;
 		return {
+			...(rejectedTokenStatuses !== undefined && storedOAuthAccess !== undefined
+				? { rejectableAccess: storedOAuthAccess, rejectedTokenStatuses }
+				: {}),
 			provider,
 			model: requestModel,
 			options: {
@@ -871,8 +908,8 @@ export class ModelRuntime implements Models {
 						: streamOptions?.sessionId !== undefined
 							? { affinityKey: streamOptions.sessionId }
 							: {}),
-					runAttempt: async (slot) => {
-						const prepared = await this.prepareRequest(
+					runAttempt: (slot) =>
+						this.attemptWithTokenRecovery(
 							model,
 							streamOptions,
 							slot.lane === "env"
@@ -880,30 +917,58 @@ export class ModelRuntime implements Models {
 										...(slot.envKey === undefined ? {} : { apiKey: slot.envKey }),
 									}
 								: { slotName: slot.name },
-						);
-						const attempt = await this.providerSemaphores.bracket(
-							prepared.model.provider,
-							prepared.options.signal,
-							() =>
+							(prepared) =>
 								prepared.provider.stream(
 									prepared.model as Model<TApi>,
 									context,
 									withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
 								),
-						);
-						return wrapStreamWithModelRecovery(attempt, model, context.tools ?? []);
-					},
+							context,
+						),
 				});
 			}
-			const prepared = await this.prepareRequest(model, streamOptions);
-			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				prepared.provider.stream(
-					prepared.model as Model<TApi>,
-					context,
-					withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
-				),
+			return this.attemptWithTokenRecovery(
+				model,
+				streamOptions,
+				undefined,
+				(prepared) =>
+					prepared.provider.stream(
+						prepared.model as Model<TApi>,
+						context,
+						withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+					),
+				context,
 			);
-			return wrapStreamWithModelRecovery(inner, model, context.tools ?? []);
+		});
+	}
+
+	/**
+	 * One provider request with the #2297 recovery: a stored OAuth token the provider
+	 * refuses before any output is re-exchanged once and the request re-sent.
+	 */
+	private attemptWithTokenRecovery<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
+		model: Model<Api>,
+		options: TOptions | undefined,
+		slotAuth: { apiKey?: string; slotName?: string } | undefined,
+		send: (prepared: Awaited<ReturnType<ModelRuntime["prepareRequest"]>>) => AssistantMessageEventStream,
+		context: Context,
+	): Promise<AsyncIterable<AssistantMessageEvent>> {
+		return retryOnceOnRejectedToken(async (rejectedAccess) => {
+			const prepared = await this.prepareRequest(
+				model,
+				options,
+				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
+			);
+			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
+				send(prepared),
+			);
+			return {
+				stream: wrapStreamWithModelRecovery(inner, model, context.tools ?? []),
+				...(prepared.rejectableAccess === undefined ? {} : { rejectableAccess: prepared.rejectableAccess }),
+				...(prepared.rejectedTokenStatuses === undefined
+					? {}
+					: { rejectedTokenStatuses: prepared.rejectedTokenStatuses }),
+			};
 		});
 	}
 	complete<TApi extends Api>(
@@ -924,36 +989,50 @@ export class ModelRuntime implements Models {
 				return rotation.streamWithCredentialRotation({
 					sources,
 					...(streamOptions?.sessionId === undefined ? {} : { affinityKey: streamOptions.sessionId }),
-					runAttempt: async (slot) => {
-						const prepared = await this.prepareRequest(
+					runAttempt: (slot) =>
+						this.attemptWithTokenRecovery(
 							model,
 							streamOptions,
 							slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name },
-						);
-						return wrapStreamWithModelRecovery(
-							await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
+							(prepared) =>
 								prepared.provider.streamSimple(
 									prepared.model,
 									context,
 									withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
 								),
-							),
-							model,
-							context.tools ?? [],
-						);
-					},
+							context,
+						),
 				});
 			}
-			const prepared = await this.prepareRequest(model, options);
-			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				prepared.provider.streamSimple(
-					prepared.model,
-					context,
-					withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
-				),
+			return this.attemptWithTokenRecovery(
+				model,
+				options,
+				undefined,
+				(prepared) =>
+					prepared.provider.streamSimple(
+						prepared.model,
+						context,
+						withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+					),
+				context,
 			);
-			return wrapStreamWithModelRecovery(inner, model, context.tools ?? []);
 		});
+	}
+	/**
+	 * Resolve auth, headers, `extraBody`, env, and the upstream model id exactly as a
+	 * single-credential `streamSimple` request does, without sending it. The session-start
+	 * prompt-cache prewarm (senpi#2096) builds its request from this so its prefix matches
+	 * the first turn's.
+	 */
+	async prepareSimpleRequest(
+		model: Model<Api>,
+		options?: ModelsSimpleStreamOptions,
+	): Promise<{ model: Model<Api>; options: SimpleStreamOptions }> {
+		const prepared = await this.prepareRequest(model, options);
+		return {
+			model: prepared.model,
+			options: withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+		};
 	}
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage> {
 		return this.streamSimple(model, context, options).result();

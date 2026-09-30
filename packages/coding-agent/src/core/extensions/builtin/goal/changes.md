@@ -1,5 +1,86 @@
 # goal Extension Changes
 
+## 2026-09-28 - Terminal provider 401/403 blocks the goal on the first hit (senpi#2293)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: `terminalProviderAuthFailure(event)` returns `{ httpStatus: 401 | 403, provider, model }` when the turn ends with an error, `willRetry: false`, and no system-owned abort. It reads the adapter's `providerDiagnostic` first (`httpStatus` 401/403, or category `auth`); only when the message carries no diagnostic does it fall back to a leading `401`/`403` in `errorMessage`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation-recovery.ts`: `PROVIDER_AUTH_BLOCKED_REASON_PREFIX`, `providerAuthBlockedReason`, and `providerAuthRecoveryHint` (names `provider/model`, `/login <provider>`, the key/token for 401 or the model's plan access for 403 (the Copilot plan for `github-copilot`), and any proxy or gateway). `isMechanicalContinuationBlock` treats reasons with the prefix as mechanical.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: an active goal whose turn ended with a terminal 401/403 is blocked before the system-abort and provider-recovery routing, with one warning notice.
+
+### Why
+
+Since 2026-08-24, terminal provider errors queue a guarded `providerRecovery` continuation. A rejected credential or a model the account cannot use fails identically on every continuation, so the goal burned all 8 continuations and ended with `continuation cap reached. Send any message to resume.`; the next message looped again. Reported on GitHub Copilot with kimi-k3, whose endpoint answered 403 with an empty body.
+
+### Why an extension could not handle it
+
+Agent-end routing, goal blocking, and the mechanical-block set are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW in `agent-end-continuation.ts` (the block after the policy-rejection check), `terminal-provider-error.ts` (new export), `continuation-recovery.ts` (`isMechanicalContinuationBlock`).
+
+## 2026-09-25 - Turn-end todo-owed backstop for main sessions without an active goal (senpi#2121)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts` (new): `TodoOwedBackstop` evaluates at the tail of the `agent_end` handler, after `continueGoalAfterAgentEnd` returned. A turn owes a nudge only when every clause holds: main session (`ctx.sessionManager.getHeader()?.parentSession === undefined` and `ctx.mode` not in `{print, json}` - the set `terminal/notify.ts` never wakes; child sessions are untagged today, so they pass and are treated as main), `event.aborted !== true` and `didAgentEndCleanly(event.messages)` with a last stopReason other than `length`, no pending messages, no active goal, no continuation pending, at least one open todo task (`todo-gate.ts openTodoTaskContents`), no live wake source (`monitor-continuation.ts hasActiveWakeSources`), no `ask_user_question` / `request_user_input` tool call in the run's messages, a final paragraph that does not end a sentence with `?`, and `todo.turnEndBackstop` enabled. Delivery is a hidden followUp exactly like `queueHiddenGoalPrompt` (`pi.sendMessage({ customType: "senpi.todo-owed", content, display: false }, { triggerTurn: true, deliverAs: "followUp" })`) with the Ask/Now/Next anchors from `todotools/state.ts getLatestTodoStateFromBranchEntries` + `describeAskNowNext`; the second delivery prefixes "Second and final reminder. ". After two, `ctx.ui.notify("Agent stopped with N open todo tasks (Now: ...). Send a message to continue.", "warning")` fires once per chain, then nothing. `todo_owed_reminder` is emitted per delivery/cap; every suppression logs one debug line naming the first failing clause. No timers anywhere.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: instantiates the backstop, resets its chain on `session_start` and `session_tree`, and calls `afterAgentEnd` at the tail of the `agent_end` handler.
+- `packages/coding-agent/src/core/extensions/builtin/goal/direct-input-lifecycle.ts`: optional `onAcceptedDirectInput` dependency, fired for every accepted non-extension input; the goal builtin wires it to reset the backstop chain.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: `didAgentEndCleanly` is now exported (the backstop reuses the goal's own clean-end predicate instead of restating it).
+
+### Why
+
+A text-only end of turn with open todo work and no question stops an unattended run mid-task. The Anthropic Opus 5.5 guide ("Unattended agentic runs") prescribes exactly this harness shape: name the open items in a short user message and stop after two or three automatic continuations. The goal path already owns the turn end when a goal is active; this backstop covers only the gap where nothing does.
+
+### Why an extension could not handle it
+
+The predicate needs the goal builtin's own continuation state (clean-end predicate, continuation latch, wake sources, direct-input lifecycle); a foreign extension cannot see any of it.
+
+### Expected merge conflict zones
+
+- LOW in `index.ts` (tail of the `agent_end` handler, the `session_start` reset), `direct-input-lifecycle.ts` (dis injection), `continuation.ts` (the `export` keyword).
+
+## 2026-09-24 - Sync with pi-goal 0.3.1 (senpi#2079)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: the continuation prompt calls the objective "untrusted goal data" instead of "user-provided data" (pi-goal#4). The rest of senpi's continuation guidance is unchanged.
+- Not ported: pi-goal 0.3.1 removes the blocked -> active auto-resume on every user prompt. senpi never had that path: `direct-input-lifecycle.ts` reactivates a goal on accepted direct input only for mechanical continuation blocks (`isMechanicalContinuationBlock`), so user-interrupt and model-declared blocks already stay blocked until `/goal resume`.
+- The sync report's remaining hunks are whole-file differences between upstream's smaller module set and senpi's extended one; applying them would revert senpi-only behavior, so they were not applied.
+
+### Why
+
+`create_goal` can store an objective the model inferred, so calling it user-provided overstated its authority in every hidden continuation turn.
+
+### Why an extension could not handle it
+
+The continuation prompt is built inside this builtin.
+
+### Expected merge conflict zones
+
+- LOW in `prompt.ts` first objective sentence.
+
+## 2026-09-23 - One cache-warm card per wait; reloads keep the parked wait (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/parked-wait.ts` (new): `findParkedGoalWait(branch, goalId)` reads the pending wait (last `goal-cache-warmup` entry is a `scheduled` one for this goal, no message after it).
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: `rearmMonitorBackstop` passes the parked wait to `#schedule`, which then keeps its iteration, cache snapshot, delay and original `dueAtMs` (timer armed for the remaining time), re-emits `goal_continuation_scheduled` for live consumers, and appends no entry.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts` + `index.ts`: `isSameGoalCacheWarmCard` registered as the renderer's `replaces` option, so a same-goal entry directly after the previous card updates it in place.
+
+### Why
+
+- A config reload re-armed the backstop through a fresh generation: a new iteration-1 entry without cache figures and a full backstop from the reload time, which can land after the prompt-cache TTL. Three stacked cards were observed for one wait.
+
+### Why an extension could not handle it
+
+- Goal-owned logic; documented here by convention (fork-only directory).
+
+### Expected merge conflict zones
+
+- `#schedule` and `rearmMonitorBackstop` in `monitor-continuation.ts`.
+
 ## 2026-09-22 - claude-sdk-oauth provider id renamed to anthropic-subscription in the exhaustion classifier comment (senpi#1989)
 
 ### What changed
@@ -1571,3 +1652,24 @@ stale-ctx error (`stale-context.ts`) inside `tick()` and retire (clear the
 interval, drop the ctx); `GoalWaitTicker.stop()` tolerates a stale ctx on its
 final clear render. A later `sync()` with a live ctx re-arms them. Covered by
 `test/suite/goal-ticker-stale-context.test.ts`.
+
+## 2026-09-24 — Goal cache-warm consumes the prompt-cache lifetime classification (#831, #2090)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm.ts` reads `resolvePromptCacheLifetime()`. For a best-effort cache, `estimateCacheWarmMetrics()` reports `cacheLifetime: "best-effort"` with the cached tokens and no `ttlSeconds` or savings estimate, and the new `resolveGoalBackstopMaxSecondsForCache()` replaces an unconfigured (270 s default) backstop with `GOAL_MONITOR_BEST_EFFORT_BACKSTOP_SECONDS` (3570). An explicitly configured backstop other than the default is kept. Explicit-TTL and unknown lanes are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` passes the active model's lifetime into the backstop resolution when a monitor wait is scheduled.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts` renders a best-effort card as "~N tokens were cached after the prior turn · provider caching is best-effort, with no expiry to beat", without TTL, warmth, or savings copy.
+- `packages/coding-agent/src/core/extensions/builtin/goal/parked-wait.ts` restores the `cacheLifetime` marker when a reload re-arms a parked wait.
+
+### Why
+
+- The 270 s default backstop exists to land the re-check inside a 5-minute TTL. A best-effort cache (direct DeepSeek) has no TTL, so that wake only preserved a fabricated expiry and the card claimed a "5m prompt-cache TTL". Explicit-TTL lanes now show their real TTL (30m for OpenAI GPT-5.6+/GPT-6).
+
+### Why an extension could not handle it
+
+- The Goal extension owns the monitor timer, the `goal-cache-warmup` entry/event payload and its renderer; no other extension can change the delay or copy after scheduling.
+
+### Expected merge conflict zones
+
+- LOW: `cache-warm.ts` backstop constants and metrics function, the delay expression in `monitor-continuation.ts` `#schedule()`, the `warmLine()` branch in `cache-warm-renderer.ts`, and `parseCache()` in `parked-wait.ts`.

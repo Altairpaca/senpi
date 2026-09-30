@@ -11,9 +11,11 @@ import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-regist
 import { createHarness } from "./harness.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
-vi.mock("node:worker_threads", async () => {
+vi.mock("node:worker_threads", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:worker_threads")>();
 	const { EventEmitter } = await import("node:events");
 	return {
+		...actual,
 		Worker: class extends EventEmitter {
 			postMessage(): void {}
 			terminate(): Promise<number> {
@@ -83,6 +85,7 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 			}
 			case "bind":
 			case "command":
+			case "prompt_surface":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":
@@ -90,7 +93,6 @@ async function retainHost(options: { idleEvictionMs?: number } = {}) {
 				queueMicrotask(() => this.emit("exit", 0));
 				break;
 			case "cancel_ui":
-			case "display":
 				break;
 			default: {
 				const exhaustive: never = message;

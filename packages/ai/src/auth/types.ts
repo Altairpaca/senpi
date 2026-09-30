@@ -108,11 +108,18 @@ export interface AuthResult {
 	env?: ProviderEnv;
 	/** Human-readable label for status UI: "ANTHROPIC_API_KEY", "OAuth", "~/.aws/credentials". */
 	source?: string;
+	/**
+	 * Resolved only from a shared cloud credential chain (AWS profile/keys/roles, Google ADC)
+	 * that exists for other tools too, not from a credential configured for this provider.
+	 */
+	ambient?: true;
 }
 
 export interface AuthCheck {
 	source?: string;
 	type: "api_key" | "oauth";
+	/** Same meaning as `AuthResult.ambient`. */
+	ambient?: true;
 }
 
 export type AuthType = "api_key" | "oauth";
@@ -225,6 +232,14 @@ export interface OAuthAuth {
 
 	/** Selector label for the OAuth login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
+
+	/**
+	 * HTTP statuses with which the provider refuses a stored access token before its
+	 * own expiry says so (GitHub Copilot revokes its short-lived token server-side and
+	 * answers 401/403). The runtime re-exchanges that exact token once and retries the
+	 * request before surfacing the failure.
+	 */
+	rejectedTokenStatuses?: readonly number[];
 
 	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;
 

@@ -12,6 +12,13 @@ export interface PromptCacheSettings {
 	keepAlive?: PromptCacheKeepAliveSettings;
 }
 
+export type TodoFirstTurnPlan = "force" | "remind" | "off";
+
+export interface TodoSettings {
+	firstTurnPlan?: TodoFirstTurnPlan; // default: "force" (first prompt of a session gets a hidden plan reminder; "force" also names the todo tool in tool_choice where the provider allows it)
+	turnEndBackstop?: boolean; // default: true (a main-session turn that ends text-only with open todo tasks and no active goal gets a hidden nudge, at most two per chain)
+}
+
 export interface ImageSettings {
 	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers

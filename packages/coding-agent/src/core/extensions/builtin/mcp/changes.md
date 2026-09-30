@@ -1,5 +1,97 @@
 # mcp Extension Changes
 
+## 2026-09-29 - list_changed re-registers a non-shared connection's current listing (#2188)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: before a list_changed refresh re-registers, a non-shared connection re-collects its catalog with `collectServerCatalogForCache`, stores it on `entry.cachedCatalog`, and writes it to the on-disk catalog cache, as a shared lease's `catalog()` already does. Until the first refresh has recorded names, the removal diff starts from the catalog the session last registered.
+
+### Why
+
+- Registration reads `entry.cachedCatalog`, and on a non-shared connection only the startup connect filled it. A list_changed re-listed the server only to diff names and then re-registered the startup catalog, so added tools never registered and removed tools were registered again on top of their tombstones.
+- The first refresh had no recorded names to diff against, so a change that arrived inside the coalescing window of the connect's own relist tombstoned nothing.
+
+### Why an extension could not handle it
+
+- The list_changed refresh and the connection's catalog cache are internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: `refreshMcpToolsOnListChanged` between the startup-claim early return and the tombstone loop, and its imports.
+
+## 2026-09-29 - Skill-declared servers expand ${VAR} by the skill's trust (#2345)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skill-server.ts` (new; `resolveSkillMcpServer` moved here from `config.ts`): a skill-declared stdio server from a trusted source (user, temporary or system scope, or project scope while the project is trusted) is interpolated with the same `interpolateValue` as trusted `mcp.json`; an untrusted project's stdio server stays literal and returns one warning naming the skill and the variables; a remote server from any skill keeps `url`/`headers` literal and drops a bearer-attaching `bearerTokenEnv` (setting `auth: false`), with one warning each. A server asking for command substitution is skipped with a warning instead of throwing.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: exports `normalizeServer`, `interpolateValue` and `hashConfig` for `skill-server.ts`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `SkillLike.sourceInfo.scope` and `SkillServerRegistration` (first declaring skill's name and scope) travel with each declaration.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSkillMcpServers` takes `SkillServerRegistration`s, derives trust from the scope plus the session's project trust, and returns each trust warning once per session.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: passes the parsed declarations straight through.
+
+### Why
+
+- Skill servers skipped `${VAR}` expansion, so the documented `"env": { "EXA_API_KEY": "${EXA_API_KEY}" }` spawned the child with the literal placeholder. A stdio child sees only the SDK's allowlisted environment plus `env` (`transport-sdk.ts`), so expansion decides which parent variables a skill-chosen command receives: user-owned skills get what trusted `mcp.json` gets, an untrusted project's skill gets nothing. Remote servers never expand, and `bearerTokenEnv` from a skill is dropped, because both would send a parent variable to a URL the skill chose.
+
+### Why an extension could not handle it
+
+- Skill server resolution and registration are internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSkillMcpServers` signature and loop, the `#skillServerWarnings` field, the `attachSession` prologue.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: the removed `resolveSkillMcpServer` and the `export` keywords.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `SkillLike` and the declaration record.
+
+## 2026-09-27 - Register a raced startup catalog exactly once (#2177)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: `raceMcpStartupConnect` puts a `startupCatalogClaim` on the connection entry for as long as the startup connect owns the server's first catalog registration, and releases it when the connect settles, right before a backgrounded refresh registers the catalog.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: `McpStartupCatalogClaim` (the catalog the entry had when the connect began, and whether the claim still owns registration) and the optional `startupCatalogClaim` entry field.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/expose/session.ts`: while a claim owns registration, a registration pass uses the claim's starting catalog and does not list a connected-but-unrefreshed server itself. Each pass records the `mcpRegistrationIdentity` (`packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`: tools, resources and prompts) of what it registered as the entry's `registeredIdentity`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection-types.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/shared-lease.ts`: tools-changed events carry a `cause`: `connect` for the signal every successful connect raises, `notification` for everything else (list_changed, resource_updated, owner renewal, explicit `markToolsChanged()`). Shared leases forward the cause.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts` (the coalesced subscription and `#handleServerToolsChanged`, moved out of `service.ts`): a refresh whose merged signals all came from connects leaves an unchanged registration alone and yields to a startup claim that still owns registration. Any reported change re-lists and re-registers as before.
+
+### Why
+
+- When the startup-race deadline fell after `connect()` but before the catalog refresh finished, the attach pass listed the catalog itself and the backgrounded refresh then registered it again: two `tools/list` round trips, every tool registered twice, and two concurrent registration passes. The by-name tool registry hid the duplicates from provider requests, but the MCP threshold test counted 22 registrations for 11 tools.
+- Every connect, the first one included, raises the tools-changed signal so a reconnect re-lists. 300ms after startup that relist re-registered the catalog the startup connect had just registered. A connect whose listing changed still re-registers (`recovery-reregister.test.ts`), and reported changes keep their re-registration (`host-registry-sharing-lifecycle.test.ts`).
+
+### Why an extension could not handle it
+
+- The startup race and the registration pass are internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: `raceMcpStartupConnect` prologue.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`: entry mapping.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/session.ts`: live-catalog branch and listing record of `registerDirectMcpTools`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `#wireListChanged` and `#handleServerToolsChanged` now delegate to `service-tools-changed.ts`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`: `markToolsChanged` signature and the post-connect call.
+
+## 2026-09-23 - Keep native OAuth authorization usable (oh-my-openagent#6724)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth-dispatch.ts` calls the existing shell-free browser launcher and emits UI-only transcript entries for auth notices.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts` presents the full URL before opening the browser, retains paste instructions, and lets manual authorization continue if the opener rejects.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts` renders auth entries through the shared notice renderer. These entries never enter model context.
+
+### Why
+
+- Native auth previously substituted a transient notification for the browser launcher, then overwrote that URL with another status notification. A user could neither open the browser nor recover the link.
+
+### Why an extension could not handle it
+
+- The MCP builtin owns the command dispatch and OAuth provider callback; its own `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth-dispatch.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts` must expose and launch the URL.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth-dispatch.ts`: UI/browser dependencies.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts`: interactive authorization announcements.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts`: renderer registration.
+
 ## 2026-09-21 - Share eligible connections in the in-process host (#1921)
 
 ### What changed

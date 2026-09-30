@@ -30,6 +30,7 @@ import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type Extens
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
+import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
@@ -41,7 +42,9 @@ import {
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
 import type {
+	BeforeAgentStartHandlerOptions,
 	EntryRenderer,
+	EntryRendererOptions,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
@@ -57,6 +60,7 @@ import type {
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
 	SessionContext,
+	SessionControlActions,
 	SessionKind,
 	ToolDefinition,
 } from "./types.ts";
@@ -64,14 +68,12 @@ import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./type
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
-	sharedHostEnabled?: boolean;
 	sessionKind?: SessionKind;
 	sessionContext?: SessionContext;
 }
 
 function sessionProfile(options: ExtensionSessionOptions | undefined): ExtensionSessionProfile {
 	return {
-		sharedHostEnabled: options?.sharedHostEnabled ?? false,
 		sessionKind: options?.sessionKind ?? "interactive",
 		sessionContext: options?.sessionContext ?? EMPTY_SESSION_CONTEXT,
 	};
@@ -272,6 +274,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setSessionModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		setSessionThinkingLevel: notInitialized,
 		setSessionFastMode: notInitialized,
+		sessionControl: unboundSessionControlActions(),
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		pendingNativeProviderRegistrations: [],
@@ -322,6 +325,12 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	};
 
 	return runtime;
+}
+
+const unboundSessionControl = unboundSessionControlActions();
+
+function sessionControlOf(runtime: ExtensionRuntime): SessionControlActions {
+	return runtime.sessionControl ?? unboundSessionControl;
 }
 
 /**
@@ -377,16 +386,19 @@ function createExtensionAPI(
 
 	const api = {
 		cwd,
-		sharedHostEnabled: session.sharedHostEnabled,
 		sessionKind: session.sessionKind,
 		sessionContext: session.sessionContext,
 
 		// Registration methods - write to extension
-		on(event: string, handler: HandlerFn): void {
+		on(event: string, handler: HandlerFn, options?: BeforeAgentStartHandlerOptions): void {
 			assertActive();
 			const list = extension.handlers.get(event) ?? [];
 			list.push(handler);
 			extension.handlers.set(event, list);
+			if (event === "before_agent_start" && options?.previewSafe === true) {
+				extension.previewSafeHandlers ??= new WeakSet();
+				extension.previewSafeHandlers.add(handler);
+			}
 		},
 
 		registerTool(tool: ToolDefinition): void {
@@ -482,10 +494,17 @@ function createExtensionAPI(
 			extension.markdownTransformer = transformer;
 		},
 
-		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
+		registerEntryRenderer<T>(
+			customType: string,
+			renderer: EntryRenderer<T>,
+			options?: EntryRendererOptions<T>,
+		): void {
 			assertActive();
 			extension.entryRenderers ??= new Map();
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
+			extension.entryRendererOptions ??= new Map();
+			if (options === undefined) extension.entryRendererOptions.delete(customType);
+			else extension.entryRendererOptions.set(customType, options as EntryRendererOptions);
 		},
 
 		registerReadClassifier(classifier: ReadClassifier): () => void {
@@ -620,6 +639,29 @@ function createExtensionAPI(
 		unregisterProvider(name: string) {
 			assertActive();
 			applyRuntimeChange(() => runtime.unregisterProvider(name, extension.path));
+		},
+
+		session: {
+			registerControlEndpoint(options) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).registerControlEndpoint(options);
+			},
+			admissionGate() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).admissionGate();
+			},
+			admitExternalMessage(input) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).admitExternalMessage(input);
+			},
+			listAdmittedDeliveries() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).listAdmittedDeliveries();
+			},
+			persistHeaderNow() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).persistHeaderNow();
+			},
 		},
 
 		rpc: {

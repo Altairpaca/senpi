@@ -1,10 +1,9 @@
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import {
 	type AgentSessionLaunchProfile,
 	AgentSessionRuntime,
-	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionRuntime,
 } from "../../core/agent-session-runtime.ts";
 import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
@@ -12,6 +11,8 @@ import type { SessionContext, SessionKind, SessionStartEvent } from "../../core/
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { SESSION_PATH_RETRY_AFTER_MS, type SessionPathReservations } from "./host-reservations.ts";
+import { createRegistryWarm, type HostWarm, type PreparableRuntimeFactory } from "./host-warm.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 import { beginSessionClose, closeMarkedSession, closeSession, type SessionTeardownHost } from "./session-teardown.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
 
@@ -76,7 +77,6 @@ export class RpcSessionRegistryError extends Error {
 		| "session_reservation_limit"
 		| "invalid_path"
 		| "invalid_session_id"
-		| "host_memory_pressure"
 		| "open_failed";
 	/** Machine-readable context for the wire (`errorData`): who holds a path, when to retry. */
 	readonly detail?: Readonly<Record<string, unknown>>;
@@ -91,7 +91,8 @@ export class RpcSessionRegistryError extends Error {
 
 export interface RpcSessionRegistryOptions {
 	agentDir: string;
-	createRuntime: CreateAgentSessionRuntimeFactory;
+	/** A factory with `prepare` also gives the registry `warm` (senpi#2314). */
+	createRuntime: PreparableRuntimeFactory;
 	mcpRegistry?: HostMcpRegistry;
 	/** Injectable clock (defaults to Date.now) so idle bookkeeping is testable. */
 	now?: () => number;
@@ -103,15 +104,6 @@ export interface RpcSessionRegistryOptions {
 	 * that is the only host of its agent directory.
 	 */
 	pathReservations?: SessionPathReservations;
-}
-
-/**
- * Why the host currently declines to CREATE a worker session: it is above its RSS refuse
- * watermark. Carried verbatim to the client as `errorData` so it knows when to retry.
- */
-export interface WorkerAdmissionRefusal {
-	readonly rssMb: number;
-	readonly retry_after_ms: number;
 }
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
@@ -139,12 +131,6 @@ export interface OpenRpcSession {
 	sessionPath?: string;
 	/** True when this open attached to an already-open session instead of creating one. */
 	attached?: boolean;
-}
-
-function canonicalPath(path: string): string {
-	const absolutePath = resolve(path);
-	if (existsSync(absolutePath)) return realpathSync(absolutePath);
-	return `${realpathSync(dirname(absolutePath))}/${basename(absolutePath)}`;
 }
 
 /** Freezes an open's launch inputs, including the nested objects a client supplied. */
@@ -177,9 +163,15 @@ export class RpcSessionRegistry {
 	private readonly options: RpcSessionRegistryOptions;
 	private readonly now: () => number;
 	readonly closeGraceMs: number;
-	private workerRefusal: WorkerAdmissionRefusal | undefined;
+	/** Present only when the runtime factory can build a session's services alone (`host-warm.ts`). */
+	readonly warm?: HostWarm;
 
 	constructor(options: RpcSessionRegistryOptions) {
+		if (options.createRuntime.prepare)
+			this.warm = createRegistryWarm(options.createRuntime.prepare, {
+				agentDir: options.agentDir,
+				...(options.mcpRegistry !== undefined ? { mcpRegistry: options.mcpRegistry } : {}),
+			});
 		this.options =
 			options.mcpRegistry === undefined
 				? options
@@ -208,19 +200,10 @@ export class RpcSessionRegistry {
 		return this.entries.size;
 	}
 
-	/**
-	 * While set, an open that would CREATE a worker session is refused with
-	 * `host_memory_pressure`; attaches to a live path and interactive opens are unaffected.
-	 * The only memory-driven refusal on the in-process path - never an occupancy count.
-	 */
-	setWorkerAdmission(refusal: WorkerAdmissionRefusal | undefined): void {
-		this.workerRefusal = refusal;
-	}
-
 	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		this.validateProfile(profile);
 		this.syncRuntimeMetadata();
-		const sessionPath = profile.sessionPath ? canonicalPath(profile.sessionPath) : undefined;
+		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a
 		// concurrent open naming the same durable id must find this one already recorded rather
 		// than a window between the decision and the record of it. Two LIVE sessions may never
@@ -255,6 +238,12 @@ export class RpcSessionRegistry {
 			// no attach may revoke it for the clients that already rely on it.
 			if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;
 			if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");
+			// The surface follows the client that renders the replies: an attach that names one moves
+			// the live session to it; an attach without one keeps what the session has.
+			if (profile.promptSurface !== undefined && profile.promptSurface !== entry.profile.promptSurface) {
+				entry.profile = frozenProfile({ ...entry.profile, promptSurface: profile.promptSurface });
+				entry.runtime?.setPromptSurface(profile.promptSurface);
+			}
 			entry.lastCommandAt = this.now();
 			if (wasParked) {
 				entry.lifecycleMutex = entry.lifecycleMutex.then(() =>
@@ -269,8 +258,6 @@ export class RpcSessionRegistry {
 				attached: true,
 			};
 		}
-		if (this.workerRefusal && profile.sessionKind === "worker")
-			throw new RpcSessionRegistryError("host_memory_pressure", undefined, { ...this.workerRefusal });
 		if (sessionPath) {
 			// Taken SYNCHRONOUSLY, before any await: a concurrent open for the same path must find the
 			// reservation already held, not a window between the decision and the record of it.
@@ -348,6 +335,7 @@ export class RpcSessionRegistry {
 					runtime.launchProfile,
 				);
 				replacement.setRebindSession(entry.rebindSession);
+				runtime.releaseSessionHold();
 				entry.runtime = replacement;
 				this.syncRuntimeMetadata();
 				return result;
@@ -502,7 +490,7 @@ export class RpcSessionRegistry {
 			const manager = entry.runtime?.session.sessionManager;
 			if (!manager) continue;
 			const currentPath = manager.getSessionFile();
-			const currentKey = currentPath ? canonicalPath(currentPath) : undefined;
+			const currentKey = currentPath ? canonicalSessionPath(currentPath) : undefined;
 			// Preserve the originally canonicalized key while the runtime still points at
 			// the same path. SessionManager may expose a symlink-resolved spelling after
 			// opening a file that did not exist yet; treating that as replacement would

@@ -36,7 +36,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 - Fork point is the last assistant boundary strictly before the divergence.
 - Non-fork reattach passes `resume` and must omit `sessionId` (the SDK rejects the pair). Fork adds `resumeSessionAt` + `forkSession`.
 - Abort never taints and never flattens; `interrupt()` receipts gate keep-vs-close.
-- Fingerprint normalizes the `Current date:` line wherever the date/cwd pair sits (extension appends follow it; no midnight retirement); cwd and other regions stay fail-closed. Host-tool denial copy is versioned by `HOST_TOOL_POLICY_FINGERPRINT` in `toolsetHash`; bump it when the copy changes so resident sessions re-fingerprint instead of keeping the old reason. `config-dir` lane failover is the one declared residual that still flattens.
+- Fingerprint hashes the system prompt verbatim: the generated prompt carries no date or cwd (they arrive as an `environment-context` message, senpi#2093), so a midnight rollover leaves it unchanged; every prompt region stays fail-closed. Host-tool denial copy is versioned by `HOST_TOOL_POLICY_FINGERPRINT` in `toolsetHash`; bump it when the copy changes so resident sessions re-fingerprint instead of keeping the old reason. `config-dir` lane failover is the one declared residual that still flattens.
 - Every main turn emits exactly one continuity observation; TUI notices only for degradations.
 - `resumeMode: "off"` / `SENPI_CLAUDE_SDK_OAUTH_RESUME=off` restores legacy per-turn behavior.
 - `full`/`override` prompt modes default `settingSources` to `[]` (no CLAUDE.md double-injection). The CLI still prepends its own agent preamble; `full` means senpi's prompt arrives intact, not alone.

@@ -1,5 +1,310 @@
 # prompt-preset Extension Changes
 
+## 2026-09-30 - Chat surface for every core (senpi#2398)
+
+### What changed
+
+- Every `INTENT_GATE_LEAD` table (Claude Fable 5 / 5.1, Opus 5 / 5.5, Sonnet 5.5, Grok 4.5 / 4.6 / 4.7, Kimi K3, GPT-5.5 / 5.6 / 6 Astra) is keyed by `TerminalOrApp` and looked up through `terminalOrApp(context.surface)`, and every `context.surface === "app"` branch reads `!== "terminal"`, so `chat` gets the app wording. `kimi-k2-6.ts` / `kimi-k2-code.ts`: the "routing line is required every turn" sentence renders only on `terminal`.
+- Final-message rules on `chat` say the final message is the answer itself instead of opening with the Handoff block: Claude cores and Kimi K3 through `CHAT_FINAL_MESSAGE`, Opus 5 / 5.5 and Sonnet 5.5 as "When you finish, your reply is the answer itself:", Grok 4.5 as "the final message is the answer itself, leading with the outcome", GPT-5.5 / 5.6 without the You need slot.
+- `gpt-5.5.ts`, `gpt-5.6.ts`: the inline `## Handoff` section is `CHAT_REPLIES_SECTION` on `chat`. `gpt-6-astra.ts`: `SURFACE_DIRECTIVE` gains a `chat` entry (app steering, `CHAT_REPLY_RULE` in place of the handoff paragraph, the final-message shape without the handoff block). `gpt-surface.ts`: `GPT_HANDOFF_MOMENTS` is keyed by `TerminalOrApp`.
+- `test/suite/prompt-presets-app-surface.test.ts`: the app assertions run for `app` and `chat`; for every prompt, `chat` carries no `> Ask:`, `For you`, `Now: [`, `You need` or "handoff block" while `app` still carries a handoff slot; `resolvePromptSurface` accepts `chat`; a harness session with `SENPI_PROMPT_SURFACE=chat` renders the chat prompt. RED on main: 96 of 337 tests in the targeted files failed.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (2026-09-30, senpi#2398).
+
+### Why an extension could not handle it
+
+- These are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- The `INTENT_GATE_LEAD` tables and final-message sentences in each core; `SURFACE_DIRECTIVE` in `gpt-6-astra.ts`.
+
+## 2026-09-30 - App surface: every core's claim audit covers an unrun check with the evidence that did run (senpi#2377)
+
+### What changed
+
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `kimi-k3.ts`: on `app` the core's own claim audit drops "flag the unverified explicitly" and renders `APP_UNRUN_CHECK_RULE` (from `dynamic-prompt/verification.ts`) in its place; the Intent Gate's tool-feedback sentence is removed. Sonnet 5.5 keeps "If no real check can run here, say which one you did not run": with no evidence at all, naming it is what the rule asks for.
+- `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`: `APP_UNRUN_CHECK_RULE` follows the verification paragraph on `app`; Grok 4.5's final-message slot "what you could not verify and why" reads "anything left unverified that no other evidence covers"; the Intent Gate feedback sentence is removed.
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: "if validation cannot run, say so and name the next best check" / "Say plainly what you could not run and why" become `GPT_APP_UNRUN_CHECK_RULE` on `app`; the final-message slot ("what you could not and why" / "what you could not verify and why") becomes `GPT_APP_UNVERIFIED_SLOT`. Astra keeps `GPT6_ASTRA_RULES` as the terminal wording and derives `finalMessageShape` in `SURFACE_DIRECTIVE`. `gpt-surface.ts`: `GPT_APP_FEEDBACK` is replaced by `GPT_APP_UNRUN_CHECK_RULE` and `GPT_APP_UNVERIFIED_SLOT`.
+- `test/suite/prompt-presets-app-surface.test.ts`: for the dynamic prompt and every preset name, the app prompt contains none of "flag the unverified explicitly", "could not verify/run", "cannot run, say so", "what you could not and why"; contains "covered by the evidence that did run" exactly once and "tool and hook feedback" exactly once, never inside the Intent Gate. RED on main: 30 of 30 app prompts failed.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (2026-09-30): on the app surface the claim audit, not the Intent Gate, decides whether an unavailable check reaches the user, so each core's audit carries the rule and the feedback guidance lives there alone.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself; the claim-audit wording lives inside each core.
+
+### Expected merge conflict zones
+
+- Fork-only files. The claim-audit and final-message sentences of each core, the `INTENT_GATE_LEAD.app` strings, and `SURFACE_DIRECTIVE` in `gpt-6-astra.ts`.
+
+## 2026-09-30 - Venice's dotless gpt-61-sol resolves to the GPT-6 family preset (senpi#2390)
+
+### What changed
+
+- `presets.ts` `hasGpt6FamilySignal`: the point-release group also accepts one digit glued to the 6 (`gpt[._-]?6(?:[._-]\d+|\d)?[._-](astra|sol|luna)`), so `openai-gpt-61-sol` renders the `gpt-6-astra` preset. Bare `gpt-61` and `gpt-611-sol` stay unmatched (single digit only).
+- `test/suite/prompt-presets-gpt-6-family.test.ts`: the Venice id joins the shape matrix (RED on the previous regex), and the non-family list gains `gpt-61` and `gpt-611-sol`; the catalog sweep matcher is widened the same way.
+
+### Why
+
+Venice publishes `openai-gpt-61-sol` (as it does `openai-gpt-56-sol`); without this the row ran on the generic prompt while every other GPT-6.1 Sol row used the family preset.
+
+### Why an extension could not handle it
+
+Preset matching is this extension.
+
+### Expected merge conflict zones
+
+- `presets.ts`: the GPT-6 matcher block near the top.
+
+## 2026-09-30 - GPT-6.1 Sol resolves to the GPT-6 family preset; two writing rules from codex's 6.1 Sol template (senpi#2390)
+
+### What changed
+
+- `presets.ts` `hasGpt6FamilySignal`: the tier marker accepts an optional point release (`gpt[._-]?6(?:[._-]\d+)?[._-](astra|sol|luna)`), so `gpt-6.1-sol`, `gpt-6.1-sol-fast`, `openai/gpt-6.1-sol`, `GPT-6.1-Sol` and the display name "GPT-6.1 Sol" render the `gpt-6-astra` preset. Bare `gpt-6.1`, `gpt-6-mini` and near-miss words stay unmatched.
+- `gpt-6-astra.ts`: new rule `no-reflexive-apology` (concern `writing-style`, rendered once in `## Writing` after `direct-statements`): "Apologize or fault yourself only for an avoidable mistake of your own, and then plainly: acknowledge it, correct it, move on. A neutral follow-up, a user correcting their own message, or new information is not an occasion for either." `direct-statements` adds "what something is not" to the announcements to skip. The rendered prompt grows from 2,925 to 2,968 words; nothing else in the core moves. Both rules render for every GPT-6 tier: the builder never sees the model, `promptPreset: "gpt-6-astra"` is one byte-stable prompt, and OpenAI's GPT-6 guide shares its practices across the family.
+- `test/suite/prompt-presets-gpt-6-family.test.ts`: 6.1 Sol id shapes (base, `-fast` on the Codex lane, OpenRouter, Vercel `-fast`, display-name cased id), display-name resolution, byte-identical render against Astra, the apply_patch gate agreement, and the catalog sweep (matcher widened the same way). `test/suite/prompt-presets-gpt-6-astra.test.ts`: `no-reflexive-apology` pinned to `writing-style` / `Writing`.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29. openai/codex ships it the Astra template plus exactly two edits no other tier received: the paragraph against reflexive apologies and self-blame, and "what something is not" in the negation-avoid list. Those are OpenAI's only first-party, trace-derived signals about this model, and this preset addressed neither prior (category C, missing context). Everything else in codex's 6.1 Sol template was mapped section by section against this core and is either already carried (permission-as-final-step, steering, initiative, writing style, technical communication, PR descriptions, batching rules, skills precedence, no tool messaging) or left out on purpose (commentary channel, file-link syntax, apps, plugins). No senpi trace of 6.1 Sol exists yet, so no Astra-observed rule was removed on its account. The apology rule is positive-framed and 40 words against codex's 55.
+
+### Why an extension could not handle it
+
+Preset matching and the GPT-6 core are this extension; a user extension could only re-implement the whole dispatch.
+
+### Expected merge conflict zones
+
+- `presets.ts`: the GPT-6 matcher block near the top.
+- `gpt-6-astra.ts`: the `Gpt6AstraRuleId` union, the `DIRECT_STATEMENTS` / `NO_REFLEXIVE_APOLOGY` constants, `GPT6_ASTRA_RULES`, and the `## Writing` line of the core.
+
+## 2026-09-29 - App prompt surface for every preset (senpi#2377)
+
+### What changed
+
+- Every preset renders a `surface: "app"` variant (`SENPI_PROMPT_SURFACE=app`, see `dynamic-prompt/changes.md`); `terminal` renders are byte-identical to before. Shared-core presets (claude-opus-4-x, deepseek, glm, gpt-5 through 5.4, kimi-k2-x) take the shared intent gate and handoff app wording.
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `kimi-k3.ts`, `grok-4.5.ts`, `grok-4.6.ts`, `grok-4.7.ts`: the Intent Gate lead is an `INTENT_GATE_LEAD: Record<PromptSurface, string>` whose `terminal` entry is the old text verbatim; the `app` entry keeps each core's stop-condition and scaffolding rules in its own wording, drops the routing line, and adds the core's tool-and-hook-feedback sentence. `buildHandoffSection` receives `surface: context.surface`. `kimi-k3.ts`: "Before the routing line, reread ..." reads "Before you act, reread ..." on `app`.
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: same `INTENT_GATE_LEAD` shape; the inline handoff moments come from `GPT_HANDOFF_MOMENTS` and the feedback sentence from `GPT_APP_FEEDBACK` in the new `gpt-surface.ts`. Astra keeps `GPT6_ASTRA_RULES` as the terminal wording and derives its `app` steering and handoff-report directives from it (`SURFACE_DIRECTIVE`), dropping "rather than another routing line" and the routing-line moment.
+- `claude-fable-5.ts`, `grok-4.6.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts`: "your declared stop condition" (context-limit line, Stop Goal) reads "your stop condition" on `app`, so no app prompt asks for a declared, i.e. written-out, condition.
+- `kimi-k2-6.ts`, `kimi-k2-code.ts`: the "The intent gate routing line is required every turn." sentence is omitted on `app`.
+- `presets.ts` `withDefaults` and `index.ts` `eventOptionsToBuilderInput` carry `surface` from the session's system-prompt options; `settings.ts` exports `VALID_PRESETS` so the surface suite iterates every preset name.
+- `test/suite/prompt-presets-app-surface.test.ts` (new): for the dynamic prompt and every `VALID_PRESETS` name, `app` has no "I read this as" / "routing line" and has the feedback guidance; `terminal` (omitted and explicit) keeps the routing line; `resolvePromptSurface` accepts only `app`; a harness session with `SENPI_PROMPT_SURFACE=app` renders the app prompt for a preset model and the fallback prompt.
+
+### Why
+
+- The routing line is a terminal contract; an app host renders replies as chat, where the line and relayed tool notices read as harness chatter (omo-desktop-app#1313). Per-core wording keeps each model's dialect; one `app` entry per core replaces the lead at its source instead of appending a counter-rule.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself; the lead text lives inside each core.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `INTENT_GATE_LEAD` declarations above each `build*Core`, and the handoff call sites.
+
+## 2026-09-29 - Claude Sonnet 5.5 preset (senpi#2321)
+
+### What changed
+
+- `claude-sonnet-5-5.ts` (new): the `claude-opus-5-5` core with the Sonnet 5.5 guide's coding-agent deltas applied at the sentence they replace, one home per rule (prompt-engineering A/B/C pass, no rule appended): `## Style` names the three early stops the guide documents at low and medium effort (confirming a plan the request already settles, asking a self-answerable question, stopping after one part of a multipart task) in place of the Opus 5.5 "unattended run" endings; `## Scope` widens the tests-only clause to tests, docs and supporting files and carries the guide's mention-at-the-end remedy; `## Verification` folds the guide's "a check that failed to start does not count; install declared deps with the project's own package manager; name the unrun check" into the existing "run the validator" sentence; the Opus 5.5 time-as-cost delegation sentence is dropped (undocumented for Sonnet). Unchanged: Intent Gate and its stop condition, explore-before-acting, the claim audit, the Handoff block, no reasoning-in-text lines.
+- `presets.ts`: `CLAUDE_SONNET_55_MARKERS` (`sonnet-5-5`, `sonnet-5.5`) resolve to `claude-sonnet-5-5` after the Opus matchers; Sonnet 5 and Sonnet 4.x keep the default dynamic prompt. `settings.ts`: the name joins `PromptPresetName` and `VALID_PRESETS`.
+- `test/suite/prompt-presets-claude-sonnet-5-5.test.ts` (new): id shapes (dashed, dotted, dated, Bedrock, Vertex, display name), non-matches (Sonnet 5, Opus 5.5, `sonnet-55`), forced preset, catalog sweep.
+
+### Why
+
+- Anthropic's Sonnet 5.5 guide (2026-09-28) says Sonnet 5 prompts carry over and documents three low/medium-effort early stops, supporting-file over-delivery, and reporting a change done without a runnable check. Each maps onto a sentence the Opus 5.5 core already has, so the delta is a replacement, not growth.
+
+### Why an extension could not handle it
+
+- Preset dispatch lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the Claude matcher block and the `buildPreset` switch in `presets.ts`; `claude-sonnet-5-5.ts` is fork-only.
+
+
+## 2026-09-28 - GPT-6 Astra: the stated goal bounds the work (#2256)
+
+### What changed
+
+- `gpt-6-astra.ts` (shared by GPT-6 Sol / Luna), five replacements at the sentences that licensed going deeper than the goal. The preset shrinks from 2956 to 2923 words (17,501 to 17,329 rendered chars), and no rule was appended.
+  - `## Working the Task`: `; a finding that looks too simple deserves one more layer of callers or dependencies, and the root fix beats the symptom fix.` -> `, and fix the root cause rather than the symptom.` (B: the escalation clause overrode the stop rule in the same sentence; the root-cause half is kept).
+  - `## Verification`: `, where a defect found in use is yours to fix this turn` deleted (A: it contradicted "fix failures your change caused and report pre-existing ones" in the same section and the Scope paragraph, and it is the literal order behind the reported detour).
+  - `## Scope and Recovery`: `A pre-existing bug or cleanup opportunity beside your change goes in the final message while the diff stays focused.` -> `Errors, bugs, and cleanup opportunities outside the stated goal, including ones you run into along the way, go in the final message unexplored unless one blocks the goal.` (B plus a gap: the old sentence bounded the diff, not the tool calls; this is the one positive scoping principle).
+  - `eval-first-routing`: `; an extra read-only call in that wave is nearly free, while a stale assumption costs the turn` deleted (B: a rationale that read as a license for speculative reads; the batching directive itself is unchanged).
+  - `monitor-conditions`: `EVERY CONDITION YOU WOULD OTHERWISE CHECK ON` -> `... WAIT ON` (B: the caps rule made Astra subscribe even to a 100 ms test run and end the turn, which contradicted `foreground-exception`; the 2026-09-05 long-wait behavior is what "wait on" names).
+- Unchanged on purpose: the 2026-09-11 set (`unbounded-retry`, `turn-end-is-wait`, `approval-last`, the handoff stands-in clause), the Stop Goal, Hard Limits, the shared test decision, and every skill-loading sentence (`skills.ts` catalog line, `bun-runtime`, the eval description's bun-1-4 line), which are out of scope per the owner.
+
+### Why
+
+A user gave GPT-6 Astra (`low`) a clear goal and acceptance criteria; it found an unrelated page error and debugged it until told to refocus. Every emphasized or escalating instruction Astra receives was enumerated and judged keep / soften / delete (table in the PR). The five above were the ones whose wording turns a side finding into owned work or makes extra depth free. Real-model A/B at `low` (RPC surface, before vs after, n = 4-5 per arm per task, effort `low`): on the planted-error task off-goal runs fell 2/4 -> 0/4 with calls 13.0 -> 12.0; a root-cause bug fix and an 11-key multi-step task (the 09-11 early-stop shape) kept 4/4 success and 0 early stops; the rename task was unchanged (its remaining overhead is skill reads, which stay). Harness and raw events are kept outside the repo.
+
+### Why an extension could not handle it
+
+The sentences are preset core text and rule data; an extension could only append a competing rule after them.
+
+### Expected merge conflict zones
+
+- `gpt-6-astra.ts`: `EVAL_FIRST_ROUTING`, `MONITOR_CONDITIONS`, the `## Working the Task`, `## Verification`, and `## Scope and Recovery` template paragraphs, and the header comment. Fork-only file.
+
+## 2026-09-24 - GPT cores: the routing line is not a handoff (real-surface QA)
+
+### What changed
+
+- `gpt-5.5.ts`, `gpt-5.6.ts`, `gpt-6-astra.ts` (`handoff-report` directive): `At a handoff - turn start, a todo phase change, ...` -> `At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message; the routing line is not one - ...`. Mirrors the shared-core `handoff.ts` rewording (`dynamic-prompt/changes.md`); the Claude, Kimi, and Grok cores render the shared builder and pick it up there. +9 words per GPT core.
+- The final-message rule in every core that states one is merged into the handoff block instead of competing with it: `claude-fable-5.ts`, `claude-fable-5-1.ts`, `kimi-k3.ts` ("The final message opens with the Handoff block; its/write its For you slot ..."), `claude-opus-5.ts`, `claude-opus-5-5.ts` ("When you finish, open with the Handoff block; its For you slot answers ..."), `gpt-5.5.ts` ("The final message is the Handoff block: its outcome and You need slots carry the result and its verification ..."), `gpt-5.6.ts` ("Final message: the Handoff block, whose outcome leads and whose You need slot carries the evidence ..."), `gpt-6-astra.ts` `FINAL_MESSAGE_SHAPE` ("The final message is the handoff block and stands alone ..."), `grok-4.5.ts` ("the final message is the Handoff block, whose For you slot leads with the outcome ..."). The outcome-first content of each rule is kept; only its container changes. +2 to +11 words per core. `prompt-presets-extension.test.ts` pinned the old gpt-5.6 wording (`Lead with the conclusion`) as a presence marker; it now pins the section label `Final message:` (a structural marker, not the prose).
+
+- `claude-fable-5-1.ts`: `buildHandoffSection({ turnEndRuleStatedElsewhere: true, briefUpdatesBetweenHandoffs: true })`. Third QA finding: with the final message fixed, `claude-fable-5-1` still wrote nothing between the todo init and the final message - no handoff at the plan or at any phase change - which is the guide's documented default ("Ask for user-facing progress updates": 5.1 writes fewer updates than Fable 5 during long tool chains; remedy: remove narration-suppressing lines first, then say when updates are wanted). The only suppressing line it saw was the shared `Between handoffs, work without narration.`; for this family it becomes the guide's positive form, carrying the Now/Next labels so the update names the todo state. Measured on single runs: the unlabeled form produced findings lines with no todo state, the labeled form produced findings + Now + Next at each phase change. Other families keep the quiet default: grok-4.7 passed with it and no other family has a documented under-reporting default. +12 words in the fable-5-1 core.
+
+### Why
+
+- Second QA finding: on the re-run `claude-fable-5-1` wrote no handoff block at all and closed with a free-form outcome-first summary, because each core's final-summary rule and `## Handoff` both claimed the final message. Merging them leaves one rule per message.
+- Category B: on the real `xai/grok-4.7` run the routing line satisfied "turn start" in the model's reading, so the first handoff block only appeared in the final message. Naming the moment by state (the plan now exists) removes the ambiguity in every family at once.
+
+### Why an extension could not handle it
+
+- Preset core text; an extension could only append a competing definition.
+
+### Expected merge conflict zones
+
+- The `## Handoff` paragraph of `gpt-5.5.ts` / `gpt-5.6.ts` and the `HANDOFF_REPORT` constant in `gpt-6-astra.ts`. Fork-only files.
+
+## 2026-09-24 - Grok 4.7 tuned against the field trace; the 4.6 byte-copy contract retired
+
+### What changed
+
+- `grok-4.7.ts`: the file stops being a verbatim copy of `grok-4.6.ts` (the 2026-09-22 copy ruling below, senpi#1990, anticipated exactly this: the copy and its equality test retire together when 4.7 gets its own tuning). Edits, each against the full-day Grok 4.7 field trace (stopped early repeatedly, claimed done with open work, did not decompose a five-step natural-language build request, gave no visibility), with no vendor prompting guide for 4.7 to lean on:
+  - A: `You are ${APP_NAME}, a coding agent running on Grok 4.6 - a fast, decisive daily driver.` -> `... running on Grok 4.7.`
+  - B: Intent Gate paragraph 2 (`Before naming the stop condition, decide what done actually means ... is a defect, not diligence.`, an over-work warning while the observed failure is early stopping) -> `Done means the deliverable the user asked for exists and they can see it working - never a plan, a partial, or a report about it. Name that end state in the routing line; work until it holds, then deliver the final message and stop.`
+  - B: routes `"what do you think about X?": judge and propose; wait for confirmation.` -> `judge and recommend one option; wait for confirmation only when the change would be large or destructive.`; `"refactor" / "improve" / "clean up": assess first, propose an approach.` -> `assess, then make the smallest change that meets the goal; propose first only when it would be large or destructive.`
+  - C: appended route `A request that names a deliverable - build, make, create, do X then Y - is implementation however it is phrased; a multi-step request is one deliverable executed in order.`
+  - C: the grok-4.6 treatment - `buildHandoffSection()` as `## Handoff` before `## Style`, the dense/quiet/never-restate paragraph deleted, the announcement ban reduced to permission-begging, and the full completion bullet in `## Hard Limits`.
+  - A (paying for the growth; each rule keeps one home): `; open-ended ones take the smallest path that fully satisfies the goal` (the refactor route now says it), `- Never speculate about code, tests, or runtime behavior you have not read or verified.` (the Working the Task re-read rule; kimi-k3 made the same cut), `Concise, concrete` (brevity adjective), `Keep working until your declared stop condition is met.` (the new stop paragraph).
+  - Header: the first paragraph now records the trace, the missing vendor guide, and the A/B/C edits; the 4.6 field-guide findings stay (explicit done beats exhortation), and the file names no `Grok 4.6` string.
+- `test/suite/prompt-presets-grok-4-7.test.ts`: both byte-equality assertions against 4.6 and the `buildGrok46Prompt` import are gone. The built prompt is now checked with sentinels: `toContain("running on Grok 4.7")`, `not.toContain("Grok 4.6")`, `occurrences(prompt, "## Handoff") === 1`, `toContain("## Intent Gate")`. Each went RED under a one-line mutation first (4.6 self-id restored; a `Grok 4.6` leak with the 4.7 self-id kept; Handoff rendered twice; Intent Gate heading renamed). The settings-force case asserts `running on Grok 4.7` instead of `Grok 4.6`.
+- `AGENTS.md`: the covered-family list names grok-4.5, grok-4.6, and grok-4.7 (its own tuned core).
+
+Rendered `wc -w` (empty tool list, `resolvePreset` settings force): 1057 -> 1130 (+73).
+
+| Delta | Words | Category |
+|-------|-------|----------|
+| Self-id line | -6 | A |
+| Intent Gate paragraph 2 | -14 | B |
+| Judgment + refactor routes | +26 | B |
+| Deliverable route (new) | +31 | C |
+| `## Handoff` (+122) minus quiet paragraph (-78) and announcement ban (-6) | +38 | B+C |
+| Completion bullet | +36 | C |
+| Four redundant deletions | -38 | A |
+
+Net B is +12 (the two route rewrites add their large-or-destructive conditions and the stop paragraph shrinks by 14); the growth past the bullet plus the net handoff delta (+74) is paid by the four A deletions, so the file ends 1 word under it.
+
+### Why
+
+senpi#2121. The field trace shows the 4.6 posture failing on 4.7 in the opposite direction from what the 4.6 text guards against: the stop paragraph warned against doing too much, the routes told the model to propose and wait, and the Style section told it to stay quiet. The gajae-code routing stance (a directly implementable request is implemented) and its completion contract informed the route and bullet wording.
+
+### Why an extension could not handle it
+
+The preset core text and its test are this builtin's own; an extension could only append after the contradicting sentences.
+
+### Expected merge conflict zones
+
+- `grok-4.7.ts` header, Intent Gate, `## Hard Limits`, `## Style`; `prompt-presets-grok-4-7.test.ts` imports and the replaced case. Fork-only files.
+
+## 2026-09-24 - Grok 4.5 and 4.6 cores: handoff contract and completion bullet
+
+### What changed
+
+- `grok-4.5.ts`: `buildHandoffSection()` renders `## Handoff` before `## Output` in place of the Output's first sentence; the CEO/orchestration and delegation text is untouched. Full completion bullet in `## Hard Limits` (no scope-swap sentence in this core). Header rationale line.
+- `grok-4.6.ts`: the first `## Style` paragraph is deleted and `## Handoff` renders before `## Style`; the announcement ban becomes a permission-begging ban; full completion bullet in `## Hard Limits`. Header finding 3 now says the Handoff block's fixed fields cover the over-reporting half. Header rationale line. This commit leaves `grok-4.7.ts` a stale copy, and `prompt-presets-grok-4-7.test.ts`'s byte-equality assertion fails until the next entry retires it.
+
+Removed sentences and rendered `wc -w` (empty tool list, `resolvePreset` settings force):
+
+| Preset | Removed (exact) | Before | After | Delta by category |
+|--------|-----------------|--------|-------|-------------------|
+| grok-4.5 | `Update only at meaningful phase changes — a discovery that changes the plan, a worker returning, a blocker — one sentence each.` | 780 | 916 | +122 handoff B+C; +36 full completion bullet C; -22 phase-change cadence B |
+| grok-4.6 | `Make every report dense with information the user does not already have: lead with the outcome and what you verified, never restate the task back. While working, stay quiet through small changes and give one short update only at a meaningful phase change - a discovery that changes the plan, a blocker, work spanning many files - with enough substance to let the user decide whether to interrupt. Skip anything the user does not need to act on.`; `announcement language ("Next, I will...") and permission-begging ("Shall I?") are prohibited` -> `permission-begging ("Shall I?") is prohibited` | 1057 | 1131 | +122 handoff B+C; +36 full completion bullet C; -78 quiet/never-restate paragraph B; -6 announcement ban B |
+
+Neither file grew beyond its completion bullet plus the net handoff delta.
+
+### Why
+
+senpi#2121 (user directive 2026-09-24): progress must be legible at every phase change and at the end. Both Grok cores told the model to stay quiet until a "meaningful" phase change and banned announcing the next step, and the Grok field trace behind this issue shows silent runs that ended with done claimed while work was still open. No xAI prompting guide covers progress reporting; the 4.6 field guide's finding that an explicit definition beats exhortation is why the replacement is a fixed block with named moments, not a frequency word.
+
+### Why an extension could not handle it
+
+The sentences are preset core text; an extension could only append a contradicting rule after them.
+
+### Expected merge conflict zones
+
+- `grok-4.5.ts` `## Hard Limits` / `## Output` opening; `grok-4.6.ts` `## Hard Limits` / `## Style` opening; both import blocks and headers. Fork-only files.
+
+## 2026-09-24 - GPT cores: outcome-first handoff; Astra handoff-report rule
+
+### What changed
+
+- `gpt-5.5.ts`: `## Handoff` (outcome-first block: `[Outcome so far] toward [...]. You need: [...]. Now: [...]. Next: [...]`) inserted before `## Style`; full completion bullet in `## Hard Limits` (the core bans widening only, not swap); header rationale line.
+- `gpt-5.6.ts`: the same `## Handoff` section before `## Output`; the short completion bullet (`## Output` already says "never substitute a shorter artifact for the one asked for" and the Stop Goal "no partial delivery"); `Final message:`, `Code reviews:`, the Stop Goal, and `GPT56_EXECUTION_RULES` untouched; header rationale line, and the header's quoted brevity phrase reworded.
+- `gpt-6-astra.ts`: new rule `handoff-report` (concern `reporting`) renders once in `## Reporting` in place of the plan-change sentence, ending with that sentence's clause "a plan, a hypothesis, a status report, or an offer to continue never stands in for the work"; no heading and no bold (the `## Reporting` section is the heading, and bold stays reserved for the async rules). `DIRECT_STATEMENTS` untouched. Short completion bullet in `## Hard Limits` (`initiative-bias` already says "deliver all of it and only it"). Header rationale line.
+- `test/suite/prompt-presets-gpt-6-astra.test.ts`: `handoff-report` -> `reporting` -> `Reporting` in both rule tables; the emphasized set is unchanged, so the rule is asserted plain. RED under four one-line mutations (rendered in `## Writing`, rendered twice, concern `writing-style`, bold added) before green. `prompt-presets-gpt-6-family.test.ts` (Sol/Luna byte-equal to Astra) stays green unchanged.
+
+Removed sentences and rendered `wc -w` (empty tool list, `resolvePreset` settings force):
+
+| Preset | Removed (exact) | Before | After | Delta by category |
+|--------|-----------------|--------|-------|-------------------|
+| gpt-5.5 | `, and roadmap language ("Next, I will") - do the follow-up now and report it done` (the sentence now ends at the permission-begging ban) | 882 | 998 | +94 handoff B+C; +36 full completion bullet C; -14 roadmap ban B (contradicted the handoff's Next) |
+| gpt-5.6 | `During work, update only at meaningful phase changes - a plan-changing discovery, a tradeoff decision, a blocker - one sentence each; never narrate routine reads.`; `Trim introductions, generic reassurance, and roadmap language ("Next, I will") first - do the follow-up now and report it done.` -> `Trim introductions and generic reassurance first.`; `say so concisely` -> `say so in a sentence` | 2116 | 2201 | +94 handoff B+C; +28 short bullet C; -25 phase-change cadence B; -14 roadmap ban B; +2 brevity adjective replaced by a bound A |
+| gpt-6-astra (and Sol/Luna) | `While working, speak only when something changes the plan - a finding, a tradeoff decision, a blocker - in one or two sentences naming the concrete outcome and the next step, then take that step in the same turn: a plan, a hypothesis, a status report, or an offer to continue never stands in for the work. Routine reads and passing checks go unnarrated.` | 2778 | 2852 | +110 handoff-report B+C (keeps the stands-in clause); -64 plan-change sentence B; +28 short bullet C |
+
+No file grew beyond its completion bullet plus the net handoff delta. None of the three files contains `concise` or `keep it short` after this change.
+
+### Why
+
+senpi#2121 (user directive 2026-09-24): progress must be legible at every phase change and at the end. The GPT cores rationed updates to plan-changing discoveries and banned roadmap language, so a run could go silent and a named Next read as forbidden. The GPT-5.5 guide asks for a short visible preamble and sparse outcome-based updates at major phase changes, never narration of routine calls; the GPT-5.6 guide ("Simplify prompts first") asks that added text replace, not stack, so each section is paid for by the sentences it supersedes, and no brevity adjective is added (GPT-5.6 over-compresses under them). Astra keeps its 09-11 closing clause because that survey showed it ending turns on a named next step it never took.
+
+### Why an extension could not handle it
+
+The sentences are preset core text and rule data; an extension could only append a contradicting rule after them.
+
+### Expected merge conflict zones
+
+- `gpt-5.5.ts` / `gpt-5.6.ts` `## Hard Limits` tails and the `## Style` / `## Output` openings; `gpt-6-astra.ts` rule-id union, `GPT6_ASTRA_RULES`, `## Reporting`, `## Hard Limits`; the astra test's two rule tables. Fork-only files.
+
+## 2026-09-24 - Claude and Kimi K3 cores: handoff contract replaces quiet narration
+
+### What changed
+
+- `claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `kimi-k3.ts`: each renders `buildHandoffSection({ turnEndRuleStatedElsewhere: true })` (`dynamic-prompt/handoff.ts`) as `## Handoff` immediately before its `## Style`, gains a completion bullet in `## Hard Limits`, and gets a one-line header rationale. Every one of these cores already carries a text-only turn-end rule ("check your last paragraph", or the Opus 5.5 four endings), so the block's "a Next with nothing after it is a defect" clause is dropped there instead of stated twice. Completion bullet: the short form where the core already bans scope swap (fable-5-1, opus-5, opus-5-5 Scope sections; kimi-k3 "deliver all of it and only it ... scaling the task down is the user's call"), the full form in fable-5 (no scope-swap sentence).
+- `kimi-k2-code.ts` (thin, shared by K2.7/K2.8): `Write lean - do not restate the request or re-derive what you already established this turn.` -> `Write lean - do not re-derive what you already established this turn.` (the rendered shared core now asks for an Ask field). The only thin-preset edit.
+
+Removed sentences and rendered `wc -w` (empty tool list, `resolvePreset` settings force; renders in the lane evidence `task-7-<preset>.before/.after.md`):
+
+| Preset | Removed (exact) | Before | After | Delta by category |
+|--------|-----------------|--------|-------|-------------------|
+| claude-fable-5 | `Announcement language ("Next, I will...") and permission-begging ("Shall I?") are prohibited.` -> `Permission-begging ("Shall I?") is prohibited.`; `Be concise and concrete: no filler openers, no self-praise,` (default traits, brevity adjective); `Terse shorthand between tool calls is fine;` (licensed the narration the handoff forbids; "see it" -> "see the work" to keep the sentence whole) | 1083 | 1211 | +113 handoff B+C; +36 full completion bullet C; -6 announcement B; -9 concise traits A; -7 shorthand allowance B; +1 referent |
+| claude-fable-5-1 | `Add a brief progress note when you learn something important or change direction.` | 1097 | 1225 | +113 handoff B+C; +28 short bullet C; -13 progress-note cadence B |
+| claude-opus-5 | `The routing line already announced the plan, so add a brief update only when you find something important or change direction, and correct an earlier statement ...` -> `Correct an earlier statement ...` (correction filter kept) | 1253 | 1372 | +113 handoff B+C; +28 short bullet C; -22 cadence clause B |
+| claude-opus-5-5 | same clause as claude-opus-5 | 1348 | 1467 | +113 handoff B+C; +28 short bullet C; -22 cadence clause B |
+| kimi-k3 | `Do not restate the request, re-derive facts ...` -> `Do not re-derive facts ...` | 1303 | 1441 | +113 handoff B+C; +28 short bullet C; -3 restate ban B |
+| kimi-k2-7 / kimi-k2-8 | `do not restate the request or` | 1416 | 1412 | -4 restate ban B |
+
+No file grew beyond its completion bullet plus the net handoff delta, so no further deletion was owed.
+
+### Why
+
+senpi#2121: the user directive of 2026-09-24 asks that progress be legible at every phase change and at the end - what was asked, what the user needs to know, what runs now, what runs next. These cores either banned announcements outright or rationed updates to "something important", which produced silent runs. Anthropic's guides describe the lever as the shape of updates, not a cadence counter (claude.md "User-facing progress updates"; Opus 5 "User-facing progress updates"; Fable 5.1 "Ask for user-facing progress updates": remove narration-suppressing lines first; Opus 5.5 "User-facing progress updates"). Kimi's guide asks for objective conditions and a stated replacement behavior (kimi.md "Explicit terminal conditions"). The request-restating bans conflicted with the handoff's Ask field.
+
+### Why an extension could not handle it
+
+The sentences are preset core text; an extension could only append a contradicting rule after them.
+
+### Expected merge conflict zones
+
+- The five cores' `## Hard Limits` tails, `## Style` paragraphs, imports, and header comments; `kimi-k2-code.ts` tuning sentence. Fork-only files.
+
 ## 2026-09-23 - GPT presets: the test decision replaces test-first
 
 ### What changed

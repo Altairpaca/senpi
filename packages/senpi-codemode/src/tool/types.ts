@@ -1,5 +1,6 @@
-import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
+import type { AgentToolResult, AgentToolUpdateCallback, KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { type TSchema, type TUnsafe, Type } from "typebox";
+import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
@@ -16,8 +17,6 @@ export type EnabledEvalLanguages = Readonly<Record<EvalLanguage, boolean>>;
 export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage[] {
 	return evalLanguageOrder.filter((language) => enabled[language]);
 }
-
-export const EVAL_SUMMARY_MAX_LENGTH = 80;
 
 /** The deadlines the schema teaches the model; every number comes from the resolved settings. */
 export interface EvalDeadlineSeconds {
@@ -67,6 +66,12 @@ export type EvalControlInput =
 
 export type EvalToolRequest = EvalToolInput | EvalControlInput;
 
+// Like `summary`, `language` and `code` stay optional in the wire schema because control
+// actions share it; the description teaches the requirement and parseEvalRequest enforces it.
+const LANGUAGE_FIELD_DESCRIPTION =
+	"REQUIRED for run. Kernel that runs the cell; each language keeps its own persistent state across eval calls.";
+const CODE_FIELD_DESCRIPTION = "REQUIRED for run. Cell body, verbatim.";
+
 function evalInputProperties<Language extends TSchema>(languageSchema: Language, deadlines: EvalDeadlineSeconds) {
 	return {
 		action: Type.Optional(
@@ -76,12 +81,11 @@ function evalInputProperties<Language extends TSchema>(languageSchema: Language,
 			}),
 		),
 		language: Type.Optional(languageSchema),
-		code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
+		code: Type.Optional(Type.String({ description: CODE_FIELD_DESCRIPTION })),
 		summary: Type.Optional(
 			Type.String({
-				maxLength: EVAL_SUMMARY_MAX_LENGTH,
 				description:
-					"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
+					"REQUIRED for run. One line in the language the user writes in: a progress update saying what you are doing and why, not a label for the code; shown in the TUI while the cell runs.",
 			}),
 		),
 		timeout: Type.Optional(Type.Number({ minimum: 1, description: timeoutFieldDescription(deadlines) })),
@@ -99,11 +103,15 @@ function evalInputProperties<Language extends TSchema>(languageSchema: Language,
 	};
 }
 
+function evalLanguageUnion(languages: readonly EvalLanguage[]) {
+	return Type.Union(
+		languages.map((item) => Type.Literal(item)),
+		{ description: LANGUAGE_FIELD_DESCRIPTION },
+	);
+}
+
 const fullEvalInputSchema = Type.Object(
-	evalInputProperties(
-		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
-		defaultEvalDeadlineSeconds,
-	),
+	evalInputProperties(evalLanguageUnion(evalLanguageOrder), defaultEvalDeadlineSeconds),
 );
 
 /** Runtime accepts a discriminated run/control union. */
@@ -115,10 +123,7 @@ export function createEvalInputSchema(
 ): EvalInputSchema {
 	const languages = enabledLanguageList(enabled);
 	if (languages.length === 0) throw new Error("eval requires at least one enabled language");
-	const languageSchema =
-		languages.length === 1
-			? Type.Union([Type.Literal(languages[0])])
-			: Type.Union(languages.map((item) => Type.Literal(item)));
+	const languageSchema = evalLanguageUnion(languages);
 	return Type.Unsafe<EvalToolRequest>(
 		Type.Object(evalInputProperties(languageSchema, deadlines), {
 			anyOf: [
@@ -137,6 +142,8 @@ export interface EvalKernelRunInput {
 	readonly timeoutMs?: number;
 	readonly onStarted?: () => void;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
+	/** Globals of the tools active when the cell was submitted; kernels without preludes ignore them. */
+	readonly kernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 export interface KernelInterruptHandle {
@@ -160,6 +167,11 @@ export interface EvalKernel {
 
 export interface EvalKernelManager {
 	getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel>;
+	/**
+	 * Drops the per-cell listener `getKernel` registered for `language` once that cell settled.
+	 * Identity-checked, so releasing a superseded listener never unbinds a newer cell's listener.
+	 */
+	releaseKernelListener?(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void;
 }
 
 export type ExecuteTool = (
@@ -251,4 +263,8 @@ export interface EvalToolDetails {
 	readonly jsonOutputs?: readonly unknown[];
 	readonly notice?: string;
 	readonly meta?: TruncationMeta;
+	/** Kernel memory after the cell; its notice text is delivered as its own content part. */
+	readonly memory?: EvalMemoryDetails;
 }
+
+export type EvalMemoryDetails = Omit<KernelMemoryReport, "notice">;

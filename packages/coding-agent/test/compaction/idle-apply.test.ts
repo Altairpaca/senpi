@@ -191,6 +191,7 @@ function createAgentEndEvent(overrides?: Partial<AgentEndEvent>): AgentEndEvent 
 function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
+		trigger: "prompt",
 		prompt: "next prompt",
 		systemPrompt: "TEST AGENT SYSTEM PROMPT",
 		systemPromptOptions: { cwd: process.cwd() },

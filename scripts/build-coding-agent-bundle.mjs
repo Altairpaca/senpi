@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,7 +89,7 @@ const httpsProxyAgentNamedExportPlugin = {
 	},
 };
 
-function commonBuildOptions() {
+export function commonBuildOptions() {
 	return {
 		absWorkingDir: repoRoot,
 		banner,
@@ -124,7 +125,7 @@ function commonBuildOptions() {
 	};
 }
 
-function validateExternalImports(metafiles) {
+export function validateExternalImports(metafiles) {
 	const unexpected = new Set();
 	for (const metafile of metafiles) {
 		for (const input of Object.values(metafile.inputs)) {
@@ -139,6 +140,37 @@ function validateExternalImports(metafiles) {
 	if (unexpected.size > 0) {
 		throw new Error(`Bundle left unexpected external imports: ${Array.from(unexpected).sort().join(", ")}`);
 	}
+}
+
+/** Package names the bundle imports at runtime, so a relocated copy can resolve them the same way. */
+export function collectExternalPackages(metafiles) {
+	const names = new Set();
+	for (const metafile of metafiles) {
+		for (const input of Object.values(metafile.inputs)) {
+			for (const imported of input.imports) {
+				if (!imported.external || isBuiltin(imported.path) || imported.path.startsWith("bun:")) continue;
+				const segments = imported.path.split("/");
+				names.add(imported.path.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0]);
+			}
+		}
+	}
+	return Array.from(names).sort();
+}
+
+/**
+ * `runtime-manifest.json` names this exact build (a content hash of every emitted file) for the
+ * CLI's runtime snapshot (`packages/coding-agent/src/runtime-snapshot/`), which keeps a running
+ * session on its own build when a package manager rewrites the install (#2358).
+ */
+function writeRuntimeManifest(metafiles) {
+	const hash = createHash("sha256");
+	for (const file of readdirSync(bundleDir, { recursive: true }).map(String).sort()) {
+		const path = join(bundleDir, file);
+		if (!statSync(path).isFile()) continue;
+		hash.update(file.replaceAll("\\", "/")).update("\0").update(readFileSync(path));
+	}
+	const manifest = { buildId: hash.digest("hex").slice(0, 16), externals: collectExternalPackages(metafiles) };
+	writeFileSync(join(bundleDir, "runtime-manifest.json"), `${JSON.stringify(manifest)}\n`);
 }
 
 function findContainingOutput(metafile, inputSuffix) {
@@ -158,85 +190,92 @@ function outputBytes(metafiles) {
 	);
 }
 
-for (const entry of [
-	join(codingAgentDistDir, "cli.js"),
-	join(codingAgentDistDir, "index.js"),
-	join(codingAgentDistDir, "rpc-entry.js"),
-	join(codingAgentDistDir, "client", "index.js"),
-	join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-	join(aiDistDir, "api", "bedrock-converse-stream.js"),
-	join(aiDistDir, "auth", "oauth", "anthropic.js"),
-]) {
-	if (!existsSync(entry)) {
-		throw new Error(`Bundle input is missing: ${relative(repoRoot, entry)}. Build the workspace packages first.`);
+async function buildBundle() {
+	for (const entry of [
+		join(codingAgentDistDir, "cli.js"),
+		join(codingAgentDistDir, "index.js"),
+		join(codingAgentDistDir, "rpc-entry.js"),
+		join(codingAgentDistDir, "client", "index.js"),
+		join(codingAgentDistDir, "utils", "image-resize-worker.js"),
+		join(aiDistDir, "api", "bedrock-converse-stream.js"),
+		join(aiDistDir, "auth", "oauth", "anthropic.js"),
+	]) {
+		if (!existsSync(entry)) {
+			throw new Error(`Bundle input is missing: ${relative(repoRoot, entry)}. Build the workspace packages first.`);
+		}
 	}
+
+	rmSync(bundleDir, { force: true, recursive: true });
+	mkdirSync(bundleDir, { recursive: true });
+
+	const mainResult = await build({
+		...commonBuildOptions(),
+		entryNames: "[name]",
+		entryPoints: {
+			cli: join(codingAgentDistDir, "cli.js"),
+			client: join(codingAgentDistDir, "client", "index.js"),
+			index: join(codingAgentDistDir, "index.js"),
+			"rpc-entry": join(codingAgentDistDir, "rpc-entry.js"),
+		},
+		outdir: bundleDir,
+		chunkNames: "chunks/[name]-[hash]",
+		splitting: true,
+	});
+
+	const bedrockLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/api/bedrock-converse-stream.lazy.js");
+	const oauthLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/auth/oauth/load.js");
+	const imageResizeOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/utils/image-resize.js");
+	if (dirname(bedrockLoaderOutput) !== dirname(oauthLoaderOutput)) {
+		throw new Error("Bedrock and OAuth lazy loaders were emitted into different directories");
+	}
+
+	// These implementations are reached through variable-specifier imports or a
+	// worker URL, so the main bundle cannot follow them. Emit one self-contained
+	// file per implementation beside the code that resolves it.
+	const lazyResult = await build({
+		...commonBuildOptions(),
+		entryNames: "[name]",
+		entryPoints: {
+			anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
+			"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
+			cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
+			"cursor-agent": join(aiDistDir, "api", "cursor-agent.js"),
+			devin: join(aiDistDir, "auth", "oauth", "devin.js"),
+			"devin-agent": join(aiDistDir, "api", "devin-agent.js"),
+			"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
+			// `supervisor-route.js` defers this with a dynamic `import("./host-lifecycle.js")`
+			// so the RPC host graph stays out of every launch. `session-worker` is bundled
+			// here with splitting off, which leaves that specifier unresolved beside the
+			// emitted file - so the implementation has to exist there under that exact name,
+			// or `host ensure` dies with "Module not found .../chunks/host-lifecycle.js".
+			"host-lifecycle": join(codingAgentDistDir, "modes", "rpc", "host-lifecycle.js"),
+			"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
+			"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
+			"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
+			"chatgpt-subscription": join(aiDistDir, "auth", "oauth", "chatgpt-subscription.js"),
+			openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),
+			radius: join(aiDistDir, "auth", "oauth", "radius.js"),
+			xai: join(aiDistDir, "auth", "oauth", "xai.js"),
+		},
+		outdir: dirname(bedrockLoaderOutput),
+		splitting: false,
+	});
+
+	const imageResizeWorkerOutput = resolve(dirname(bedrockLoaderOutput), "image-resize-worker.js");
+	if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
+		throw new Error("Image resize implementation and worker were emitted into different directories");
+	}
+
+	validateExternalImports([mainResult.metafile, lazyResult.metafile]);
+	chmodSync(join(bundleDir, "cli.js"), 0o755);
+	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
+	writeRuntimeManifest([mainResult.metafile, lazyResult.metafile]);
+
+	const files = new Set([...Object.keys(mainResult.metafile.outputs), ...Object.keys(lazyResult.metafile.outputs)]).size;
+	const mib = outputBytes([mainResult.metafile, lazyResult.metafile]) / (1024 * 1024);
+	console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);
 }
 
-rmSync(bundleDir, { force: true, recursive: true });
-mkdirSync(bundleDir, { recursive: true });
-
-const mainResult = await build({
-	...commonBuildOptions(),
-	entryNames: "[name]",
-	entryPoints: {
-		cli: join(codingAgentDistDir, "cli.js"),
-		client: join(codingAgentDistDir, "client", "index.js"),
-		index: join(codingAgentDistDir, "index.js"),
-		"rpc-entry": join(codingAgentDistDir, "rpc-entry.js"),
-	},
-	outdir: bundleDir,
-	chunkNames: "chunks/[name]-[hash]",
-	splitting: true,
-});
-
-const bedrockLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/api/bedrock-converse-stream.lazy.js");
-const oauthLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/auth/oauth/load.js");
-const imageResizeOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/utils/image-resize.js");
-if (dirname(bedrockLoaderOutput) !== dirname(oauthLoaderOutput)) {
-	throw new Error("Bedrock and OAuth lazy loaders were emitted into different directories");
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+	await buildBundle();
 }
-
-// These implementations are reached through variable-specifier imports or a
-// worker URL, so the main bundle cannot follow them. Emit one self-contained
-// file per implementation beside the code that resolves it.
-const lazyResult = await build({
-	...commonBuildOptions(),
-	entryNames: "[name]",
-	entryPoints: {
-		anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
-		"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
-		cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
-		"cursor-agent": join(aiDistDir, "api", "cursor-agent.js"),
-		devin: join(aiDistDir, "auth", "oauth", "devin.js"),
-		"devin-agent": join(aiDistDir, "api", "devin-agent.js"),
-		"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
-		// `supervisor-route.js` defers this with a dynamic `import("./host-lifecycle.js")`
-		// so the RPC host graph stays out of every launch. `session-worker` is bundled
-		// here with splitting off, which leaves that specifier unresolved beside the
-		// emitted file - so the implementation has to exist there under that exact name,
-		// or `host ensure` dies with "Module not found .../chunks/host-lifecycle.js".
-		"host-lifecycle": join(codingAgentDistDir, "modes", "rpc", "host-lifecycle.js"),
-		"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-		"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
-		"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
-		"chatgpt-subscription": join(aiDistDir, "auth", "oauth", "chatgpt-subscription.js"),
-		openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),
-		radius: join(aiDistDir, "auth", "oauth", "radius.js"),
-		xai: join(aiDistDir, "auth", "oauth", "xai.js"),
-	},
-	outdir: dirname(bedrockLoaderOutput),
-	splitting: false,
-});
-
-const imageResizeWorkerOutput = resolve(dirname(bedrockLoaderOutput), "image-resize-worker.js");
-if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
-	throw new Error("Image resize implementation and worker were emitted into different directories");
-}
-
-validateExternalImports([mainResult.metafile, lazyResult.metafile]);
-chmodSync(join(bundleDir, "cli.js"), 0o755);
-chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
-
-const files = new Set([...Object.keys(mainResult.metafile.outputs), ...Object.keys(lazyResult.metafile.outputs)]).size;
-const mib = outputBytes([mainResult.metafile, lazyResult.metafile]) / (1024 * 1024);
-console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);

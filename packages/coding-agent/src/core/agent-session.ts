@@ -38,9 +38,12 @@ import {
 	resolveToolNameAlias,
 } from "@earendil-works/pi-agent-core";
 import {
+	type AssistantMessageEvent,
 	contentText,
 	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
+	supportsAllowedToolChoice,
+	supportsConfigurationUpdate,
 	type ThinkingSelection,
 } from "@earendil-works/pi-ai";
 import type {
@@ -87,11 +90,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
-import {
-	AgentSettledDelivery,
-	type DeferredAgentSettledAction,
-	type DeferredTurnClaim,
-} from "./agent-settled-delivery.ts";
+import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
@@ -116,7 +115,12 @@ import type { CompactionModelSelector } from "./compaction-settings-access.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type PromptSurface,
+	resolvePromptSurface,
+} from "./dynamic-prompt/index.ts";
 import {
 	AssistantEditError,
 	assertExpectedLeaf,
@@ -130,10 +134,16 @@ import {
 	UserEditError,
 	userTextEquals,
 } from "./edited-user-message.ts";
+import {
+	type EnvironmentContext,
+	environmentContextMessageIfChanged,
+	resolveEnvironmentContext,
+} from "./environment-context.ts";
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
+import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import {
 	type ModelUsabilityAdmission,
 	ModelUsabilityBudgetError,
@@ -196,6 +206,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
+import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
@@ -206,6 +217,7 @@ import type {
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
+import { ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import {
 	isManualContinueSubmission,
@@ -217,11 +229,20 @@ import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
+import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
+import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
+import {
+	acquireFallbackCircuits,
+	createFallbackCircuitAccess,
+	type FallbackCircuitAccess,
+	monotonicNow,
+} from "./retry-fallback/circuit.ts";
+import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
@@ -236,6 +257,8 @@ import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
+import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
+import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import {
@@ -246,7 +269,11 @@ import {
 } from "./session-manager.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
-import type { SettingsManager, SettingsSourceSelection } from "./settings-manager.ts";
+import {
+	DEFAULT_STREAM_START_TIMEOUT_MS,
+	type SettingsManager,
+	type SettingsSourceSelection,
+} from "./settings-manager.ts";
 import {
 	formatSkillInvocationPrompt,
 	MAX_SKILL_EXPANSIONS_PER_PROMPT,
@@ -257,13 +284,17 @@ import {
 	type SkillInvocationToken,
 } from "./skill-invocation.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
+import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
+import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
+import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */
@@ -309,8 +340,9 @@ type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 };
 
 export type AgentSessionEvent =
-	| Exclude<AgentEvent, { type: "agent_end" }>
+	| Exclude<AgentEvent, { type: "agent_end" | "message_update" }>
 	| AgentSessionAgentEndEvent
+	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
 	| { type: "agent_idle" }
 	| { type: "session_abort" }
@@ -327,6 +359,8 @@ export type AgentSessionEvent =
 			notice: string;
 	  }
 	| { type: "continuation_error"; errorMessage: string }
+	/** The session file refused a message of the running turn; the message is not in the transcript. */
+	| { type: "transcript_write_failed"; role: AgentMessage["role"]; errorMessage: string }
 	| {
 			type: "skill_invocation";
 			skills: readonly {
@@ -441,9 +475,17 @@ export type AgentSessionEvent =
 			to: string;
 			chainKey: string;
 			reason: "transient" | "refusal" | "hard-error" | "billing";
+			/** Set when a usage limit caused the switch: `model` binds one model, `account` the whole provider. */
+			limit?: "model" | "account";
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
-	| { type: "retry_fallback_reverted"; from: string; to: string }
+	| {
+			type: "retry_fallback_reverted";
+			from: string;
+			to: string;
+			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
+			cause?: "fallback-unusable";
+	  }
 	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
 	| {
 			type: "server_fallback_aborted";
@@ -514,6 +556,11 @@ export interface AgentSessionConfig {
 	fallbackNow?: () => number;
 	/** Random source for retry jitter (tests only). */
 	retryRandom?: () => number;
+	/**
+	 * Send cwd and date as an append-only environment-context message before a turn (senpi#2093).
+	 * Default true; test fixtures that pin exact transcripts pass false.
+	 */
+	environmentContext?: boolean;
 	/** Global model narrowing for selectors and startup model choice (from --models / enabledModels) */
 	scopedModels?: Array<{
 		model: Model<any>;
@@ -558,6 +605,8 @@ export interface AgentSessionConfig {
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
 	autoTitleSessions?: boolean;
+	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
+	promptSurface?: PromptSurface;
 }
 
 type SessionModelEntry = {
@@ -774,6 +823,11 @@ export interface PromptOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
+	/**
+	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
+	 * interactive or RPC input is rejected with `UnknownCommandError`.
+	 */
+	unknownCommandAsText?: boolean;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
 	/** Internal hook used by the TUI to distinguish handled input from owned prompt work. */
@@ -815,6 +869,8 @@ export interface SessionStats {
 	};
 	cost: number;
 	contextUsage?: ContextUsage;
+	/** Absent from hosts that predate the report. */
+	failures?: SessionFailureReport;
 }
 
 interface ToolDefinitionEntry {
@@ -917,6 +973,18 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
+	readonly externalAdmission = new ExternalAdmission({
+		isBusy: () => this._isAgentRunActive || this._promptStartPending,
+		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
+		start: (message) =>
+			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
+				this._sessionLogger.warn("external_delivery_start_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}),
+	});
+	private _controlEndpointHost: ControlEndpointHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
 	// the stale-usage exemption and schedule the continuation itself.
@@ -941,6 +1009,11 @@ export class AgentSession {
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
+	// Message writes the session file refused. Queued event work cannot throw to the prompt, so a
+	// prompt-owned run's prompt throws the first one once the queue settles; any other run reports it
+	// as a continuation error when it happens.
+	private readonly _transcriptWriteFailures = new TranscriptWriteFailures();
+	private _promptOwnsRun = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
 	// that AgentSession initiated required-compaction recovery.
@@ -1027,10 +1100,20 @@ export class AgentSession {
 	private readonly _publishedEvalOnlyHintNames = new Set<string>();
 	/** Active-tool selection as requested by callers, before eval-only filtering. */
 	private _requestedActiveToolNames?: string[];
+	/** Every tool that has been active this session, in first-activation order (senpi#2095). */
+	private readonly _declaredToolNames: string[] = [];
+	/** Tool names the base system prompt was last built from. */
+	private _promptToolNames: readonly string[] = [];
+	/** Whether the last tool declaration used the session-wide declared set. */
+	private _promptDeclaresSessionTools = false;
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
+	// Settles once session_start handlers, default-tool enforcement, and resource discovery
+	// (which rebuilds the base prompt with discovered skills) have run.
+	private _sessionStartSettled: Promise<void> = Promise.resolve();
+	private readonly _promptCachePrefixBuilds = new PromptCachePrefixBuilds();
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
@@ -1045,9 +1128,14 @@ export class AgentSession {
 	private readonly _fallbackValidationWarnings: readonly string[];
 	private readonly _retryFallback: RetryFallbackController;
 	private readonly _selectorCooldowns: SelectorCooldowns;
+	private readonly _fallbackCircuits: FallbackCircuitAccess;
+	private readonly _fallbackCircuitsLease: ReturnType<typeof acquireFallbackCircuits>;
+	private _probeBackLaneSeq = 0;
+	private _circuitProbeWatchdog: ReturnType<typeof setTimeout> | undefined;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
 	private readonly _retryRandom: () => number;
+	private readonly _environmentContextEnabled: boolean;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -1069,8 +1157,10 @@ export class AgentSession {
 		appendSystemPrompt?: string;
 	};
 	private _systemPromptOverride?: string;
+	private _promptSurface: PromptSurface | undefined;
 
 	constructor(config: AgentSessionConfig) {
+		this._promptSurface = config.promptSurface;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
@@ -1113,13 +1203,28 @@ export class AgentSession {
 				source: fallbackChainsSource,
 			});
 		}
-		this._selectorCooldowns = new SelectorCooldowns(config.fallbackNow ?? (() => Date.now()));
-		this._fallbackNow = config.fallbackNow ?? (() => Date.now());
+		// Cooldowns, probe schedules, and circuits measure elapsed time, so they all
+		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
+		this._fallbackNow = config.fallbackNow ?? monotonicNow;
+		this._selectorCooldowns = new SelectorCooldowns(this._fallbackNow);
+		const lease = () => this._fallbackCircuitsLease;
+		this._fallbackCircuits = createFallbackCircuitAccess({
+			// Read on every use: the hold is taken as construction's last step.
+			get breaker() {
+				return lease().breaker;
+			},
+			owner: () => this.sessionId,
+			now: this._fallbackNow,
+			settings: () => this.settingsManager.getFallbackCircuitSettings(),
+			logger: fallbackLogger,
+		});
 		this._retryRandom = config.retryRandom ?? Math.random;
+		this._environmentContextEnabled = config.environmentContext ?? true;
 		this._retryFallback = new RetryFallbackController({
 			getSettings: () => this.settingsManager.getRetryFallbackSettings(),
 			registry: this._modelRegistry,
 			cooldowns: this._selectorCooldowns,
+			circuits: this._fallbackCircuits,
 			logger: fallbackLogger,
 			switchModel: async (model, thinking, reason) => {
 				await this._switchActiveModel(model, {
@@ -1169,6 +1274,8 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
+		// Last, so a construction that throws never leaves a hold only dispose() could release.
+		this._fallbackCircuitsLease = acquireFallbackCircuits(this._agentDir);
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -1551,6 +1658,7 @@ export class AgentSession {
 				previousContext = previousSnapshot.context ?? postLateCompactionTurn.context;
 			}
 
+			this._refreshToolDeclarationsForModel();
 			return {
 				...previousSnapshot,
 				context: {
@@ -1558,6 +1666,7 @@ export class AgentSession {
 					messages: previousContext.messages,
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
 					tools: this.agent.state.tools.slice(),
+					declaredTools: this.agent.state.declaredTools?.slice(),
 				},
 				model: this.agent.state.model,
 				thinkingLevel: this.agent.state.thinkingLevel,
@@ -1588,7 +1697,7 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
-		for (const l of this._eventListeners) {
+		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
 	}
@@ -1877,6 +1986,8 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
+		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
+		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
@@ -1932,8 +2043,18 @@ export class AgentSession {
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
+		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		this._requiredCompactionAdmissionError = undefined;
+		this._transcriptWriteFailures.startRun();
+		this._promptOwnsRun = true;
+		if (!this.agent.state.isStreaming) {
+			const withoutRefused = this._transcriptWriteFailures.takeRefusedOut(this.agent.state.messages);
+			if (withoutRefused) {
+				this.agent.state.messages = withoutRefused;
+				this._incrementMessageRevision();
+			}
+		}
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		try {
@@ -1942,8 +2063,10 @@ export class AgentSession {
 			// blocking Agent core. Wait for this run's queued recovery decision
 			// before reporting prompt completion to the caller.
 			await this._agentEventQueue;
+			this._promptOwnsRun = false;
 			const requiredCompactionError = this._requiredCompactionAdmissionError;
 			this._requiredCompactionAdmissionError = undefined;
+			const transcriptWriteFailure = this._transcriptWriteFailures.takeReport();
 			if (requiredCompactionError) {
 				this._sessionLogger.warn("prompt_rejected", {
 					stage: "admission",
@@ -1951,7 +2074,9 @@ export class AgentSession {
 				});
 				throw requiredCompactionError;
 			}
+			if (transcriptWriteFailure) throw transcriptWriteFailure.error;
 		} catch (error) {
+			this._promptOwnsRun = false;
 			if (
 				error instanceof Error &&
 				error.message ===
@@ -2333,6 +2458,7 @@ export class AgentSession {
 	private async _processAgentEvent(event: AgentEvent, signal: AbortSignal): Promise<void> {
 		if (event.type === "agent_start") {
 			this._requiredCompactionTurnError = undefined;
+			this._armCircuitProbeWatchdog();
 		}
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
@@ -2372,31 +2498,54 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 
 		// Notify all listeners
-		this._emit(event.type === "agent_end" ? { ...event, willRetry: agentEndWillRetry } : event);
+		this._emit(
+			event.type === "agent_end"
+				? { ...event, willRetry: agentEndWillRetry }
+				: event.type === "message_update"
+					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
+					: event,
+		);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
 
+		if (event.type === "message_update" && event.message.role === "assistant") {
+			this._acceptCircuitProbeOnProgress(event.message, event.assistantMessageEvent);
+		}
+
 		// Handle session persistence
 		if (event.type === "message_end") {
-			// Check if this is a custom message from extensions
-			if (event.message.role === "custom") {
-				// Persist as CustomMessageEntry
-				this.sessionManager.appendCustomMessageEntry(
-					event.message.customType,
-					event.message.content,
-					event.message.display,
-					event.message.details,
-				);
-				this._incrementMessageRevision();
-			} else if (
-				event.message.role === "user" ||
-				event.message.role === "assistant" ||
-				event.message.role === "toolResult"
-			) {
-				// Regular LLM message - persist as SessionMessageEntry
-				this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
-				this._incrementMessageRevision();
+			try {
+				// Check if this is a custom message from extensions
+				if (event.message.role === "custom") {
+					// Persist as CustomMessageEntry
+					this.sessionManager.appendCustomMessageEntry(
+						event.message.customType,
+						event.message.content,
+						event.message.display,
+						event.message.details,
+					);
+					this._incrementMessageRevision();
+					this.externalAdmission.observePersisted(event.message);
+				} else if (
+					event.message.role === "user" ||
+					event.message.role === "assistant" ||
+					event.message.role === "toolResult"
+				) {
+					// Regular LLM message - persist as SessionMessageEntry
+					this._emitEntryAppended(this.sessionManager.appendMessage(event.message));
+					this._incrementMessageRevision();
+					this.externalAdmission.observePersisted(event.message);
+				}
+			} catch (error) {
+				// The session manager kept nothing, so the turn goes on; the run's owner reports it.
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				// A refused delivery is settled, not left held: a held start would queue every later delivery.
+				this.externalAdmission.observeRefused(event.message, errorMessage);
+				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
+				this._transcriptWriteFailures.record(event.message, error);
+				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
+				if (!this._promptOwnsRun) this._reportContinuationTranscriptFailure();
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -2410,6 +2559,7 @@ export class AgentSession {
 					assistantMsg.stopReason !== "error" &&
 					assistantMsg.stopReason !== "aborted" &&
 					!isClassifierRefusal(assistantMsg);
+				if (succeeded) this._retryFallback.probes.accept(`${assistantMsg.provider}/${assistantMsg.model}`);
 				if (succeeded && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryAttempted = false;
 				}
@@ -2455,6 +2605,12 @@ export class AgentSession {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
 			this._skipNextPostRetryCompactionCheck = false;
+			this._clearCircuitProbeWatchdog();
+			// Billing and quota exhaustion make the entry unusable for every session,
+			// whether or not the chain has a candidate left.
+			if (msg.stopReason === "error" && isHealthExhaustionFailure(msg.errorMessage) && this.model) {
+				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
+			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
 				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
@@ -2510,6 +2666,18 @@ export class AgentSession {
 				this._abortProvenance.closeAgentEndBoundary();
 				return;
 			}
+			// A probe that failed with retries disabled still reopens its circuit; any
+			// other ending without an accepted response (a user abort, a request-shaped
+			// error) hands the probe back and leaves the circuit half-open.
+			if (
+				msg.stopReason === "error" &&
+				this.model &&
+				this._isRetryableError(msg) &&
+				this._isCircuitProbeOnCurrentModel()
+			) {
+				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
+			}
+			this._retryFallback.probes.release();
 			// Provider-timeout retries deliberately skip their first queue poll so
 			// steering cannot be consumed by another doomed retry request. Once the
 			// managed retry owner exhausts its budget, hand that retained queue back
@@ -2523,6 +2691,12 @@ export class AgentSession {
 
 			if (retryOutcome === "not-handled" && cursorQuotaRe && msg.errorMessage) {
 				msg.errorMessage = `${msg.errorMessage} (likely provider usage/quota exhaustion: conversation is well below the model context window)`;
+			}
+			if (retryOutcome === "not-handled" && msg.stopReason === "error" && msg.errorMessage) {
+				const rejectedImages = rejectedImageSources(this.agent.state.messages, msg);
+				if (rejectedImages.length > 0) {
+					msg.errorMessage = `${msg.errorMessage} (the rejected image from ${rejectedImages.join(", ")} is left out of later requests; send your next message to continue)`;
+				}
 			}
 			if (retryOutcome === "not-handled" && this._retryAttempt > 0 && msg.errorMessage) {
 				const attempt = this._retryAttempt;
@@ -2610,6 +2784,48 @@ export class AgentSession {
 		this._cumulativeHintedWaitMs = 0;
 	}
 
+	private _isCircuitProbeOnCurrentModel(): boolean {
+		const model = this.model;
+		return model !== undefined && this._retryFallback.probes.holds(formatSelector(model));
+	}
+
+	/** The first streamed content from the probed entry proves it serves again. */
+	private _acceptCircuitProbeOnProgress(message: AssistantMessage, event: AssistantMessageEvent): void {
+		const probing = this._retryFallback.probes.probing;
+		if (probing === undefined || `${message.provider}/${message.model}` !== probing) return;
+		const streamedContent =
+			(event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta") &&
+			event.delta.length > 0;
+		if (!streamedContent) return;
+		this._retryFallback.probes.accept(probing);
+		this._clearCircuitProbeWatchdog();
+	}
+
+	/**
+	 * A probe holds the circuit's only admission until it settles, so it must never
+	 * hang: with the stream-start guard disabled, the probe still gets that guard's
+	 * default bound and is aborted as a provider failure when it expires.
+	 */
+	private _armCircuitProbeWatchdog(): void {
+		this._clearCircuitProbeWatchdog();
+		const probing = this._retryFallback.probes.probing;
+		if (probing === undefined || this.agent.streamStartTimeoutMs !== undefined) return;
+		const timeoutMs = DEFAULT_STREAM_START_TIMEOUT_MS;
+		this._circuitProbeWatchdog = setTimeout(() => {
+			this._circuitProbeWatchdog = undefined;
+			if (this._retryFallback.probes.probing !== probing) return;
+			this.agent.abort(
+				new ProviderRetryWatchdogAbortError(`Circuit probe of ${probing} sent no response within ${timeoutMs}ms`),
+			);
+		}, timeoutMs);
+	}
+
+	private _clearCircuitProbeWatchdog(): void {
+		if (this._circuitProbeWatchdog === undefined) return;
+		clearTimeout(this._circuitProbeWatchdog);
+		this._circuitProbeWatchdog = undefined;
+	}
+
 	private async _emitSessionAbort(): Promise<void> {
 		await this._extensionRunner.emit({ type: "session_abort" });
 		this._emit({ type: "session_abort" });
@@ -2646,6 +2862,11 @@ export class AgentSession {
 			deadlineMs: schedule.deadlineMs,
 			authAvailable: () => this._modelRuntime.hasConfiguredAuth(provider),
 			runProbe: async (signal: AbortSignal): Promise<boolean> => {
+				// The shared circuit gates probe-back like any other request: no probe
+				// before the provider's Retry-After or the cooldown elapses, and none
+				// while another session holds the circuit's single probe.
+				const admission = this._fallbackCircuits.admit(selector, `probe-back:${++this._probeBackLaneSeq}`);
+				if (admission.kind === "open") return false;
 				try {
 					const result = await this._modelRuntime.completeSimple(
 						demotedModel,
@@ -2661,13 +2882,20 @@ export class AgentSession {
 						},
 						{ maxTokens: 1, signal },
 					);
-					return result.stopReason !== "error" && result.stopReason !== "aborted";
+					const ok = result.stopReason !== "error" && result.stopReason !== "aborted";
+					if (!ok && result.stopReason === "error" && admission.kind === "probe") {
+						this._fallbackCircuits.noteFailure(selector, { errorMessage: result.errorMessage });
+					}
+					return ok;
 				} catch {
 					return false;
+				} finally {
+					if (admission.kind === "probe") this._fallbackCircuits.release(admission.token);
 				}
 			},
 			onCleared: (sel: string) => {
 				this._selectorCooldowns.clear(sel);
+				this._fallbackCircuits.close(sel);
 			},
 			emit: (event) => {
 				if (event.type === "retry_probe_scheduled") {
@@ -2912,6 +3140,9 @@ export class AgentSession {
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
 			this._probeBackScheduler.cancel("dispose");
+			this._clearCircuitProbeWatchdog();
+			this._retryFallback.probes.releaseAll();
+			this._fallbackCircuitsLease.release();
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();
@@ -3074,6 +3305,18 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	/**
+	 * Rebuilds the prompt for another surface (a later `open_session.promptSurface`). The next
+	 * turn's `before_agent_start` hands presets the new surface through `systemPromptOptions`.
+	 */
+	setPromptSurface(surface: PromptSurface): void {
+		const current = this._baseSystemPromptOptions.surface;
+		this._promptSurface = surface;
+		if (current === surface) return;
+		this._systemPromptOverride = undefined;
+		this._applyToolDeclarations(this.getActiveToolNames());
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -3107,6 +3350,8 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
+			permissionParser: definition.permissionParser,
 			sourceInfo,
 			...normalizeToolExposure(definition),
 		}));
@@ -3114,6 +3359,15 @@ export class AgentSession {
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
 		return this._toolDefinitions.get(name)?.definition;
+	}
+
+	/**
+	 * The tool a call named `requested` runs, by the same rule the agent loop
+	 * applies (exact name, else the unique alias among callable tools), without
+	 * activating anything. Returns `requested` when nothing resolves.
+	 */
+	resolveToolCallName(requested: string): string {
+		return resolveToolNameAlias(requested, this._callableToolNames()) ?? requested;
 	}
 
 	async executeTool<TDetails = unknown>(
@@ -3356,11 +3610,14 @@ export class AgentSession {
 		const activeToolNamesChanged =
 			validToolNames.length !== this.agent.state.tools.length ||
 			validToolNames.some((name, index) => name !== this.agent.state.tools[index]?.name);
+		const previousToolNames = new Set(this.agent.state.tools.map((tool) => tool.name));
 		this.agent.state.tools = tools;
+		for (const name of validToolNames) {
+			if (!this._declaredToolNames.includes(name)) this._declaredToolNames.push(name);
+		}
 
 		// Rebuild base system prompt with new tool set
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+		this._applyToolDeclarations(validToolNames);
 		if (activeToolNamesChanged) {
 			// A tool change emitted while extensions are still binding belongs to the
 			// binding itself, not to a mid-session change. The session was already
@@ -3371,6 +3628,53 @@ export class AgentSession {
 				this._incrementMessageRevision();
 			}
 		}
+		// senpi#2128: notification-only; the runner reports handler failures, so nothing awaits it.
+		const activatedToolNames = validToolNames.filter((name) => !previousToolNames.has(name));
+		if (activatedToolNames.length > 0 && this._extensionRunner?.hasHandlers("tool_activated")) {
+			void this._extensionRunner.emit({ type: "tool_activated", toolNames: activatedToolNames });
+		}
+	}
+
+	/**
+	 * senpi#2095: a model that accepts `allowed_tools` is declared every tool this session has
+	 * activated, and the prompt's tool section lists that same set, so the active set shrinking or
+	 * re-growing restricts callability through `tool_choice` instead of rewriting the cached prefix.
+	 * Any other model is declared exactly the active tools.
+	 */
+	private _declaresSessionTools(): boolean {
+		const model = this.model;
+		return model !== undefined && supportsAllowedToolChoice(model);
+	}
+
+	private _toolDeclarationNames(activeToolNames: readonly string[]): string[] {
+		if (!this._declaresSessionTools()) return [...activeToolNames];
+		return this._declaredToolNames.filter((name) => this._toolRegistry.has(name));
+	}
+
+	private _applyToolDeclarations(activeToolNames: readonly string[]): void {
+		this._promptDeclaresSessionTools = this._declaresSessionTools();
+		const declaredNames = this._toolDeclarationNames(activeToolNames);
+		const declaresInactiveTools =
+			declaredNames.length !== activeToolNames.length ||
+			declaredNames.some((name, index) => name !== activeToolNames[index]);
+		this.agent.state.declaredTools = declaresInactiveTools
+			? declaredNames.flatMap((name) => this._toolRegistry.get(name) ?? [])
+			: undefined;
+		this._baseSystemPrompt = this._rebuildSystemPrompt(declaredNames);
+		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+	}
+
+	/**
+	 * Re-derive the declaration after a model change. Only a switch into or out of a model that declares
+	 * the session set can move it, and the prompt is rebuilt only when its tool list actually moves.
+	 */
+	private _refreshToolDeclarationsForModel(): void {
+		if (!this._declaresSessionTools() && !this._promptDeclaresSessionTools) return;
+		const declaredNames = this._toolDeclarationNames(this.getActiveToolNames());
+		const unchanged =
+			declaredNames.length === this._promptToolNames.length &&
+			declaredNames.every((name, index) => name === this._promptToolNames[index]);
+		if (!unchanged) this._applyToolDeclarations(this.getActiveToolNames());
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -3420,6 +3724,11 @@ export class AgentSession {
 	/** Publish on the internal event bus shared by this session's extensions. */
 	emitExtensionEvent(channel: string, data: unknown): void {
 		this._resourceLoader.emitExtensionEvent?.(channel, data);
+	}
+
+	/** Installed by the interactive mode before it binds extensions; `pi.session.registerControlEndpoint` needs one. */
+	setControlEndpointHost(host: ControlEndpointHost | undefined): void {
+		this._controlEndpointHost = host;
 	}
 
 	/** Current session display name, if set */
@@ -3509,6 +3818,7 @@ export class AgentSession {
 
 	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
+		this._promptToolNames = validToolNames;
 		// An eval-only tool is hidden from the model but still callable as `tool.<name>(...)`,
 		// so its own snippet and guidelines still apply and must survive the withholding.
 		// `selectedTools` stays the model-visible list; only the contributions are widened.
@@ -3545,6 +3855,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			surface: this._promptSurface ?? resolvePromptSurface(process.env),
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
@@ -3633,6 +3944,33 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		// Held synchronously, before any await: an external delivery never overtakes this input.
+		const hold = this.externalAdmission.beginInput({
+			command: this._isExtensionCommandText(text, options),
+			submittedByCommand: options?.source === "extension",
+		});
+		try {
+			await this._prompt(text, {
+				...options,
+				promptDisposition: (disposition) => {
+					hold.accepted();
+					options?.promptDisposition?.(disposition);
+				},
+			});
+		} finally {
+			hold.end();
+		}
+	}
+
+	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
+		if (!(options?.expandPromptTemplates ?? true) || !text.startsWith("/")) return false;
+		const spaceIndex = text.indexOf(" ");
+		return (
+			this._extensionRunner.getCommand(spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex)) !== undefined
+		);
+	}
+
+	private async _prompt(text: string, options: PromptOptions): Promise<void> {
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
@@ -3778,19 +4116,42 @@ export class AgentSession {
 					hasImages: (options?.images?.length ?? 0) > 0,
 				})
 			) {
-				await this.sendCustomMessage(
-					{
-						customType: MANUAL_CONTINUE_CUSTOM_TYPE,
-						content: MANUAL_CONTINUE_DIRECTIVE,
-						display: false,
-					},
-					{
-						triggerTurn: true,
-						deliverAs: options?.streamingBehavior === "followUp" ? "followUp" : "steer",
-					},
-				);
-				promptDisposition?.("handled");
-				preflightResult?.(true);
+				// Report acceptance once the runtime took the continuation - its turn started (as
+				// subscribers see it: after that turn's agent_start) or it was queued into a running
+				// turn - like an ordinary prompt, not after the whole continued turn.
+				let accepted = false;
+				const reportAccepted = (): void => {
+					if (accepted) return;
+					accepted = true;
+					promptDisposition?.("handled");
+					preflightResult?.(true);
+				};
+				let turnStarted = false;
+				const turnClaim = new DeferredTurnClaim();
+				void turnClaim.disposition.then((disposition) => {
+					if (disposition === "delegated") reportAccepted();
+					else if (disposition === "started") turnStarted = true;
+				});
+				const unsubscribe = this.subscribe((event) => {
+					if (event.type === "agent_start" && turnStarted) reportAccepted();
+				});
+				try {
+					await this.sendCustomMessage(
+						{
+							customType: MANUAL_CONTINUE_CUSTOM_TYPE,
+							content: MANUAL_CONTINUE_DIRECTIVE,
+							display: false,
+						},
+						{
+							triggerTurn: true,
+							deliverAs: options?.streamingBehavior === "followUp" ? "followUp" : "steer",
+						},
+						turnClaim,
+					);
+				} finally {
+					unsubscribe();
+				}
+				reportAccepted();
 				return;
 			}
 
@@ -3825,6 +4186,14 @@ export class AgentSession {
 				expandedText = this._expandSkillCommand(expandedText);
 				const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 				expandedText = templateExpansion.text;
+				if (
+					expandedText === currentText &&
+					options?.source !== "extension" &&
+					options?.unknownCommandAsText !== true &&
+					!/^\s/.test(text)
+				) {
+					this._rejectUnknownCommand(currentText);
+				}
 				if (templateExpansion.template) {
 					pendingCommandInvocation = {
 						name: templateExpansion.template.name,
@@ -3976,8 +4345,10 @@ export class AgentSession {
 			// The user's new prompt is sent below, so do not call agent.continue() here.
 			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 
-			// Build messages array (custom message if any, then user message)
+			// Build messages array (environment context if it changed, user message, then custom messages)
 			messages = [];
+			const environmentContext = this._pendingEnvironmentContextMessage();
+			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
 			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
@@ -4000,6 +4371,8 @@ export class AgentSession {
 			}
 
 			// Emit before_agent_start extension event
+			this._refreshToolDeclarationsForModel();
+			this._promptCachePrefixBuilds.cancelAll();
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
@@ -4118,6 +4491,23 @@ export class AgentSession {
 			});
 			return true;
 		}
+	}
+
+	/**
+	 * Throw `UnknownCommandError` when `text` is command-shaped and no extension command, prompt
+	 * template, or loaded skill resolves it. Runs after input transforms and expansion, so extension
+	 * rewrites and expanded commands never reach here as unknown.
+	 */
+	private _rejectUnknownCommand(text: string): void {
+		if (commandShapedName(text) === undefined) return;
+		const promptCommands = new Set<string>([
+			...this._extensionRunner.getRegisteredCommands().map((command) => command.invocationName),
+			...this.promptTemplates.map((template) => template.name),
+			...this.resourceLoader.getSkills().skills.map((skill) => `skill:${skill.name}`),
+		]);
+		const interactiveCommands = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+		const rejection = findUnknownCommand(text, { promptCommands, interactiveCommands });
+		if (rejection) throw rejection;
 	}
 
 	/**
@@ -4315,11 +4705,9 @@ export class AgentSession {
 			if (abortController.signal.aborted) {
 				return;
 			}
-			const message = error instanceof Error ? error.message : String(error);
-			this._extensionRunner.emitError({
-				extensionPath: RUNTIME_EXTENSION_PATH,
-				event: "session_title_generation",
-				error: message,
+			// A missing title is cosmetic, so the failure stays out of the runtime-error surface.
+			this._sessionLogger.debug("session_title_failed", {
+				error: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
 			if (this._sessionTitleAbortController === abortController) {
@@ -4501,7 +4889,8 @@ export class AgentSession {
 				}
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
-				const messages: AgentMessage[] = [appMessage];
+				const environmentContext = this._pendingEnvironmentContextMessage();
+				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
 				const queueTriggerForLater = (): void => {
 					if (options.deliverAs === "followUp") {
 						this.agent.followUp(appMessage);
@@ -4512,11 +4901,14 @@ export class AgentSession {
 				this._triggerTurnAdmissionAbortGeneration = userAbortGeneration;
 				try {
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
+					this._refreshToolDeclarationsForModel();
+					this._promptCachePrefixBuilds.cancelAll();
 					const result = await this._extensionRunner.emitBeforeAgentStart(
 						contentText(appMessage.content, ""),
 						undefined,
 						this._baseSystemPrompt,
 						this._baseSystemPromptOptions,
+						{ trigger: "extension" },
 					);
 					if (userAbortGeneration !== this._userAbortGeneration) {
 						queueTriggerForLater();
@@ -4548,6 +4940,12 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
 		}
+	}
+
+	/** Environment context a new turn must carry: set when cwd or date differs from the latest one visible (senpi#2093). */
+	private _pendingEnvironmentContextMessage(): CustomMessage<EnvironmentContext> | undefined {
+		if (!this._environmentContextEnabled) return undefined;
+		return environmentContextMessageIfChanged(this.agent.state.messages, resolveEnvironmentContext(this._cwd));
 	}
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
@@ -4709,6 +5107,7 @@ export class AgentSession {
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
+		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
 		Object.defineProperty(cleared, "ordered", {
@@ -5150,6 +5549,7 @@ export class AgentSession {
 	private async _maybeRestoreFallbackPrimary(): Promise<void> {
 		try {
 			await this._retryFallback.maybeRestorePrimary(this.settingsManager.getRetryFallbackSettings().revertPolicy);
+			await this._retryFallback.rerouteAroundOpenCircuit();
 		} catch (error) {
 			this._retryFallback.clear();
 			console.error("fallback revert failed; cleared fallback state", error);
@@ -5209,7 +5609,7 @@ export class AgentSession {
 		const previousReasoningBaseline = this.agent.state.reasoningBaseline;
 		const previousAbortServerSideFallback = this.agent.abortServerSideFallback;
 		this.agent.state.model = model;
-		if (!(model.id === "gpt-6-astra" && (model.provider === "openai" || model.provider === "chatgpt-subscription"))) {
+		if (!supportsConfigurationUpdate(model)) {
 			this.agent.state.reasoningBaseline = undefined;
 		}
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
@@ -5524,11 +5924,7 @@ export class AgentSession {
 		if (isChanging || selectionChanged) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection);
 			const model = this.model;
-			if (
-				isChanging &&
-				model?.id === "gpt-6-astra" &&
-				(model.provider === "openai" || model.provider === "chatgpt-subscription")
-			) {
+			if (isChanging && model !== undefined && supportsConfigurationUpdate(model)) {
 				this.agent.state.reasoningBaseline ??= previousLevel;
 				this.sessionManager.appendConfigurationUpdate(effectiveLevel);
 				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
@@ -5623,6 +6019,8 @@ export class AgentSession {
 				selection = { level: remembered, source: "explicit" };
 			}
 		}
+		// senpi#2196: the model's own default outranks the global last-used level and carries no provenance.
+		requestedLevel ??= model.defaultThinkingLevel;
 		if (requestedLevel === undefined) {
 			const configuredDefault = this.settingsManager.getDefaultThinkingLevel();
 			if (configuredDefault !== undefined) {
@@ -6317,8 +6715,8 @@ export class AgentSession {
 			const modelAfterCompaction = this.model;
 			if (
 				latestConfigurationEffort !== undefined &&
-				modelAfterCompaction?.id === "gpt-6-astra" &&
-				(modelAfterCompaction.provider === "openai" || modelAfterCompaction.provider === "chatgpt-subscription")
+				modelAfterCompaction !== undefined &&
+				supportsConfigurationUpdate(modelAfterCompaction)
 			) {
 				this.sessionManager.appendConfigurationUpdate(latestConfigurationEffort);
 			}
@@ -6967,7 +7365,10 @@ export class AgentSession {
 		allowSummaryOnly = false,
 		keepRecentTokensOverride?: number,
 	): Promise<boolean> {
-		if (this._isCompactionDelegated()) return false;
+		// An earlier external-owner rejection never answers for a rejected request
+		// awaiting its retry: whether the owner can recover it depends on the request
+		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).
+		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		const controller = new AbortController();
 		const requestId = randomUUID();
 		this._claimCompactionController(controller, "compaction");
@@ -7092,6 +7493,7 @@ export class AgentSession {
 
 			await this._revalidateScheduledContinuationAdmission();
 			if (this.agent.state.isStreaming) return "taken-over";
+			if (!this._promptOwnsRun) this._transcriptWriteFailures.startRun();
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
@@ -7146,6 +7548,14 @@ export class AgentSession {
 		}
 	}
 
+	/** A continuation run has no prompt to reject, so a message write it lost is reported like a failed continuation. */
+	private _reportContinuationTranscriptFailure(): void {
+		const failure = this._transcriptWriteFailures.takeReport();
+		if (!failure) return;
+		const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+		this._emit({ type: "continuation_error", errorMessage: `The session file did not save this run: ${message}` });
+	}
+
 	private _scheduleContinuationAfterCurrentEvent(
 		options: AgentContinuationOptions = {},
 		retryContinuation = false,
@@ -7193,7 +7603,7 @@ export class AgentSession {
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
-		if (this._isCompactionDelegated()) return false;
+		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		// Model identity is captured before the auth await below: a model switch during
 		// that await must not change the token budgets this compaction was admitted with.
 		const model = this.model;
@@ -7369,6 +7779,7 @@ export class AgentSession {
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
 		const finishBindingWork = this._sessionWorkBarrier.begin();
+		const settleSessionStart = this._beginSessionStartSettlement();
 		const bindingPromptReadiness = new Set<Promise<void>>();
 		this._extensionBindingPromptReadiness = bindingPromptReadiness;
 		try {
@@ -7401,8 +7812,17 @@ export class AgentSession {
 				this._extensionBindingPromptReadiness = undefined;
 			}
 			finishBindingWork();
+			void Promise.allSettled(bindingPromptReadiness).then(settleSessionStart);
 		}
 		await Promise.all(bindingPromptReadiness);
+	}
+
+	private _beginSessionStartSettlement(): () => void {
+		let settle!: () => void;
+		this._sessionStartSettled = new Promise<void>((resolve) => {
+			settle = resolve;
+		});
+		return settle;
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -7429,7 +7849,7 @@ export class AgentSession {
 
 		this._resourceLoader.extendResources(extensionPaths);
 		if (skillPaths.length > 0 || promptPaths.length > 0 || themePaths.length > 0) {
-			this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+			this._baseSystemPrompt = this._rebuildSystemPrompt(this._toolDeclarationNames(this.getActiveToolNames()));
 			this.agent.state.systemPrompt = this._baseSystemPrompt;
 		}
 	}
@@ -7580,6 +8000,11 @@ export class AgentSession {
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
 				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
+				sessionControl: createSessionControlActions({
+					admission: this.externalAdmission,
+					sessionManager: this.sessionManager,
+					host: () => this._controlEndpointHost,
+				}),
 			},
 			{
 				getModel: () => this.model,
@@ -7734,6 +8159,19 @@ export class AgentSession {
 						runtimeHookSourcePaths: [],
 					},
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
+				getPromptCachePrefixRequest: (options) =>
+					this._promptCachePrefixBuilds.build(
+						{
+							agent: this.agent,
+							runner: this._extensionRunner,
+							modelRuntime: this._modelRuntime,
+							ready: this._sessionStartSettled,
+							getServiceTier: () => this.effectiveServiceTier,
+							getBaseSystemPrompt: () => this._baseSystemPrompt,
+							getBaseSystemPromptOptions: () => this._baseSystemPromptOptions,
+						},
+						options,
+					),
 			},
 			{
 				registerProvider: (name, config) => {
@@ -8065,13 +8503,18 @@ export class AgentSession {
 			this._extensionShutdownHandler ||
 			this._extensionErrorListener;
 		if (hasBindings) {
-			await options?.beforeSessionStart?.();
-			this.syncPromptCacheSafeWaitEnv();
-			await this._extensionRunner.emit({
-				type: "session_start",
-				reason: "reload",
-			});
-			await this.extendResourcesFromExtensions("reload");
+			const settleSessionStart = this._beginSessionStartSettlement();
+			try {
+				await options?.beforeSessionStart?.();
+				this.syncPromptCacheSafeWaitEnv();
+				await this._extensionRunner.emit({
+					type: "session_start",
+					reason: "reload",
+				});
+				await this.extendResourcesFromExtensions("reload");
+			} finally {
+				settleSessionStart();
+			}
 		}
 		time("lifecycle", "reload");
 		return { cancelled: false };
@@ -8459,6 +8902,18 @@ export class AgentSession {
 				return "not-handled";
 			}
 			this._retryAttempt++;
+		} else if (this._isCircuitProbeOnCurrentModel() && this._retryFallback.canTryFallback()) {
+			// A half-open probe proves nothing by retrying: its first provider-health
+			// failure reopens the circuit and moves on instead of spending the budget.
+			switchedFallback = await tryFallback("transient", {
+				errorMessage,
+				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
+			});
+			if (!switchedFallback) {
+				this._resolveRetry();
+				return "not-handled";
+			}
+			this._retryAttempt = 1;
 		} else {
 			// A provider-stream stall is an ordinary transient failure: it consumes
 			// the same bounded same-model budget (the resolved profile's turn
@@ -9379,6 +9834,8 @@ export class AgentSession {
 			if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 				addUsageToTotals(usageTotals, entry.usage);
 			}
+			const prewarmUsage = getPromptCachePrewarmUsage(entry);
+			if (prewarmUsage) addUsageToTotals(usageTotals, prewarmUsage);
 			if (entry.type !== "message") continue;
 			totalMessages++;
 			const message = entry.message;
@@ -9416,6 +9873,7 @@ export class AgentSession {
 			},
 			cost: usageTotals.cost,
 			contextUsage: this.getContextUsage(),
+			failures: computeSessionFailureReport(this.sessionManager.getEntries()),
 		};
 	}
 

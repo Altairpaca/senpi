@@ -4,7 +4,7 @@ import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
-import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
+import { isSameGoalCacheWarmCard, renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
 import { registerGoalCommand } from "./command-registration.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
@@ -19,6 +19,7 @@ import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
+import { TodoOwedBackstop } from "./todo-owed-backstop.ts";
 import { registerGoalTools } from "./tool-registration.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
@@ -56,19 +57,23 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		},
 		goalWaitTicker,
 	);
+	const todoOwedBackstop = new TodoOwedBackstop(pi);
 	const directInputLifecycle = new GoalDirectInputLifecycle({
 		monitor: monitorContinuation,
 		goalStoreRef,
 		beginAgentGoalAccounting,
 		refreshGoalUi: refreshGoalUiBestEffort,
 		resumeAfterSuppressedLoad: (resumeCtx, goal) => queueGoalContinuationForCurrentSession(pi, resumeCtx, goal),
+		onAcceptedDirectInput: () => todoOwedBackstop.resetChain(),
 	});
 
 	const goalTicker = new GoalElapsedTicker({
 		render: (renderCtx, renderGoal, live) => updateGoalUi(renderCtx, renderGoal, live),
 	});
 
-	pi.registerEntryRenderer(GOAL_CACHE_WARMUP_ENTRY_TYPE, renderGoalCacheWarmupEntry);
+	pi.registerEntryRenderer(GOAL_CACHE_WARMUP_ENTRY_TYPE, renderGoalCacheWarmupEntry, {
+		replaces: isSameGoalCacheWarmCard,
+	});
 	registerGoalTools(pi, {
 		goalStoreRef: (ctx) => buildGoalStoreRef(ctx.sessionManager, ctx.cwd),
 		accountCurrentAgentTurn,
@@ -123,6 +128,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
 		directInputLifecycle.reset();
+		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);
 		await migrateLegacyGoalFile(ref);
 		const goal = await readGoal(goalStoreRef(ctx));
@@ -166,6 +172,10 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				await queueGoalContinuationForCurrentSession(pi, ctx, goal);
 			}
 		}
+	});
+
+	pi.on("session_tree", async () => {
+		todoOwedBackstop.resetChain();
 	});
 
 	pi.on("input", async (event, ctx) => {
@@ -249,6 +259,13 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			goal = continuationGoal;
 			syncContinuationGoal(ctx, goal);
 		}
+		todoOwedBackstop.afterAgentEnd({
+			ctx,
+			event,
+			goal,
+			continuationPending,
+			hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+		});
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {

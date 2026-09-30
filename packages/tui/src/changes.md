@@ -1,5 +1,65 @@
 # TUI delta rendering fork changes
 
+## 2026-09-28 - Picker rows that take arguments wait for them (omo #9042)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `AutocompleteItem` gains the optional `awaitsArguments` flag.
+- `packages/tui/src/slash-command-autocomplete.ts` (fork-only): `getSlashCommandSuggestions` sets `awaitsArguments` on every row whose command declares an `argumentHint`; the hint still leads the description.
+- `packages/tui/src/components/editor.ts`: the editor keeps the provider items behind the open list (`autocompleteItems`). Confirming a `/` row whose item has `awaitsArguments` applies the completion (`/name `), closes the picker, and returns without submitting; other `/` rows still fall through to submit. `submitValue()` passes `{ rawText }` (the text before trimming) as the second `onSubmit` argument.
+- `packages/tui/src/editor-component.ts`: new `EditorSubmitDetails` and the optional second `onSubmit` parameter. `packages/tui/src/index.ts` exports the type.
+
+### Why
+
+- Enter on `/skill:ulw-execute` or `/model` in the picker submitted the bare command before the user could type its arguments. The leading-space escape for the coding-agent unknown-command check needs the untrimmed submission, which `onSubmit` never saw.
+
+### Why an extension could not handle it
+
+- The confirm key and the submission trimming live inside `Editor.handleInput`/`submitValue`; an extension editor would have to fork the whole component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the `tui.select.confirm` branch, `applyAutocompleteSuggestions`, `clearAutocompleteUi`, and `submitValue`.
+- `packages/tui/src/autocomplete.ts`: the `AutocompleteItem` interface. `packages/tui/src/editor-component.ts`: the `onSubmit` declaration. `packages/tui/src/index.ts`: the `./editor-component.ts` export line.
+
+## 2026-09-24 - Fuzzy matching over pre-lowered text (senpi#2087)
+
+### What changed
+
+- `packages/tui/src/fuzzy.ts`: new exported `fuzzyMatchLower(queryLower, textLower)` holds the direct and letter/digit-swap scoring. `fuzzyMatch` lower-cases its inputs and delegates to it, so scoring has one source. `packages/tui/src/index.ts` exports `fuzzyMatchLower` next to `fuzzyMatch`.
+- `packages/tui/test/fuzzy.test.ts`: `fuzzyMatchLower` on lower-cased inputs returns exactly what `fuzzyMatch` returns for mixed-case pairs, swap variants included.
+
+### Why
+
+- `fuzzyMatch` lower-cases the whole text on every call. The coding-agent `/resume` search calls it once per token per session over tens of MB of transcript text, so the same text was lower-cased again on every keystroke.
+
+### Why an extension could not handle it
+
+- The scoring lives in the TUI package. A caller outside it can only reach `fuzzyMatch`, which always lower-cases.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/fuzzy.ts`: the `fuzzyMatch` body, now a delegating wrapper above `fuzzyMatchLower`.
+- `packages/tui/src/index.ts`: the `./fuzzy.ts` export line.
+
+## 2026-09-23 — Let hosts observe the real stderr destination (senpi#1879)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` accepts a host-owned stderr subscription and releases it on stop. `packages/tui/src/stderr-observer.ts` retains direct-stream observation for ordinary terminals without replacing a later writer during cleanup.
+
+### Why
+
+- A host can redirect stderr to a diagnostic log. Observing calls above that redirect falsely reports visible output and duplicates the working frame.
+
+### Why an extension could not handle it
+
+- Mouse geometry is invalidated inside the terminal, below extension components.
+
+### Expected merge conflict zones
+
+- Terminal construction, external-write observation and stop cleanup. Visible stdout/stderr must continue invalidating stale hit targets.
+
 ## 2026-09-22 - Render-error diagnostics follow the host log directory (senpi#2000)
 
 ### What changed
@@ -1293,3 +1353,25 @@ Component-level caching is added in coding-agent components because high-frequen
 - HIGH: `packages/tui/src/components/editor.ts` marker handling and input dispatch; `packages/tui/src/terminal.ts` `ProcessTerminal` start/stop.
 - MEDIUM: `packages/tui/src/index.ts` export list; `packages/tui/src/utils.ts` width cache and ANSI helpers; `select-list.ts` render path.
 - LOW: `box.ts` lifecycle methods; `tui-alt-screen.ts` teardown call sites.
+
+## 2026-09-28 - The skill: namespace row drills down instead of submitting (senpi#2249)
+
+### What changed
+
+- `packages/tui/src/slash-command-autocomplete.ts`: `isSlashNamespaceItem(value)` names the namespace rule (a slash item whose value ends in `:`, today only `skill:`).
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider.applyCompletion` completes a namespace item as `/skill:` with no trailing space, so the namespace's own list can follow; every other command keeps `/name `.
+- `packages/tui/src/components/editor.ts`: Enter and Tab on a namespace row apply that completion and re-request suggestions instead of submitting; public `openAutocomplete()` requests suggestions at the cursor.
+- `packages/tui/src/editor-component.ts`: optional `openAutocomplete?()` on `EditorComponent`.
+
+### Why
+
+- The `skill:` row is an autocomplete-only drill-down with no command behind it. Enter submitted `/skill: ` to the model, and the trailing space kept the skill list from opening even on Tab.
+
+### Why an extension could not handle it
+
+- Picker confirm handling and completion text live in the editor and the combined provider; an extension cannot intercept the editor's Enter before it submits.
+
+### Expected merge conflict zones
+
+- MEDIUM: the autocomplete `tui.select.confirm` and `tui.input.tab` branches in `packages/tui/src/components/editor.ts`; the slash-command branch of `CombinedAutocompleteProvider.applyCompletion` in `packages/tui/src/autocomplete.ts`.
+- LOW: the added optional member in `packages/tui/src/editor-component.ts`.

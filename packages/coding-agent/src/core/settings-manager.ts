@@ -22,7 +22,6 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
 import type { CompactionModelSelector, CompactionSettings } from "./compaction-settings-access.ts";
 import {
@@ -40,6 +39,11 @@ import {
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
+import {
+	type FallbackCircuitSettings,
+	type ResolvedFallbackCircuitSettings,
+	resolveFallbackCircuitSettings,
+} from "./retry-fallback/circuit.ts";
 import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
 import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
@@ -50,6 +54,9 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { parseSettingsJson } from "./settings-json.ts";
+import { withoutOverride } from "./settings-overrides.ts";
+import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
@@ -64,6 +71,8 @@ import {
 	type PromptCacheSettings,
 	type ProviderConcurrencySettings,
 	type ThinkingBudgetsSettings,
+	type TodoFirstTurnPlan,
+	type TodoSettings,
 } from "./settings-shapes.ts";
 import {
 	type BranchSummarySettings,
@@ -145,10 +154,6 @@ export type PackageSource =
 			hooks?: string[];
 	  };
 
-export interface ExperimentalSettings {
-	sharedHost?: boolean;
-}
-
 export interface Settings {
 	providers?: Record<string, ProviderConcurrencySettings>;
 	lastChangelogVersion?: string;
@@ -166,6 +171,7 @@ export interface Settings {
 	compaction?: CompactionSettings & { model?: string };
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
+	fallback?: FallbackCircuitSettings;
 	hideThinkingBlock?: boolean;
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
@@ -196,6 +202,7 @@ export interface Settings {
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
@@ -219,7 +226,6 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
-	experimental?: ExperimentalSettings;
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
@@ -289,84 +295,7 @@ export interface SettingsSourceSelection {
 
 export type SettingsSourceListener = (source: SettingsSourceSelection) => void;
 
-/** Parse JSON or JSONC without changing comment-like text inside strings. */
-export function parseSettingsJson(content: string): Record<string, unknown> {
-	content = stripBom(content);
-	const withoutComments: string[] = [];
-	let inString = false;
-	let escaped = false;
-
-	for (let index = 0; index < content.length; index += 1) {
-		const char = content[index];
-		const next = content[index + 1];
-		if (inString) {
-			withoutComments.push(char);
-			if (escaped) escaped = false;
-			else if (char === "\\") escaped = true;
-			else if (char === '"') inString = false;
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			withoutComments.push(char);
-			continue;
-		}
-		if (char === "/" && next === "/") {
-			withoutComments.push(" ", " ");
-			index += 2;
-			while (index < content.length && content[index] !== "\n" && content[index] !== "\r") {
-				withoutComments.push(" ");
-				index += 1;
-			}
-			if (index < content.length) withoutComments.push(content[index]);
-			continue;
-		}
-		if (char === "/" && next === "*") {
-			withoutComments.push(" ", " ");
-			index += 2;
-			let closed = false;
-			for (; index < content.length; index += 1) {
-				if (content[index] === "*" && content[index + 1] === "/") {
-					withoutComments.push(" ", " ");
-					index += 1;
-					closed = true;
-					break;
-				}
-				withoutComments.push(content[index] === "\n" || content[index] === "\r" ? content[index] : " ");
-			}
-			if (!closed) throw new SyntaxError("Unterminated block comment in settings");
-			continue;
-		}
-		withoutComments.push(char);
-	}
-
-	const normalized = withoutComments;
-	inString = false;
-	escaped = false;
-	for (let index = 0; index < normalized.length; index += 1) {
-		const char = normalized[index];
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (char === "\\") escaped = true;
-			else if (char === '"') inString = false;
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			continue;
-		}
-		if (char !== ",") continue;
-		let nextIndex = index + 1;
-		while (nextIndex < normalized.length && /\s/.test(normalized[nextIndex])) nextIndex += 1;
-		if (normalized[nextIndex] === "}" || normalized[nextIndex] === "]") normalized[index] = " ";
-	}
-
-	const parsed: unknown = JSON.parse(normalized.join(""));
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		throw new TypeError("Settings must contain a JSON object");
-	}
-	return parsed as Record<string, unknown>;
-}
+export { parseSettingsJson };
 
 const SELF_WRITE_TTL_MS = 15_000;
 const MAX_SELF_WRITES_PER_PATH = 8;
@@ -622,6 +551,8 @@ export class SettingsManager {
 	private projectSettings: Settings;
 	private settings: Settings;
 	private projectTrusted: boolean;
+	/** CLI/SDK overrides (`applyOverrides`): never persisted, re-applied on every recompute. */
+	private runtimeOverrides: Settings = {};
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
 	private modifiedNestedFields = new Map<keyof Settings, Set<string>>(); // Track global nested field modifications
 	private modifiedProjectFields = new Set<keyof Settings>(); // Track project fields modified during session
@@ -728,7 +659,10 @@ export class SettingsManager {
 		if (!content) {
 			return {};
 		}
-		return SettingsManager.migrateSettings(parseSettingsJson(content));
+		const raw = parseSettingsJson(content);
+		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
+		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
+		return SettingsManager.migrateSettings(raw);
 	}
 
 	private static tryLoadFromStorage(
@@ -936,6 +870,16 @@ export class SettingsManager {
 		};
 	}
 
+	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
+		const configured = this.settings.todo?.firstTurnPlan;
+		return configured === "remind" || configured === "off" ? configured : "force";
+	}
+
+	getTodoTurnEndBackstop(): boolean {
+		const configured = this.settings.todo?.turnEndBackstop;
+		return typeof configured === "boolean" ? configured : true;
+	}
+
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
 	}
@@ -952,7 +896,7 @@ export class SettingsManager {
 		if (!trusted) {
 			this.projectSettings = {};
 			this.projectSettingsLoadError = null;
-			this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+			this.updateSettings(this.mergedSettings());
 			return;
 		}
 
@@ -963,7 +907,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 	}
 
 	async reload(): Promise<void> {
@@ -993,7 +937,7 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 	}
 
 	getSelectedSettingsSources(): SettingsSourceSelection[] {
@@ -1020,11 +964,18 @@ export class SettingsManager {
 
 	/** Apply additional overrides on top of current settings */
 	applyOverrides(overrides: Partial<Settings>): void {
-		this.updateSettings(deepMergeSettings(this.settings, overrides));
+		this.runtimeOverrides = deepMergeSettings(this.runtimeOverrides, overrides);
+		this.updateSettings(this.mergedSettings());
+	}
+
+	/** Persisted global+project settings with the session-only override layer on top. */
+	private mergedSettings(): Settings {
+		return deepMergeSettings(deepMergeSettings(this.globalSettings, this.projectSettings), this.runtimeOverrides);
 	}
 
 	/** Mark a global field as modified during this session */
 	private markModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedNestedFields.has(field)) {
@@ -1036,6 +987,7 @@ export class SettingsManager {
 
 	/** Mark a project field as modified during this session */
 	private markProjectModified(field: keyof Settings, nestedKey?: string): void {
+		this.runtimeOverrides = withoutOverride(this.runtimeOverrides, field, nestedKey);
 		this.modifiedProjectFields.add(field);
 		if (nestedKey) {
 			if (!this.modifiedProjectNestedFields.has(field)) {
@@ -1119,7 +1071,7 @@ export class SettingsManager {
 	}
 
 	private save(): void {
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 
 		if (this.globalSettingsLoadError) {
 			return;
@@ -1137,7 +1089,7 @@ export class SettingsManager {
 	private saveProjectSettings(settings: Settings): void {
 		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
-		this.updateSettings(deepMergeSettings(this.globalSettings, this.projectSettings));
+		this.updateSettings(this.mergedSettings());
 
 		if (this.projectSettingsLoadError) {
 			return;
@@ -1487,6 +1439,10 @@ export class SettingsManager {
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
 		return resolveRetryFallbackSettings(this.settings.retry);
+	}
+
+	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
+		return resolveFallbackCircuitSettings(this.settings.fallback);
 	}
 
 	getHintPolicySettings(): ResolvedHintPolicySettings {
@@ -2208,10 +2164,6 @@ export class SettingsManager {
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		return tools ? [...tools] : undefined;
-	}
-
-	getExperimentalSharedHost(): boolean {
-		return this.settings.experimental?.sharedHost === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {
