@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { estimateContextTokens, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { estimateContextTokens, fauxAssistantMessage, normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { projectModelUsabilityBudget } from "../../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
 import { createAgentSession } from "../../../src/core/sdk.ts";
@@ -54,14 +54,15 @@ describe("#1511 oversized resume admission", () => {
 				compaction: { enabled: true, speculativeEnabled: false, idleCompactionEnabled: false, keepRecentTokens: 1 },
 			},
 			extensionFactories: [
-				(pi) =>
+				(pi) => {
 					pi.on("session_before_compact", (event) => ({
 						compaction: {
 							summary: "restored context summary",
 							firstKeptEntryId: event.preparation.firstKeptEntryId,
 							tokensBefore: event.preparation.tokensBefore,
 						},
-					})),
+					}));
+				},
 			],
 		});
 		harnesses.push(harness);
@@ -110,7 +111,7 @@ describe("#1511 oversized resume admission", () => {
 		expect(harness.faux.getCallLog().length).toBeGreaterThan(0);
 		const providerCall = harness.faux.getCallLog().at(-1);
 		if (!providerCall) throw new Error("expected a provider request after required compaction");
-		expect(estimateContextTokens(providerCall.context).tokens).toBeLessThanOrEqual(
+		expect(estimateContextTokens(normalizeContext(providerCall.context)).tokens).toBeLessThanOrEqual(
 			model.contextWindow - model.maxTokens,
 		);
 
