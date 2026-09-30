@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Toggle-only reasoning models now expose only their supported thinking states: eligible GLM 4.7 and Qwen catalog rows offer `off` and enabled thinking without fabricated effort levels, while models with explicit effort metadata keep their declared ladders. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29
