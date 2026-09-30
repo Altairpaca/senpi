@@ -1124,6 +1124,8 @@ export class AgentSession {
 	private _turnIndex = 0;
 	private readonly _entryIdsByMessage = new WeakMap<object, string>();
 	private readonly _boundaryDispatchedMessages = new WeakSet<object>();
+	/** Assistant turns whose `turn_end` boundary committed entries, so the next request must re-read agent state. */
+	private readonly _boundaryRefreshedTurns = new WeakSet<object>();
 	private _lastActivityOutcome: AgentActivityOutcome = "completed";
 	private _isBeforeSettle = false;
 	private _abortDuringBeforeSettle = false;
@@ -1766,6 +1768,7 @@ export class AgentSession {
 			(entries) => this._buildBoundaryContext(entries, "turn_end"),
 		);
 		this._commitBoundaryDrafts(boundary.entries);
+		if (boundary.entries.length > 0) this._boundaryRefreshedTurns.add(message);
 		if (boundary.continue && !this._buildBoundaryContext([], "turn_end").canContinue) {
 			this._reportInvalidBoundaryContinuation("turn_end");
 			return false;
@@ -1889,7 +1892,11 @@ export class AgentSession {
 			};
 
 			const compactedBeforeCallback = await compactBeforeNextAdmission();
-			const messages = compactedBeforeCallback ? this.agent.state.messages.slice() : turn.context.messages;
+			// A committed turn_end boundary rebuilt agent state from the session projection (a handoff
+			// compaction, context edits, custom messages); the loop's turn context predates that commit.
+			const boundaryRefreshed = this._boundaryRefreshedTurns.delete(turn.message);
+			const messages =
+				compactedBeforeCallback || boundaryRefreshed ? this.agent.state.messages.slice() : turn.context.messages;
 
 			const postCompactionTurn = {
 				...turn,

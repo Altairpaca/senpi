@@ -1,3 +1,21 @@
+## 2026-09-30 - Upstream sync repair: actionable boundaries against the fork session core
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a `turn_end` boundary that commits entries (a retain-none handoff compaction, context edits, custom messages) marks its turn, and the next request's `prepareNextTurnWithContext` re-reads agent state instead of the loop's pre-commit turn context, so the handoff reaches the provider.
+
+### Why
+
+The upstream v0.99.1 (6a4af07d6) actionable boundaries (`finishTurn`/`turn_end` D-16, `agent_before_settle` D-15, `context_edit` projection D-27) commit through the fork session core, which kept its own next-turn context, post-run queue drain, usage accounting and length recovery; each point read state that the boundary had already changed.
+
+### Why an extension could not handle it
+
+The boundary commit, the next-request context, the post-run queue owner and compaction accounting are all owned by `AgentSession`; extensions only return drafts.
+
+### Expected merge conflict zones
+
+- `_dispatchTurnEndBoundary`, the `messages` choice in `_installAgentNextTurnRefresh`, the `agent_end` branch of `_handleAgentEvent`, the overflow/threshold head of `_checkCompaction`, and the estimate in `getContextUsage()`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
 
 ### What changed
