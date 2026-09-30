@@ -265,6 +265,8 @@
 
 - `websearch.json` accepts `nativeModel`, the model the session's hosted web search runs on, for example `"nativeModel": "claude-haiku-4-5"`. It must be served by the same provider, endpoint and credential as the session model; any other value is ignored and `/websearch status` warns about it. When the chosen model fails or finds nothing, the same search retries on the session model before moving to the next search provider. See [Web Search](docs/web-search.md). ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
 
+- `web_search` has two new hosted routes. **ChatGPT subscription route:** a ChatGPT subscription session now searches through the subscription's own web search tool with your ChatGPT login, on by default for those sessions, ahead of the free engines; it uses subscription usage, not an API account. **Google Search grounding:** opt-in only; it runs when you list a `google` entry in `websearch.json` (without `apiKey` it uses your senpi Google API-key login) and may be billed by Google beyond its free allowance. A Google model session without that entry is unchanged. Both routes count a result only when the provider actually searched: its sources and citations are returned, never URLs typed into the answer, and Google results link through Google's grounding redirect. See [Web Search](docs/web-search.md). ([#2341](https://github.com/code-yeongyu/senpi/issues/2341))
+
 - `web_search` can use a self-hosted SearXNG instance: add `{ "provider": "searxng", "baseUrl": "http://localhost:8888" }` to `websearch.json`. A plain `http://` address is accepted for hosts on your own network only. See [Web Search](docs/web-search.md). ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
 
 ### Changed
