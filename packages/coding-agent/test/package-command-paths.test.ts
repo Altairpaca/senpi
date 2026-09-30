@@ -511,6 +511,8 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("toggles built-in extensions in config global mode", async () => {
+		// User skills under ~/.agents/skills are discovered from HOME; keep the real ones out of the list.
+		vi.stubEnv("HOME", tempDir);
 		const settingsManager = SettingsManager.fromStorage(new InMemorySettingsStorage(), { projectTrusted: true });
 		const resolvedPaths = await new DefaultPackageManager({
 			cwd: projectDir,
@@ -541,6 +543,8 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	});
 
 	it("cycles project built-in extension overrides in config local mode", async () => {
+		// User skills under ~/.agents/skills are discovered from HOME; keep the real ones out of the list.
+		vi.stubEnv("HOME", tempDir);
 		const storage = new InMemorySettingsStorage();
 		storage.withLock("global", () => JSON.stringify({ extensions: ["-builtin:mcp"] }));
 		const settingsManager = SettingsManager.fromStorage(storage, { projectTrusted: true });
