@@ -37,6 +37,24 @@ Pre-provider compaction admission and overflow recovery are the core session's g
 
 - The final `shouldCompact` guard of `_enforceCompactionBeforeProvider`, the model/reserve lines at the top of `_enforceFinalProviderAdmission`, and the `recoverableLength` line of `_checkCompaction` in `agent-session.ts`.
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): compaction summaries use the routed thinking level
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_getCompactionRequestAuth` returns the thinking level resolved by `_getSummarizationRequestAuth`, and `_runDefaultCompaction` takes it as a parameter and passes it to `compact()` instead of `this.thinkingLevel`. Under a virtual selection that is the level the router chose for the `direct` request; otherwise it is still the session level.
+
+### Why
+
+The fork already routed a virtual selection before sizing the summary (adopted upstream `_getSummarizationRequestAuth`), but dropped the routed level and summarized with the session's own level, so the router's choice for summaries was ignored (`test/suite/virtual-models.test.ts` "routes compaction summaries before sizing them"). Upstream passes `request.thinkingLevel` to `compact()`.
+
+### Why an extension could not handle it
+
+The default compaction summary request is assembled inside the core session; an extension can replace the whole summary but cannot change the level of the built-in one.
+
+### Expected merge conflict zones
+
+- The return type of `_getCompactionRequestAuth`, the parameter list and `compact()` call of `_runDefaultCompaction`, and its caller in the auto/manual compaction path of `agent-session.ts`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
 
 ### What changed

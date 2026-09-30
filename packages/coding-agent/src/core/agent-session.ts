@@ -1453,6 +1453,7 @@ export class AgentSession {
 		headers?: Record<string, string>;
 		extraBody?: Record<string, unknown>;
 		env?: Record<string, string>;
+		thinkingLevel: ThinkingLevel;
 	}> {
 		const auth = await this._getSummarizationRequestAuth(model);
 		return {
@@ -6709,6 +6710,7 @@ export class AgentSession {
 		signal: AbortSignal,
 		env: Record<string, string> | undefined,
 		reason: CompactionReason,
+		thinkingLevel: ThinkingLevel,
 	): Promise<CompactionResult> {
 		let cacheFriendly: CacheFriendlySummaryOptions | undefined;
 
@@ -6771,7 +6773,8 @@ export class AgentSession {
 			customInstructions,
 			signal,
 			extraBody,
-			this.thinkingLevel,
+			// The routed thinking level under a virtual selection, the session's otherwise.
+			thinkingLevel,
 			this.agent.streamFunction,
 			env,
 			this.agent.transformContext,
@@ -7149,6 +7152,7 @@ export class AgentSession {
 						headers,
 						extraBody,
 						env,
+						thinkingLevel,
 					} = await this._getCompactionRequestAuth(compactionModel);
 					compactionResult = await this._runDefaultCompaction(
 						preparation,
@@ -7160,6 +7164,7 @@ export class AgentSession {
 						signal,
 						env,
 						request.reason,
+						thinkingLevel,
 					);
 				}
 			}
