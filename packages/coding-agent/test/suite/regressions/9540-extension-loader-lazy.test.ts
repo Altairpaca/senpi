@@ -34,8 +34,8 @@ interface JitiOptionsProbe {
 }
 
 describe("extension loader lazy imports", () => {
-	// Regression test for #9540.
-	it("defers ordinary jiti and its virtual modules until importing an extension", async () => {
+	// Regression test for #9540. Follows decision L4 (lazy importNodeOnlyApi("jiti/static") + static VIRTUAL_MODULES table; upstream jiti/virtual-modules.ts wiring not adopted).
+	it("defers the jiti transformer until importing an extension", async () => {
 		expect(state.jitiModuleLoads).toBe(0);
 		expect(state.jitiStaticModuleLoads).toBe(0);
 		expect(state.virtualModulesLoads).toBe(0);
@@ -44,15 +44,15 @@ describe("extension loader lazy imports", () => {
 
 		expect(result.errors).toEqual([]);
 		expect(result.extensions).toHaveLength(1);
-		expect(state.jitiModuleLoads).toBe(1);
-		expect(state.jitiStaticModuleLoads).toBe(0);
-		expect(state.virtualModulesLoads).toBe(1);
+		expect(state.jitiModuleLoads).toBe(0);
+		expect(state.jitiStaticModuleLoads).toBe(1);
+		expect(state.virtualModulesLoads).toBe(0);
 		expect(state.createJiti).toHaveBeenCalledOnce();
 
 		const options = state.createJiti.mock.calls[0][1] as JitiOptionsProbe;
 		expect(options.tryNative).toBeUndefined();
 		expect(options.tsconfigPaths).toBe(true);
-		expect(options.alias).toBeUndefined();
-		expect(options.virtualModules).toBeDefined();
+		expect(options.alias).toBeDefined();
+		expect(options.virtualModules?.typebox).toBeDefined();
 	});
 });
