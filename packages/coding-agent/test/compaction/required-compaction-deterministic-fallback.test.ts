@@ -10,9 +10,10 @@ import {
 	createRequiredCompactionFallback,
 	type DeterministicFallbackDiagnostic,
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
+import { requiresDeterministicCompactionFallback } from "../../src/core/extensions/builtin/compaction/extension-wiring.ts";
 import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
 import { SummaryRequestError } from "../../src/core/extensions/builtin/compaction/speculative.ts";
-import type { CompactionReason } from "../../src/core/extensions/types.ts";
+import type { CompactionReason, ContextUsage } from "../../src/core/extensions/types.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
 import { createBlockingContext, createCompactionHandlers } from "../helpers/blocking-compaction-harness.ts";
 
@@ -35,6 +36,33 @@ function createGeminiAssistantMessage(
 }
 
 describe("required compaction deterministic fallback", () => {
+	it("gates proactive fallback at the effective hard cap", () => {
+		const harness = createBlockingContext({ usageTokens: 0 });
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		expect(preparation).toBeDefined();
+		const event = {
+			type: "session_before_compact",
+			reason: "pre_prompt",
+			willRetry: false,
+			requestId: "pre-prompt-gate-boundary",
+			preparation: preparation!,
+			branchEntries,
+			signal: new AbortController().signal,
+		} satisfies Parameters<typeof requiresDeterministicCompactionFallback>[0];
+		const usage = (tokens: number | null, contextWindow = 10_000): ContextUsage => ({
+			tokens,
+			contextWindow,
+			percent: tokens === null ? null : (tokens / contextWindow) * 100,
+		});
+
+		expect(requiresDeterministicCompactionFallback(event, usage(9_599))).toBe(false);
+		expect(requiresDeterministicCompactionFallback(event, usage(9_600))).toBe(true);
+		expect(requiresDeterministicCompactionFallback(event, usage(null))).toBe(false);
+		expect(requiresDeterministicCompactionFallback(event, usage(10_000, 0))).toBe(false);
+		expect(requiresDeterministicCompactionFallback({ ...event, reason: "manual" }, usage(0))).toBe(true);
+	});
+
 	it("advances to the latest user boundary when the prepared suffix cannot fit", async () => {
 		const handlers = createCompactionHandlers();
 		const harness = createBlockingContext({ usageTokens: 9_900 });
