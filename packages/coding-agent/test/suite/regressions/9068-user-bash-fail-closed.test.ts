@@ -30,7 +30,9 @@ vi.mock("../../../src/modes/interactive/components/bash-execution.js", () => ({
 	},
 }));
 
+// The fork JSONL reader is bounded: runRpcMode passes MAX_RPC_LINE_CHARACTERS (16 MiB) to it.
 vi.mock("../../../src/modes/rpc/jsonl.js", () => ({
+	MAX_RPC_LINE_CHARACTERS: 16 * 1024 * 1024,
 	attachJsonlLineReader: vi.fn((_stream: NodeJS.ReadableStream, onLine: (line: string) => void) => {
 		rpcIo.lineHandler = onLine;
 		return () => {
@@ -124,6 +126,9 @@ type InteractiveBashContext = {
 	pendingMessagesContainer: { addChild(component: unknown): void };
 	pendingBashComponents: unknown[];
 	isBashMode: boolean;
+	refusedUnknownCommandText?: string;
+	hideShortcutOverlay(): void;
+	isExtensionCommand(text: string): boolean;
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void>;
 	showError(message: string): void;
 	updateEditorBorderColor(): void;
@@ -131,6 +136,8 @@ type InteractiveBashContext = {
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as {
 	setupEditorSubmitHandler(this: InteractiveBashContext): void;
+	hideShortcutOverlay(this: InteractiveBashContext): void;
+	isExtensionCommand(this: InteractiveBashContext, text: string): boolean;
 	handleBashCommand(this: InteractiveBashContext, command: string, excludeFromContext?: boolean): Promise<void>;
 };
 
@@ -246,6 +253,9 @@ describe("Interactive user_bash failure handling (#9068)", () => {
 			pendingMessagesContainer: { addChild: vi.fn() },
 			pendingBashComponents: [],
 			isBashMode: true,
+			// The fork submit handler hides the shortcut overlay and routes extension commands first.
+			hideShortcutOverlay: interactiveModePrototype.hideShortcutOverlay,
+			isExtensionCommand: interactiveModePrototype.isExtensionCommand,
 			handleBashCommand: interactiveModePrototype.handleBashCommand,
 			showError: vi.fn(),
 			updateEditorBorderColor: vi.fn(),
