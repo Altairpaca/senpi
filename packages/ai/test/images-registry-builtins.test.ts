@@ -43,22 +43,26 @@ describe("openai-images builtin registry", () => {
 	});
 
 	it("returns an error envelope when the underlying module import fails", async () => {
-		// Force the dynamic import of the openai-images module to reject.
-		vi.doMock("../../api/openai-images.ts", () => {
+		// Force the dynamic import of the openai-images module to reject. The path is relative to this
+		// test file; a wrong path leaves the real module loaded and the call goes to the network.
+		vi.doMock("../src/api/openai-images.ts", () => {
 			throw new Error("module import failed");
 		});
 
 		const provider = getImagesApiProvider("openai-images");
 		expect(provider).toBeDefined();
+		// If the mocked import did not fail, the real module would build a client with this fetch.
+		const fetch = vi.fn(() => Promise.reject(new Error("the network must not be reached")));
 
-		const result = await generateImages(model, context, { apiKey: "test-key" });
+		const result = await generateImages(model, context, { apiKey: "test-key", fetch });
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toBeTruthy();
 		expect(result.output).toEqual([]);
+		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it("returns an error envelope (never a thrown rejection) on import failure via direct provider call", async () => {
-		vi.doMock("../../api/openai-images.ts", () => {
+		vi.doMock("../src/api/openai-images.ts", () => {
 			throw new Error("module import failed");
 		});
 
@@ -67,9 +71,12 @@ describe("openai-images builtin registry", () => {
 
 		// The lazy wrapper must catch the import failure and return an
 		// AssistantImages with stopReason "error" — never a thrown rejection.
-		const result = await provider?.generateImages(model, context, { apiKey: "test-key" });
+		const fetch = vi.fn(() => Promise.reject(new Error("the network must not be reached")));
+		const result = await provider?.generateImages(model, context, { apiKey: "test-key", fetch });
 		expect(result).toBeDefined();
 		expect(result?.stopReason).toBe("error");
 		expect(result?.errorMessage).toBeTruthy();
+		expect(result?.output).toEqual([]);
+		expect(fetch).not.toHaveBeenCalled();
 	});
 });

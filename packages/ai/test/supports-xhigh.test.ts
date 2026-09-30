@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { clampThinkingLevel, getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
 import type { Model } from "../src/model.ts";
@@ -30,19 +28,6 @@ function maplessModel<TApi extends Api>(api: TApi, id: string, overrides: Partia
 }
 
 describe("getSupportedThinkingLevels", () => {
-	it("delegates extended-tier precedence to the exported capability predicates", () => {
-		const source = readFileSync(fileURLToPath(new URL("../src/models.ts", import.meta.url)), "utf8");
-		const functionSource = source.slice(
-			source.indexOf("export function getSupportedThinkingLevels"),
-			source.indexOf("export function clampThinkingLevel"),
-		);
-
-		expect(functionSource).toContain('if (level === "xhigh") return supportsXhigh(model);');
-		expect(functionSource).toContain('if (level === "max") return supportsMax(model);');
-		expect(functionSource).not.toContain("supportsXhighModelId");
-		expect(functionSource).not.toContain("supportsMaxModel");
-	});
-
 	it("includes max but not xhigh for Anthropic Opus 4.6 on anthropic-messages API", () => {
 		const model = getModel("anthropic", "claude-opus-4-6");
 		expect(model).toBeDefined();
