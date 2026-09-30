@@ -7531,7 +7531,7 @@ export class InteractiveMode {
 					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect?.() ?? true,
 					terminalMouse: this.settingsManager.getTerminalMouse(),
-					fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+					fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines?.() ?? "auto",
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
