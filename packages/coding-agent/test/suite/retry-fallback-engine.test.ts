@@ -1,5 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	withoutInitialSystemMessage,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
@@ -291,7 +296,8 @@ describe("retry fallback engine", () => {
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
 			(context) => {
-				fallbackRequestMessages = structuredClone(context.messages);
+				// The provider-boundary system head (A2 C-AG-3) carries the prompt and tools asserted below.
+				fallbackRequestMessages = structuredClone(withoutInitialSystemMessage(context.messages));
 				stateAtFallbackRequest = structuredClone(harness.session.state.messages);
 				fallbackRequestSystemPrompt = getCurrentSystemPrompt(context.messages);
 				fallbackRequestToolNames = getCurrentTools(context.messages).map((tool) => tool.name);
