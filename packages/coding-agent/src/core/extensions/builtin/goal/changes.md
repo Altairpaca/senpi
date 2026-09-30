@@ -1,3 +1,22 @@
+## 2026-09-30 - Drop test-only goal exports (senpi#2447)
+
+### What changed
+
+- `prompt.ts`: removed `buildMonitorStallNotice`, a one-line wrapper over `buildGoalStallNotice(n, { liveSources: ["terminal-monitors"] })` that only a test called. The earlier entry describing it is historical.
+- `continuation.ts`: removed `shouldQueueGoalContinuationWhenIdle` and `shouldQueueGoalContinuationAfterAgentEnd`. Neither had a production caller; production gates through `evaluateGoalContinuation` and `didAgentEndCleanly`, whose message-shape rows the suite now asserts directly.
+
+### Why
+
+- The exports existed only to be tested. The verdict suite (`goal-continuation-verdict.test.ts`) owns the status, pending and idle gating at the production entry.
+
+### Why an extension could not handle it
+
+- Goal is a manually ported builtin (`MANUAL_PACKAGES` in `scripts/sync-builtin-extensions.mjs`), so its source is maintained here.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `prompt.ts` and the predicate block above `didAgentEndCleanly` in `continuation.ts`. An upstream pi-goal sync that re-adds them can drop them again.
+
 # goal Extension Changes
 
 ## 2026-09-28 - Terminal provider 401/403 blocks the goal on the first hit (senpi#2293)
