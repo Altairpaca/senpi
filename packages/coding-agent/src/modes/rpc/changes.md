@@ -1,3 +1,27 @@
+## 2026-09-30 - An updated client retires a live pre-layout-2 host with no session (senpi#2423)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts` (new): the flat `<agentDir>/rpc-host-daemon/host.pid` of a host from before layout 2, read-only as before. `readLegacyHost` returns the record and the endpoint it describes (its stamped `socket`, else `<agentDir>/rpc/rpc.sock`). `provenLegacyOwner(paths, socket)` proves the pid + start time against the live process for that endpoint. `retireIdleLegacyHost` drains (SIGUSR1) a proven legacy host whose endpoint answers with `generation_handoff` and lists no session (`list_sessions` with workers), waits for it to exit, and otherwise returns the refusal detail: pid, endpoint, session count and `<app> host stop --drain --socket <endpoint>`.
+- `host-daemon-registration.ts`: `readLegacyHostRecord` and `legacyHostIsLive` moved into `host-legacy.ts`.
+- `host-ensure.ts`: the `legacy_host` refusal now comes from `retireIdleLegacyHost`; an idle legacy host is drained and waited out (`_test.stopTimeoutMs`, default 10 s) before the start, on any endpoint of the agent directory.
+- `host-stop.ts`: `stopHost({ drain: true })` falls back to `provenLegacyOwner` when no layout-2 owner is proven. A hard stop still needs a layout-2 owner.
+- `host-decision.ts`: `HostEnsureRefusedError` takes an optional `detail` (kept on the error and appended to its message); the `legacy_host` text no longer says the host is never signalled.
+- `host-runner.ts`: an ensure refusal's JSON carries `detail` when the error has one.
+- `docs/rpc.md` (daemon directory section) and `test/suite/regressions/2423-legacy-host-retire.test.ts` (real supervisors: drain, idle ensure, held refusal, PID-reuse and other-endpoint controls).
+
+### Why
+
+senpi#2423: a legacy host on the default socket, idle and advertising `generation_handoff`, made every ensure in the agent directory refuse `legacy_host` - including the desktop's per-thread endpoints - while `host stop --drain` answered `unknown_owner`, so no updated client could ever retire it.
+
+### Why an extension could not handle it
+
+Host ensure, stop and the daemon-directory ownership proof are core RPC host lifecycle.
+
+### Expected merge conflict zones
+
+- Fork-only files. The legacy branch of `ensureHostLocked` in `host-ensure.ts`, the drain branch of `stopHost`, the `HostEnsureRefusedError` constructor and `ensureOutcome`'s refusal in `host-runner.ts`.
+
 ## 2026-09-30 - One question-settle rule for hosts and terminal control endpoints (senpi#2407)
 
 ### What changed
