@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-09-30 - Self-contained eval action schemas (senpi#2240)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/types.ts`: each action branch declares its own properties. Runs require `language`, `code`, and `summary`, including when `action` is omitted. `list` requires only its action; `peek` and `stop` require `cell_id`.
+- `packages/senpi-codemode/test/eval-schema-required-fields.test.ts`: covers missing run fields, implicit runs, enabled languages, control calls, and branch-local field declarations.
+- `packages/senpi-codemode/scripts/qa-e2e-eval.ts`: expects incomplete runs to fail schema validation before execution. The README describes the action-specific requirements.
+
+### Why
+
+- With the issue's forced `tool_choice: "any"`, Mistral-hosted GLM 5.3 returned only `{"action":"run"}` with the constraint-only branches. Adding `required` without declaring the fields inside the branch still failed in a live reproduction. Self-contained branches let the provider generate complete calls.
+
+### Why an extension could not handle it
+
+- This package is the extension that owns the eval schema.
+
+### Expected merge conflict zones
+
+- LOW: `createEvalInputSchema` in `packages/senpi-codemode/src/tool/types.ts`.
+
 ## 2026-09-29 - Eval return values reach the model whole, and every cut says so (senpi#2402)
 
 ### What changed
