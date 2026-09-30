@@ -150,6 +150,24 @@ The warning matcher is core.
 
 - `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
 
+## 2026-09-30 - The global extension shim names the install, not a runtime snapshot (#2408)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `canonicalizeGlobalDefaultExtensionModulePath()` maps a path inside a runtime snapshot to the same path in the install it was taken from (`resolveInstallPath()` from `src/runtime-snapshot/marker.ts`) before resolving symlinks.
+
+### Why
+
+- The snapshot's `dist` used to be links into the install, so resolving symlinks alone reached the install. It is a copy now (#2408), and the shim in the agent directory outlives any one snapshot and is shared by the sessions of every build, so it must keep naming the install.
+
+### Why an extension could not handle it
+
+- The shim path is computed by the resource loader before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the body of `canonicalizeGlobalDefaultExtensionModulePath()` and the imports of `packages/coding-agent/src/core/resource-loader.ts`.
+
 ## 2026-09-30 - GPT-6.1 Sol becomes the OpenAI provider default; warning covers it (senpi#2390)
 
 ### What changed
