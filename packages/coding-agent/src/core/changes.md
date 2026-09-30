@@ -1,3 +1,21 @@
+## 2026-10-01 - Admitted deliveries emit their own turn trigger (senpi#2424)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage(..., { triggerTurn: true })` emits `before_agent_start.trigger: "delivery"` only when `deliveryIdOf` recognises a valid `session_control_delivery`; every other custom-message turn still emits `"extension"`.
+
+### Why
+
+- The first gateway request must receive first-request behavior without making onboarding and other hidden extension turns look user-authored.
+
+### Why an extension could not handle it
+
+- `AgentSession` owns the custom-message turn boundary and is the only layer that sees the admitted message's `customType` before emitting `before_agent_start`.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `emitBeforeAgentStart` call in the `sendCustomMessage` trigger-turn path.
+
 ## 2026-09-30 - Terminal setting maxDurableMonitors (senpi#2420)
 
 ### What changed

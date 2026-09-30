@@ -1384,11 +1384,12 @@ export interface BeforeAgentStartEvent {
 	/** The raw user prompt text (after expansion). */
 	prompt: string;
 	/**
-	 * Who started this turn: `"prompt"` for a user prompt (and a preview of one), `"extension"` for a
-	 * turn an extension triggered with `sendMessage(..., { triggerTurn: true })`, whose `prompt` is
-	 * that custom message's text.
+	 * Who started this turn: `"prompt"` for a user prompt (and a preview of one), `"delivery"` for an
+	 * externally admitted session-control delivery, or `"extension"` for any other turn an extension
+	 * triggered with `sendMessage(..., { triggerTurn: true })`. For either custom-message trigger,
+	 * `prompt` is that message's text.
 	 */
-	trigger: "prompt" | "extension";
+	trigger: "prompt" | "delivery" | "extension";
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
 	/** The fully assembled system prompt string. */

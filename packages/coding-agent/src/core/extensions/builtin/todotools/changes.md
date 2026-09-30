@@ -1,5 +1,24 @@
 # todotools Fork Tracker
 
+## 2026-10-01 - The first gateway delivery gets the first-turn opener (senpi#2424)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `shouldArmFirstTurn` treats `trigger: "delivery"` like `"prompt"` and counts earlier `session_control_delivery` entries as requests. Question/exclamation, print/json and ask-user-answer exclusions apply equally to both paths; answer-frame deliveries do not consume the opener.
+- `test/suite/regressions/2424-delivery-first-turn.test.ts`: covers the delivery gate table, gateway-only first/later deliveries with forced `todo` choice, both prompt/delivery orders, hidden extension turns, and typed or delivered answer frames through the real `AgentSession`.
+
+### Why
+
+- A gateway-only session's admitted delivery is its work request. Skipping it gave that request no opener and incorrectly saved the opener for a later local prompt.
+
+### Why an extension could not handle it
+
+- This is the todotools builtin's first-request policy; it consumes the host's new delivery trigger and persisted delivery entries.
+
+### Expected merge conflict zones
+
+- Fork-only files. `first-turn.ts` gate and request-entry classifier.
+
 ## 2026-09-30 - The first-turn opener never arms on an ask-user answer frame (senpi#2419)
 
 ### What changed
