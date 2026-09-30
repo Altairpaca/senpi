@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the `accept-edits` permission preset: project reads and edits are allowed, while shell commands, outside paths and other tools require approval. Multi-session hosts advertise `permission_preset_accept_edits` so clients can fall back to `ask` on older engines. ([#2430](https://github.com/code-yeongyu/senpi/issues/2430))
+
 - `SENPI_PROMPT_SURFACE=chat` (or `open_session.promptSurface: "chat"`, host capability `prompt_surface_chat`) renders every built-in system prompt for a chat bridge that posts each reply to people in a conversation: everything the `app` surface does, plus no Ask / For you / Now / Next handoff block and no todo or ledger lines in replies; the todo tool stops appending its "Handoff due" cue, and a finalized reply that still carries a routing line, a handoff block or todo-ledger lines has them removed before it is emitted or saved (streamed deltas are not rewritten). Terminal and app prompts are unchanged. ([#2398](https://github.com/code-yeongyu/senpi/issues/2398))
 
 ### Changed
