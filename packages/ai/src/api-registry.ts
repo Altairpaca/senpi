@@ -2,22 +2,22 @@ import { getRegisteredFauxProvider } from "./providers/faux.ts";
 import type {
 	Api,
 	AssistantMessageEventStream,
-	Context,
 	Model,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
+	TranscriptContext,
 } from "./types.ts";
 
 export type ApiStreamFunction = (
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: StreamOptions,
 ) => AssistantMessageEventStream;
 
 export type ApiStreamSimpleFunction = (
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ) => AssistantMessageEventStream;
 

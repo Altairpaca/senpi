@@ -10,11 +10,11 @@ import { isKeyRelease, matchesKey } from "./keys.ts";
 import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "./mux.ts";
 import type { Terminal } from "./terminal.ts";
 import {
-	isOsc11BackgroundColorResponse,
-	parseOsc11BackgroundColor,
+	parseOscColorResponse,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,
+	type TerminalColors,
 } from "./terminal-colors.ts";
 import {
 	deleteKittyImage,
@@ -149,7 +149,13 @@ export interface TuiMouseDispatchResult extends TuiMouseEventResult {
 export function dispatchMouseEvent(component: Component, event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
 	const result = component.handleMouse?.(event);
 	if (!result) return undefined;
-	if ("target" in result) return result as TuiMouseDispatchResult;
+	if ("target" in result) {
+		// The component forwarded the event to a child it hosts. Like a delegating container, it routes
+		// keys to that child itself, so it keeps keyboard focus. Focusing the child directly would leave
+		// focus on a detached component once the host removes it, e.g. a closed settings submenu.
+		const forwarded = result as TuiMouseDispatchResult;
+		return forwarded.focus && component.handleInput ? { ...forwarded, focusTarget: component } : forwarded;
+	}
 	if (!result.handled && !result.capture && !result.focus) return undefined;
 	return {
 		...result,
@@ -207,9 +213,17 @@ export interface Component {
 
 export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
 export type TuiInputListener = (data: string) => TuiInputListenerResult;
-type PendingOsc11BackgroundQuery = {
-	settled: boolean;
-	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
+type PendingTerminalColorQuery = {
+	foreground?: RgbColor;
+	background?: RgbColor;
+	palette: Array<RgbColor | undefined>;
+	/** Targets that already replied, so duplicates do not count twice. */
+	replied: Set<string>;
+	/**
+	 * Receives the result: the promise's resolve until the timeout, then `onLateReply`. Unset once the
+	 * query completed (on the DA1 reply or once every color replied); later replies are ignored.
+	 */
+	deliver: ((colors: TerminalColors) => void) | undefined;
 	timer: NodeJS.Timeout | undefined;
 };
 
@@ -236,6 +250,20 @@ interface NormalizedLinesResult {
 	readonly compareEndExclusive: number;
 	readonly bounded: boolean;
 }
+
+const TERMINAL_PALETTE_SIZE = 16;
+/** OSC 10 and 11 plus OSC 4 for every palette color. */
+const TERMINAL_COLOR_REPLY_COUNT = 2 + TERMINAL_PALETTE_SIZE;
+/**
+ * Default colors, palette colors 0-15, and a trailing primary device attributes (DA1) request.
+ * Every terminal answers DA1 and terminals answer in order, so the DA1 reply marks the end of
+ * the color replies, including for terminals that ignore the color queries.
+ */
+const TERMINAL_COLOR_QUERY = `\x1b]10;?\x07\x1b]11;?\x07${Array.from(
+	{ length: TERMINAL_PALETTE_SIZE },
+	(_, index) => `\x1b]4;${index};?\x07`,
+).join("")}\x1b[c`;
+const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[\?[\d;]*c$/;
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -756,8 +784,11 @@ export abstract class TuiBase extends Container {
 	private muxViewportRepaintCount = 0;
 	private overWideCrashDumpWritten = false;
 	protected stopped = false;
-	private pendingOsc11BackgroundReplies = 0;
-	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
+	/**
+	 * Color queries waiting for their DA1 reply, oldest first. Terminals answer in order, so color
+	 * replies belong to the oldest one. Queries stay here after a timeout to collect late replies.
+	 */
+	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
@@ -1477,7 +1508,9 @@ export abstract class TuiBase extends Container {
 		this.doRender();
 	}
 
+	/** After stop(), the shell owns the cursor and it must stay visible, so only a running TUI hides it. */
 	#setCursorVisibility(visible: boolean): void {
+		if (!visible && this.stopped) return;
 		if (this.#lastCursorVisibility === visible) return;
 		if (visible) {
 			this.terminal.showCursor();
@@ -1594,7 +1627,7 @@ export abstract class TuiBase extends Container {
 				data = focus.data;
 			}
 		}
-		if (this.consumeOsc11BackgroundResponse(data)) {
+		if (this.consumeTerminalColorResponse(data)) {
 			return;
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
@@ -1669,28 +1702,50 @@ export abstract class TuiBase extends Container {
 		}
 	}
 
-	private consumeOsc11BackgroundResponse(data: string): boolean {
-		if (this.pendingOsc11BackgroundReplies <= 0) {
+	private consumeTerminalColorResponse(data: string): boolean {
+		const query = this.pendingTerminalColorQueries[0];
+		if (!query) {
 			return false;
 		}
-
-		if (!isOsc11BackgroundColorResponse(data)) {
-			return false;
+		if (DEVICE_ATTRIBUTES_RESPONSE_PATTERN.test(data)) {
+			this.pendingTerminalColorQueries.shift();
+			this.completeTerminalColorQuery(query);
+			return true;
 		}
 
-		const rgb = parseOsc11BackgroundColor(data);
-		this.pendingOsc11BackgroundReplies -= 1;
-		const query = this.pendingOsc11BackgroundQueries.shift();
-		if (query && !query.settled) {
-			query.settled = true;
-			if (query.timer) {
-				clearTimeout(query.timer);
-				query.timer = undefined;
-			}
-			query.resolve?.(rgb);
-			query.resolve = undefined;
+		const response = parseOscColorResponse(data);
+		if (!response) {
+			return false;
+		}
+		const { target, rgb } = response;
+		const key = String(target);
+		if (!query.deliver || query.replied.has(key)) {
+			return true;
+		}
+		query.replied.add(key);
+		if (target === "foreground") {
+			query.foreground = rgb;
+		} else if (target === "background") {
+			query.background = rgb;
+		} else if (target < TERMINAL_PALETTE_SIZE) {
+			query.palette[target] = rgb;
+		}
+		if (query.replied.size === TERMINAL_COLOR_REPLY_COUNT) {
+			this.completeTerminalColorQuery(query);
 		}
 		return true;
+	}
+
+	private terminalColorQueryResult(query: PendingTerminalColorQuery): TerminalColors {
+		const palette = query.palette.every((color) => color !== undefined) ? (query.palette as RgbColor[]) : undefined;
+		return { foreground: query.foreground, background: query.background, palette };
+	}
+
+	private completeTerminalColorQuery(query: PendingTerminalColorQuery): void {
+		const deliver = query.deliver;
+		query.deliver = undefined;
+		clearTimeout(query.timer);
+		deliver?.(this.terminalColorQueryResult(query));
 	}
 
 	private consumeTerminalColorSchemeReport(data: string): boolean {
@@ -2996,57 +3051,34 @@ export abstract class TuiBase extends Container {
 	}
 
 	/**
-	 * Query the terminal's default background color with OSC 11 (`ESC ] 11 ; ? BEL`).
-	 * @param timeoutMs Query timeout in milliseconds.
-	 * @returns Promise containing the parsed RGB color, or undefined if it times out or fails to parse.
+	 * Query the terminal's theme colors: the default foreground (OSC 10), the default background
+	 * (OSC 11), and ANSI colors 0-15 (OSC 4), followed by a DA1 request that marks the end of the
+	 * replies. Resolves when the DA1 reply or all color replies arrive, or when the timeout expires.
+	 * Colors the terminal did not report are undefined; the palette is only set when all 16 arrived.
+	 * @param timeoutMs Query timeout in milliseconds, for terminals that do not answer DA1 either.
+	 * @param onLateReply Receives the replies if the query completes after the timeout, e.g. over slow links.
 	 */
-	queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined> {
+	queryTerminalColors({
+		timeoutMs,
+		onLateReply,
+	}: {
+		timeoutMs: number;
+		onLateReply?: (colors: TerminalColors) => void;
+	}): Promise<TerminalColors> {
 		return new Promise((resolve) => {
-			const query: PendingOsc11BackgroundQuery = {
-				settled: false,
-				resolve,
+			const query: PendingTerminalColorQuery = {
+				palette: Array.from({ length: TERMINAL_PALETTE_SIZE }, () => undefined),
+				replied: new Set(),
+				deliver: resolve,
 				timer: undefined,
 			};
-
+			// Resolve with the replies so far, and keep collecting late replies for `onLateReply`.
 			query.timer = setTimeout(() => {
-				if (query.settled) {
-					return;
-				}
-				query.settled = true;
-				query.timer = undefined;
-				query.resolve?.(undefined);
-				query.resolve = undefined;
+				query.deliver = onLateReply;
+				resolve(this.terminalColorQueryResult(query));
 			}, timeoutMs);
-			this.pendingOsc11BackgroundQueries.push(query);
-			this.pendingOsc11BackgroundReplies += 1;
-			this.terminal.write("\x1b]11;?\x07");
-		});
-	}
-
-	/**
-	 * Query the terminal's color-scheme preference with DSR (`CSI ? 996 n`).
-	 * Terminals that support the color palette notification protocol reply with
-	 * `CSI ? 997 ; 1 n` for dark or `CSI ? 997 ; 2 n` for light.
-	 */
-	queryTerminalColorScheme({ timeoutMs }: { timeoutMs: number }): Promise<TerminalColorScheme | undefined> {
-		return new Promise((resolve) => {
-			let settled = false;
-			let timer: NodeJS.Timeout | undefined;
-			let unsubscribe: () => void = () => {};
-			const settle = (scheme: TerminalColorScheme | undefined) => {
-				if (settled) return;
-				settled = true;
-				if (timer) {
-					clearTimeout(timer);
-					timer = undefined;
-				}
-				unsubscribe();
-				resolve(scheme);
-			};
-
-			unsubscribe = this.onTerminalColorSchemeChange(settle);
-			timer = setTimeout(() => settle(undefined), timeoutMs);
-			this.terminal.write("\x1b[?996n");
+			this.pendingTerminalColorQueries.push(query);
+			this.terminal.write(TERMINAL_COLOR_QUERY);
 		});
 	}
 }

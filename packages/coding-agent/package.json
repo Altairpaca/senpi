@@ -54,7 +54,7 @@
 		"qa:app-server": "node scripts/qa-app-server/run-all.mjs"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "0.85.1",
+		"@earendil-works/chord": "0.99.1",
 		"@earendil-works/pi-agent-core": "^2026.9.30",
 		"@earendil-works/pi-ai": "^2026.9.30",
 		"@earendil-works/pi-client": "^2026.9.30",
