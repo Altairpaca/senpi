@@ -1,3 +1,22 @@
+## 2026-09-30 - Legacy tool warnings require a legacy tool entry point (senpi#2451)
+
+### What changed
+
+- `packages/coding-agent/src/extension-system-migration.ts`: project and global `tools/` warnings now require the legacy `tools/<name>/index.ts` layout instead of treating every non-binary entry as a custom tool.
+- `packages/coding-agent/test/extension-system-migration.test.ts`: the OmO-branded migration covers both a plain helper file and a legacy custom tool directory.
+
+### Why
+
+- OmO keeps its own helper files and artifacts in `.omo/tools`; those files were never legacy custom tools, but their presence triggered the migration warning.
+
+### Why an extension could not handle it
+
+- The warning is produced by the startup migration before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the custom-tool filter in `extension-system-migration.ts`.
+
 ## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
 
 ### What changed
