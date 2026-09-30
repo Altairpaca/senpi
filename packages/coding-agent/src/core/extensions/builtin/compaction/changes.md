@@ -1,3 +1,22 @@
+## 2026-09-30 - Compaction accepts ambient request-time authentication (senpi#2441)
+
+### What changed
+
+- `speculative.ts`: the summary-auth pre-check accepts the model registry's preserved `ambient` marker in addition to API keys and credential headers.
+- `test/suite/regressions/2441-bedrock-ambient-compaction.test.ts`: an Amazon Bedrock model authenticated only by an `AWS_PROFILE` reaches the mocked Bedrock summary request through `runExtensionCompaction`; an unconfigured keyed provider remains rejected before dispatch.
+
+### Why
+
+- Amazon Bedrock and Google Vertex resolve shared cloud credential chains as ambient auth with an empty request-auth object because their SDKs authenticate at request time. Compaction discarded that provider decision and rejected the request before the normal model runtime could apply it.
+
+### Why an extension could not handle it
+
+- The rejection happens inside the builtin compaction summary generator before any provider request is sent.
+
+### Expected merge conflict zones
+
+- LOW: the auth guard near the start of `runExtensionCompaction()` in `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`.
+
 ## 2026-09-29 - ChatGPT subscription remote compaction goes through responses-v2 and replays on its own lane (senpi#2378)
 
 ### What changed

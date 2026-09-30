@@ -1,3 +1,21 @@
+## 2026-09-30 - Preserve ambient request authentication for auxiliary requests (senpi#2441)
+
+### What changed
+
+- `model-registry.ts`: `getApiKeyAndHeaders()` now carries the provider resolver's `ambient` marker in a successful request-auth result.
+
+### Why
+
+- Normal turns accept a resolved provider auth result even when the provider signs or authenticates the request later and therefore supplies neither an API key nor credential headers. Auxiliary callers need that same decision without treating an unresolved keyed provider as authenticated.
+
+### Why an extension could not handle it
+
+- The request-auth compatibility result is produced by the core model registry before builtin extensions dispatch provider requests.
+
+### Expected merge conflict zones
+
+- LOW: the `ResolvedRequestAuth` type and successful resolution branch in `packages/coding-agent/src/core/model-registry.ts`.
+
 ## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
 
 ### What changed

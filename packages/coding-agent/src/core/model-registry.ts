@@ -31,6 +31,7 @@ export type ResolvedRequestAuth =
 			upstreamModelId?: string;
 			serviceTier?: "auto" | "flex" | "priority";
 			env?: Record<string, string>;
+			ambient?: true;
 	  }
 	| { ok: false; error: string };
 export { clearApiKeyCache } from "./provider-composer.ts";
@@ -128,6 +129,7 @@ export class ModelRegistry {
 				upstreamModelId: compatibility.upstreamModelId,
 				serviceTier: compatibility.serviceTier,
 				env: resolution.env,
+				...(resolution.ambient ? { ambient: true } : {}),
 			};
 		} catch (error) {
 			const cause = error instanceof Error ? error.cause : undefined;
