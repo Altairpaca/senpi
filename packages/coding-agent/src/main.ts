@@ -93,6 +93,7 @@ import {
 	MissingSessionCwdError,
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
+import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
@@ -875,7 +876,7 @@ export function createCliRuntimeFactory(
 			...(local.modelRuntime === undefined ? {} : { modelRuntime: local.modelRuntime }),
 			mcpRegistry,
 			modelRuntimeSignal: AbortSignal.timeout(15_000),
-			extensionFlagValues: parsed.unknownFlags,
+			extensionFlagValues: sessionExtensionFlagValues(parsed.unknownFlags, launchProfile),
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
 				? {
 						resolveProjectTrust: async ({ extensionsResult }) => {
