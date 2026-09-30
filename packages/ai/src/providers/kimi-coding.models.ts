@@ -44,6 +44,11 @@ const values = {
 				"image",
 				"video"
 			],
+			"inputLimits": {
+				"images": {
+					"resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+				}
+			},
 			"cost": {
 				"input": 3,
 				"output": 15,
@@ -68,6 +73,11 @@ const values = {
 				"text",
 				"image"
 			],
+			"inputLimits": {
+				"images": {
+					"resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+				}
+			},
 			"cost": {
 				"input": 0,
 				"output": 0,
@@ -102,6 +112,11 @@ const values = {
 				"text",
 				"image"
 			],
+			"inputLimits": {
+				"images": {
+					"resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+				}
+			},
 			"cost": {
 				"input": 0.95,
 				"output": 4,
@@ -135,6 +150,11 @@ const values = {
 				"text",
 				"image"
 			],
+			"inputLimits": {
+				"images": {
+					"resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+				}
+			},
 			"cost": {
 				"input": 1.9,
 				"output": 8,

@@ -1,3 +1,21 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): kimi-coding vision rows carry the default image resize profile
+
+### What changed
+
+- `packages/ai/src/providers/kimi-coding.models.ts`: the four image-input rows (`k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`) declare `inputLimits.images.resize` with the generator's default profile (2000 x 2000 px, 4.5 MiB, JPEG quality 80).
+
+### Why
+
+Upstream v6 stamps that resize profile on every generated vision model, and the read tool and the session read it from `model.inputLimits`; the hand-owned kimi-coding shard bypasses the generator, so its vision rows had no resize profile.
+
+### Why an extension could not handle it
+
+The shard is part of the builtin catalog, loaded before any extension exists.
+
+### Expected merge conflict zones
+
+- LOW: none from upstream (the shard is fork-owned); a change to the generator's `DEFAULT_IMAGE_RESIZE` must be mirrored here.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
 
 ### What changed
