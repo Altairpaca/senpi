@@ -1,3 +1,22 @@
+## 2026-09-30 - Drop the duplicate Rust manual PTY QA step (senpi#2447)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the "Rust manual PTY QA" step is removed.
+
+### Why
+
+- The preceding `cargo test -p senpi-pty --locked` step already runs `crates/senpi-pty/tests/manual_qa.rs`, because it is an integration test of the crate, so CI ran it twice.
+- The file stays as the manual QA harness `crates/senpi-pty/AGENTS.md` names.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: the senpi-pty steps of `native-prebuilds.yml`.
+
 # changes
 
 ## 2026-09-30 - Node bundle CI step runs the Bun provider-coverage and compiled provider-probe files (senpi#2447)
