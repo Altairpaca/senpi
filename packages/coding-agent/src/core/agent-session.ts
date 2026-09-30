@@ -95,6 +95,7 @@ import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
+import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
@@ -7680,9 +7681,28 @@ export class AgentSession {
 			contextUsage !== undefined &&
 			contextUsage.tokens !== null &&
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
-		const recoverableLength = sameModel && isRecoverableLength(assistantMessage, this.model?.maxTokens ?? 0);
+		// A boundary context_edit can omit this assistant or change the context its usage measured.
+		const branch = this.sessionManager.getBranch();
+		const projection = this.sessionManager.buildSessionProjection();
+		const usageScope = resolveAssistantUsageScope(
+			branch,
+			projection,
+			this._findPersistedMessageEntryId(assistantMessage),
+		);
+		const overflowEvidenceApplies =
+			assistantMessage.stopReason === "error"
+				? usageScope.retainedForExplicitRecovery
+				: usageScope.usageMatchesProjection;
+		// Pre-admission ("threshold") runs only before a natural next request: the truncated response's
+		// failed tool results or queued input follow it, so there is no truncated final attempt to retry.
+		const recoverableLength =
+			sameModel &&
+			usageScope.projected &&
+			isRecoverableLength(assistantMessage, this.model?.maxTokens ?? 0);
 		const isOverflow =
-			(isContextOverflow(assistantMessage, contextWindow) && (sameModel || currentContextNeedsCompaction)) ||
+			(overflowEvidenceApplies &&
+				isContextOverflow(assistantMessage, contextWindow) &&
+				(sameModel || currentContextNeedsCompaction)) ||
 			recoverableLength ||
 			this._isCursorPayloadOverflow(assistantMessage);
 		if (isOverflow && !settings.enabled && !isTurnStuckOnContextOverflow(assistantMessage, contextWindow)) {
@@ -7788,7 +7808,9 @@ export class AgentSession {
 			contextTokens = estimateContextTokens(messages).tokens;
 		} else {
 			const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
-			if (assistantMessage.stopReason !== "error" && directContextTokens !== 0) {
+			if (!usageScope.usageMatchesProjection) {
+				contextTokens = estimateProjectedContextTokens(projection, branch).tokens;
+			} else if (assistantMessage.stopReason !== "error" && directContextTokens !== 0) {
 				contextTokens = this._resolveThresholdContextTokens(directContextTokens);
 			} else {
 				const messages = filterContextExcludedMessages(this.agent.state.messages);
@@ -10484,7 +10506,11 @@ export class AgentSession {
 			}
 		}
 
-		const estimate = estimateContextTokens(messages);
+		// A context_edit omits or replaces what earlier provider usage measured, so that usage no longer
+		// describes the current context; estimate from the projection like the threshold check does.
+		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
+			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
+			: estimateContextTokens(messages);
 		const percent = (estimate.tokens / contextWindow) * 100;
 
 		return {
