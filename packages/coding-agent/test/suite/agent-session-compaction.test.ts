@@ -455,8 +455,6 @@ describe("AgentSession compaction characterization", () => {
 		// given
 		const harness = await createHarness();
 		harnesses.push(harness);
-		// Auth is resolved only when Pi summarizes itself, after checking there is something to compact.
-		seedCompactableSession(harness);
 
 		await harness.session.prompt("hi");
 		await harness.session.prompt("who are you");
