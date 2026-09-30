@@ -978,6 +978,8 @@ export class AgentSession {
 	 * treat these identities as pending persistence, never as stale or droppable.
 	 */
 	private readonly _messageEndsAwaitingPersistence = new Set<AgentMessage>();
+	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
+	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
 	private _toolExecutionDepth = 0;
 	private readonly _toolContextDisposers = new Set<() => void>();
@@ -1779,6 +1781,11 @@ export class AgentSession {
 		const previousFinishTurn = this.agent.finishTurn;
 		this.agent.finishTurn = async (turn, signal) => {
 			this._boundaryDispatchedMessages.add(turn.message);
+			// Agent.emit does not await the fork's event queue, so this turn's message_end persistence may
+			// still be queued; the boundary resolves persisted entry IDs, as upstream's awaited listeners allow.
+			await Promise.all(
+				[turn.message, ...turn.toolResults].map((message) => this._messageEndPersistence.get(message)),
+			);
 			const extensionContinue = await this._dispatchTurnEndBoundary(turn.message, turn.toolResults);
 			const previousDecision = await previousFinishTurn?.(turn, signal);
 			if (previousDecision?.action === "end") return previousDecision;
@@ -2579,7 +2586,10 @@ export class AgentSession {
 		// Keep queue alive if an event handler fails, including the promise created
 		// by finally() above. The originating prompt observes the stored admission
 		// error after the queue settles; no rejection should become unhandled.
-		this._agentEventQueue.catch(() => {});
+		const settled = this._agentEventQueue.catch(() => {});
+		if (pendingMessage !== undefined) {
+			this._messageEndPersistence.set(pendingMessage, settled);
+		}
 	};
 
 	private _createRetryPromiseForAgentEnd(event: AgentEvent): void {
