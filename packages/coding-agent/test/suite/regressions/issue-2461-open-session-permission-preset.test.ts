@@ -22,6 +22,10 @@ import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 
 type WireRecord = Record<string, unknown> & { id?: string; type?: string; sessionId?: string };
 
+function wireCommand(frame: Record<string, unknown>): RpcCommand {
+	return JSON.parse(JSON.stringify(frame)) as RpcCommand;
+}
+
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const dispose of disposers.splice(0).reverse()) await dispose();
@@ -127,12 +131,7 @@ async function presetHost(turn: ToolTurn) {
 				if (record.type !== "extension_ui_request" || record.method !== "select") return;
 				if (!String(record.title ?? "").startsWith("Permission required:")) return;
 				void writer.withConnection("client", () =>
-					router.handle({
-						type: "extension_ui_response",
-						id: String(record.id),
-						sessionId,
-						value: "Deny",
-					} as RpcCommand),
+					router.handle(wireCommand({ type: "extension_ui_response", id: String(record.id), sessionId, value: "Deny" })),
 				);
 			};
 			listeners.add(denier);
