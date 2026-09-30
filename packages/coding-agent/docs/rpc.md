@@ -1290,6 +1290,12 @@ containment, or containment of arbitrary native code. They are not an extension 
 
 ### D1 normative table (multi-session mode)
 
+Hosts that support `open_session.permissionPreset: "accept-edits"` advertise
+`permission_preset_accept_edits`. This preset allows project read/list/grep/edit
+and asks for bash, external_directory and other tools. Clients without that
+capability must use `ask`, never `workspace`, for an edit-only approval promise.
+Explicit permission rules and remembered approvals retain their existing precedence.
+
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
@@ -1449,8 +1455,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "steer", "success": true}
+{"type": "response", "command": "steer", "success": true, "data": {"disposition": "queued"}}
 ```
+
+`data.disposition` is `"handled"` if an input handler consumed this steer, or `"queued"` if senpi queued it (including after a handler transformed it). It does not guarantee the message stays queued. Like the prompt response, `data` is optional: older hosts omit it.
 
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
 
@@ -1471,8 +1479,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "follow_up", "success": true}
+{"type": "response", "command": "follow_up", "success": true, "data": {"disposition": "queued"}}
 ```
+
+`data.disposition` has the same optional `"handled"` or `"queued"` meaning as for `steer`, applied to this follow-up.
 
 See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up messages are processed.
 

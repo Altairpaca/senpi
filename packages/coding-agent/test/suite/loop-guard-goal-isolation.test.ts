@@ -6,6 +6,7 @@ import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.t
 import { type Goal, isRecord } from "../../src/core/extensions/builtin/goal/types.ts";
 import { buildLoopGuardBlockReason } from "../../src/core/extensions/builtin/loop-guard/notice.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -57,7 +58,13 @@ describe("loop-guard Goal isolation", () => {
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		await harness.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Recover from loop guard" }, undefined, undefined, ctx);
+			?.execute(
+				"create",
+				{ objective: "Recover from loop guard" },
+				undefined,
+				undefined,
+				ctx as ExtensionToolContext,
+			);
 		harness.events.emit("continuation_hold_state", {
 			source: "loop-guard-hard-stop",
 			active: true,

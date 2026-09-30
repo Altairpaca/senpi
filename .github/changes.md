@@ -10,6 +10,16 @@
 
 - `npm run check` runs `check:bun-lock` since senpi#2352, which needs bun to regenerate `bun.lock`; ci.yml's `Static checks` installs Bun, the nightly job did not, so it failed with `bun is required to regenerate bun.lock: spawnSync bun ENOENT` on every run from 2026-09-30.
 
+## 2026-09-30 - Node bundle CI step runs the Bun provider-coverage and compiled provider-probe files (senpi#2447)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/bun-bundle-provider-coverage.test.ts` and `scripts/compiled-provider-probe.test.ts`.
+
+### Why
+
+- Both files carry real provider-reachability and compiled-binary auth assertions, but no job, package script or doc ran them: they are Bun `.ts` files outside the `scripts/*.test.mjs` glob behind `npm run test:scripts`. The coverage file needs the canvas rebuild that this job already does before the step.
+
 ### Why an extension could not handle it
 
 - CI workflow.
@@ -17,6 +27,29 @@
 ### Expected merge conflict zones
 
 - LOW: the steps between `Install dependencies` and `Check` in `releasability.yml`.
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: `.github/workflows/publish-model-catalog.yml`: adopted the `scripts/model-catalog-protocol.ts` path trigger.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
 
 ## 2026-09-29 - Model catalog publish runs only in the upstream repository (senpi#1522)
 
