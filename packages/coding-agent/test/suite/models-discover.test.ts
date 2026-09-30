@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { discoverProviderModels } from "../../src/core/model-discovery.ts";
@@ -92,6 +92,20 @@ describe("discoverProviderModels", () => {
 		const model = await runtimeModel("effort-model");
 		expect(model.defaultThinkingLevel).toBe("high");
 		expect(getSupportedThinkingLevels(model)).toEqual(["low", "high"]);
+	});
+
+	it("keeps discovered efforts authoritative when the same id has a catalog max", async () => {
+		writeProvider({ compat: { supportsReasoningEffort: true } });
+		server.listing = {
+			status: 200,
+			body: { data: [{ id: "kimi-k3", reasoning_efforts: [{ value: "low" }, { value: "high" }] }] },
+		};
+
+		await discover();
+		const model = await runtimeModel("kimi-k3");
+
+		expect(getSupportedThinkingLevels(model)).toEqual(["low", "high"]);
+		expect(clampThinkingLevel(model, "max")).toBe("high");
 	});
 
 	it("ignores advertised efforts without compat.supportsReasoningEffort", async () => {

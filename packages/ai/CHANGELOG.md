@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Custom OpenAI-compatible models now inherit native `max` reasoning support from any built-in catalog entry with the same id after authoritative discovered/model effort maps are considered, while the existing GPT and Claude id lists remain a floor. Thanks @hunghoang3011. ([#2456](https://github.com/code-yeongyu/senpi/issues/2456))
+
 ### Removed
 
 ## [2026.9.30] - 2026-09-30

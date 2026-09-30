@@ -20,6 +20,7 @@ import type {
 	CredentialStore,
 	ProviderAuth,
 } from "./auth/types.ts";
+import { builtinCatalogAdvertisesMax } from "./model-catalog.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
 import type {
 	Api,
@@ -1081,8 +1082,9 @@ function supportsXhighModelId(modelId: string): boolean {
 /**
  * Whether the model exposes the `max` tier.
  *
- * Mirrors {@link supportsXhigh}: an explicit `thinkingLevelMap` wins, and only map-less models
- * are inferred from the id.
+ * Discovery writes valid endpoint efforts as an authoritative `thinkingLevelMap`; unusable
+ * advertised efforts disable reasoning, while absent metadata leaves the model map-less. A map-less
+ * model then inherits max from an exact-id built-in catalog entry before the legacy id floors apply.
  */
 export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
 	const mapped = inferOpenAIThinkingLevelMap(model)?.max;
@@ -1133,6 +1135,7 @@ const MAX_MODEL_IDS = [
 
 function supportsMaxModel<TApi extends Api>(model: Model<TApi>): boolean {
 	if (!model.reasoning) return false;
+	if (builtinCatalogAdvertisesMax(model.id)) return true;
 	if (OPENAI_MAX_APIS.includes(model.api) && OPENAI_MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id)))
 		return true;
 	return MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id));
