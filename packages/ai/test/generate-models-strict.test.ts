@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("strict model generation", () => {
-	it("omits reasoning metadata for unsupported GLM-5.3 variants in generated output", () => {
+	it("distinguishes toggle-only and unsupported GLM reasoning metadata in generated output", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-glm-5-3-"));
 		temporaryRoots.push(fixtureRoot);
 		const isolatedPackageRoot = join(fixtureRoot, "package");
@@ -24,8 +24,8 @@ describe("strict model generation", () => {
 		const outputDir = join(fixtureRoot, "output");
 		const preloadPath = join(fixtureRoot, "mock-models.mjs");
 		const unsupportedVariants = ["glm-5.3-turbo", "glm-5.3-xl", "glm-5.3-anything-else"];
-		const sourceModels = Object.fromEntries(
-			unsupportedVariants.map((id) => [
+		const sourceModels = Object.fromEntries([
+			...unsupportedVariants.map((id) => [
 				id,
 				{
 					id,
@@ -35,7 +35,16 @@ describe("strict model generation", () => {
 					reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }],
 				},
 			]),
-		);
+			[
+				"glm-4.7",
+				{
+					id: "glm-4.7",
+					name: "GLM-4.7",
+					tool_call: true,
+					reasoning: true,
+				},
+			],
+		]);
 		const catalog = {
 			"zai-coding-plan": { models: sourceModels },
 			"zhipuai-coding-plan": { models: sourceModels },
@@ -73,6 +82,14 @@ describe("strict model generation", () => {
 			expect(generated[id].thinkingLevelMap).toBeUndefined();
 			expect(generated[id].compat?.supportsReasoningEffort).not.toBe(true);
 		}
+		expect(generated["glm-4.7"]?.thinkingLevelMap).toEqual({
+			minimal: null,
+			low: null,
+			medium: null,
+			xhigh: null,
+			max: null,
+		});
+		expect(generated["glm-4.7"]?.compat?.supportsReasoningEffort).toBe(false);
 	});
 
 	it("fails before mutating generated data when an Individual model loses tool support", () => {
