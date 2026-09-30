@@ -30,6 +30,8 @@
 
 - Answering a pending question no longer gets the first-turn todo reminder or a forced `todo` tool call when the question came from a turn the user did not type, such as a first-launch onboarding greeting or a request delivered through the session control endpoint. The model now acts on the answer, and the first request the user types afterwards now opens with a phased todo list. ([#2419](https://github.com/code-yeongyu/senpi/issues/2419))
 
+- The prompt-cache keep-alive pings again in real sessions, and each ping sends the same tool list as the turn it keeps warm. It used to try to arm while the run was still finishing, stand down as busy and never re-arm; and when it did ping, it rebuilt the tools in registry order, so its cache prefix never matched the turn's. Thanks to @MoerAI. ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))
+
 ### Removed
 
 ## [2026.9.29-5] - 2026-09-29
@@ -57,8 +59,6 @@
 - A session no longer leaves an empty `.omo/` (or `.senpi/`) folder in the project. Reading the project hook trust state when the project has no config folder returns the empty state without creating the folder for a lock. ([#2386](https://github.com/code-yeongyu/senpi/issues/2386))
 
 - RPC `get_auth_providers` gives each login method row its own status: a stored OAuth login no longer also marks the provider's API-key row connected, and vice versa, and `login_api_key` / `logout` answer only after the status reflects the change ([#2384](https://github.com/code-yeongyu/senpi/issues/2384)).
-
-- Fixed the prompt-cache keep-alive never arming in real sessions and pinging with a different tool list than the turn it keeps warm ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))
 
 ### Removed
 
