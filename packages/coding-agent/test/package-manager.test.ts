@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import * as childProcessUtils from "../src/utils/child-process.ts";
 
 function normalizeForMatch(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -683,6 +684,38 @@ Content`,
 	});
 
 	describe("command spawning", () => {
+		it("should hide package-manager subprocess windows", () => {
+			const child = new MockSpawnedProcess();
+			const spawnSpy = vi.spyOn(childProcessUtils, "spawnProcess").mockReturnValue(child as never);
+			const spawnSyncSpy = vi.spyOn(childProcessUtils, "spawnProcessSync").mockReturnValue({
+				status: 0,
+				stdout: "",
+				stderr: "",
+			} as never);
+			const managerWithInternals = packageManager as unknown as {
+				spawnCommand(command: string, args: string[]): MockSpawnedProcess;
+				spawnCaptureCommand(command: string, args: string[]): MockSpawnedProcess;
+				runCommandSync(command: string, args: string[]): string;
+			};
+
+			managerWithInternals.spawnCommand("npm", ["install"]);
+			managerWithInternals.spawnCaptureCommand("npm", ["view"]);
+			managerWithInternals.runCommandSync("npm", ["root", "-g"]);
+
+			expect(spawnSpy).toHaveBeenNthCalledWith(
+				1,
+				"npm",
+				["install"],
+				expect.objectContaining({ windowsHide: true }),
+			);
+			expect(spawnSpy).toHaveBeenNthCalledWith(2, "npm", ["view"], expect.objectContaining({ windowsHide: true }));
+			expect(spawnSyncSpy).toHaveBeenCalledWith(
+				"npm",
+				["root", "-g"],
+				expect.objectContaining({ windowsHide: true }),
+			);
+		});
+
 		it("should preserve argv entries containing spaces", () => {
 			const managerWithInternals = packageManager as unknown as {
 				runCommandSync(command: string, args: string[]): string;

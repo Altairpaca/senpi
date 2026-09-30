@@ -1,3 +1,21 @@
+## 2026-09-30 - Package-manager subprocesses stay hidden on Windows (senpi#2450)
+
+### What changed
+
+- `packages/coding-agent/src/core/package-manager.ts`: `spawnCommand`, `spawnCaptureCommand` and `runCommandSync` pass `windowsHide: true` to the child-process wrappers; commands, arguments, environment and stdio are unchanged (`test/package-manager.test.ts`).
+
+### Why
+
+Package operations such as extension installs and skill dependency installs could open a visible console window on Windows.
+
+### Why an extension could not handle it
+
+The package manager starts these subprocesses in core before an extension can alter their spawn options.
+
+### Expected merge conflict zones
+
+- LOW: the spawn option literals in `packages/coding-agent/src/core/package-manager.ts` and the `command spawning` tests in `packages/coding-agent/test/package-manager.test.ts`.
+
 ## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
 
 ### What changed
