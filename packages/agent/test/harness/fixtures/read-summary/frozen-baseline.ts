@@ -98,7 +98,9 @@ export function loadReadGate(path: string) {
 			decision: z
 				.object({
 					languages: z.array(z.string()),
-					wasm_allowed: z.literal(false),
+					// #1685 answered the WASM question; the receipt records the owner's actual answer.
+					wasm_allowed: z.boolean(),
+					candidate_dependencies: z.array(z.string()),
 					max_embedded_delta_bytes: z.literal(12582912),
 				})
 				.passthrough(),
@@ -106,5 +108,8 @@ export function loadReadGate(path: string) {
 		.parse(JSON.parse(bytes.toString("utf8")));
 	if (JSON.stringify(receipt.decision.languages) !== JSON.stringify(languages))
 		throw new Error("read_gate_language_drift");
+	// An approved grammar engine must name the dependencies it ships; a refusal must name none.
+	const declaresDependencies = receipt.decision.candidate_dependencies.length > 0;
+	if (receipt.decision.wasm_allowed !== declaresDependencies) throw new Error("read_gate_dependency_drift");
 	return { ...receipt, sha256: sha256(bytes) };
 }

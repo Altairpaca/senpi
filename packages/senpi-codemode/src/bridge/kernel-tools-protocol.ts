@@ -1,10 +1,28 @@
 import { type Static, Type } from "typebox";
 
+/** Payload of a `kernel_tool_host_denied` refusal: the host tool, the invoking call, the reason (#1731). */
+const kernelToolHostDenialSchema = Type.Object({
+	tool: Type.String({ minLength: 1 }),
+	call_id: Type.String({ minLength: 1 }),
+	reason: Type.Union([Type.Literal("allow"), Type.Literal("deny")]),
+});
+
 const kernelToolErrorSchema = Type.Object({
 	message: Type.String(),
 	name: Type.Optional(Type.String()),
 	stack: Type.Optional(Type.String()),
 	code: Type.Optional(Type.String()),
+	details: Type.Optional(kernelToolHostDenialSchema),
+});
+
+/** Per-call execution scope for the nested host calls the invoked closure makes (#1731). */
+export const kernelToolInvokeScopeSchema = Type.Object({
+	tools: Type.Optional(
+		Type.Object({
+			allow: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+			deny: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		}),
+	),
 });
 
 export const kernelToolDescriptorSchema = Type.Object({
@@ -43,6 +61,7 @@ export const kernelToolHostToKernelSchemas = [
 		definition_revision: Type.Integer({ minimum: 1 }),
 		args: Type.Unknown(),
 		call_id: Type.String({ minLength: 1 }),
+		scope: Type.Optional(kernelToolInvokeScopeSchema),
 	}),
 	Type.Object({
 		type: Type.Literal("kernel-tool-cancel"),

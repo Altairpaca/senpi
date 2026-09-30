@@ -1,59 +1,33 @@
 import assert from "node:assert/strict";
 import { createReadTool } from "../../../../../coding-agent/src/core/tools/read.ts";
-import {
-	isReadSummaryPath,
-	READ_FOLD_SETTINGS,
-	selectedReadFolder,
-} from "../../../../src/harness/utils/read-folders/index.ts";
-import { createSegmentedReadView } from "../../../../src/harness/utils/segmented-read-view.ts";
-import type { Prototype } from "./heuristic.ts";
-import type { Fold } from "./scorer.ts";
+import { isReadSummaryPath, selectedReadFolder } from "../../../../src/harness/utils/read-folders/index.ts";
+import { prepareReadFolder } from "../../../../src/harness/utils/read-folders/prepare.ts";
+import { type EngineCandidate, engineCandidate } from "./engine-candidate.ts";
 
-/** Measure the shipping folder/view and check it against the actual default read tool. */
+/** The dependency-free scan, measured whatever the frozen selection currently binds. */
+export function heuristicCandidate(path: string, source: string): EngineCandidate {
+	return engineCandidate(selectedReadFolder, path, source);
+}
+
+/** Measure the folder the reader really uses for this path and check the actual default read. */
 export async function productionCandidate(
 	cwd: string,
 	path: string,
 	source: string,
-): Promise<Prototype & { readonly defaultReadText: string; readonly discoveredFolds: readonly Fold[] }> {
-	const parsed = selectedReadFolder.fold({ path, text: source, settings: READ_FOLD_SETTINGS });
-	const view = createSegmentedReadView({ text: source, parsed });
+): Promise<EngineCandidate & { readonly defaultReadText: string; readonly engineId: string }> {
+	const folder = (await prepareReadFolder(path, selectedReadFolder)) ?? selectedReadFolder;
+	const candidate = engineCandidate(folder, path, source);
 	const result = await createReadTool(cwd).execute("production-candidate", { path });
 	const text = result.content
 		.filter((part) => part.type === "text")
 		.map((part) => part.text)
 		.join("\n");
-	const queue = parsed.status === "parsed" ? [...parsed.ranges] : [];
-	for (let i = 0; i < queue.length; i++) queue.push(...queue[i].children);
-	const discoveredFolds = queue.map((range) => ({ start: range.startLine, end: range.endLine }));
-	switch (view.status) {
-		case "summary":
-			assert.equal(
-				text,
-				isReadSummaryPath(path) ? view.rendered.text : source,
-				"Production read violates its frozen selection",
-			);
-			return {
-				discoveredFolds,
-				text: view.rendered.text,
-				defaultReadText: text,
-				folds: view.rendered.elidedRanges.map((range) => ({ start: range.startLine, end: range.endLine })),
-				reason: "folded",
-				scanned_folds: queue.length,
-			};
-		case "no_summary": {
-			assert.equal(text, source, "Production raw fallback changed source bytes");
-			const reason = parsed.status === "parse_failure" ? parsed.reason : view.reason;
-			return {
-				discoveredFolds,
-				text,
-				defaultReadText: text,
-				folds: [],
-				reason,
-				fallback_reason: reason,
-				scanned_folds: queue.length,
-			};
-		}
-		default:
-			return view satisfies never;
-	}
+	if (candidate.folds.length)
+		assert.equal(
+			text,
+			isReadSummaryPath(path) ? candidate.text : source,
+			"Production read violates its frozen selection",
+		);
+	else assert.equal(text, source, "Production raw fallback changed source bytes");
+	return { ...candidate, defaultReadText: text, engineId: folder.id };
 }

@@ -7,16 +7,19 @@ export const KERNEL_TOOL_ERROR_CODES = Object.freeze([
 	"kernel_tool_missing",
 	"kernel_tool_failed",
 	"kernel_tool_recursion",
+	"kernel_tool_host_denied",
 ]);
 
 export class KernelToolError extends Error {
-	constructor(code, message) {
+	constructor(code, message, details) {
 		super(message);
 		this.name = "KernelToolError";
 		this.code = code;
+		// Only `kernel_tool_host_denied` carries one today: { tool, call_id, reason }.
+		if (details !== undefined) this.details = details;
 	}
 }
 
-export function kernelToolError(code, message) {
-	return new KernelToolError(code, message);
+export function kernelToolError(code, message, details) {
+	return new KernelToolError(code, message, details);
 }

@@ -44,31 +44,8 @@ export function formatWorkingElapsedSeconds(elapsedSeconds: number): string {
 	return `${hours}h ${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
 }
 
-/**
- * Live streaming rate for the working line. A crawling turn used to look
- * exactly like a healthy one (elapsed time only), so a 2 tok/s session stayed
- * "Working (10m 00s • Esc to interrupt)" for ten minutes (#1739).
- */
-function formatWorkingRateSegment(tokensPerSecond: number | undefined): string {
-	if (tokensPerSecond === undefined || !Number.isFinite(tokensPerSecond) || tokensPerSecond < 0) return "";
-	return ` • ${tokensPerSecond.toFixed(1)} tok/s`;
-}
-
-export function formatWorkingStatusSuffix(
-	elapsedSeconds: number,
-	interruptKey: string,
-	tokensPerSecond?: number,
-): string {
-	return ` (${formatWorkingElapsedSeconds(elapsedSeconds)}${formatWorkingRateSegment(tokensPerSecond)} • ${interruptKey} to interrupt)`;
-}
-
-export function formatWorkingStatusMessage(
-	message: string,
-	elapsedSeconds: number,
-	interruptKey: string,
-	tokensPerSecond?: number,
-): string {
-	return `${message}${formatWorkingStatusSuffix(elapsedSeconds, interruptKey, tokensPerSecond)}`;
+export function formatWorkingStatusMessage(message: string, elapsedSeconds: number, interruptKey: string): string {
+	return `${message} (${formatWorkingElapsedSeconds(elapsedSeconds)} • ${interruptKey} to interrupt)`;
 }
 
 export type ToolHookStatusHookName = "PreToolUse" | "PostToolUse";
@@ -186,9 +163,8 @@ export function formatWorkingStatusMessageFrame(
 	interruptKey: string,
 	animationElapsedMs: number,
 	style: WorkingStatusMessageFrameStyle,
-	tokensPerSecond?: number,
 ): string {
-	const suffix = formatWorkingStatusSuffix(elapsedSeconds, interruptKey, tokensPerSecond);
+	const suffix = ` (${formatWorkingElapsedSeconds(elapsedSeconds)} • ${interruptKey} to interrupt)`;
 	return `${formatWorkingStatusTextFrame(message, animationElapsedMs, style)}${style.suffix(suffix)}`;
 }
 

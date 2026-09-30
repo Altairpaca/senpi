@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
 import { binaryIdentity, repository, runRecorded, stageReadRuntime } from "./read-summary-build.mjs";
-import { readSummaryControl, readSurface } from "./read-summary-parity.mjs";
+import { readSummaryControl, readSummaryGrammarControl, readSurface } from "./read-summary-parity.mjs";
 
 const { values } = parseArgs({ options: { binary: { type: "string" }, out: { type: "string" } }, strict: true });
 assert(values.binary && isAbsolute(values.binary));
@@ -17,7 +17,7 @@ const startedAt = new Date().toISOString();
 try {
 	const control = readSummaryControl();
 	const files = [
-		{ ...control, id: "javascript-raw", path: "javascript.js" },
+		readSummaryGrammarControl(),
 		control,
 		{ ...control, id: "typescript-raw", path: "typescript.ts" },
 		{ ...control, id: "unsupported", path: "unsupported.rs" },
@@ -31,7 +31,9 @@ try {
 	const binary = await readSurface(binaryLayout.command, binaryDirectory, files);
 	assert.deepEqual(binary.records, source.records);
 	assert.deepEqual(binary.fresh, source.fresh);
-	assert.deepEqual(source.records[0].elided, []);
+	// The compiled binary must reach its embedded grammar, not fall back to the scan it defeats.
+	assert(source.records[0].elided.length > 0);
+	assert(binary.records[0].elided.length > 0);
 	assert(source.records[1].elided.length > 0);
 	assert.deepEqual(source.records[2].elided, []);
 	assert.deepEqual(source.records[3].elided, []);

@@ -1,11 +1,14 @@
 import { Script } from "node:vm";
 import * as ts from "@typescript/typescript6";
 import { READ_FOLD_SETTINGS, selectedReadFolder } from "../../../../src/harness/utils/read-folders/index.ts";
+import type { ReadFolder } from "../../../../src/harness/utils/read-folders/types.ts";
 import { adversarialPrograms } from "./adversarial-grammar.ts";
 import { typescriptOracle } from "./oracle-typescript.ts";
 import { overlaps, sha256, validBoundaries } from "./scorer.ts";
 
-export function enumerateBoundaries() {
+export type EnumerationFolders = (language: "ts" | "js") => ReadFolder;
+
+export function enumerateBoundaries(folders: EnumerationFolders = () => selectedReadFolder) {
 	const programs = adversarialPrograms();
 	let emittedRanges = 0;
 	let protectedPrograms = 0;
@@ -30,7 +33,7 @@ export function enumerateBoundaries() {
 		}
 		const oracle = typescriptOracle(source, language);
 		if (oracle.protected.length) protectedPrograms++;
-		const parsed = selectedReadFolder.fold({ path: `input.${language}`, text: source, settings: READ_FOLD_SETTINGS });
+		const parsed = folders(language).fold({ path: `input.${language}`, text: source, settings: READ_FOLD_SETTINGS });
 		const ranges = parsed.status === "parsed" ? [...parsed.ranges] : [];
 		for (let i = 0; i < ranges.length; i++) ranges.push(...ranges[i].children);
 		emittedRanges += ranges.length;

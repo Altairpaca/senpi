@@ -1,4 +1,4 @@
-import type { ServiceCall } from "@earendil-works/chord";
+import { createServiceSubscribeCall, type ServiceCall, type ServiceProviderUpdate } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, type JsonlSessionMetadata } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { CoordinatorConnectionEvent } from "../src/experimental/coordinator.ts";
@@ -287,6 +287,79 @@ describe("Session worker operations", () => {
 		await expect(attachment.invokeService(serviceCall, () => {}, BACKGROUND_CONTEXT)).rejects.toThrow(
 			/invalid operation response/,
 		);
+		workers.detach();
+		await release();
+	});
+
+	test("holds an operation response behind the provider updates the worker emitted before it", async () => {
+		const { coordinator, workers, attachment, release } = await createAttachedWorker();
+		const forwarded: string[] = [];
+		let drainPeer!: () => void;
+		// The presentation peer stops draining its socket, so the host's publish - which awaits that
+		// write - cannot complete until the peer catches up.
+		const peerDrained = new Promise<void>((resolve) => {
+			drainPeer = resolve;
+		});
+		const publish = async (subscriptionId: string, _update: ServiceProviderUpdate): Promise<void> => {
+			forwarded.push(`update:${subscriptionId}`);
+			await peerDrained;
+			forwarded.push(`delivered:${subscriptionId}`);
+		};
+		let operations = 0;
+		coordinator.onSend = (peerId, payload) => {
+			if (payload.type !== "operation") return;
+			const scope = asObject(payload.scope);
+			const requestId = payload.requestId;
+			const emitsUpdate = operations++ === 1;
+			queueMicrotask(() => {
+				if (emitsUpdate) {
+					coordinator.emit({
+						type: "message",
+						from: peerId,
+						payload: {
+							type: "service_update",
+							token: "worker-token",
+							sessionKey: metadata.path,
+							scope,
+							subscriptionId: "subscription-1",
+							update: { type: "state", member: "state", sequence: 1, ops: [] },
+						},
+					});
+				}
+				coordinator.emit({
+					type: "message",
+					from: peerId,
+					payload: {
+						type: "operation_response",
+						token: "worker-token",
+						sessionKey: metadata.path,
+						response: {
+							type: "operation_result",
+							requestId,
+							scope,
+							result: { accepted: true },
+						},
+					},
+				});
+			});
+		};
+		await attachment.invokeService(
+			createServiceSubscribeCall("subscription-1", "test.session", "singleton"),
+			publish,
+			BACKGROUND_CONTEXT,
+		);
+		const responded = attachment
+			.invokeService(serviceCall, publish, BACKGROUND_CONTEXT)
+			.then(() => void forwarded.push("response"));
+
+		// One event-loop turn settles every microtask the arriving frames could schedule; a response
+		// that does not wait for the stalled update would already have overtaken it here.
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(forwarded).toEqual(["update:subscription-1"]);
+
+		drainPeer();
+		await responded;
+		expect(forwarded).toEqual(["update:subscription-1", "delivered:subscription-1", "response"]);
 		workers.detach();
 		await release();
 	});

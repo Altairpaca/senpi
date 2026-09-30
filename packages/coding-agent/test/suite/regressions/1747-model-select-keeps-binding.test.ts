@@ -2,16 +2,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	BINDING_ENTRY_TYPE,
 	BINDING_MARKER,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-binding.ts";
-import { readStoredBinding } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-binding-store.ts";
-import { decideNativeContinuity } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-continuity.ts";
-import { getBinding } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-reattach.ts";
-import { getSession } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-registry.ts";
-import { registerSessionRegistry } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-registry-wiring.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/session-binding.ts";
+import { readStoredBinding } from "../../../src/core/extensions/builtin/anthropic-subscription/session-binding-store.ts";
+import { decideNativeContinuity } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
+import { getBinding } from "../../../src/core/extensions/builtin/anthropic-subscription/session-reattach.ts";
+import { getSession } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
+import { registerSessionRegistry } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts";
 import {
 	recordSyncedStream,
 	sentMessageHashes,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-sync.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
 import {
 	assistant,
 	cleanupRestartFixture,
@@ -23,7 +23,7 @@ import {
 	SESSION_ID,
 	sessionFixture,
 	TOOLSET_HASH,
-} from "../../helpers/claude-sdk-oauth-restart-fixture.ts";
+} from "../../helpers/anthropic-subscription-restart-fixture.ts";
 
 /**
  * senpi#1747: leaving this provider through the model selector must close the live
@@ -37,7 +37,7 @@ function selectModel(provider: string, id: string) {
 	return {
 		type: "model_select",
 		model: { id, provider },
-		previousModel: { id: "claude-test", provider: "claude-sdk-oauth" },
+		previousModel: { id: "claude-test", provider: "anthropic-subscription" },
 	};
 }
 
@@ -78,7 +78,7 @@ describe("issue #1747 model selector keeps a resumable Claude binding", () => {
 		await emit(
 			turn.extension.handlers,
 			"model_select",
-			selectModel("claude-sdk-oauth", "claude-test"),
+			selectModel("anthropic-subscription", "claude-test"),
 			turn.eventContext,
 		);
 

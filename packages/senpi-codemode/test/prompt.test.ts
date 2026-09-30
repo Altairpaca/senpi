@@ -96,13 +96,13 @@ describe("buildEvalPrompt", () => {
 		}
 	});
 
-	it("documents detachment, busy-kernel discipline, and the detached-cell controls", () => {
+	it("documents detachment, queued-cell discipline, and the detached-cell controls", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
 		expect(prompt).toContain("outlives the foreground window detaches");
-		expect(prompt).toContain('eval({ action: "peek", cell_id })');
-		expect(prompt).toContain('eval({ action: "stop", cell_id })');
-		expect(prompt).toContain("Do not re-run a detached cell");
+		expect(prompt).toContain('eval({ action: "peek" | "stop", cell_id })');
+		expect(prompt).toContain('eval({ action: "list" })');
+		expect(prompt).toContain("Do not re-run a detached or queued cell");
 	});
 
 	it("teaches output() as an immediate status or transcript read", () => {
@@ -119,7 +119,7 @@ describe("buildEvalPrompt", () => {
 		// Then: the system-prompt guidance carries the batching decision rule.
 		expect(guidelines).toEqual([
 			"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
+			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
 		]);
 	});
 

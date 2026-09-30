@@ -163,7 +163,8 @@ interface FileMonitorRecord {
 	dirtyPasses: number;
 	dirtyWindowStartedAt: number;
 	checking: Promise<void> | undefined;
-	readonly deadline: ReturnType<typeof setTimeout>;
+	/** Unset for a persistent watch: it has no live deadline, only its durability expiry. */
+	readonly deadline: ReturnType<typeof setTimeout> | undefined;
 }
 
 interface MonitorRecord {
@@ -204,6 +205,7 @@ export class MonitorRegistry {
 	readonly #files = new Map<string, FileMonitorRecord>();
 	#nextFileId = 1;
 	#disposed = false;
+	#parked = false;
 	#pendingRegistrations = 0;
 	readonly #pending = new Set<PendingFileRegistration>();
 	#lifecycle = 0;
@@ -214,6 +216,16 @@ export class MonitorRegistry {
 		this.#onEnded = options?.onEnded;
 		this.#onFire = options?.onFire;
 		this.#reserve = options?.reserve;
+	}
+
+	/** Attachment parking is independent of persisted monitor mute and wake budgets. */
+	setParked(parked: boolean): void {
+		if (this.#parked === parked) return;
+		this.#parked = parked;
+		for (const record of this.#files.values()) {
+			if (parked) record.watch.pause();
+			else if (!record.paused) record.watch.resume();
+		}
 	}
 
 	snapshot(): readonly MonitorSnapshotEntry[] {
@@ -374,6 +386,7 @@ export class MonitorRegistry {
 			cleanupRegistration();
 			throw new Error("Cannot create file monitor: monitor registry is disposed.");
 		}
+		const persistent = options.persistent ?? options.expiresAt !== undefined;
 		const record: FileMonitorRecord = {
 			id,
 			monitorId: options.monitorId ?? allocateMonitorId(),
@@ -382,11 +395,8 @@ export class MonitorRegistry {
 			startedAtMs: Date.now(),
 			command: null,
 			filter: null,
-			persistent: options.persistent ?? options.expiresAt !== undefined,
-			deadlineMs:
-				(options.persistent ?? options.expiresAt !== undefined)
-					? null
-					: (options.deadlineMs ?? Date.now() + options.timeoutMs),
+			persistent,
+			deadlineMs: persistent ? null : (options.deadlineMs ?? Date.now() + options.timeoutMs),
 			fireCount: 0,
 			lastFiredAtMs: null,
 			expiresAt: options.expiresAt,
@@ -410,12 +420,15 @@ export class MonitorRegistry {
 			dirtyPasses: 0,
 			dirtyWindowStartedAt: 0,
 			checking: undefined,
-			deadline: setTimeout(() => {
-				const current = this.#files.get(id);
-				if (current) this.#settleFile(current, "watcher timed_out");
-			}, options.timeoutMs),
+			deadline: persistent
+				? undefined
+				: setTimeout(() => {
+						const current = this.#files.get(id);
+						if (current) this.#settleFile(current, "watcher timed_out");
+					}, options.timeoutMs),
 		};
 		this.#files.set(id, record);
+		if (this.#parked) record.watch.pause();
 		finishRegistration();
 		this.#finishPending(pending, true);
 		if (registrationError || this.#disposed || lifecycle !== this.#lifecycle) {
@@ -436,7 +449,12 @@ export class MonitorRegistry {
 
 	/** Emit one restored-watch line through the SAME sink a live watch uses (coalescing, wake budget). */
 	emitFileLine(id: string, line: string): boolean {
-		const record = this.#files.get(id);
+		return this.#files.has(id) && this.emitLine(id, line);
+	}
+
+	/** Inject one line into a live command or file watch's event stream (e.g. a restore notice). */
+	emitLine(id: string, line: string): boolean {
+		const record = this.#records.get(id) ?? this.#files.get(id);
 		if (!record || record.settled) return false;
 		this.#emitForRecord(record, { type: "line", id: record.id, description: record.description, line });
 		return true;
@@ -480,7 +498,7 @@ export class MonitorRegistry {
 
 	async #checkFile(id: string): Promise<void> {
 		const record = this.#files.get(id);
-		if (!record || record.settled || record.paused) return;
+		if (!record || record.settled || record.paused || this.#parked) return;
 		if (record.checking) {
 			record.dirty = true;
 			return;
@@ -646,7 +664,7 @@ export class MonitorRegistry {
 			// A rearm (or any resume) restarts the rolling fire budget while keeping its window start.
 			if ("fireWindow" in record && record.fireWindow !== undefined) record.fireWindow.count = 0;
 			resumed.push({ id: record.id, mutedDropped });
-			if ("watch" in record) record.watch.resume();
+			if ("watch" in record && !this.#parked) record.watch.resume();
 		}
 		if (resumed.length > 0) this.#notifyChange();
 		return resumed;

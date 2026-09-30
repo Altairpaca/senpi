@@ -229,6 +229,53 @@ assert.equal(factory(false), 97);
 		);
 	});
 
+	it("binds named, aliased, namespace, and default imports from a CommonJS package (#1807)", () => {
+		// Given: a CommonJS dependency, as @mozilla/readability and jsdom ship, imported four ways.
+		const root = fixture(`import { Thing, Other as Renamed } from "cjs-lib";
+import * as ns from "cjs-lib";
+import whole from "cjs-lib";
+export default () => [Thing(), Renamed, ns.Other, whole.deflt];`);
+		const directory = join(root, "node_modules", "cjs-lib");
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "cjs-lib", main: "index.js" }));
+		writeFileSync(
+			join(directory, "index.js"),
+			'exports.Thing = function Thing() { return "thing"; };\nexports.Other = "other";\nmodule.exports.deflt = "d";\n',
+		);
+		// When / Then: every binding resolves through module.exports, as Node and plain Bun do.
+		run(
+			root,
+			`
+const importer = await createBunExtensionImporter({});
+const factory = await importer.import(entry, { default: true });
+assert.deepEqual(factory(), ["thing", "other", "other", "d"]);
+`,
+		);
+	});
+
+	it("loads a CommonJS package that reassigns exports and keeps exports aliased to module.exports (#1838)", () => {
+		// Given: a dependency that reassigns exports, as whatwg-url and jsdom's generated IDL utils do.
+		const root = fixture(`import lib from "cjs-lib";
+import { thing } from "cjs-lib";
+export default () => [lib.thing, thing, lib.selfIsExports, lib.later];`);
+		const directory = join(root, "node_modules", "cjs-lib");
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "cjs-lib", main: "index.js" }));
+		writeFileSync(
+			join(directory, "index.js"),
+			'module.exports = exports = { thing: "reassigned", selfIsExports: this === module.exports };\nexports.later = "late";\n',
+		);
+		// When / Then: the reassignment reaches every binding and `exports` starts as module.exports, as in Node.
+		run(
+			root,
+			`
+const importer = await createBunExtensionImporter({});
+const factory = await importer.import(entry, { default: true });
+assert.deepEqual(factory(), ["reassigned", "reassigned", true, "late"]);
+`,
+		);
+	});
+
 	it("propagates transform and resolution errors when extension input is malformed", () => {
 		// Given
 		const root = fixture("export const broken: = ;");

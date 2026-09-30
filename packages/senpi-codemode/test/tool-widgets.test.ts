@@ -52,6 +52,7 @@ const FG_COLORS = {
 	thinkingMax: "#2d2d2d",
 	bashMode: "#2e2e2e",
 	searchMatchText: "#2f2f2f",
+	skillMention: "#303030",
 	scrollbarTrack: "#3a3a3a",
 	scrollbarThumb: "#3b3b3b",
 } satisfies Record<ThemeColor, string>;

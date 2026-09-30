@@ -1,5 +1,148 @@
 # TUI delta rendering fork changes
 
+## 2026-09-28 - Picker rows that take arguments wait for them (omo #9042)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `AutocompleteItem` gains the optional `awaitsArguments` flag.
+- `packages/tui/src/slash-command-autocomplete.ts` (fork-only): `getSlashCommandSuggestions` sets `awaitsArguments` on every row whose command declares an `argumentHint`; the hint still leads the description.
+- `packages/tui/src/components/editor.ts`: the editor keeps the provider items behind the open list (`autocompleteItems`). Confirming a `/` row whose item has `awaitsArguments` applies the completion (`/name `), closes the picker, and returns without submitting; other `/` rows still fall through to submit. `submitValue()` passes `{ rawText }` (the text before trimming) as the second `onSubmit` argument.
+- `packages/tui/src/editor-component.ts`: new `EditorSubmitDetails` and the optional second `onSubmit` parameter. `packages/tui/src/index.ts` exports the type.
+
+### Why
+
+- Enter on `/skill:ulw-execute` or `/model` in the picker submitted the bare command before the user could type its arguments. The leading-space escape for the coding-agent unknown-command check needs the untrimmed submission, which `onSubmit` never saw.
+
+### Why an extension could not handle it
+
+- The confirm key and the submission trimming live inside `Editor.handleInput`/`submitValue`; an extension editor would have to fork the whole component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the `tui.select.confirm` branch, `applyAutocompleteSuggestions`, `clearAutocompleteUi`, and `submitValue`.
+- `packages/tui/src/autocomplete.ts`: the `AutocompleteItem` interface. `packages/tui/src/editor-component.ts`: the `onSubmit` declaration. `packages/tui/src/index.ts`: the `./editor-component.ts` export line.
+
+## 2026-09-24 - Fuzzy matching over pre-lowered text (senpi#2087)
+
+### What changed
+
+- `packages/tui/src/fuzzy.ts`: new exported `fuzzyMatchLower(queryLower, textLower)` holds the direct and letter/digit-swap scoring. `fuzzyMatch` lower-cases its inputs and delegates to it, so scoring has one source. `packages/tui/src/index.ts` exports `fuzzyMatchLower` next to `fuzzyMatch`.
+- `packages/tui/test/fuzzy.test.ts`: `fuzzyMatchLower` on lower-cased inputs returns exactly what `fuzzyMatch` returns for mixed-case pairs, swap variants included.
+
+### Why
+
+- `fuzzyMatch` lower-cases the whole text on every call. The coding-agent `/resume` search calls it once per token per session over tens of MB of transcript text, so the same text was lower-cased again on every keystroke.
+
+### Why an extension could not handle it
+
+- The scoring lives in the TUI package. A caller outside it can only reach `fuzzyMatch`, which always lower-cases.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/fuzzy.ts`: the `fuzzyMatch` body, now a delegating wrapper above `fuzzyMatchLower`.
+- `packages/tui/src/index.ts`: the `./fuzzy.ts` export line.
+
+## 2026-09-23 — Let hosts observe the real stderr destination (senpi#1879)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` accepts a host-owned stderr subscription and releases it on stop. `packages/tui/src/stderr-observer.ts` retains direct-stream observation for ordinary terminals without replacing a later writer during cleanup.
+
+### Why
+
+- A host can redirect stderr to a diagnostic log. Observing calls above that redirect falsely reports visible output and duplicates the working frame.
+
+### Why an extension could not handle it
+
+- Mouse geometry is invalidated inside the terminal, below extension components.
+
+### Expected merge conflict zones
+
+- Terminal construction, external-write observation and stop cleanup. Visible stdout/stderr must continue invalidating stale hit targets.
+
+## 2026-09-22 - Render-error diagnostics follow the host log directory (senpi#2000)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: new module-scoped `defaultDiagnosticLogDirectory()` and `renderErrorLogDirectory`. `TuiBase`'s constructor publishes its resolved `logDirectory` into that module scope, and `logRenderErrorOnce()` writes to it instead of re-deriving `os.homedir()/.senpi/agent`. The default when no host directory is supplied is unchanged.
+- `packages/tui/test/render-contract.test.ts`: a throwing child rendered by a TUI constructed with an explicit log directory writes `senpi-debug.log` into that directory and not into a `HOME`-derived path.
+
+### Why
+
+- `logRenderErrorOnce()` is reached from `Container.render()`, which has no TUI instance, so the path was hardcoded from `os.homedir()`. Hosts already pass a resolved agent directory (`logDirectory`), and `pi-debug.log` already honours it; only the render-error diagnostic did not.
+- Under a non-default brand the resolved agent directory is not `~/.senpi/agent`, so the only record of a component that throws every frame landed in a directory the operator never reads.
+- Suites that quarantine the agent directory but not `HOME` append to the developer's real `~/.senpi/agent/senpi-debug.log`; a single run of the coding-agent progressive-transcript suite was measured growing that file from 19,650 to 19,744 bytes. That leak is what led here, but it is **not** fixed by this change: that suite renders a container directly and never constructs a `TuiBase`, so no host directory is published and the fallback still resolves from `HOME`. Re-measured with this change applied, the same run still grew the file (19,744 -> 19,838). Closing it belongs to the coding-agent test setup, which must quarantine `HOME` the way it already quarantines the agent directory.
+
+### Why an extension could not handle it
+
+- Render containment and its diagnostic live inside `packages/tui`'s render path; an extension cannot reach `Container.render()`'s catch branch or the module-scoped logger.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the module-scoped diagnostic state block near `DIAGNOSTIC_LOG_MODE`, the `logRenderErrorOnce()` body, and the `TuiBase` constructor's `logDirectory` assignment.
+
+## 2026-09-20 - Keyboard focus requires the ability to receive keys (senpi#1882)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: new `canReceiveKeys()` export; `resolveMouseFocusTarget()` returns `Component | null` and resolves a clicked component that cannot receive keys to the deepest mounted ancestor that can, or to `null`; new private `findKeyFocusOwner()`.
+- `packages/tui/src/tui-main-screen.ts`: `applyMouseResult` skips a null focus owner, and the release branch only re-applies the click target's focus when the click handler left focus untouched.
+- `packages/tui/src/tui-alt-screen.ts`: same null handling in `applyMouseDispatchResult` (new `applyFocus` parameter) and the same click-handler precedence in `handleMouseEvent`.
+- `packages/tui/test/tui-alt-screen.test.ts`: the mouse-aware control keeps capture and drag routing, and the keyboard owner keeps focus. The previous expectation parked focus on a control with no `handleInput`, which is the defect this entry fixes.
+
+### Why
+
+- A clickable row (`MouseRegion`) or tab strip has no `handleInput`. Focusing it made `handleTerminalInput` drop every later keystroke, so answering an ask-user question with the mouse silently killed typing while output kept flowing.
+- The release branch applied the click target's focus after the click handler ran, so the composer focus restored by an ask-user submit was immediately overwritten.
+- Resolving at the renderer keeps every clickable surface correct without each call site opting in; a per-component opt-in missed the tab strip, which does not use `MouseRegion`.
+
+### Why an extension could not handle it
+
+- Mouse focus ownership is renderer state inside `packages/tui`; an extension cannot reorder focus application around click dispatch.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: `resolveMouseFocusTarget` signature and return type.
+- `packages/tui/src/tui-main-screen.ts` and `packages/tui/src/tui-alt-screen.ts`: the click branches of their mouse handlers.
+
+## 2026-09-20 - Resolve native clipboard helpers in the published bundle (senpi#1848)
+
+### What changed
+
+- `packages/tui/src/native-module-path.ts`: resolve the installed TUI entry with `import.meta.resolve`, fall back to `moduleRequire.resolve`, and accept the package-anchored candidate only when the entry is absolute.
+
+### Why
+
+- `packages/tui/src/native-module-path.ts`: Bun can return the bare package specifier from `require.resolve` inside an esbuild chunk. The resulting relative candidate cannot load the native helper, so Ctrl+V silently reads an empty clipboard.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/native-module-path.ts`: native helper discovery belongs to the TUI package, below extension clipboard handling.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/native-module-path.ts`: package resolution and its first candidate. The module-directory and executable-directory fallbacks retain their order.
+
+## 2026-09-17 - Repeated dollar mentions and styled skill tokens (senpi#1778)
+
+### What changed
+
+- `packages/tui/src/dollar-invocation-autocomplete.ts`: `getDollarInvocationContext` completes any `$query` at a whitespace boundary regardless of earlier `$` tokens; slash commands are offered only while the token is the first thing in the prompt; an exact known-skill token closes the popup. New `findDollarSkillMentions(line, knownSkills)` and `knownSkillNames(commands)`.
+- `packages/tui/src/autocomplete.ts`: `AutocompleteProvider.getMentionRanges?(line)` and `MentionRange`; `CombinedAutocompleteProvider` implements it from its `skill:` commands.
+- `packages/tui/src/components/editor.ts`: `LayoutLine` carries `logicalLine`/`startIndex`; `EditorTheme.mention?` styles resolved mention ranges. Row composition moved to `packages/tui/src/components/editor-line-render.ts` (`renderEditorLine`), which styles the cursor grapheme and each mention fragment separately so the cursor's SGR reset cannot bleed into a mention.
+
+### Why
+
+- senpi#1778: after one `$skill` the popup no longer opened for a later `$`, and a resolved mention was indistinguishable from prose.
+
+### Why an extension could not handle it
+
+- The editor owns row composition and the popup trigger policy.
+
+### Expected merge conflict zones
+
+- MEDIUM: `editor.ts` `render()` cursor branch (replaced by `renderEditorLine`) and the `layoutText` pushes; LOW: `autocomplete.ts` interface.
+
 ## 2026-09-14 - Out-of-band tmux frame anchors (#1645)
 
 ### What changed
@@ -1210,3 +1353,25 @@ Component-level caching is added in coding-agent components because high-frequen
 - HIGH: `packages/tui/src/components/editor.ts` marker handling and input dispatch; `packages/tui/src/terminal.ts` `ProcessTerminal` start/stop.
 - MEDIUM: `packages/tui/src/index.ts` export list; `packages/tui/src/utils.ts` width cache and ANSI helpers; `select-list.ts` render path.
 - LOW: `box.ts` lifecycle methods; `tui-alt-screen.ts` teardown call sites.
+
+## 2026-09-28 - The skill: namespace row drills down instead of submitting (senpi#2249)
+
+### What changed
+
+- `packages/tui/src/slash-command-autocomplete.ts`: `isSlashNamespaceItem(value)` names the namespace rule (a slash item whose value ends in `:`, today only `skill:`).
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider.applyCompletion` completes a namespace item as `/skill:` with no trailing space, so the namespace's own list can follow; every other command keeps `/name `.
+- `packages/tui/src/components/editor.ts`: Enter and Tab on a namespace row apply that completion and re-request suggestions instead of submitting; public `openAutocomplete()` requests suggestions at the cursor.
+- `packages/tui/src/editor-component.ts`: optional `openAutocomplete?()` on `EditorComponent`.
+
+### Why
+
+- The `skill:` row is an autocomplete-only drill-down with no command behind it. Enter submitted `/skill: ` to the model, and the trailing space kept the skill list from opening even on Tab.
+
+### Why an extension could not handle it
+
+- Picker confirm handling and completion text live in the editor and the combined provider; an extension cannot intercept the editor's Enter before it submits.
+
+### Expected merge conflict zones
+
+- MEDIUM: the autocomplete `tui.select.confirm` and `tui.input.tab` branches in `packages/tui/src/components/editor.ts`; the slash-command branch of `CombinedAutocompleteProvider.applyCompletion` in `packages/tui/src/autocomplete.ts`.
+- LOW: the added optional member in `packages/tui/src/editor-component.ts`.

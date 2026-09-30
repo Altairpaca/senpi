@@ -4,6 +4,7 @@ import {
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
 } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { fallbackCircuitsFor } from "../../src/core/retry-fallback/circuit.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -111,7 +112,108 @@ describe("model usability budget", () => {
 		});
 	});
 
-	it("rejects a downswitch before committing when live context exceeds the target budget", async () => {
+	it("classifies admission as fits-now, fits-after-compaction, or impossible (#1873)", async () => {
+		// given
+		const harness = await createHarness({
+			models: [
+				{ id: "million", contextWindow: 1_000_000, maxTokens: 32_000 },
+				{ id: "372k", contextWindow: 372_000, maxTokens: 32_000 },
+				{ id: "overhead-bound", contextWindow: 16_000, maxTokens: 4_000 },
+			],
+		});
+		harnesses.push(harness);
+		const compaction = harness.session.settingsManager.getCompactionSettings();
+		const systemPrompt = harness.session.agent.state.systemPrompt;
+		const tools = harness.session.agent.state.tools;
+		const target = harness.getModel("372k");
+		const overheadBound = harness.getModel("overhead-bound");
+		if (!target || !overheadBound) throw new Error("missing verdict fixtures");
+
+		// when: the same model is projected against a live context it can hold, one it
+		// cannot hold until the transcript is reduced, and a window whose fixed overhead
+		// alone leaves no room for any transcript at all.
+		const headroom =
+			target.contextWindow -
+			projectModelUsabilityBudget({ model: target, systemPrompt, tools, compaction }).requiredTokens;
+		const fitsNow = projectModelUsabilityBudget({
+			model: target,
+			systemPrompt,
+			tools,
+			liveContextTokens: Math.floor(headroom / 2),
+			compaction,
+		});
+		const needsCompaction = projectModelUsabilityBudget({
+			model: target,
+			systemPrompt,
+			tools,
+			liveContextTokens: headroom + 1_000,
+			compaction,
+		});
+		const impossible = projectModelUsabilityBudget({
+			model: overheadBound,
+			systemPrompt,
+			tools,
+			liveContextTokens: 0,
+			compaction,
+		});
+
+		// then: the verdict separates "repairable by reducing the transcript" from
+		// "this model can never serve this session", so only the latter may refuse.
+		expect(fitsNow.verdict).toBe("fits-now");
+		expect(fitsNow.usable).toBe(true);
+		expect(needsCompaction.verdict).toBe("fits-after-compaction");
+		expect(needsCompaction.usable).toBe(false);
+		expect(impossible.verdict).toBe("impossible");
+		expect(impossible.usable).toBe(false);
+	});
+
+	it("admits a switch that only the speculation lead would have rejected (#1873)", async () => {
+		// given
+		const harness = await createHarness({
+			models: [
+				{ id: "million", contextWindow: 1_000_000, maxTokens: 32_000 },
+				{ id: "372k", contextWindow: 372_000, maxTokens: 32_000 },
+			],
+		});
+		harnesses.push(harness);
+		const target = harness.getModel("372k");
+		if (!target) throw new Error("missing lead-parity switch target fixture");
+		const compaction = harness.session.settingsManager.getCompactionSettings();
+		const systemPrompt = harness.session.agent.state.systemPrompt;
+		const tools = harness.session.agent.state.tools;
+		const withoutLead = projectModelUsabilityBudget({
+			model: target,
+			systemPrompt,
+			tools,
+			compaction,
+			includeSpeculationLead: false,
+		});
+		const withLead = projectModelUsabilityBudget({
+			model: target,
+			systemPrompt,
+			tools,
+			compaction,
+			includeSpeculationLead: true,
+		});
+		expect(withLead.speculationLeadTokens).toBeGreaterThan(1_000);
+
+		// A live context that clears the budget once the lead is not charged, and that
+		// only the lead pushes over the window. #1339 removed the lead from resume
+		// admission because speculation cannot shrink history it has not admitted yet;
+		// the same holds for a switch, which only has to fit the next single request.
+		const liveContextTokens = target.contextWindow - withoutLead.requiredTokens - 1_000;
+		expect(liveContextTokens).toBeGreaterThan(target.contextWindow - withLead.requiredTokens);
+		seedLiveContext(harness, liveContextTokens + withoutLead.systemPromptTokens + withoutLead.activeToolSchemaTokens);
+
+		// when
+		await harness.session.setModel(target);
+
+		// then
+		expect(harness.session.model?.id).toBe("372k");
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toHaveLength(1);
+	});
+
+	it("holds a downswitch before committing when live context exceeds the target budget", async () => {
 		// given
 		const harness = await createHarness({
 			models: [
@@ -125,28 +227,32 @@ describe("model usability budget", () => {
 		seedLiveContext(harness, 321_000);
 
 		// when
-		const error = await harness.session.setModel(target).then(
-			() => undefined,
-			(reason: unknown) => reason,
-		);
+		await harness.session.setModel(target);
 
-		// then
-		expect(error).toBeInstanceOf(ModelUsabilityBudgetError);
-		if (!(error instanceof ModelUsabilityBudgetError)) throw new Error("expected downswitch budget rejection");
-		expect(error.projection).toMatchObject({
+		// then: #1873 holds the switch instead of discarding it, and the projection it
+		// was held on still describes the same shortfall the refusal used to report.
+		const pending = harness.session.pendingModelSwitch;
+		if (!pending) throw new Error("expected the downswitch to be held");
+		expect(pending.projection).toMatchObject({
 			model: "faux/372k",
 			contextWindow: 372_000,
 			outputReserveTokens: 32_000,
 			compactionReserveTokens: 16_384,
 			safetyMarginTokens: 8_192,
 			usable: false,
+			verdict: "fits-after-compaction",
 		});
+		const error = { projection: pending.projection };
 		// The usage estimate includes the current prompt and schemas; live messages
 		// exclude them exactly, including restored grep's schema and guidance.
 		expect(error.projection.liveContextTokens).toBe(
 			321_000 - error.projection.systemPromptTokens - error.projection.activeToolSchemaTokens,
 		);
-		expect(error.projection.speculationLeadTokens).toBeGreaterThan(0);
+		// #1873: a switch no longer charges the speculation lead, so the rejection
+		// here is the transcript genuinely not fitting rather than the lead margin.
+		// The shortfall must therefore survive without the lead in the requirement.
+		expect(error.projection.speculationLeadTokens).toBe(0);
+		expect(error.projection.verdict).toBe("fits-after-compaction");
 		expect(error.projection.requiredTokens).toBe(
 			error.projection.liveContextTokens +
 				error.projection.systemPromptTokens +
@@ -181,7 +287,7 @@ describe("model usability budget", () => {
 		expect(harness.session.model?.id).toBe("372k");
 	});
 
-	it("revalidates and accepts a rejected downswitch after explicit compaction", async () => {
+	it("accepts a downswitch outright once an explicit compaction has made room", async () => {
 		// given
 		const harness = await createHarness({
 			models: [
@@ -205,9 +311,8 @@ describe("model usability budget", () => {
 		seedLiveContext(harness, 321_000);
 		const target = harness.getModel("372k");
 		if (!target) throw new Error("missing compact-retry target fixture");
-		await expect(harness.session.setModel(target)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
 
-		// when
+		// when: the transcript is reduced first, so the switch needs no deferral
 		await harness.session.compact();
 		await harness.session.setModel(target);
 
@@ -221,11 +326,11 @@ describe("model usability budget", () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const model = { ...harness.getModel(), contextWindow: 16_000, maxTokens: 4_000 };
+		const agentDir = join(harness.tempDir, "sdk-agent");
+		const breaker = fallbackCircuitsFor(agentDir);
 
 		// when / then
-		await expect(
-			createAgentSession({ cwd: harness.tempDir, agentDir: join(harness.tempDir, "sdk-agent"), model }),
-		).rejects.toMatchObject({
+		await expect(createAgentSession({ cwd: harness.tempDir, agentDir, model })).rejects.toMatchObject({
 			name: "ModelUsabilityBudgetError",
 			projection: {
 				model: `${model.provider}/${model.id}`,
@@ -233,6 +338,9 @@ describe("model usability budget", () => {
 				contextWindow: 16_000,
 			},
 		});
+		// then: the refused session keeps no hold on the agent dir's fallback breaker
+		fallbackCircuitsFor(`${agentDir}-unrelated`);
+		expect(fallbackCircuitsFor(agentDir)).not.toBe(breaker);
 	});
 
 	it("rejects a resumed session whose restored transcript exceeds the startup budget", async () => {

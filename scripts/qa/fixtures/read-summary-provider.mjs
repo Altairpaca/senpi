@@ -30,7 +30,11 @@ export default function readSummaryProvider(pi) {
 				JSON.stringify({
 					folder: { id: selectedReadFolder.id, version: selectedReadFolder.version },
 					selection: READ_FOLDER_SELECTION,
-					parserInitCounters: { wasm: 0, selectedParserRuntimes: 0 },
+					// What this build may load, stated from the frozen selection itself (#1685).
+					parserInitCounters: {
+						wasm: Object.values(READ_FOLDER_SELECTION.languages).filter((engine) => engine === "wasm").length,
+						selectedParserRuntimes: READ_FOLDER_SELECTION.wasm ? 1 : 0,
+					},
 				}),
 			),
 		]);

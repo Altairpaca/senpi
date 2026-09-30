@@ -1,3 +1,389 @@
+## 2026-09-30 - GPT-6.1 Sol under Venice's dotless id, plus the Copilot and OpenCode rows models.dev now lists (senpi#2390)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `GPT_6_FAMILY_DEFAULT_CONTEXT_WINDOWS` gains the marker `gpt-61-sol` (Venice spells every point release without the dot: `openai-gpt-56-sol`, `openai-gpt-61-sol`), and `applyGpt6ThinkingLevels` forces `off: null` through the new `isGpt61SolId` for both spellings.
+- `packages/ai/src/providers/data/` regenerated with `--strict` now that models.dev lists the model: +1 `github-copilot.json` (`gpt-6.1-sol`, 2/10/0.1/2.5 + tier, 400k budget, ladder low..max), +1 `opencode.json` (`gpt-6.1-sol`, 2/10/0.2/2.5 as models.dev prices it), +1 `venice.json` (`openai-gpt-61-sol`, 2.5/12.5/0.125/3.125, now the 400k budget instead of the 1,050,000 total that landed above the 922k input cap). Incidental drift: OpenRouter DeepSeek V4 Pro 0813 and `~z-ai/glm-latest` / `z-ai/glm-5.2` prices. No id removed.
+- `test/openai-input-cap-catalog.test.ts`: the deliberate 400k pairing covers `gpt-61-sol`, and the Venice, OpenCode and Copilot rows are pinned to 400,000 / 128,000.
+
+### Why
+
+The release job regenerates the catalog before `npm run check`; a dry run on the merged head showed the Venice row would ship with `contextWindow: 1050000` because the `gpt-6.1-sol` substring markers never see the dotless id. A prompt budget above the documented input cap lets a session run into `context_too_large` instead of compacting.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the GPT-6 family context-window table and `applyGpt6ThinkingLevels`.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than merge.
+
+## 2026-09-30 - GPT-6.1 Sol catalog rows and Fast variant (senpi#2390)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `gpt-6.1-sol` joins every OpenAI id table that carries `gpt-6-sol` (tool search + additional tools on `openai` and `chatgpt-subscription`, short-context cap, long-context pricing tiers, Fast/Priority `-fast` variants on both first-party providers) and, unlike GPT-6 Sol, `CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS` (openai/codex's `models.json` flags `gpt-6.1-sol` `supports_reasoning_effort_updates: true`, as it does `gpt-6-astra`). It stays out of `OPENAI_RESPONSES_NONE_REASONING_MODELS` and `applyGpt6ThinkingLevels` forces `off: null` for it as for Astra, because the model page documents `low`/`medium`/`high`/`xhigh`/`max` only. `OPENAI_GPT_6_STANDARD_COSTS["gpt-6.1-sol"]` is 2/10/0.1/2.5 per MTok (the cached-input rate halves versus GPT-6 Sol); the flagship and family context-window tables carry `gpt-6.1-sol` at the 400,000 Sol budget, listed before `gpt-6-sol` since the family lookup matches by substring. Hand-added rows land in the `openai` fallback list and the `chatgpt-subscription` list.
+- `packages/ai/src/providers/data/` regenerated with `--strict`: +2 rows each on `openai.json` and `chatgpt-subscription.json` (base + `-fast`), +1 on `azure-openai-responses.json`, +4 on `openrouter.json` (`openai/gpt-6.1-sol`, `-pro`, both `:batch`), +2 on `vercel-ai-gateway.json` (`openai/gpt-6.1-sol`, `openai/gpt-6.1-sol-fast`; Vercel also added two `inclusionai/ling-3.1-flash` rows). Incidental upstream drift: OpenRouter DeepSeek V4 Pro prices refreshed and `~openai/gpt-sol-latest` now resolves to GPT-6.1 Sol (0.1 cache reads, no `none`). No model id was removed. models.dev, GitHub Copilot, OpenCode Zen and OpenGateway do not list the model yet.
+- Tests: `test/gpt-6-family-catalog.test.ts` adds `gpt-6.1-sol` with `supportsNone: false` (first-party rows, pricing tiers, `off` vetoed on catalog and map-less rows, `-fast` variant, family-wide budget); `test/openai-input-cap-catalog.test.ts` exempts the deliberate `gpt-6.1-sol @ 400,000` pairing and pins the OpenRouter and Vercel rows; `test/openai-config-update.test.ts` pins the `chatgpt-subscription` flag set as `gpt-6-astra`, `gpt-6-astra-fast`, `gpt-6.1-sol`, `gpt-6.1-sol-fast`.
+
+### Why
+
+OpenAI released GPT-6.1 Sol on 2026-09-29 (developers.openai.com/api/docs/models/gpt-6.1-sol): near-Astra quality at GPT-6 Sol's price, and Codex made it the default catalog model. Without rows the id was unselectable on every lane, and the `gpt-6-sol` substring matchers did not cover it. Ultrafast is deliberately absent: OpenAI's Ultrafast pricing table lists `gpt-6-astra` only and the announcement says GPT-6.1 Sol Ultrafast follows "in the coming days"; senpi carries no `ultrafast` service tier yet (the openai SDK's `service_tier` union stops at `priority`), so that is its own change when it ships.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package; nothing loaded at runtime can add a first-party row or change what the generator wrote.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the OpenAI id tables near the top, `OPENAI_GPT_6_STANDARD_COSTS`, `applyGpt6ThinkingLevels`, the hand-added `openai` and `chatgpt-subscription` row lists.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than merge.
+
+## 2026-09-29 - Published tarball excludes sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/ai/package.json`: `files` excludes `dist/**/*.map`.
+
+### Why
+
+- The maps point at `src/`, which is not published, so they cannot resolve for consumers and only add install size.
+
+### Why an extension could not handle it
+
+- Package publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `files` list in `package.json`.
+
+## 2026-09-29 - Claude Sonnet 5.5 catalog rows (senpi#2321)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `ANTHROPIC_ALLOWED_FALLBACK_MODELS["claude-sonnet-5-5"] = ["claude-sonnet-5"]` (the live `allowed_fallback_models`), `supportsAnthropicMidConvoEffort` matches `claude-sonnet-5[.-]5`, `isAnthropicAdaptiveOnlyModel` adds `sonnet-5-5` / `sonnet-5.5`.
+- Regenerated provider data: `anthropic.json` `claude-sonnet-5-5`, `amazon-bedrock.json` `global.anthropic.claude-sonnet-5-5`, `openrouter.json` `anthropic/claude-sonnet-5.5` (+ `:batch`), `vercel-ai-gateway.json`, `venice.json` (`claude-sonnet-5-5`, plus `claude-opus-5-5-fast` and `xiaomi-mimo-v2-6-flash` that models.dev now lists), `opencode.json`. Drift that rode along: `together.json` dropped `moonshotai/Kimi-K2.6` and `Kimi-K2.7-Code` (retired upstream; `test/together-models.test.ts` now pins `Kimi-K3`), `mistral.json` dropped `magistral-small`, OpenRouter DeepSeek and Cloudflare rows refreshed metadata.
+
+### Why
+
+- Claude Sonnet 5.5 shipped on 2026-09-28 with the Opus 5.5 request contract (adaptive-only thinking, effort low..max, no forced tool choice) and a server-side fallback allowlist of `claude-sonnet-5`.
+
+### Why an extension could not handle it
+
+- Generated catalog data.
+
+### Expected merge conflict zones
+
+- LOW: the three Anthropic helpers in `generate-models.ts`; generated JSON regenerates.
+
+## 2026-09-27 - OpenRouter catalog records mandatory reasoning again (senpi#1239, senpi#2163)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `fetchOpenRouterModels()` passes each model's `reasoning` metadata through `getOpenRouterThinkingLevelMap()` and spreads the result into the row, so models OpenRouter reports as `mandatory: true` get `thinkingLevelMap.off: null` plus their supported efforts. This restores the call site upstream added in badlogic/pi-mono 650e7a6 (#8614). The fork merge `c1b91ace01` kept only the import.
+
+### Why
+
+Without `off: null`, `openai-completions` sends `reasoning: { effort: "none" }` whenever no thinking level is requested. Mandatory-reasoning endpoints such as `meta/muse-spark-1.3-contributor` and `z-ai/glm-5.3` reject that with HTTP 400 `Reasoning is mandatory for this endpoint and cannot be disabled.`, and the thinking selector offers an `off` level those models cannot run. The release model regeneration (`scripts/release-artifacts.mjs`) writes the corrected rows.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package and are written only by the generator.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the `normalizedModel` literal in `fetchOpenRouterModels()`. Upstream carries the same call, so an upstream sync should resolve toward upstream's shape.
+
+## 2026-09-24 - configuration_update follows a catalog capability flag (senpi#2094)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `applyOpenAIConfigurationUpdateMetadata` runs in the final metadata pass after `applyOpenAIExplicitPromptCacheMetadata` and sets `compat.supportsConfigurationUpdate` on `openai` / `openai-responses` rows with `cost.cacheWrite > 0` (the GPT-5.6+ family) and on `chatgpt-subscription` / `openai-codex-responses` `gpt-6-astra` (`CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS`). Priority `-fast` variants are cloned after the pass and inherit the flag.
+
+### Why
+
+Live OpenAI probes on 2026-09-24 showed the direct API accepts `configuration_update` on gpt-6-luna and gpt-5.6-luna (cache kept, effort applied), so the capability belongs to the cache-write-priced family, not one id. The Codex backend was only ever verified on gpt-6-astra and stays limited to it until it can be probed.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package; nothing loaded at runtime can change what the generator writes.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the block after `applyOpenAIExplicitPromptCacheMetadata` and the final metadata pass loop.
+
+## 2026-09-24 - Flag GPT-5.6+ OpenAI rows as accepting allowed_tools (senpi#2095)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `applyOpenAIExplicitPromptCacheMetadata` also sets `compat.supportsAllowedTools: true` on provider `openai` / api `openai-responses` rows with `cost.cacheWrite > 0` (the GPT-5.6+ family). Regenerated `packages/ai/src/providers/data/` with `--strict`: `openai.json` gains only the flag on the 12 GPT-5.6 / GPT-6 rows (base + `-fast`); `.manifest.json` follows. Incidental upstream drift: four OpenRouter pricing/context refreshes in `openrouter.json` (deepseek-v4-flash, kimi-k2.7-code, qwen3-30b-a3b-instruct-2507). No model id was added or removed.
+
+### Why
+
+Those models keep the prompt cache warm when the `tools` list is unchanged and the callable subset moves to `tool_choice: allowed_tools`; the runtime needs a catalog flag to choose that request shape.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package and are written only by the generator.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: `applyOpenAIExplicitPromptCacheMetadata`.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than merge.
+
+## 2026-09-23 - GPT-6 Sol and GPT-6 Luna catalog rows
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `gpt-6-sol` and `gpt-6-luna` join every OpenAI id table that already carried `gpt-6-astra` (tool search + additional tools on `openai` and `chatgpt-subscription`, short-context cap, long-context pricing tiers, `none` reasoning on the direct provider, Priority `-fast` variants on both first-party providers). Hand-added rows for both tiers land in the `openai` fallback list (used only when models.dev lacks the id) and in the `chatgpt-subscription` list (models.dev never carries the Codex backend), priced from the new `OPENAI_GPT_6_STANDARD_COSTS` table (Sol 2/10/0.2/2.5, Luna 0.1/0.5/0.01/0.125 per MTok) through `withOpenAiLongContextPricing`; `OPENAI_STANDARD_COSTS` merges the 5.6 and 6 tables for the direct-provider and Cloudflare price overrides. `supportsOpenAiXhigh` / `supportsOpenAiMax` and the former Astra-only final pass now key on `isGpt6FamilyId` (astra | sol | luna markers, prefixed or suffixed ids): `applyGpt6ContextWindow` stamps the tier budget on every provider row (Astra 600,000 unchanged, Sol 400,000, Luna 922,000 = the documented input cap) and `applyGpt6ThinkingLevels` stamps the documented ladder (`minimal: null`, low..max) and forces `off: null` for Astra only, since Sol and Luna document `none`.
+- `packages/ai/src/providers/data/` regenerated with `--strict`: +4 rows each on `openai.json` and `chatgpt-subscription.json` (base + `-fast`), +2 on `azure-openai-responses.json`, `opencode.json` (plus incidental upstream additions `claude-opus-5-5`, `grok-4.7`), `venice.json`, +4 on `vercel-ai-gateway.json`; the eight pre-existing `openrouter.json` GPT-6 Sol/Luna rows gain the ladder and the Sol budget. Incidental upstream drift: OpenRouter pricing/context refreshes (aion, deepseek, hy3, glm, `~latest` aliases), Vercel gemini metadata. No model id was removed.
+- Tests: `test/gpt-6-family-catalog.test.ts` (first-party rows, pricing tiers, ladder incl. `off`, tool metadata, `-fast` variants, map-less id inference, family-wide budget across every catalog); `test/openai-input-cap-catalog.test.ts` exempts the deliberate `gpt-6-sol @ 400,000` pairing from the documented-total check (a 1,050,000 Sol row would still fail) and pins the new direct-provider defaults.
+
+### Why
+
+OpenAI's GPT-6 family is Astra, Sol and Luna (developers.openai.com/api/docs/guides/latest-model). 2026.9.22-4 shipped Astra rows only; models.dev had since added Sol/Luna rows for openai, opencode, azure, openrouter and vercel, and 2026.9.22-4's regeneration had already pulled the OpenRouter passthrough rows without any effort ladder, so `xhigh` / `max` were unreachable there and the Codex backend could not select either tier at all. Budgets follow the user-stated defaults (Luna full window, Sol 400k) rather than the 272k short-context tier.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package; nothing loaded at runtime can add a first-party row or change what the generator wrote.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the OpenAI id tables near the top, `supportsOpenAiXhigh` / `supportsOpenAiMax`, the hand-added `openai` and `chatgpt-subscription` row lists, and the final metadata pass.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than merge.
+
+## 2026-09-22 - Claude Opus 5.5 catalog rows and request compat
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `ANTHROPIC_ALLOWED_FALLBACK_MODELS["claude-opus-5-5"] = ["claude-opus-4-8", "claude-opus-5"]` (the live Models API allowlist; the generator keeps only targets that also support per-message effort, so the emitted `compat.allowedFallbackModels` is `[claude-opus-5]`); `BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS` gains `anthropic.claude-opus-5-5` so only the global/us/eu/jp/au profiles are emitted, mirroring Opus 5; `supportsAnthropicMidConvoEffort` matches `claude-opus-5-5` / `claude-opus-5.5`; the Fable-5 adaptive-only branch is now `isAnthropicAdaptiveOnlyModel` and covers Opus 5.5 too (`compat.supportsDisabledThinking: false` on `anthropic-messages`, `thinkingLevelMap.off: null` elsewhere). `src/providers/data/` regenerated (one strict run): anthropic, amazon-bedrock, openrouter (`anthropic/claude-opus-5.5`), vercel-ai-gateway (`anthropic/claude-opus-5.5`, `-fast`); venice picked up one unrelated metadata refresh.
+- Runtime compat for the same release (Messages and Bedrock family markers, forced-tool-choice default) is tracked in `src/changes.md`.
+- Tests: `test/anthropic-opus-5-5.test.ts` (catalog shape, Bedrock profile-only, thinking-off request, xhigh/max effort mapping), `test/anthropic-tool-choice-compat.test.ts` (forced `any` / named omitted for 5.5, kept for Opus 5), `test/bedrock-thinking-payload.test.ts` (Bedrock thinking-off pins effort low).
+
+### Why
+
+Claude Opus 5.5 (2026-09-22) returns 400 for `thinking.type` `disabled` and `enabled` alike and for `tool_choice` `any` / `tool`; on Opus 5 both were accepted. Verified against the live Models API (`thinking.types.enabled.supported: false`, `allowed_fallback_models: [claude-opus-4-8, claude-opus-5]`). Without the compat facts, a thinking-off turn or a forced-tool turn failed every request on the new model.
+
+### Why an extension could not handle it
+
+The catalog shards ship inside this package and the request shape is built inside the Messages and Bedrock providers before any extension hook runs.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the Anthropic family-marker functions and the hardcoded allowlist tables, against any other model-release change.
+
+## 2026-09-22 - generator rows for the chatgpt-subscription rename (senpi#1989)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the six hardcoded `openai-codex` rows now emit the `chatgpt-subscription` provider id. They were edited in place rather than regenerated.
+
+### Why
+
+A full `generate-models` run fetches live data for Venice, Together, Vercel AI Gateway, Vertex, NVIDIA and Bedrock, so regenerating to move one provider id would pull unrelated network drift into this diff and make it unreviewable. The six rows for this provider are hardcoded literals in the generator, so editing them in place is both sufficient and auditable.
+
+### Why an extension could not handle it
+
+The generator produces the committed catalog shards that ship inside this package; nothing loaded at runtime can change what it wrote.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`, against any other change to the hardcoded provider tables.
+
+## 2026-09-22 - Grok 4.7 + MiMo V2.6 Pro catalog additions (senpi#1990)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the xAI branch uses `getModelsDevCost(m.cost)` instead of a
+  flattened cost block, so models.dev context tiers survive into `xai.json` — Grok 4.7's
+  $4/$12 above-200k tier plus the tiers models.dev already publishes for 4.5/4.6. Ported
+  from upstream pi-mono 1a584a7a56 (`feat(ai,coding-agent): add Grok 4.7 support`).
+- `src/providers/data/` regenerated (one `bun run generate-models --strict` run):
+  `xai.json` + `github-copilot.json` gain `grok-4.7`; `xiaomi.json` + the three
+  `xiaomi-token-plan-*.json` + `opencode-go.json` + `openrouter.json` + `vercel-ai-gateway.json`
+  gain the mimo-v2.6 family; `venice.json` gains its dashed `grok-4-7`; `opencode.json` replaces
+  the selectable free model `mimo-v2.5-free` with `mimo-v2.6-flash-free` (opencode retired the
+  v2.5 free tier); `openrouter.json` additionally drops six retired `:batch` ids
+  (`minimax/minimax-m3:batch`, `moonshotai/kimi-k3:batch`, `openai/gpt-oss-120b:batch`,
+  `qwen/qwen3.5-9b:batch`, `qwen/qwen3.8-2.4t-a95b:batch`, `thinkingmachines/inkling:batch`)
+  and the directly-selectable model `kwaipilot/kat-coder-pro-v2` (also delisted), and gains
+  `nex-agi/nex-n2.5-pro` (live catalog drift the generator reports honestly).
+  `opencode.json` deliberately does NOT gain grok-4.7 — opencode does not serve it.
+- `test/xai-responses.test.ts`, `test/model-catalog-types.test.ts`, `test/stream.test.ts`:
+  Grok 4.7 effort/capabilities/tiered-pricing coverage, xai+xiaomi catalog type and
+  shard-scoped presence assertions (aggregator surface, grok-4.6 / mimo-v2.5-pro controls),
+  and the live-gated xAI E2E moves to grok-4.7.
+
+### Why
+
+- omo#8644: the direct xAI shard lacked `grok-4.7`, so `xai/grok-4.7` was unselectable;
+  `mimo-v2.6-pro` was in no shard at all.
+
+### Why this lives in the fork
+
+- Shard layout + manifest are fork-owned; upstream uses `.models.ts`.
+
+### Expected merge conflict zones
+
+- LOW: `data/*.json` + `.manifest.json` on any concurrent regeneration.
+
+## 2026-09-21 - Migrate the test runner to Vitest 5 (senpi#1895)
+
+### What changed
+
+- `packages/ai/package.json`: Updated the test runner to Vitest 5.0.1.
+
+### Why
+
+- Run this workspace on the pinned Vitest 5 release.
+
+### Why an extension could not handle it
+
+- The package manager resolves development tools before extensions load.
+
+### Expected merge conflict zones
+
+- The development dependency pins in `packages/ai/package.json`.
+
+## 2026-09-20 - The image-model generator formats what it writes (senpi#1886)
+
+### What changed
+
+- `packages/ai/scripts/generate-image-models.ts` hands the file it just wrote to Biome
+  (`biome check --write`) before reporting success, resolving the binary from the
+  repository's own `node_modules/.bin` and falling back to `biome` on PATH.
+
+### Why
+
+- The serializer writes tabs by hand and uses `JSON.stringify` for `input`, `output` and
+  `cost`, which emits `["text","image"]`, quoted keys and two-space indentation. Biome wants
+  `["text", "image"]`, unquoted keys and tabs, so the emitted file never satisfied
+  `npm run check`. The shared `check` script used to run `biome check --write`, which
+  rewrote the file silently; #1443 made that gate read-only, and the release job is the first
+  thing that regenerates the catalog under the strict gate. Run 35520504862 failed at
+  `[release] error: npm run check failed` with the version already applied to 10 manifests,
+  so no release can complete until the generator's output is clean on its own.
+- Formatting through Biome rather than hand-matching its current style keeps a future Biome
+  upgrade from reintroducing the same drift.
+
+### Why an extension could not handle it
+
+- This is a build-time code generator invoked by `scripts/release-artifacts.mjs`; it runs
+  before any session exists and no extension surface participates in catalog generation.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-image-models.ts`: the import block and `main()`. Upstream
+  edits to this generator touch the same `writeFileSync` tail.
+
+## 2026-09-21 - Refresh the provider SDK pins (senpi#1895)
+
+### What changed
+
+- `packages/ai/package.json`: `@anthropic-ai/sdk` 0.123.0 -> 0.127.0, `@aws-sdk/client-bedrock-runtime` 3.1127.0 -> 3.1136.0, `@google/genai` 2.21.0 -> 2.23.0, `@bufbuild/protobuf` 2.14.0 -> 2.15.0, `@smithy/types` 4.17.2 -> 4.18.0, `typebox` 1.3.27 -> 1.3.34, `yaml` 2.9.0 -> 2.9.1 and `@types/node` 26.2.0 -> 26.6.2.
+
+### Why
+
+- The provider SDKs are fork-owned exact pins and the surface this package is built on; each moves to the newest release in the same minor that satisfies `min-release-age=2`. The `@anthropic-ai/sdk` line in the 2026-08-21 entry below ("stays at 0.91.1") is historical: the browser-bundle blocker it records is handled by the `anthropic-sdk-node-builtins` plugin in `scripts/check-browser-smoke.mjs`.
+
+### Why an extension could not handle it
+
+- Manifest dependency versions are resolved by the package manager before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the dependency version block, on every upstream release bump.
+
+## 2026-09-18 - The catalog check tolerates a shard the aggregator no longer lists
+
+### What changed
+
+- `packages/ai/scripts/model-data.ts` excludes a shard a provider module imports from the
+  aggregator/shard equality check, the way it already excludes a fork-owned shard.
+- `packages/ai/test/model-data-imported-shard.test.ts` stages the committed catalog, drops
+  `kimi-coding` from the aggregator and requires `readModelDataStructure` not to throw.
+
+### Why
+
+- With the prune guard in place the shard survives a run that wrote none of them, but the freshly
+  written aggregator no longer lists it, so `readModelDataStructure` called it an extra shard and the
+  release failed a third time - after the prune failure it was meant to replace.
+
+### Why an extension could not handle it
+
+- The equality check is the generator's own consistency gate; only it knows which shards the run wrote.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/model-data.ts` around `readModelDataStructure`'s shard comparison.
+
+## 2026-09-18 - Never prune a model shard a provider module imports
+
+### What changed
+
+- `packages/ai/scripts/model-shards.ts` gains `importedModelShards` and a third argument to
+  `isPrunableModelShard`: a shard a committed provider module imports is never prunable, whoever was
+  supposed to write it. `FORK_OWNED_MODEL_SHARDS` stays for shards no module imports.
+- `packages/ai/scripts/generate-models.ts` reads the provider modules beside the shards and passes the
+  imported set to the prune, so a provider models.dev has stopped describing keeps its catalog.
+- `packages/ai/test/model-shards.test.ts` adds the fresh-generation case: every imported shard survives a
+  run that wrote none of them. It fails without the guard.
+
+### Why
+
+- The release job regenerates catalogs before type-checking. models.dev no longer describes `kimi-coding`,
+  so the prune deleted `packages/ai/src/providers/kimi-coding.models.ts` while
+  `packages/ai/src/providers/kimi-coding.ts` still imported it, and two consecutive releases died on
+  `TS2307` with fifteen cascades. Ordinary CI type-checks the committed catalog instead of regenerating
+  it, and the existing ownership test compares against that same committed aggregator, so only the release
+  job could see it.
+
+### Why an extension could not handle it
+
+- The prune happens inside the generator's own write-and-sweep pass. Nothing outside it knows which shards
+  the run produced, so the decision to keep a shard has to be made where that set exists.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/model-shards.ts` around `isPrunableModelShard`, and the prune loop in
+  `packages/ai/scripts/generate-models.ts`, if upstream reshapes the shard sweep.
+
+## 2026-09-18 - Generate the official B.AI chat catalog
+
+### What changed
+
+- `packages/ai/scripts/bai-models.json` records B.AI's published standard context, output, modality,
+  reasoning-level, and pricing metadata for the 56 chat models B.AI documents as active, sourced from each
+  `docs.b.ai/llmservice/models/<slug>/` page and the standard pricing table. Promotional, DeepSeek idle, and
+  long-cache rates are deliberately excluded.
+- `packages/ai/scripts/generate-models-bai.ts` converts that source into provider models with family-specific
+  API selection and B.AI endpoint shapes.
+- `packages/ai/scripts/generate-models.ts` adds the curated B.AI rows before the shared normalization and
+  generated-shard pipeline.
+- Regenerated `packages/ai/src/providers/data/bai.json`, `bai.models.ts`, `models.generated.ts`, and the model
+  data manifest. Image-only `gpt-image-2` is intentionally absent from the chat catalog.
+- `packages/ai/test/gpt-6-astra-context-window.test.ts` includes the B.AI shard in the cross-provider Astra
+  context-window invariant.
+- `packages/ai/scripts/generate-models.ts` re-derives `reasoning` for B.AI models after the shared
+  thinking-level passes, so a model that gains a selectable level cannot keep `reasoning: false` and silently
+  lose its reasoning payload at request time.
+
+### Why
+
+- B.AI `/v1/models` is credential-scoped and returns IDs only. The committed generated catalog is the
+  maintainable source for model capabilities and standard reference prices, while runtime discovery decides
+  which classified IDs the current key may use.
+
+### Why an extension could not handle it
+
+- Catalog generation and validation run before extensions load and feed every built-in provider consumer.
+
+### Expected merge conflict zones
+
+- LOW: one import and one append in `packages/ai/scripts/generate-models.ts`.
+- NONE: the B.AI generator source and metadata file are new fork-owned files.
+
 ## 2026-09-13 - Publish static provider module subpaths
 
 ### What changed
@@ -153,7 +539,7 @@
 
 ### What changed
 
-- `packages/ai/scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, `packages/ai/src/providers/data/azure-openai-responses.json`, `packages/ai/src/providers/data/.manifest.json` (the same run picked up one OpenRouter price refresh).
+- `packages/ai/scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/chatgpt-subscription.json`, `packages/ai/src/providers/data/azure-openai-responses.json`, `packages/ai/src/providers/data/.manifest.json` (the same run picked up one OpenRouter price refresh).
 
 ### Why
 
@@ -310,7 +696,7 @@
 
 - `packages/ai/scripts/generate-models.ts`: hand-added `gpt-6-astra` entries for the `openai` and `openai-codex` providers (published pricing 10/50/1/12.5 per MTok with the >272k long-context tiers, 272k default context, 128k output, text+image input, `thinkingLevelMap` with `off`/`minimal` null and low through high, with xhigh/max merged by `supportsOpenAiXhigh`/`supportsOpenAiMax`); the id joins the tool-search, additional-tools, short-context-cap, long-context-pricing, and Priority `-fast` sets; a post-metadata override keeps `off`/`minimal` unavailable.
 - `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` gains `gpt-6-astra`; the sol-only max-effort family check is generalized to `OPENAI_MAX_MODEL_IDS` (`gpt-5.6-sol`, `gpt-6-astra`).
-- Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, and `packages/ai/src/providers/data/.manifest.json` with only the Astra entries (plus their `-fast` variants) changing.
+- Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/chatgpt-subscription.json`, and `packages/ai/src/providers/data/.manifest.json` with only the Astra entries (plus their `-fast` variants) changing.
 - `packages/ai/test/gpt-6-astra-catalog.test.ts`: catalog entries, pricing tiers, context limits, thinking levels, xhigh/max support, and `-fast` variants.
 
 ### Why
@@ -953,7 +1339,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `src/context-provenance.ts`: added request-local, non-enumerable message/item provenance tokens.
 - `src/api/openai-responses-shared.ts`: preserves those tokens while converting messages to Responses input items.
 - `src/types.ts` and `src/index.ts`: expose the typed provenance helpers needed by coding-agent's replay boundary.
-- `src/utils/openai-codex-auth.ts`: centralizes browser-safe ChatGPT account-ID extraction so normal Codex requests
+- `src/utils/chatgpt-subscription-auth.ts`: centralizes browser-safe ChatGPT account-ID extraction so normal Codex requests
   and remote compaction canonicalize the same wire tenant across bearer-token refreshes.
 
 ### Why
@@ -970,7 +1356,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `src/api/openai-responses-shared.ts`
 - `src/index.ts`
 - `src/types.ts`
-- `src/utils/openai-codex-auth.ts`
+- `src/utils/chatgpt-subscription-auth.ts`
 
 ### Expected merge conflict zones
 
@@ -1109,7 +1495,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `test/fireworks-models.test.ts`
 - `test/github-copilot-oauth.test.ts`
 - `test/oauth-device-code.test.ts`
-- `test/openai-codex-stream.test.ts`
+- `test/chatgpt-subscription-stream.test.ts`
 
 ### Expected merge conflict zones
 

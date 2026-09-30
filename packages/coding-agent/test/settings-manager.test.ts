@@ -422,35 +422,6 @@ describe("SettingsManager", () => {
 			expect(whenManager.getProviderStreamRetryTimeoutMs()).toBeUndefined();
 		});
 
-		// #1739: the throughput watchdog's knobs are agent-side defaults; the
-		// settings layer only forwards what the user actually configured.
-		it("should leave the stream throughput guard at the agent defaults when unconfigured", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
-
-			const whenManager = SettingsManager.create(projectDir, agentDir);
-
-			expect(whenManager.getAgentStreamThroughputOptions()).toBeUndefined();
-		});
-
-		it("should forward configured stream throughput knobs, including a disabling zero", () => {
-			writeFileSync(
-				join(agentDir, "settings.json"),
-				JSON.stringify({
-					retry: {
-						provider: { minThroughputTokensPerSecond: 0, throughputWindowMs: 30_000, throughputGraceMs: 0 },
-					},
-				}),
-			);
-
-			const whenManager = SettingsManager.create(projectDir, agentDir);
-
-			expect(whenManager.getAgentStreamThroughputOptions()).toEqual({
-				floorTokensPerSecond: 0,
-				windowMs: 30_000,
-				graceMs: 0,
-			});
-		});
-
 		it("should default the agent stream idle timeout to httpIdleTimeoutMs", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));

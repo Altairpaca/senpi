@@ -3,6 +3,7 @@ import { fuzzyFilter } from "./fuzzy.ts";
 
 const SKILL_COMMAND_PREFIX = "skill:";
 const DOLLAR_QUERY_PATTERN = /^\$([a-zA-Z0-9:_-]*)$/;
+const DOLLAR_MENTION_PATTERN = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 const COMMON_SHELL_VARIABLES = new Set([
 	"CI",
 	"EDITOR",
@@ -35,25 +36,16 @@ export interface DollarInvocationContext {
 	readonly skillsOnly: boolean;
 }
 
+export interface DollarSkillMention {
+	readonly start: number;
+	readonly end: number;
+	readonly name: string;
+}
+
 function isDollarQueryCompletable(query: string): boolean {
 	if (query === "") return true;
 	if (query.startsWith("-") || query.startsWith("_") || /^\d/.test(query)) return false;
 	return !COMMON_SHELL_VARIABLES.has(query);
-}
-
-function leadingKnownSkillRun(text: string, knownSkills: ReadonlySet<string>): boolean {
-	const tokens = text.trim().split(/\s+/).filter(Boolean);
-	return (
-		tokens.length > 0 &&
-		tokens.every((token) => {
-			const match = DOLLAR_QUERY_PATTERN.exec(token);
-			if (match === null || match[1] === "") return false;
-			const name = match[1].startsWith(SKILL_COMMAND_PREFIX)
-				? match[1].slice(SKILL_COMMAND_PREFIX.length)
-				: match[1];
-			return name !== "" && knownSkills.has(name);
-		})
-	);
 }
 
 function commandName(command: SlashCommand | AutocompleteItem): string {
@@ -73,35 +65,62 @@ function commandDescription(command: SlashCommand | AutocompleteItem): string | 
 	return description || undefined;
 }
 
-export function getDollarInvocationContext(
-	textBeforeCursor: string,
-	_cursorLine: number,
-	commands: readonly (SlashCommand | AutocompleteItem)[],
-): DollarInvocationContext | null {
-	const knownSkills = new Set(
+/**
+ * Locate every `$name` / `$skill:name` token on one line that names a known
+ * skill. Tokens must sit at a whitespace boundary, so `$HOME`, `$1`, `a$x`,
+ * and unknown names stay plain. Offsets are line-local and `end` is exclusive.
+ */
+export function findDollarSkillMentions(line: string, knownSkills: ReadonlySet<string>): DollarSkillMention[] {
+	if (knownSkills.size === 0) return [];
+	const mentions: DollarSkillMention[] = [];
+	for (const match of line.matchAll(DOLLAR_MENTION_PATTERN)) {
+		const token = match[2] ?? "";
+		const name = token.startsWith(SKILL_COMMAND_PREFIX) ? token.slice(SKILL_COMMAND_PREFIX.length) : token;
+		if (!knownSkills.has(name)) continue;
+		const start = match.index + (match[1] ?? "").length;
+		mentions.push({ start, end: start + token.length + 1, name });
+	}
+	return mentions;
+}
+
+/** Names of the skills the command list exposes as `skill:<name>` entries. */
+export function knownSkillNames(commands: readonly (SlashCommand | AutocompleteItem)[]): ReadonlySet<string> {
+	return new Set(
 		commands.flatMap((command) => {
 			const name = skillName(commandName(command));
 			return name ? [name] : [];
 		}),
 	);
+}
+
+/**
+ * Describe the `$` token under the cursor when it should open the popup.
+ *
+ * Any `$query` at a whitespace boundary completes, however many `$` tokens
+ * precede it, so one prompt can carry several skill mentions. Slash commands
+ * are only offered while the token is the first thing in the prompt; a token
+ * that already names a known skill closes the popup so `enter` submits.
+ */
+export function getDollarInvocationContext(
+	textBeforeCursor: string,
+	_cursorLine: number,
+	commands: readonly (SlashCommand | AutocompleteItem)[],
+): DollarInvocationContext | null {
 	const tokenStart = textBeforeCursor.search(/\S+$/);
 	const token = tokenStart === -1 ? "" : textBeforeCursor.slice(tokenStart);
 	const match = DOLLAR_QUERY_PATTERN.exec(token);
 	if (!match) return null;
 
-	const rawQuery = match[1];
+	const rawQuery = match[1] ?? "";
 	if (!isDollarQueryCompletable(rawQuery)) return null;
 	const explicitSkillNamespace = rawQuery.startsWith(SKILL_COMMAND_PREFIX);
-	const precedingText = tokenStart === -1 ? "" : textBeforeCursor.slice(0, tokenStart);
-	const hasEarlierDollarToken = precedingText.includes("$");
-	const hasKnownLeadingSkillRun = leadingKnownSkillRun(precedingText, knownSkills);
-	if (hasEarlierDollarToken && !hasKnownLeadingSkillRun) return null;
-	const isKnownSkillInOrdinaryText = !hasKnownLeadingSkillRun && knownSkills.has(rawQuery);
-	if (isKnownSkillInOrdinaryText) return null;
+	const query = explicitSkillNamespace ? rawQuery.slice(SKILL_COMMAND_PREFIX.length) : rawQuery;
+	if (knownSkillNames(commands).has(query)) return null;
+	const isFirstToken = textBeforeCursor.slice(0, tokenStart).trim() === "";
 	return {
 		prefix: `$${rawQuery}`,
-		query: explicitSkillNamespace ? rawQuery.slice(SKILL_COMMAND_PREFIX.length) : rawQuery,
-		skillsOnly: hasKnownLeadingSkillRun || explicitSkillNamespace,
+		query,
+		skillsOnly: explicitSkillNamespace || !isFirstToken,
 	};
 }
 

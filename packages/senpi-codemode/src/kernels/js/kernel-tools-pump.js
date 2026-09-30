@@ -21,7 +21,15 @@ export function createKernelToolPump({ getRuntime, emit, nestedInvokes }) {
 			const runtime = getRuntime();
 			if (!runtime?.kernelTools) throw kernelToolError("tools_unavailable", "JS runtime not initialized");
 			const value = await kernelToolCallContext.run(
-				{ pendingTools, callId: message.call_id, generation: message.kernel_generation, signal: controller.signal },
+				// The scope lives only in this store: it is gone once the call settles, and it never
+				// reaches the top-level cell context or the next invocation (#1731).
+				{
+					pendingTools,
+					callId: message.call_id,
+					generation: message.kernel_generation,
+					signal: controller.signal,
+					scope: message.scope,
+				},
 				() =>
 					runtime.kernelTools.invoke(
 						{
@@ -91,9 +99,14 @@ function pumpError(error) {
 			message: error.message,
 			stack: error.stack,
 			...(typeof error.code === "string" ? { code: error.code } : {}),
+			...(isPlainRecord(error.details) ? { details: error.details } : {}),
 		};
 	}
 	return { message: String(error) };
+}
+
+function isPlainRecord(value) {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function errorFrom(error) {
@@ -101,5 +114,6 @@ function errorFrom(error) {
 	if (error.name) result.name = error.name;
 	if (error.stack) result.stack = error.stack;
 	if (typeof error.code === "string") result.code = error.code;
+	if (isPlainRecord(error.details)) result.details = error.details;
 	return result;
 }

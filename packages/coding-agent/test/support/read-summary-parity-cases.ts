@@ -80,6 +80,8 @@ export async function fallbackParity() {
 			{ name: "both-thresholds", text: long(3000), path: "x.json", summary: false },
 			{ name: "large.txt", text: long(2500), path: "large.txt", summary: false },
 			{ name: "binary", text: `${text}\0`, path: "x.json", summary: false },
+			// #1685 selects `.js`, so an injected folder is consulted there exactly as it is for `.json`.
+			{ name: "js", text, path: "x.js", summary: true },
 			...[
 				"txt",
 				"md",
@@ -89,7 +91,6 @@ export async function fallbackParity() {
 				"mkd",
 				"mkdn",
 				"mdx",
-				"js",
 				"ts",
 				"tsx",
 				"jsx",

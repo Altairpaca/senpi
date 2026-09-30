@@ -1,4 +1,562 @@
+## 2026-09-29 - Published packages ship no sourcemaps (senpi#2362)
+
+### What changed
+
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi pack gate and every published alias package check reject any `*.map` in the tarball.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: the vendored client/protocol copy skips `*.map`.
+
+### Why
+
+- The maps reference workspace `src/` files that are never published, so they cannot resolve for consumers; they were 17.9 MiB of the senpi tarball alone.
+
+### Why an extension could not handle it
+
+- Publish tooling.
+
+### Expected merge conflict zones
+
+- LOW: `assertPublishedWorkspacePackFiles`, `assertSenpiPackedWorkspaceFiles`, `copyVendoredTypeWorkspaces`.
+
+## 2026-09-29 - Publish the real @code-yeongyu/senpi dependency manifest instead of a flattened bundle (senpi#2360)
+
+### What changed
+
+- `scripts/prepare-senpi-publish-manifest.mjs`: `stagePublishManifest` writes the source dependency list (vendored `pi-client`/`pi-protocol` removed, fork workspaces rewritten to their exact `npm:@code-yeongyu/senpi-*` aliases), deletes `bundleDependencies`/`bundledDependencies`, and rejects local specs and unpublished fork packages. The staged-`node_modules` listing, platform-constrained filter and optional-family promotion are gone.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: only vendors client/protocol under `vendor/` and stages the manifest; the workspace/runtime-closure copies into `packages/coding-agent/node_modules` are removed.
+- `scripts/senpi-publish-pack-checks.mjs` (new): the senpi pack gate (no `node_modules`, no `npm-shrinkwrap.json`, no bundle fields, fork deps through aliases, vendored files present) and per-alias-package loader-file checks (agent-core tree-sitter assets, pty `native/index.js` and warned-optional prebuild, codemode sources) moved from the bundled copies to the packages that now ship them.
+- `scripts/publish.mjs`: validates each package against those checks; `materializeMissingPublishRuntime` is no longer called.
+- Removed: `scripts/prepare-senpi-publish-dependencies.mjs`, `scripts/prepare-senpi-publish-placements.mjs`, `scripts/materialize-publish-runtime.mjs`, `scripts/generate-coding-agent-shrinkwrap.mjs`, `scripts/unpublished-bundled-workspaces.mjs` (no-op since the desktop workspaces left the bundle) and their tests.
+- `scripts/registry-packages.mjs`, `scripts/release-packages.mjs`, `scripts/local-release.mjs`: comments no longer describe the removed bundle; no behavior change.
+- `scripts/check-lockfile-commit.mjs`: the lockfile-commit hint points at the coding-agent install-lock instead of the removed shrinkwrap.
+- `scripts/release.mjs`, `scripts/release-artifacts.mjs`: no shrinkwrap step and no stale-bundle-overlay `npm ci`; root `package.json` drops `check:shrinkwrap`/`shrinkwrap:coding-agent` and the shrinkwrap step of `refresh-lock`.
+
+### Why
+
+- Every fork workspace is published under its own name at the lockstep version, so the bundle no longer protects installs from the old ETARGET on registry-absent workspace specs. It only cost space and time: bun installs every declared dependency from the registry and keeps the bundled copy too (700 MiB, 11.1 s cold), and npm unpacks a 27k-file tarball (137 s).
+
+### Why an extension could not handle it
+
+- Release and publish tooling.
+
+### Expected merge conflict zones
+
+- MEDIUM: `stagePublishManifest` and `prepareSenpiBundledWorkspaces`; `validatePack` in `publish.mjs`.
+
+## 2026-09-29 - The bundle names its build for the runtime snapshot (#2358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: after both esbuild passes, writes `dist/bundle/runtime-manifest.json` with `buildId` (the first 16 hex digits of a SHA-256 over every emitted file's path and bytes) and `externals` (`collectExternalPackages`: the non-builtin package names the bundle imports at runtime).
+
+### Why
+
+- The CLI keys its runtime snapshot by build and verifies that the snapshot resolves the bundle's externals exactly as the install does (#2358).
+
+### Why an extension could not handle it
+
+- The manifest describes the build output itself.
+
+### Expected merge conflict zones
+
+- LOW: the end of `buildBundle()` after `validateExternalImports`.
+
+## 2026-09-29 - bun.lock regeneration converges and matches every workspace manifest (senpi#2352)
+
+### What changed
+
+- `scripts/bun-lock-workspace-specifiers.mjs` (new): parses bun.lock, lists every workspace dependency specifier that differs from its manifest, and rewrites the stale ones that can only resolve to the local workspace.
+- `scripts/regenerate-bun-lock-isolated.mjs`: repairs those specifiers in the seeded island lock before Bun runs, runs `bun install --lockfile-only` twice and fails unless the second pass changes nothing, then fails on any remaining manifest mismatch. `--check` names the stale specifiers.
+- `scripts/release-artifacts.mjs`: `runPackageLockRefresh` refreshes bun.lock with `node scripts/regenerate-bun-lock-isolated.mjs` instead of an in-place `bun install --lockfile-only`.
+
+### Why
+
+- One seeded Bun 1.4.2 pass after a version bump keeps the previous workspace ranges; a second pass fixes only the workspaces something depends on, and leaf workspaces keep the stale range forever. Release v2026.9.29 committed such a lock, so a fresh clone's `bun install` dirtied it.
+
+### Why an extension could not handle it
+
+- Release and lockfile tooling.
+
+### Expected merge conflict zones
+
+- LOW: `runPackageLockRefresh` in `release-artifacts.mjs`; `regenerateBunLock` in `regenerate-bun-lock-isolated.mjs`.
+
+## 2026-09-26 - Cover Node bundle tree-sitter grammar loading (senpi#2032)
+
+### What changed
+
+- `node-bundle-smoke.test.ts`: the isolated published-bundle smoke test now imports the emitted tree-sitter engine chunk under Node and Bun and requires the embedded JavaScript grammar to resolve on both runtimes.
+
+### Why
+
+- The Node npm bundle previously skipped its embedded grammar while Bun loaded it, so this runtime-specific regression could pass existing CLI smoke tests unnoticed.
+
+### Why an extension could not handle it
+
+- The regression is in the build artifact's embedded asset resolution and must be exercised by the bundle smoke harness itself.
+
+### Expected merge conflict zones
+
+- LOW: the runtime matrix in `node-bundle-smoke.test.ts`.
+
+## 2026-09-28 - Drop the desktop packages from build, bundle and release tooling (senpi#2128)
+
+### What changed
+
+- `scripts/build-all.mjs`: the build phases no longer list the five `packages/desktop-*` workspaces.
+- `scripts/build-coding-agent-bundle.mjs`: `@code-yeongyu/senpi-desktop-engine` is no longer an external of the release bundle.
+- `scripts/check-entry-graphs.mjs`: the desktop workspace entries and their per-package budgets are removed.
+- `scripts/generate-coding-agent-shrinkwrap.mjs`: the `@code-yeongyu/senpi-desktop-` internal prefix is removed.
+- `scripts/local-release.mjs`, `scripts/release-packages.mjs`: the desktop workspaces leave the local-release and bundled-internal lists.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: the desktop workspaces and the engine prebuild naming are removed; `@earendil-works/pi-pty` is the only native prebuild.
+- `scripts/changes-md-policy.mjs`: `CRATES_SOURCE_PATTERN` returns to `crates/senpi-pty`.
+- Removed with their subject: `scripts/build-desktop-engine-local.mjs`, `scripts/ci/probe-desktop-engine.mjs`, `scripts/ci/windows-interactive-desktop-smoke.ps1`, `scripts/desktop-package-boundaries.test.mjs`. The generic never-published-workspace tests keep their coverage with synthetic fixtures.
+
+### Why
+
+- The desktop stack moved to omo (code-yeongyu/oh-my-openagent#8893); these references would otherwise point at deleted workspaces.
+
+### Why an extension could not handle it
+
+- Release tooling.
+
+### Expected merge conflict zones
+
+- LOW: the list literals in each script above.
+
+## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
+
+### What changed
+
+- `scripts/coding-agent-consumer.mjs`: the consumer smoke env pins `SENPI_RUNTIME: "node"`.
+
+### Why
+
+- An installed CLI now re-execs under any Bun 1.4.0+ on PATH, which would silently turn the Node lane of the smoke into a Bun run. Under a Bun runtime the pin is inert (`already-bun` wins).
+
+### Why an extension could not handle it
+
+- Release tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `env` literal in `smokeTestCodingAgentConsumer`.
+
+## 2026-09-25 - The published tarball leaves out never-published workspaces nothing shipped reaches (senpi#2141)
+
+### What changed
+
+- `scripts/registry-packages.mjs`: `isUnpublishedForkPackage(name)` is true for a `@code-yeongyu/` package outside `registryPackageNames` (the publish set), which the registry can never serve.
+- `scripts/unpublished-bundled-workspaces.mjs` (new): `unpublishedBundledWorkspaces(repoRoot, workspaces)` returns those bundled workspaces, measured against the BUILT `packages/coding-agent/dist` (any quoted specifier of the package in a shipped `.js`/`.mjs`/`.cjs`) and against the manifests that ship (the CLI's and every published bundled workspace's `dependencies`/`optionalDependencies`/`peerDependencies`). If anything shipped reaches one, it throws and names the importer or declarer, so a release can never publish an uninstallable CLI.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: `prepareSenpiBundledWorkspaces` skips those workspaces and removes any stale staged copy, so `stagePublishManifest` never declares them. `assertSenpiPackedWorkspaceFiles` skips their required-file checks and throws when the packed manifest's runtime or bundled dependencies name one.
+- Tests: `unpublished-bundled-workspaces.test.mjs` (the rule, an import from `dist/bundle`, declarations by the CLI and by a published workspace); `prepare-senpi-bundled-workspaces-pack.test.mjs` replaces the "desktop engine loader required" case with the guard and the leave-out case. `prepare-senpi-bundled-workspaces.prepare.test.mjs` replaces "stages the desktop engine's host executable" with the leave-out case (a stale staged copy is removed, nothing desktop is declared) and a staging failure when the built dist imports the engine, and its manifest case no longer expects the desktop names.
+
+### Why
+
+`@code-yeongyu/senpi@2026.9.25` declared the five private desktop workspaces (`2026.9.24-2`) as dependencies because `stagePublishManifest` declares every bundled package. npm installs from the bundle, but bun resolves every declared dependency from the registry even when it is bundled (as in #1632), so `bun add` failed and omo could not adopt the release. Nothing in the shipped `dist/` imports them yet (#2128 PR-0 has no user-visible tool). When the chain ships the engine as an external native sidecar, it joins the publish set and this guard is what forces that step.
+
+### Why an extension could not handle it
+
+This is release tooling.
+
+### Expected merge conflict zones
+
+- The workspace loop of `prepareSenpiBundledWorkspaces` and the check loop of `assertSenpiPackedWorkspaceFiles`.
+- `registryPackageNames` in `scripts/registry-packages.mjs`, when a desktop package joins the publish set.
+
+## 2026-09-24 - The five desktop packages join every enumerating build and publish script (senpi#2128)
+
+### What changed
+
+- `scripts/build-all.mjs`: `BUILD_PHASES` builds `packages/desktop-protocol` and `-prelude` beside tui, `-engine` beside ai, `-service` beside agent, and `-tool` beside sqlite-node, all before coding-agent. `build-all.test.mjs` pins the order and proves each desktop package builds after the workspace packages it depends on.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: the five desktop packages are bundled workspaces. `-engine` has `nativePrebuild: true`. `nativePrebuildFile(target, packageName)` takes a per-package file pattern (`senpi_pty.<target>.node` for pi-pty, `senpi-desktop-engine[.exe]` for the engine), and `bundledWorkspacePackageChecks` reports each package's own `prebuildFiles`. A missing host prebuild still only warns.
+- `scripts/release-packages.mjs`: `BUNDLED_INTERNAL_WORKSPACES` lists the five desktop manifests. They are private, never published, and stay off the CalVer stamp. `scripts/registry-packages.mjs` is deliberately unchanged, because a registry entry would make `publish.mjs` publish them.
+- `scripts/build-coding-agent-bundle.mjs`: `@code-yeongyu/senpi-desktop-engine` is external and allowed, like `@earendil-works/pi-pty`. `commonBuildOptions` and `validateExternalImports` are exported, and the build runs only when the file is executed directly, so `build-coding-agent-bundle.test.mjs` can bundle a probe with the real options.
+- `scripts/check-entry-graphs.mjs`: the desktop packages are followed as workspace sources and each `.` entry has a budget that forbids agent, ai, tui, coding-agent, and codemode.
+- `scripts/changes-md-policy.mjs`: `CRATES_SOURCE_PATTERN` matches `crates/senpi-desktop-*/` beside `crates/senpi-pty/`.
+- `scripts/local-release.mjs`: builds and packs the desktop packages in dependency order. `scripts/generate-coding-agent-shrinkwrap.mjs`: `@code-yeongyu/senpi-desktop-` is an internal prefix.
+- `scripts/desktop-package-boundaries.test.mjs` (new): enforces the import direction. Codemode imports no desktop package. Coding-agent imports only `-tool` and `-service`. `-engine` may import `-protocol`; `-service` may import `-protocol`, `-engine`, and `-prelude`; `-tool` may import those plus `-service`. `-protocol` and `-prelude` import no workspace package. No desktop package imports agent, ai, or tui, and exactly five desktop packages exist.
+
+### Why
+
+- Desktop computer use (senpi#2128) adds five flat TS packages. Every script that enumerates workspaces has to agree on them before any of them gains behavior, or publish staging and the bundle break late.
+
+### Why an extension could not handle it
+
+- Build, bundle, publish, and changelog tooling runs before any extension loads.
+
+### Expected merge conflict zones
+
+- MEDIUM: `BUILD_PHASES` in `build-all.mjs`, the `bundledWorkspaces` table and `nativePrebuildFile` in `prepare-senpi-bundled-workspaces.mjs`, the external lists and the new `buildBundle` wrapper in `build-coding-agent-bundle.mjs`, and the `packages` list in `local-release.mjs`.
+- LOW: `WORKSPACE`/`BUDGETS` in `check-entry-graphs.mjs`, `BUNDLED_INTERNAL_WORKSPACES`, `CRATES_SOURCE_PATTERN`, and `internalPackagePrefixes`.
+
+## 2026-09-23 - Claude Code model-support report in the release and nightly gates (senpi#2053)
+
+### What changed
+
+- `scripts/check-claude-code-model-support.mjs` (new): lists Anthropic catalog Claude ids the pinned bundled Claude Code binary does not embed (`--strict` exits 1); `--sdk-currency` exits 1 when `@anthropic-ai/claude-agent-sdk` trails the newest published release.
+- `scripts/release-artifacts.mjs`: `runClaudeCodeModelSupportReport` runs the report (non-strict); `scripts/release.mjs` calls it right after `runGenerateModels`.
+- `.github/workflows/releasability.yml`: `model-catalog-regen` runs the report `--strict` after regeneration; new `claude-sdk-currency` job, wired into `report-failure`. `.github/workflows/ci.yml`: new `claude-executable-windows` job in the `Check and test` fan-in.
+
+### Why
+
+- The release regenerates the catalog from the network after PR CI ran, so a new Claude id can enter there; the log and the nightly gate must say when the pinned Claude Code does not know it (oh-my-openagent#8700).
+
+### Why an extension could not handle it
+
+- Release and CI tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the import list and the artifact-step sequence in `scripts/release.mjs`; `scripts/release-artifacts.mjs` beside `runGenerateImageModels`; the job lists of `ci.yml` and `releasability.yml`.
+
+## 2026-09-22 - point the bundle oauth module map at the renamed provider module (senpi#1989)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the bundled OAuth module map key and its dist path follow the provider rename (`openai-codex` -> `chatgpt-subscription`), matching the renamed `packages/ai/src/auth/oauth/chatgpt-subscription.ts`.
+
+### Why
+
+The bundle resolves OAuth modules by provider id. Leaving the map keyed by the old id while the module file moved would break OAuth module resolution in the bundled binary only - the workspace build would still pass, so the failure would surface after packaging rather than in CI.
+
+### Why an extension could not handle it
+
+The bundle script runs at build time, outside the extension runtime entirely.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs` oauth module map, against any other bundled OAuth provider.
+
 # changes
+
+## 2026-09-22 - Compiled loader probe pins one module generation per source version (senpi#1948)
+
+### What changed
+
+- `compiled-extension-fixtures.ts`: the compiled loader probe now asserts that two `loadExtensions` calls over unchanged source share one module generation (same `moduleToken`, `factoryRuns` [1, 2]), that a second session cwd does not fork it, and that editing an imported source recompiles it (new token, `factoryRuns` back to 1). It no longer calls `clearExtensionCache`, so the freshness leg proves automatic invalidation inside a shipped binary.
+
+### Why
+
+- The probe pinned the previous contract, where every `loadExtensions` call built a new generation. That is the defect senpi#1948 fixes: a module registry cannot evict, so a per-load generation leaked the whole extension graph per session on a shared host.
+
+### Why an extension could not handle it
+
+- The probe runs the compiled loader itself; no extension can observe the generation the host compiles it under.
+
+### Expected merge conflict zones
+
+- The assertion block at the end of `compiledLoaderProbeSource`, whenever upstream changes loader caching.
+
+## 2026-09-21 - run-workspaces gains --parallel with prefixed lanes and shared signal forwarding (senpi#1895)
+
+### What changed
+
+- `scripts/run-workspaces.mjs`: parses `--parallel`; in that mode every selected workspace's script starts at once through `runInParallel`, results keep the selection order, and the exit code is still the first failing lane's.
+- `scripts/package-manager.mjs`: `spawnPackageManager` accepts `prefix` (pipes stdout/stderr and tags every line `[<workspace dir>]`, flushing a trailing partial line) and `fanout`; `createSignalFanout` installs one handler set that forwards SIGINT/SIGTERM/SIGHUP to every attached child's process group and hands the signal back so the driver re-raises it only after every lane closed. Without either option the sequential path is unchanged.
+- `scripts/run-workspaces.parallel.test.mjs`: overlap proven with a file rendezvous (each lane waits for the other's start marker), prefixed output, first-failure exit code, and a two-lane SIGTERM test; `scripts/run-workspaces.test.mjs` now uses `--sequential` as its unknown-flag sample and expects `parallel: false` from `parseArguments`.
+
+### Why
+
+- The root `dev` script used `concurrently`, the one root script that did not go through the package-manager-agnostic driver; running lanes inside the driver keeps `npm run dev` / `bun run dev` / `pnpm run dev` identical and lets the existing process-group signal forwarding cover both lanes (senpi#1895).
+
+### Why an extension could not handle it
+
+- Root scripts run before the engine or any extension is loaded.
+
+### Expected merge conflict zones
+
+- `parseArguments` and the run loop in `run-workspaces.mjs`; the `spawnPackageManager` signature in `package-manager.mjs`.
+
+## 2026-09-21 - Real-session multi-job eval QA (senpi#1908)
+
+### What changed
+
+- `scripts/qa/eval-multi-job.ts` drives sequential eval calls through an AgentSession and real JS/Python kernels, using externally released files instead of timing barriers. It captures request/response pairs, completion notifications, typed reset refusal, queued cancellation and verified teardown.
+- A read-only `--codemode-root` selects the pre-adoption implementation for the expected busy-error baseline; `--out` selects the evidence file.
+
+### Why
+
+- Unit admission tests cannot prove that queued cells, cross-language work and session notification wiring agree in a live kernel.
+
+### Why an extension could not handle it
+
+- This is repository-owned verification of the shipped extension.
+
+### Expected merge conflict zones
+
+- LOW: the new QA driver.
+
+## 2026-09-21 - Queued eval admission QA (senpi#1908)
+
+### What changed
+
+- `scripts/qa/omp-item8.ts` asserts queued admission and targeted dequeue instead of the removed per-language busy error.
+- `scripts/qa/omp-item8-fixture.ts` observes per-run callbacks and forwards cell ids when instrumenting interrupts. Its foreground bridge result assertion now narrows run details explicitly, since list controls return cross-language cell metadata instead.
+
+### Why
+
+- The steering QA must exercise the same queue and callback contract as the shipped eval tool.
+
+### Why an extension could not handle it
+
+- These are repository-owned executable QA scenarios, not extension behavior.
+
+### Expected merge conflict zones
+
+- LOW: the steering QA scenario and its fixture.
+
+## 2026-09-21 - The lock generators allowlist the bumped @google/genai (senpi#1895)
+
+### What changed
+
+- `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs`: the install-script allowlist entry moves from `@google/genai@2.21.0` to `@google/genai@2.23.0`.
+
+### Why
+
+- Both generators refuse a release dependency whose install scripts are not reviewed, and the allowlist is keyed by exact `name@version`, so bumping the dependency without the allowlist entry fails `npm run check` at `check:shrinkwrap`. The reviewed fact is unchanged: the package's `preinstall` is a no-op in the published tarball.
+
+### Why an extension could not handle it
+
+- The allowlist gates what the publish pipeline is permitted to bundle; it runs long before any extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the `allowedInstallScriptPackages` map in both generators, whenever a release dependency with install scripts is bumped.
+
+## 2026-09-19 - A bundled build can start its host again
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` adds `host-lifecycle` to the lazy entry list, so the
+  bundle emits `chunks/host-lifecycle.js` - the name `supervisor-route`'s deferred import
+  actually resolves.
+
+### Why
+
+- `session-worker` is bundled there with splitting off, and it transitively pulls
+  `supervisor-route`, whose `import("./host-lifecycle.js")` therefore stays a relative
+  specifier resolved beside the emitted file. Only the content-hashed copy existed, so a
+  published install answered `Module not found .../chunks/host-lifecycle.js` and could not
+  start a daemon at all.
+
+### Why an extension could not handle it
+
+- The bundle layout is produced by this script; nothing outside the build can decide which
+  modules are emitted as their own entries.
+
+### Expected merge conflict zones
+
+- The `entryPoints` map of the second (`lazyResult`) build, whenever another
+  variable-specifier module is added to it.
+
+## 2026-09-18 - Seed B.AI credentials in development setup
+
+### What changed
+
+- `scripts/devenv-setup.mjs` recognizes `BAI_API_KEY` when seeding the local development environment.
+
+### Why
+
+- The native B.AI provider should work in a fresh development checkout without storing credentials in tracked
+  files.
+
+### Why an extension could not handle it
+
+- Development environment bootstrapping runs before Senpi or its extensions.
+
+### Expected merge conflict zones
+
+- LOW: one entry in the provider-key array.
+
+## 2026-09-18 - Emit the Devin and Cursor lazy modules beside the bundle (senpi#1810)
+
+### What changed
+
+- `build-coding-agent-bundle.mjs`: the second esbuild pass that writes one self-contained file per variable-specifier import now also emits `devin.js`, `cursor.js` (OAuth flows) and `devin-agent.js`, `cursor-agent.js` (provider streams).
+
+### Why
+
+- `packages/ai` reaches its Node-only modules through computed relative imports (`importOAuthModule("./devin.ts")`, `importNodeOnlyApi("./devin-agent.ts")`) so bundlers cannot follow them into browser-reachable code. The bundle compensates by emitting each target as a sibling file next to the chunk that imports it. Four targets were added to the loaders after that list was written, so `dist/bundle/chunks/devin.js` never existed and every Devin or Cursor login died with `Cannot find module`. The other seven OAuth flows and Bedrock were on the list and worked.
+
+### Why an extension could not handle it
+
+- The failure is inside the release bundler's own output layout; nothing at runtime can create a missing chunk.
+
+### Expected merge conflict zones
+
+- LOW: the `entryPoints` map of the `lazyResult` build in `build-coding-agent-bundle.mjs`.
+
+## 2026-09-18 - Guard worker_threads.markAsUncloneable in the bundle prologue (senpi#1806)
+
+### What changed
+
+- `build-coding-agent-bundle.mjs`: the esbuild banner every emitted file starts with now reads `node:worker_threads` and installs a no-op `markAsUncloneable` when the runtime has none.
+
+### Why
+
+- `undici@8.10.2` instantiates `CacheStorage` at module init, and that constructor calls `webidl.util.markAsUncloneable(this)` — bound unconditionally from `worker_threads.markAsUncloneable`, a Node >= 23 API. Bun 1.3.x has no such export, so the first `require("undici")` threw and every published senpi from `2026.9.17-3` failed to boot there, TUI and headless alike. senpi never uses `caches`; the crash was undici's own init. The banner is the one place guaranteed to run before any bundled module in every chunk, including `session-worker.js`.
+
+### Why an extension could not handle it
+
+- Extensions load after the engine has already imported undici. Only the bundle prologue runs early enough.
+
+### Expected merge conflict zones
+
+- LOW: the `banner` constant in `build-coding-agent-bundle.mjs`.
+
+## 2026-09-17 - Compiled binaries carry the build epoch and short sha (#1782)
+
+### What changed
+
+- `build-binaries.sh`: every `bun build --compile` invocation gets `--define SENPI_BUILD_EPOCH=<unix(commit date)>` and `--define SENPI_BUILD_SHA7=<sha[:7]>`, derived from the commit being built.
+
+### Why
+
+Two hosts that speak the same protocol still need a way to say which one is NEWER, and a CalVer string cannot separate two builds of the same day. The epoch is that ordinal: a successor hands off only when its epoch is strictly greater and the launch profile matches. A binary built without the defines reports no ordinal at all, which reads as "uncomparable" - it attaches, and it never initiates a handoff.
+
+### Why an extension could not handle it
+
+An extension runs inside a session; both of these are process-level surfaces that exist before any session does - the module barrel a client imports to decide what to do with a host it found, and the compile step that stamps the binary. Neither is reachable from extension code.
+
+### Expected merge conflict zones
+
+Upstream edits to the same export list, and upstream edits to the `bun build --compile` argument list in the release script.
+
+
+
+### What changed
+
+`scripts/build-binaries.sh` passes `--define SENPI_BUILD_EPOCH=<unix(commit date)>` and `--define SENPI_BUILD_SHA7=<sha[:7]>` to every `bun build --compile` invocation, derived from the commit being built.
+
+### Why
+
+Two hosts that speak the same protocol still need a way to say which is NEWER, and a CalVer version string cannot answer that for two builds of the same day. The epoch is that ordinal: a successor hands off only when its epoch is strictly greater and the launch profile matches. A binary built without the defines reports no ordinal at all, which reads as "uncomparable" - it attaches, and it never initiates a handoff.
+
+## 2026-09-17 - Keep ws's native accelerators out of the bundle
+
+### What changed
+
+- `build-coding-agent-bundle.mjs`: `bufferutil` and `utf-8-validate` are esbuild externals and members of `allowedExternalPackages`.
+
+### Why
+
+- `ws` requires those two when they are present. Their loader is `node-gyp-build`, which resolves its binding through a computed require that esbuild cannot follow; the import survives as an external named `<runtime>` and `validateExternalImports` rejects the build. They are optional accelerators with a pure-JS fallback, so they belong outside the bundle next to the other native dependencies.
+
+### Why an extension could not handle it
+
+- This is the release bundler's own external policy. Nothing outside the build script decides which packages esbuild may leave unresolved.
+
+### Expected merge conflict zones
+
+- LOW: the `external` array and the `allowedExternalPackages` set in `build-coding-agent-bundle.mjs`.
+
+## 2026-09-17 - Publish a bundled workspace's assets (senpi#1800)
+
+### What changed
+
+- `prepare-senpi-bundled-workspaces.mjs`: `shouldCopyWorkspaceFile` now copies `assets` and `assets/**` alongside `dist` and `native`; `@earendil-works/pi-agent-core` declares its two tree-sitter grammars in `requiredFiles`, so `assertSenpiPackedWorkspaceFiles` fails the release when they are missing.
+
+### Why
+
+- `pi-agent-core`'s `grammar-assets.js` embeds `import("../../../../../assets/tree-sitter/<name>.wasm", { with: { type: "file" } })`, which Bun's compiler must resolve at compile time. The staged copy omitted `assets/`, so the published tarball pointed outside itself and every `publish-platform` build in the consuming repo failed with `Could not resolve`.
+
+### Expected merge conflict zones
+
+- LOW: the `bundledWorkspaces` entry for pi-agent-core and the `shouldCopyWorkspaceFile` allowlist.
+
+## 2026-09-17 - Keep the Bun-only reaper bindings out of the release bundle (senpi#1782)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `bun:ffi` joins `bun:sqlite` in `external` and in `allowedExternalPackages`, so esbuild leaves the specifier unresolved instead of failing the build, and the external-import audit still refuses any specifier that is not on that list.
+
+### Why
+
+- The socket host's child reaper loads its `waitid`/`waitpid` bindings through `await import("bun:ffi")` behind a runtime gate (`loadChildReaperSyscalls` returns undefined on Node and win32 before the specifier is reached). The bundler cannot resolve a Bun builtin, so the shipped bundle build failed the moment the reaper landed beside it; externalizing the specifier is the same treatment the runtime-guarded `bun:sqlite` lock adapter already gets.
+
+### Why an extension could not handle it
+
+- Bundling runs in the build, before any runtime or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the `allowedExternalPackages` set and the `external` array in `build-coding-agent-bundle.mjs`.
+
+## 2026-09-17 - Smoke the bundled entry under custom exec arguments (senpi#1781)
+
+### What changed
+
+- `scripts/node-bundle-smoke.test.ts`: a scenario per runtime launches the bundle with a profiler flag and asserts the agent ran (it rejects the unknown model) instead of failing to resolve its own entry.
+
+### Why
+
+- The bundle inlines `cli-main`, so the sibling the respawn path used to resolve does not exist; nothing covered that path until it broke.
+
+### Why an extension could not handle it
+
+- Packaging and process-structure coverage runs before any runtime exists.
+
+### Expected merge conflict zones
+
+- LOW: the scenario list in `node-bundle-smoke.test.ts`.
+
+## 2026-09-17 - Smoke the shipped bundle under both runtimes (senpi#1781)
+
+### What changed
+
+- `scripts/node-bundle-smoke.test.ts` runs as a runtime matrix (node and bun) over the bundle it builds: `--version` equals the package version, `--help` exits 0, an external TypeScript extension in a temp directory is loaded with `--extension` and its flag appears in help, and an RPC `--multi-session` host opens, reports state for, and closes a session.
+- `scripts/AGENTS.md` documents `build-coding-agent-bundle.mjs` as a build entry point and its ordering rule.
+
+### Why
+
+- The bundle is now produced by the package build and shipped, so its runtime behavior needs coverage on both runtimes rather than a single node smoke.
+
+### Why an extension could not handle it
+
+- Build and packaging scripts run before any runtime or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the scenario list in `node-bundle-smoke.test.ts`.
+
+## 2026-09-16 - Verify and externalize the grammar engine's assets (#1685)
+
+### What changed
+
+- `scripts/prepare-bun-compile-assets.mjs`: `verifyTreeSitterGrammarAssets` checks every artifact named by the vendored provenance file against its recorded SHA-256 and fails asset preparation with a machine code when one is missing or drifted; `main` runs it alongside the imagegen skill staging.
+- `scripts/check-browser-smoke.mjs`: the browser bundles externalize the single lazy dynamic import of the Node-only grammar engine and fail if that module still enters the treeshake graph.
+- `scripts/qa/omp-item1.ts`: the compiled-parity and packaging runners now require the gate receipt's WASM answer and its declared candidate dependencies to agree, instead of asserting the pre-decision heuristic-only selection.
+
+### Why
+
+- The compiled binary embeds the grammar through a file import, so a missing or drifted artifact must fail the build rather than ship a binary that silently falls back to the heuristic scan. The browser smoke would otherwise hard-error on the engine's `node:fs`/`node:module` reads, which no browser bundle ever executes.
+
+### Why an extension could not handle it
+
+- Asset preparation and bundle guards run in the build, before any runtime exists.
+
+### Expected merge conflict zones
+
+- LOW: `main()` in `scripts/prepare-bun-compile-assets.mjs` and the plugin list in `scripts/check-browser-smoke.mjs`.
+
+## 2026-09-16 - Type-check the qa scripts
+
+### What changed
+
+- `scripts/tsconfig.json` extends the root config and includes `qa/**/*.ts` (plus `packages/**/*.d.ts` so ambient modules the qa import graph needs stay in program).
+- `scripts/qa/read-summary-build.d.mts`, `scripts/qa/read-summary-packaging.d.mts`, `scripts/qa/read-summary-parity.d.mts`, and `scripts/qa/omp-item2-plugin.d.mts` type the local `.mjs` modules those runners import.
+
+### Why
+
+- Untyped `.mjs` imports were TS7016, and a scripts-only program dropped coding-agent ambient declarations (`*.md`, `bun:sqlite`, turndown), so qa type errors never failed `tsc`.
+
+### Why an extension could not handle it
+
+- Script tsconfig membership and `.d.mts` shims are compile-time inputs; extensions cannot enroll files in `tsc`.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/tsconfig.json` include list; the four `scripts/qa/*.d.mts` shims if those `.mjs` export surfaces change.
 
 ## 2026-09-15 - Follow the current publishing compile recipe (#1639)
 
@@ -969,3 +1527,46 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - LOW: the public-package lists and the classic-API import in these three scripts; upstream edits them only for new release tooling.
 
+## fix(rpc): a bundled build can start its daemon again
+
+### Why
+
+A published install could not start a host at all. `senpi host ensure` answered
+`RPC socket host exited with code 0 before answering get_protocol_info`, and the
+daemon's stderr log was empty because it is truncated on each generation start.
+
+### What
+
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: bundled builds re-enter the CLI
+  through `--internal-rpc-host-supervisor` instead of spawning the neighbour named
+  host-lifecycle, which is an emitted chunk in that layout and returns without listening.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: `resolveCliMainPath()` takes the
+  entry from the package's declared `bin` rather than counting `..`, which reaches the
+  package root once this module is bundled.
+- `packages/coding-agent/test/rpc-host-ensure.test.ts`: regression covering the bundled
+  layout; the pinned unbundled contract is unchanged.
+
+### Verification
+
+Unbundled 36/36. Bundled: ensure -> `start` (socket present), ensure -> `reuse` (same
+pid), stop -> `stopped` (socket removed).
+
+## fix(bundle): file-attribute imports resolve to absolute paths (senpi#2028)
+
+### What changed
+
+- `scripts/bundle-file-attribute-plugin.mjs` (new, moved out of `scripts/build-coding-agent-bundle.mjs`): each `import(..., { with: { type: "file" } })` becomes a wrapper module that imports the esbuild-emitted asset path and exports `fileURLToPath(new URL(emittedPath, import.meta.url))`.
+- `scripts/bundle-file-attribute-plugin.test.mjs`: builds a fixture in both release layouts (split main bundle, unsplit sibling build) and runs it on Node and Bun from an unrelated cwd.
+- `scripts/node-bundle-smoke.test.ts`: the bundled CLI lists the `gpt-image-gen` skill with an existing path and prints no missing-skill notice, and the bundle keeps exactly the two `claudeCodeVersion="X.Y.Z"` declarations (the `anthropic-messages-*` chunk and `session-worker.js`) that a downstream installer rewrites in place.
+
+### Why
+
+- esbuild's `file` loader inlines a path relative to the output file that contains it (`"../SKILL-<hash>.md"`), while Bun's native import returns an absolute path. Consumers `existsSync` the value, which resolved against `process.cwd()`, so every published install printed `[imagegen] bundled skill not found` and dropped the skill.
+
+### Why an extension could not handle it
+
+- Release bundling is build tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- NONE: fork-only scripts.

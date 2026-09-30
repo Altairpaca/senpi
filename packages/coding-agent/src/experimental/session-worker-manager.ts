@@ -79,7 +79,6 @@ interface WorkerServiceSubscription {
 	readonly worker: WorkerRecord;
 	readonly scope: WorkerOperationScope;
 	readonly listener: (update: ServiceProviderUpdate, context: Context) => void | Promise<void>;
-	deliveryTail: Promise<void>;
 }
 
 interface PendingLaunch {
@@ -109,6 +108,19 @@ export class SessionWorkerManager {
 	readonly #pendingDemand = new Map<string, PendingDemand>();
 	readonly #pendingOperations = new Map<string, PendingWorkerOperation>();
 	readonly #serviceSubscriptions = new Map<string, WorkerServiceSubscription>();
+	/**
+	 * One FIFO per attachment scope for everything a worker emits to that client.
+	 *
+	 * A worker writes the provider updates of an operation and that operation's response to the
+	 * same control channel, in that order. Forwarding them on two independent paths - updates
+	 * through a delivery chain that awaits the client socket write, responses settled the moment
+	 * they arrive - lets a response overtake updates whenever the peer is slow to drain: the
+	 * presentation client then sees the prompt resolve before the run's trailing `run_end`
+	 * update and tears its transcript subscription down on top of the undelivered events
+	 * (senpi#1676). Routing both through this chain keeps the client's view in the worker's
+	 * emission order, so a slow drain delays the response instead of dropping events.
+	 */
+	readonly #scopeDelivery = new Map<string, Promise<void>>();
 	readonly #removeListener: () => void;
 	readonly #onWorkerCountChanged: ((count: number) => void) | undefined;
 	#discoveryPeers?: Set<string>;
@@ -254,7 +266,6 @@ export class SessionWorkerManager {
 				worker,
 				scope,
 				listener: (update, updateContext) => publish(control.subscriptionId, update, updateContext),
-				deliveryTail: Promise.resolve(),
 			});
 			addedSubscriptionKey = key;
 		}
@@ -612,14 +623,25 @@ export class SessionWorkerManager {
 		this.#pendingOperations.delete(response.requestId);
 		pending.cleanup();
 		if (response.type === "operation_error") {
-			pending.reject(
+			const error =
 				response.code === undefined
 					? new Error(`Session worker operation failed: ${response.message}`)
-					: new ServerError(response.code, response.message),
-			);
+					: new ServerError(response.code, response.message);
+			this.#forwardInScopeOrder(pending.scope, () => pending.reject(error));
 		} else {
-			pending.resolve(response.result);
+			const result = response.result;
+			this.#forwardInScopeOrder(pending.scope, () => pending.resolve(result));
 		}
+	}
+
+	/** Append one worker-to-client forward to the attachment's ordered delivery chain. */
+	#forwardInScopeOrder(scope: WorkerOperationScope, forward: () => void | Promise<void>): void {
+		const key = scopeDeliveryKey(scope);
+		const delivered = (this.#scopeDelivery.get(key) ?? Promise.resolve()).then(forward).catch(() => {});
+		this.#scopeDelivery.set(key, delivered);
+		void delivered.finally(() => {
+			if (this.#scopeDelivery.get(key) === delivered) this.#scopeDelivery.delete(key);
+		});
 	}
 
 	#handleServiceEvent(
@@ -646,7 +668,7 @@ export class SessionWorkerManager {
 		} catch {
 			return;
 		}
-		entry.deliveryTail = entry.deliveryTail.then(() => entry.listener(parsed, TODO_CONTEXT)).catch(() => {});
+		this.#forwardInScopeOrder(scope, () => entry.listener(parsed, TODO_CONTEXT));
 	}
 
 	#recordReadyWorker(peerId: string, message: Extract<SessionWorkerEvent, { type: "worker_ready" }>): void {
@@ -849,8 +871,12 @@ function sameScope(left: WorkerOperationScope, right: WorkerOperationScope): boo
 	return left.serverConnectionId === right.serverConnectionId && left.attachmentId === right.attachmentId;
 }
 
+function scopeDeliveryKey(scope: WorkerOperationScope): string {
+	return `${scope.serverConnectionId}\0${scope.attachmentId}`;
+}
+
 function scopedServiceSubscriptionKey(scope: WorkerOperationScope, subscriptionId: string): string {
-	return `${scope.serverConnectionId}\0${scope.attachmentId}\0${subscriptionId}`;
+	return `${scopeDeliveryKey(scope)}\0${subscriptionId}`;
 }
 
 function abortError(signal: AbortSignal): Error {

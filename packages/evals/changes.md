@@ -1,6 +1,44 @@
 # changes — evals
 
+## 2026-09-21 - Migrate the eval harness to Vitest 5 (senpi#1895)
+
+### What changed
+
+- `packages/evals/package.json` uses Vitest and V8 coverage 5.0.1, matching the other workspaces.
+- The root manifest overrides vitest-evals 0.17.0's Vitest peer edge to 5.0.1.
+
+### Why
+
+- Bun's hoisted linker resolves Vitest from the harness's root location. Splitting evals onto Vitest 4 while the harness reads Vitest 5 causes incompatible TaskMeta types.
+- The explicit npm override accepts the harness's older declared peer range only with runtime and TypeScript compatibility verification. The Bun install layout stays hoisted.
+
+### Why an extension could not handle it
+
+- The package manager resolves development tools before extensions load.
+
+### Expected merge conflict zones
+
+- The development dependency pins in `packages/evals/package.json`.
+
 Tracker for `packages/evals` divergence from upstream `badlogic/pi-mono`.
+
+## Refresh the evals dependency pins (2026-09-21)
+
+### What changed
+
+- `packages/evals/package.json`: `vitest-evals` 0.16.1 -> 0.17.0 and `@types/node` 26.2.0 -> 26.6.2.
+
+### Why
+
+- The eval harness pins are fork-owned and move to the newest release in the same minor that satisfies `min-release-age=2`.
+
+### Why an extension could not handle it
+
+- Manifest dependency versions are resolved by the package manager before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the dependency version block, on every upstream release bump.
 
 ## Evals manifest re-diverges from upstream dcd4619 (2026-08-25)
 

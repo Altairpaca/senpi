@@ -1,5 +1,7 @@
 import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import {
 	type LiveWorkerPaths,
@@ -7,13 +9,27 @@ import {
 	SessionPathReservations,
 } from "./session-path-reservations.ts";
 import {
+	frozenProfile,
 	type OpenRpcSession,
 	type RpcSessionEntry,
 	type RpcSessionLaunchProfile,
+	type RpcSessionOpenOptions,
 	RpcSessionRegistryError,
+	type RpcSessionRow,
+	sessionIdentity,
 } from "./session-registry.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import { SESSION_WORKER_LIMITS, type SessionWriteGrant } from "./session-worker-protocol.ts";
+
+type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
+
+export interface WorkerSessionRegistryOptions {
+	readonly configuration: CliRuntimeConfiguration;
+	readonly closeGraceMs: number;
+	readonly now: () => number;
+	/** Production builds the real worker; a caller may supply one to drive a lifecycle path deterministically. */
+	readonly createWorker?: (callbacks: SessionWorkerCallbacks) => SessionWorkerClient;
+}
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
 export class WorkerSessionRegistry {
@@ -23,38 +39,69 @@ export class WorkerSessionRegistry {
 	readonly closeGraceMs: number;
 	private readonly now: () => number;
 
-	private readonly options: { configuration: CliRuntimeConfiguration; closeGraceMs: number; now: () => number };
+	private readonly options: WorkerSessionRegistryOptions;
+	private readonly createWorker: (callbacks: SessionWorkerCallbacks) => SessionWorkerClient;
 
-	constructor(options: { configuration: CliRuntimeConfiguration; closeGraceMs: number; now: () => number }) {
+	constructor(options: WorkerSessionRegistryOptions) {
 		this.options = options;
 		this.closeGraceMs = options.closeGraceMs;
 		this.now = options.now;
+		this.createWorker = options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks));
 	}
 
 	get size(): number {
 		return this.entries.size;
 	}
 
-	async openSession(profile: RpcSessionLaunchProfile): Promise<OpenRpcSession> {
+	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		if (!isAbsolute(profile.cwd) || (profile.sessionPath !== undefined && !isAbsolute(profile.sessionPath)))
 			throw new RpcSessionRegistryError("invalid_path");
+		// Same contract as RpcSessionRegistry.openSession (#1951), on the registry the multi-session
+		// host actually instantiates (#2010). Both checks run SYNCHRONOUSLY before the first await:
+		// the format check so a bad id is refused with its own code instead of surfacing as the
+		// worker's death (`session_closing`), and the collision scan so a concurrent open naming the
+		// same durable id finds this one already recorded. Re-opening the SAME path is an attach,
+		// not a collision: the id is the file's own.
+		const requestedDurableId = profile.durableSessionId;
+		if (requestedDurableId !== undefined) {
+			try {
+				assertValidSessionId(requestedDurableId);
+			} catch (cause) {
+				throw new RpcSessionRegistryError("invalid_session_id", String(cause));
+			}
+			const requestedKey = profile.sessionPath ? this.knownReservationKey(profile.sessionPath) : undefined;
+			for (const entry of this.entries.values()) {
+				if (entry.state === "closed") continue;
+				if (entry.durableSessionId !== requestedDurableId) continue;
+				if (requestedKey !== undefined && entry.reservationKey === requestedKey) continue;
+				throw new RpcSessionRegistryError("session_id_in_use");
+			}
+		}
 		if (profile.sessionPath) {
 			const key = this.knownReservationKey(profile.sessionPath);
 			const owner = key ? this.reservations.owner(key) : undefined;
-			if (key && owner) return this.attach(owner, key);
+			if (key && owner) return this.attach(owner, key, options, profile.promptSurface);
 		}
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
+		const storedProfile = frozenProfile(profile);
 		const entry: RpcSessionEntry = {
 			state: "opening",
 			scope: new ProviderScope(),
-			profile: Object.freeze({ ...profile }),
+			profile: storedProfile,
+			...sessionIdentity(storedProfile),
 			cwd: profile.cwd,
 			attachments: 1,
+			retainOnDisconnect: options?.retainOnDisconnect === true,
 			lastCommandAt: this.now(),
 			lifecycleMutex: Promise.resolve(),
+			// Recorded before the first await so the collision scan above sees an open still being
+			// built; `snapshot.state.sessionId` overwrites it with the authoritative value after
+			// commit, which on a resume is the header's id rather than the requested one.
+			...(requestedDurableId !== undefined ? { durableSessionId: requestedDurableId } : {}),
 		};
-		const worker = new SessionWorkerClient({
+		let workerFailure: string | undefined;
+		const worker = this.createWorker({
 			reserve: (path) => this.reserve(handle, path),
 			reconcile: (livePaths) => this.reconcile(handle, livePaths),
 			exit: () => {
@@ -65,6 +112,10 @@ export class WorkerSessionRegistry {
 				entry.closeResolve?.();
 			},
 			failure: (error) => {
+				// The open below only learns that its entry left `opening`, never why. Without this the
+				// caller is told `session_closing` - a path whose owner is tearing down - for a worker
+				// that died, and the actual reason reaches stderr alone (#1953).
+				workerFailure = error;
 				entry.state = "quarantined";
 				process.stderr.write(`senpi rpc session ${handle} quarantined: ${error}\n`);
 			},
@@ -75,7 +126,7 @@ export class WorkerSessionRegistry {
 			const path = await worker.prepare(this.options.configuration, profile);
 			const owner = this.reservations.owner(path);
 			if (owner) {
-				const attached = this.attach(owner, path);
+				const attached = await this.attach(owner, path, options, profile.promptSurface);
 				entry.state = "quarantined";
 				worker.quarantine();
 				return attached;
@@ -86,7 +137,10 @@ export class WorkerSessionRegistry {
 			entry.requestedPathKey = profile.sessionPath ? path : undefined;
 			entry.sessionPath = path;
 			const snapshot = await worker.commit();
-			if (entry.state !== "opening") throw new RpcSessionRegistryError("session_closing");
+			if (entry.state !== "opening")
+				throw workerFailure === undefined
+					? new RpcSessionRegistryError("session_closing")
+					: new RpcSessionRegistryError("open_failed", workerFailure);
 			entry.durableSessionId = snapshot.state.sessionId;
 			entry.cwd = snapshot.state.cwd;
 			entry.state = "open";
@@ -116,7 +170,7 @@ export class WorkerSessionRegistry {
 		return entry;
 	}
 
-	beginClose(handle: string, onRole?: (finalizer: boolean) => void): RpcSessionEntry {
+	beginClose(handle: string, onRole?: (finalizer: boolean) => void, options?: { detach?: boolean }): RpcSessionEntry {
 		const entry = this.entries.get(handle);
 		if (!entry) throw new RpcSessionRegistryError("unknown_session");
 		if (entry.state === "closing" || entry.state === "quarantined") {
@@ -126,6 +180,12 @@ export class WorkerSessionRegistry {
 		if (entry.state !== "open" && entry.state !== "opening") throw new RpcSessionRegistryError("unknown_session");
 		entry.attachments--;
 		if (entry.attachments > 0) return entry;
+		// A retained session answers a client's detach by staying open at zero
+		// attachments; only an explicit close or eviction reaches the worker.
+		if (options?.detach && entry.retainOnDisconnect) {
+			entry.attachments = 0;
+			return entry;
+		}
 		entry.state = "closing";
 		entry.closeCompletion = new Promise((resolve) => {
 			entry.closeResolve = resolve;
@@ -158,14 +218,7 @@ export class WorkerSessionRegistry {
 		if (timer) clearTimeout(timer);
 	}
 
-	list(): Array<{
-		sessionId: string;
-		durableSessionId?: string;
-		sessionPath?: string;
-		cwd: string;
-		name?: string;
-		status: Exclude<RpcSessionEntry["state"], "quarantined">;
-	}> {
+	list(): RpcSessionRow[] {
 		return [...this.entries].map(([sessionId, entry]) => {
 			const state = entry.worker?.snapshot?.state;
 			return {
@@ -174,6 +227,10 @@ export class WorkerSessionRegistry {
 				sessionPath: state?.sessionFile ?? entry.sessionPath,
 				cwd: state?.cwd ?? entry.cwd,
 				name: state?.sessionName,
+				kind: entry.kind,
+				context: entry.context,
+				// A closing entry has already released its last attachment; never publish that as negative.
+				attachments: Math.max(0, entry.attachments),
 				status: entry.state === "quarantined" ? "closing" : entry.state,
 			};
 		});
@@ -197,12 +254,25 @@ export class WorkerSessionRegistry {
 		return undefined;
 	}
 
-	private attach(owner: string, path: string): OpenRpcSession {
+	private async attach(
+		owner: string,
+		path: string,
+		options?: RpcSessionOpenOptions,
+		promptSurface?: PromptSurface,
+	): Promise<OpenRpcSession> {
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
+		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
+		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
+			entry.profile = frozenProfile({ ...entry.profile, promptSurface });
+			await entry.worker.setPromptSurface(promptSurface);
+		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
+		// Retention is a property of the live session: any attach may ask for it, and
+		// no attach may revoke it for the clients that already rely on it.
+		if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;
 		entry.lastCommandAt = this.now();
 		return { ...result, attached: true };
 	}

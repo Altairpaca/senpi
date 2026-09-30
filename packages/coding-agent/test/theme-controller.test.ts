@@ -1,8 +1,17 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { TUI } from "@earendil-works/pi-tui";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getAgentDir } from "../src/config.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { initTheme, type TerminalTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { InteractiveThemeController } from "../src/modes/interactive/theme/theme-controller.ts";
+
+beforeEach(() => {
+	// A controller seeds its terminal theme from the persisted detection hint, so each case has to
+	// start without one or it inherits whatever the previous case detected.
+	rmSync(join(getAgentDir(), "cache", "terminal-theme.json"), { force: true });
+});
 
 function createUi() {
 	const queryTerminalBackgroundColor = vi.fn();
@@ -43,6 +52,7 @@ function createController(ui: TUI, getSettingsManager: () => SettingsManager, in
 afterEach(() => {
 	initTheme("dark");
 	vi.unstubAllEnvs();
+	vi.useRealTimers();
 });
 
 describe("InteractiveThemeController", () => {
@@ -71,6 +81,7 @@ describe("InteractiveThemeController", () => {
 
 		expect(theme.name).toBe("dark");
 		await controller.applyFromSettings();
+		await controller.settleBackgroundDetection();
 		expect(theme.name).toBe("light");
 		expect(setTerminalColorSchemeNotifications).toHaveBeenCalledWith(true);
 
@@ -101,6 +112,7 @@ describe("InteractiveThemeController", () => {
 
 		expect(theme.name).toBe("dark");
 		await controller.setThemeSetting("light/dark");
+		await controller.settleBackgroundDetection();
 		expect(theme.name).toBe("light");
 		expect(queryTerminalColorScheme).toHaveBeenCalledOnce();
 	});
@@ -137,5 +149,110 @@ describe("InteractiveThemeController", () => {
 		manager = secondManager;
 		await controller.applyFromSettings();
 		expect(theme.name).toBe("dark");
+	});
+});
+
+function unansweredQuery<T>(timeoutMs: number): Promise<T | undefined> {
+	return new Promise((resolve) => {
+		setTimeout(() => resolve(undefined), timeoutMs);
+	});
+}
+
+async function expectApplyFromSettingsDoesNotWait(apply: () => Promise<void>): Promise<void> {
+	let settled = false;
+	void apply().then(() => {
+		settled = true;
+	});
+	await vi.advanceTimersByTimeAsync(0);
+	expect(settled).toBe(true);
+}
+
+describe("InteractiveThemeController startup detection", () => {
+	it("does not wait for an unanswered terminal background query", async () => {
+		vi.useFakeTimers();
+		vi.stubEnv("COLORFGBG", "");
+		const { ui, queryTerminalBackgroundColor } = createUi();
+		queryTerminalBackgroundColor.mockImplementation(({ timeoutMs }: { timeoutMs: number }) =>
+			unansweredQuery(timeoutMs),
+		);
+		const manager = SettingsManager.inMemory({});
+		const controller = createController(ui, () => manager);
+
+		await expectApplyFromSettingsDoesNotWait(() => controller.applyFromSettings());
+
+		expect(queryTerminalBackgroundColor).toHaveBeenCalledOnce();
+		expect(theme.name).toBe("dark");
+		expect(manager.getThemeSetting()).toBeUndefined();
+		controller.dispose();
+	});
+
+	it("seeds the first frame from the persisted terminal theme instead of re-guessing", async () => {
+		// Given: an auto theme, a terminal that never answers, and a remembered light background
+		vi.useFakeTimers();
+		vi.stubEnv("COLORFGBG", "");
+		writeFileSync(
+			join(
+				mkdirSync(join(getAgentDir(), "cache"), { recursive: true }) ?? join(getAgentDir(), "cache"),
+				"terminal-theme.json",
+			),
+			JSON.stringify({ terminalTheme: "light" }),
+		);
+		const { ui, queryTerminalBackgroundColor, queryTerminalColorScheme } = createUi();
+		queryTerminalBackgroundColor.mockImplementation(({ timeoutMs }: { timeoutMs: number }) =>
+			unansweredQuery(timeoutMs),
+		);
+		queryTerminalColorScheme.mockImplementation(({ timeoutMs }: { timeoutMs: number }) => unansweredQuery(timeoutMs));
+		const manager = SettingsManager.inMemory({ theme: "light/dark" });
+		const controller = createController(ui, () => manager);
+
+		// When
+		await expectApplyFromSettingsDoesNotWait(() => controller.applyFromSettings());
+
+		// Then: the remembered background wins over the environment guess, so there is no repaint
+		expect(theme.name).toBe("light");
+		controller.dispose();
+	});
+
+	it("does not wait for an unanswered auto theme query", async () => {
+		vi.useFakeTimers();
+		vi.stubEnv("COLORFGBG", "");
+		const { ui, queryTerminalBackgroundColor, queryTerminalColorScheme, setTerminalColorSchemeNotifications } =
+			createUi();
+		queryTerminalBackgroundColor.mockImplementation(({ timeoutMs }: { timeoutMs: number }) =>
+			unansweredQuery(timeoutMs),
+		);
+		queryTerminalColorScheme.mockImplementation(({ timeoutMs }: { timeoutMs: number }) => unansweredQuery(timeoutMs));
+		const manager = SettingsManager.inMemory({ theme: "light/dark" });
+		const controller = createController(ui, () => manager);
+
+		await expectApplyFromSettingsDoesNotWait(() => controller.applyFromSettings());
+
+		expect(queryTerminalColorScheme).toHaveBeenCalledOnce();
+		expect(setTerminalColorSchemeNotifications).toHaveBeenCalledWith(true);
+		expect(theme.name).toBe("dark");
+		controller.dispose();
+	});
+
+	it("applies a late high-confidence detection after startup has moved on", async () => {
+		vi.useFakeTimers();
+		vi.stubEnv("COLORFGBG", "");
+		const { ui, queryTerminalBackgroundColor } = createUi();
+		const background = Promise.withResolvers<{ r: number; g: number; b: number } | undefined>();
+		queryTerminalBackgroundColor.mockImplementation(() => background.promise);
+		const manager = SettingsManager.inMemory({});
+		const setTheme = vi.spyOn(manager, "setTheme");
+		const controller = createController(ui, () => manager);
+
+		await expectApplyFromSettingsDoesNotWait(() => controller.applyFromSettings());
+		expect(theme.name).toBe("dark");
+		expect(setTheme).not.toHaveBeenCalled();
+
+		background.resolve({ r: 250, g: 250, b: 250 });
+		await controller.settleBackgroundDetection();
+
+		expect(theme.name).toBe("light");
+		expect(setTheme).toHaveBeenCalledWith("light");
+		expect(manager.getThemeSetting()).toBe("light");
+		controller.dispose();
 	});
 });

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import { type CodemodeMemorySettings, memorySettingsSchema, validatedMemorySettings } from "./memory-settings.ts";
 
 export const codemodeSettingsSchema = Type.Object(
 	{
@@ -22,6 +23,7 @@ export const codemodeSettingsSchema = Type.Object(
 		foregroundWindowSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		runBudgetSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		hardLimitSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		maxDetachedCells: Type.Optional(Type.Number({ minimum: 1 })),
 		parallelPoolWidth: Type.Optional(Type.Number({ minimum: 1 })),
 		taskTools: Type.Optional(
 			Type.Object(
@@ -42,6 +44,7 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		statusEvents: Type.Optional(Type.Boolean()),
+		memory: Type.Optional(memorySettingsSchema),
 	},
 	{ additionalProperties: false },
 );
@@ -80,16 +83,21 @@ export interface CodemodeSettings {
 	readonly runBudgetSeconds: number;
 	/** Wall-clock kill deadline for a single cell; bounds detached and bridge-parked cells too. */
 	readonly hardLimitSeconds: number;
+	/** Maximum detached cells across all language kernels. */
+	readonly maxDetachedCells?: number;
 	readonly parallelPoolWidth: number;
 	readonly taskTools?: CodemodeTaskTools;
 	readonly outputSink?: CodemodeOutputSink;
 	readonly statusEvents?: boolean;
+	readonly memory?: CodemodeMemorySettings;
 }
 
 export type ResolvedCodemodeSettings = CodemodeSettings & {
+	readonly maxDetachedCells: number;
 	readonly taskTools: CodemodeTaskTools;
 	readonly outputSink: CodemodeOutputSink;
 	readonly statusEvents: boolean;
+	readonly memory: CodemodeMemorySettings;
 };
 
 export interface LoadCodemodeSettingsOptions {
@@ -129,7 +137,10 @@ export const FOREGROUND_WINDOW_ENVIRONMENT_FLAG = "SENPI_CODEMODE_FOREGROUND_SEC
  */
 export const DEFAULT_RUN_BUDGET_SECONDS = 300;
 
+export const DEFAULT_MAX_DETACHED_CELLS = 15;
+
 export const RUN_BUDGET_ENVIRONMENT_FLAG = "SENPI_CODEMODE_RUN_BUDGET_SECONDS";
+export const MAX_DETACHED_CELLS_ENVIRONMENT_FLAG = "SENPI_CODEMODE_MAX_DETACHED_CELLS";
 
 // OMP settings-schema.ts:3211-3299 has language/path settings only; eval.ts:427
 // defaults timeout to 30s, and codemode pins concurrency-bridge.ts:30 width to 4.
@@ -144,6 +155,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 	foregroundWindowSeconds: DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	runBudgetSeconds: DEFAULT_RUN_BUDGET_SECONDS,
 	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
+	maxDetachedCells: DEFAULT_MAX_DETACHED_CELLS,
 	parallelPoolWidth: 4,
 	taskTools: {
 		task: "task",
@@ -154,6 +166,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		maxColumns: 768,
 	},
 	statusEvents: true,
+	memory: validatedMemorySettings(undefined).settings,
 };
 
 const languageEnvironmentFlags = {
@@ -163,7 +176,7 @@ const languageEnvironmentFlags = {
 	jl: "SENPI_CODEMODE_JL",
 } as const;
 
-type Environment = Readonly<Record<string, string | undefined>>;
+export type Environment = Readonly<Record<string, string | undefined>>;
 
 export async function loadCodemodeSettings(options: LoadCodemodeSettingsOptions = {}): Promise<LoadedCodemodeSettings> {
 	const cwd = options.cwd ?? process.cwd();
@@ -207,6 +220,15 @@ export function resolveRunBudgetSeconds(settings: CodemodeSettings, env: Environ
 	return positiveSecondsOverride(env[RUN_BUDGET_ENVIRONMENT_FLAG]) ?? settings.runBudgetSeconds;
 }
 
+/** Uses the same positive-integer environment parsing as the run budget. */
+export function resolveMaxDetachedCells(settings: CodemodeSettings, env: Environment = process.env): number {
+	return (
+		positiveSecondsOverride(env[MAX_DETACHED_CELLS_ENVIRONMENT_FLAG]) ??
+		settings.maxDetachedCells ??
+		DEFAULT_MAX_DETACHED_CELLS
+	);
+}
+
 function positiveSecondsOverride(value: string | undefined): number | undefined {
 	if (value === undefined) return undefined;
 	const parsed = Number.parseInt(value, 10);
@@ -235,7 +257,7 @@ async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
 		};
 	}
 
-	return { settings: mergeSettings(parsed), source: path, warnings: [] };
+	return { settings: mergeSettings(parsed), source: path, warnings: validatedMemorySettings(parsed.memory).warnings };
 }
 
 function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
@@ -250,6 +272,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 		foregroundWindowSeconds: input.foregroundWindowSeconds ?? defaultCodemodeSettings.foregroundWindowSeconds,
 		runBudgetSeconds: input.runBudgetSeconds ?? defaultCodemodeSettings.runBudgetSeconds,
 		hardLimitSeconds: input.hardLimitSeconds ?? defaultCodemodeSettings.hardLimitSeconds,
+		maxDetachedCells: input.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS,
 		parallelPoolWidth: input.parallelPoolWidth ?? defaultCodemodeSettings.parallelPoolWidth,
 		taskTools: {
 			task: input.taskTools?.task ?? defaultCodemodeSettings.taskTools.task,
@@ -260,6 +283,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			maxColumns: input.outputSink?.maxColumns ?? defaultCodemodeSettings.outputSink.maxColumns,
 		},
 		statusEvents: input.statusEvents ?? defaultCodemodeSettings.statusEvents,
+		memory: validatedMemorySettings(input.memory).settings,
 	};
 }
 

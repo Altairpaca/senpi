@@ -1,6 +1,7 @@
-import type { KernelToolErrorCode } from "./kernel-tools-errors.ts";
+import type { ExtensionKernelTools, KernelToolInvokeOptions, KernelToolInvokeScope } from "@code-yeongyu/senpi";
+import type { KernelToolErrorCode, KernelToolHostDenial, KernelToolHostDenialReason } from "./kernel-tools-errors.ts";
 
-export type { KernelToolErrorCode };
+export type { KernelToolErrorCode, KernelToolHostDenial, KernelToolHostDenialReason };
 
 export type KernelToolDescriptor = {
 	readonly name: string;
@@ -31,9 +32,22 @@ export type KernelToolsDescribeResult = {
 	readonly results: readonly KernelToolsDescribeEntry[];
 };
 
+/** Host declaration (#1731); aliases so this package cannot drift from `@code-yeongyu/senpi`. */
+export type KernelToolsHostScope = NonNullable<KernelToolInvokeScope["tools"]>;
+export type KernelToolsInvokeScope = KernelToolInvokeScope;
+export type KernelToolsInvokeOptions = KernelToolInvokeOptions;
+
+/** Stable capability markers a consumer gates on before sending an option this runtime may not know. */
+export type KernelToolsCapabilities = ExtensionKernelTools["capabilities"];
+
+export const KERNEL_TOOLS_CAPABILITIES = Object.freeze({
+	invokeScope: true as const,
+}) satisfies ExtensionKernelTools["capabilities"];
+
 export type KernelToolsCapability = {
+	readonly capabilities: ExtensionKernelTools["capabilities"];
 	describe(names: readonly string[]): Promise<KernelToolsDescribeResult>;
-	invoke(request: KernelToolsInvokeRequest, signal?: AbortSignal): Promise<unknown>;
+	invoke: ExtensionKernelTools["invoke"];
 };
 
 export const KERNEL_TOOLS_UNSUPPORTED = {

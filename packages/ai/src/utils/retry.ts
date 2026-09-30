@@ -1,6 +1,21 @@
 import type { AssistantMessage } from "../types.ts";
 import { FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR } from "./empty-response-errors.ts";
 
+// A provider's support request id is opaque hex like `C6FD:AB660:AEB5548:6ABA4D81`.
+// It can contain `429` or `500`, which message classifiers read as HTTP statuses,
+// so every id is rendered behind this marker and removed before classification.
+export const PROVIDER_REQUEST_ID_MARKER = "request id:";
+
+const REQUEST_ID_SEGMENT = /request id: [^\s,;)]+/gi;
+
+export function formatProviderRequestId(label: string, id: string): string {
+	return `${label} ${PROVIDER_REQUEST_ID_MARKER} ${id}`;
+}
+
+export function stripProviderRequestIds(text: string): string {
+	return text.replace(REQUEST_ID_SEGMENT, PROVIDER_REQUEST_ID_MARKER);
+}
+
 function buildProviderErrorPattern(patterns: readonly string[]): RegExp {
 	return new RegExp(patterns.join("|"), "i");
 }
@@ -9,7 +24,30 @@ function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+/**
+ * OpenAI hard account-quota exhaustion (senpi#1969). The wire evidence is a 429
+ * whose body is `{"type":"usage_limit_reached","message":"The usage limit has
+ * been reached"}`; `usage_not_included` is the sibling entitlement code. The
+ * account cannot serve more requests until its quota resets or its plan changes,
+ * so every consumer treats the family as terminal. Declared once here and
+ * consumed by both the non-retryable pattern below and the structured terminal
+ * provider codes in `retry-profile/classifiers.ts`, so the two lists cannot
+ * drift.
+ */
+export const USAGE_LIMIT_EXHAUSTION = {
+	/** Structured error codes, as extracted into `providerCodes` failure facts. */
+	codes: ["usage_limit_reached", "usage_not_included"],
+	/** Message markers: the codes appear verbatim in bodies, plus the sentence. */
+	markers: ["usage_limit_reached", "usage_not_included", "usage limit has been reached"],
+} as const;
+
+/**
+ * Account quota, budget, credit, and billing exhaustion: the account cannot
+ * serve more requests until the user pays or the quota resets. Shared by the
+ * terminal classifier below and the fallback circuit breaker, so both recognise
+ * the same exhaustion wording.
+ */
+const QUOTA_EXHAUSTION_PATTERNS = [
 	// OpenCode Go/free-tier limits returned as 429 JSON error types by OpenCode's
 	// Zen API. These are subscription/account limits, not transient throttles.
 	"GoUsageLimitError",
@@ -33,6 +71,22 @@ const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// spend limit, so same-model retries can never recover it.
 	"credits_required",
 	"credits are required",
+
+	// OpenAI hard account-quota exhaustion (senpi#1969): the 429 body carries
+	// `usage_limit_reached` / "The usage limit has been reached", and the account
+	// stays dead until its quota resets — every same-account retry is guaranteed
+	// to fail, so the failure is terminal, not rate-limited.
+	...USAGE_LIMIT_EXHAUSTION.markers,
+] as const;
+
+const QUOTA_EXHAUSTION_PATTERN = buildProviderErrorPattern(QUOTA_EXHAUSTION_PATTERNS);
+
+export function isQuotaExhaustionMessage(errorMessage: string | undefined): boolean {
+	return errorMessage !== undefined && QUOTA_EXHAUSTION_PATTERN.test(stripProviderRequestIds(errorMessage));
+}
+
+const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+	...QUOTA_EXHAUSTION_PATTERNS,
 
 	// Request-shape rejections: the provider refused the payload we built, not the
 	// work it describes. Gateways wrap these in whatever status they like — the
@@ -136,6 +190,15 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// backtick keeps the pattern on Anthropic's pairing-error template.
 	"was found without a corresponding `",
 
+	// Replayed-reasoning rejections, e.g. "the reasoning_details at position 1271 entry 0
+	// must not contain streaming index". A gateway refuses an input reasoning entry that
+	// still carries the streaming-assembly `index`, and because the merged array is
+	// persisted in the assistant block, every later request in that conversation is
+	// rejected identically. The openai-completions request builder strips the field before
+	// the retried request is built, so the retry sends a valid payload; same reasoning as
+	// the pairing class above, and the retry stays bounded by the policy's attempt budget.
+	"must not contain streaming index",
+
 	// An empty stop or tool_use-without-tool-call on a model whose reasoning had already streamed
 	// live. The stream-level wrapper (pi-agent-core empty-assistant-recovery) cannot replay such an
 	// attempt, so it ends the turn with these exact texts for the turn retry to re-request; the
@@ -143,13 +206,18 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	escapeRegExp(FORWARDED_EMPTY_RESPONSE_ERROR),
 	escapeRegExp(FORWARDED_EMPTY_TOOL_USE_ERROR),
 
-	// Agent-loop throughput watchdog verdict (#1739). The upstream is answering,
-	// just uselessly slowly, so the turn must move - to the fallback chain, not
-	// through the same-model budget (see isProviderStreamThroughputDegradedError).
-	"provider stream throughput degraded",
-
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
+
+	// Claude subscription per-request rejection that names no policy reason:
+	// `{"type":"error","error":{"type":"forbidden","message":"Request not allowed"}}`
+	// (senpi#2376). The same credential answered neighbouring requests with 200 and
+	// the burst ended by itself, so a bounded same-model retry recovers where an
+	// immediate fallback hop stranded the session. Anchored on the exact `forbidden`
+	// type plus the reason-less message, in either field order, so permission_error
+	// and forbidden rejections that carry a reason stay terminal.
+	'"type"\\s*:\\s*"forbidden"\\s*,\\s*"message"\\s*:\\s*"Request not allowed\\.?"',
+	'"message"\\s*:\\s*"Request not allowed\\.?"\\s*,\\s*"type"\\s*:\\s*"forbidden"',
 
 	// Claude Agent SDK session.json lock contention. A second stream/resume
 	// hits proper-lockfile while the previous subprocess still holds the file.
@@ -454,7 +522,7 @@ export interface ProviderStallDescriptionOptions {
 	recovery?: "no-fallback-configured" | "chain-exhausted";
 }
 
-function formatStallDuration(timeoutMs: number): string {
+export function formatStallDuration(timeoutMs: number): string {
 	if (timeoutMs < 1000) return `${timeoutMs}ms`;
 	if (timeoutMs < 120_000) return `${Math.round(timeoutMs / 100) / 10}s`;
 	return `${Math.round(timeoutMs / 6000) / 10}m`;
@@ -500,25 +568,6 @@ export function describeProviderStallForUser(
 }
 
 /**
- * Matches the agent-loop throughput watchdog verdict ("Provider stream
- * throughput degraded: <n> tok/s over <n>s (floor <n> tok/s)", optionally
- * followed by the settings hint). Deliberately NOT part of the stall pattern
- * above: a stall is silence, which a same-model retry can genuinely fix, while
- * a degraded stream is an upstream that answers too slowly for replaying the
- * same payload to help. Callers use this to skip the same-model retry budget
- * and consult the fallback chain immediately.
- */
-const PROVIDER_STREAM_THROUGHPUT_DEGRADED_ERROR_PATTERN =
-	/^Provider stream throughput degraded: \d+(?:\.\d+)? tok\/s over \d+(?:\.\d+)?s \(floor \d+(?:\.\d+)? tok\/s\)(?: \([^)]*\))?$/i;
-
-export function isProviderStreamThroughputDegradedError(message: AssistantMessage): boolean {
-	return (
-		message.stopReason === "error" &&
-		PROVIDER_STREAM_THROUGHPUT_DEGRADED_ERROR_PATTERN.test(message.errorMessage ?? "")
-	);
-}
-
-/**
  * Classifies timeout failures that originate from the provider stream or its
  * transport. Transport timeouts may arrive as `aborted`; stream watchdog
  * failures are ordinary error responses.
@@ -550,7 +599,8 @@ export function isRetryableErrorMessage(errorMessage: string): boolean {
  */
 export function classifyErrorMessage(errorMessage: string): "non-retryable" | "retryable" | "unknown" {
 	if (!errorMessage) return "unknown";
-	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage)) return "non-retryable";
-	if (RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage)) return "retryable";
+	const text = stripProviderRequestIds(errorMessage);
+	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(text)) return "non-retryable";
+	if (RETRYABLE_PROVIDER_ERROR_PATTERN.test(text)) return "retryable";
 	return "unknown";
 }

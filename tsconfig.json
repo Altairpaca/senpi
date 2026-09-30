@@ -141,7 +141,8 @@
 		"packages/*/test/**/*",
 		"packages/session-backends/*/src/**/*",
 		"packages/session-backends/*/test/**/*",
-		"packages/coding-agent/examples/**/*"
+		"packages/coding-agent/examples/**/*",
+		"scripts/qa/**/*.ts"
 	],
 	"exclude": [
 		"**/dist/**",

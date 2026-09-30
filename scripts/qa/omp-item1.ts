@@ -94,12 +94,10 @@ try {
 			const gatePath = process.env.OMP_READ_GATE;
 			if (!gatePath) throw new Error("OMP_READ_GATE is required");
 			const gate = JSON.parse(readFileSync(gatePath, "utf8"));
-			if (
-				gate.gate !== "OQ1" ||
-				gate.decision.wasm_allowed !== false ||
-				gate.decision.candidate_dependencies.length !== 0
-			)
-				throw new Error("This runner requires the frozen heuristic-only OQ1 selection");
+			// #1685: an approved grammar engine must declare the dependencies it ships, and a
+			// refusal must declare none. Either way the receipt, not a default, states the decision.
+			if (gate.gate !== "OQ1" || gate.decision.wasm_allowed !== gate.decision.candidate_dependencies.length > 0)
+				throw new Error("Gate receipt must state the approved candidate dependencies");
 			const directory = dirname(out);
 			const ceiling = gate.decision.max_embedded_delta_bytes;
 			let result:

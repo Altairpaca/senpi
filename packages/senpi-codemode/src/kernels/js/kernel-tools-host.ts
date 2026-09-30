@@ -2,7 +2,12 @@ import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/prot
 import { generateCorrelationId } from "../../bridge/protocol.ts";
 import { RESERVED_AGENT_TOOL } from "../../bridge/reserved.ts";
 import { kernelToolError } from "./kernel-tools-errors.ts";
-import type { KernelToolsDescribeResult, KernelToolsInvokeRequest } from "./kernel-tools-types.ts";
+import type {
+	KernelToolsDescribeResult,
+	KernelToolsInvokeOptions,
+	KernelToolsInvokeRequest,
+	KernelToolsInvokeScope,
+} from "./kernel-tools-types.ts";
 
 type KernelToolReply = Extract<
 	KernelToHostMessage,
@@ -59,7 +64,13 @@ export class KernelToolHostPump {
 		return { results: reply.results as KernelToolsDescribeResult["results"] };
 	}
 
-	async invoke(request: KernelToolsInvokeRequest, signal?: AbortSignal): Promise<unknown> {
+	/**
+	 * `options` is the caller's abort signal, or `{ signal?, scope? }` where `scope` bounds the host
+	 * tools the invoked closure may reach during this call only. A call without a scope posts exactly
+	 * the message it always did (#1731).
+	 */
+	async invoke(request: KernelToolsInvokeRequest, options?: AbortSignal | KernelToolsInvokeOptions): Promise<unknown> {
+		const { signal, scope } = normalizeInvokeOptions(options);
 		this.events.dispatchEvent(new Event("nestedInvoke"));
 		const reply = await this.#request(
 			{
@@ -70,13 +81,14 @@ export class KernelToolHostPump {
 				definition_revision: request.definition_revision,
 				args: request.args,
 				call_id: request.call_id,
+				...wireScope(scope),
 			},
 			signal,
 		);
 		if (reply.type !== "kernel-tool-invoke-reply") {
 			throw kernelToolError("kernel_tool_failed", "unexpected kernel-tool invoke reply");
 		}
-		if (!reply.ok) throw kernelToolError(codeOf(reply.error.code), reply.error.message);
+		if (!reply.ok) throw kernelToolError(codeOf(reply.error.code), reply.error.message, reply.error.details);
 		return reply.value;
 	}
 
@@ -112,6 +124,33 @@ export class KernelToolHostPump {
 	}
 }
 
+/**
+ * The scope as the protocol carries it: own copies of the caller's lists, and nothing at all when the
+ * caller named no host tools, so an unscoped call posts exactly the message it always did.
+ */
+function wireScope(scope?: KernelToolsInvokeScope): { scope?: { tools: { allow?: string[]; deny?: string[] } } } {
+	const tools = scope?.tools;
+	if (tools === undefined) return {};
+	if (tools.allow === undefined && tools.deny === undefined) return {};
+	return {
+		scope: {
+			tools: {
+				...(tools.allow === undefined ? {} : { allow: [...tools.allow] }),
+				...(tools.deny === undefined ? {} : { deny: [...tools.deny] }),
+			},
+		},
+	};
+}
+
+function normalizeInvokeOptions(options?: AbortSignal | KernelToolsInvokeOptions): KernelToolsInvokeOptions {
+	if (options === undefined) return {};
+	return isAbortSignal(options) ? { signal: options } : options;
+}
+
+function isAbortSignal(options: AbortSignal | KernelToolsInvokeOptions): options is AbortSignal {
+	return options instanceof AbortSignal || "aborted" in options;
+}
+
 function codeOf(
 	code: string | undefined,
 ):
@@ -119,12 +158,14 @@ function codeOf(
 	| "kernel_tool_stale"
 	| "kernel_tool_missing"
 	| "kernel_tool_recursion"
+	| "kernel_tool_host_denied"
 	| "tools_unavailable"
 	| "invalid_tool_definition" {
 	if (
 		code === "kernel_tool_stale" ||
 		code === "kernel_tool_missing" ||
 		code === "kernel_tool_recursion" ||
+		code === "kernel_tool_host_denied" ||
 		code === "tools_unavailable" ||
 		code === "invalid_tool_definition"
 	) {

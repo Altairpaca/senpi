@@ -19,6 +19,7 @@ on:
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
       - 'scripts/probe-native-grep*.mjs'
+      - 'scripts/ci/**'
   push:
     branches: [main]
     paths:
@@ -30,6 +31,7 @@ on:
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
       - 'scripts/probe-native-grep*.mjs'
+      - 'scripts/ci/**'
 
 permissions:
   contents: read
@@ -49,7 +51,7 @@ jobs:
     name: Build ${{ matrix.artifact }}
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.best_effort }}
-    timeout-minutes: 45
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -130,6 +132,7 @@ jobs:
       NODE_PLATFORM: ${{ matrix.node_platform }}
       NODE_ARCH: ${{ matrix.node_arch }}
       NAPI_CROSS_COMPILE: ${{ matrix.napi_cross_compile }}
+      LINUX_ROW: ${{ matrix.linux }}
 
     steps:
       - name: Checkout
@@ -153,6 +156,12 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add "${RUST_TARGET}"
+
+      # One cache per target: rows sharing a runner OS would otherwise restore each other's target dir.
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: native-${{ matrix.rust_target }}
 
       - name: Setup Zig and cargo-zigbuild
         if: ${{ matrix.linux }}

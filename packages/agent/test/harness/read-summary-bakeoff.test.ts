@@ -217,10 +217,23 @@ describe("read-summary bake-off gate (#1639)", () => {
 		const result = selectEngine(input);
 		expect(result).toMatchObject({ engine: "raw", reason: "invalid_token_counts" });
 	});
-	it("keeps a losing heuristic raw pending WASM owner approval", () => {
+	it("records a measured shortfall as a decided raw outcome (#1685)", () => {
 		const input = changeSamples((sample) => ({ ...sample, candidateTokens: 56 }));
 		const result = selectEngine(input);
-		expect(result).toMatchObject({ engine: "raw", status: "pending_owner", reason: "wasm_candidate_pending_owner" });
+		expect(result).toMatchObject({
+			engine: "raw",
+			status: "conclusive",
+			reason: "candidate_below_reference_threshold",
+		});
+	});
+
+	it("names the grammar engine when the grammar candidate wins (#1685)", () => {
+		const result = selectEngine({ ...measurement(), engine: "wasm" });
+		expect(result).toMatchObject({ engine: "wasm", status: "conclusive", reason: "safe_quality_threshold_met" });
+		expect(selectEngine({ ...changeSamples((s) => ({ ...s, candidateTokens: 56 })), engine: "wasm" })).toMatchObject({
+			engine: "raw",
+			reason: "candidate_below_reference_threshold",
+		});
 	});
 	it("accepts safe positive savings when reference has zero savings", () => {
 		const input = changeSamples((sample) => ({ ...sample, ompTokens: 100, candidateTokens: 99 }));
@@ -230,6 +243,6 @@ describe("read-summary bake-off gate (#1639)", () => {
 	it("does not adopt a candidate with no positive total saving", () => {
 		const input = changeSamples((sample) => ({ ...sample, candidateTokens: 100 }));
 		const result = selectEngine(input);
-		expect(result).toMatchObject({ engine: "raw", reason: "wasm_candidate_pending_owner" });
+		expect(result).toMatchObject({ engine: "raw", reason: "candidate_below_reference_threshold" });
 	});
 });

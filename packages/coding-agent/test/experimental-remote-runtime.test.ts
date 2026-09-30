@@ -5,6 +5,7 @@ import { type Context, createFacetHost, defineFacet, defineService } from "@eare
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Client, ServerError as ClientServerError } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
+import { Server } from "@earendil-works/pi-server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ExampleFacetService } from "../examples/plugins/pi-example-plugin/src/contract.ts";
 import { runClient } from "../src/experimental/client.ts";
@@ -32,6 +33,13 @@ const directories = new Set<string>();
 const fauxWorkerEntryUrl = new URL("fixtures/faux-session-worker.ts", import.meta.url);
 const realSpawnInternalProcess = processRuntime.spawnInternalProcess;
 const sessionWorkerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
+/**
+ * Event-loop turns the injected stalled peer takes to drain one write. It is a turn budget, not a
+ * wall-clock sleep: the injected write is released the moment another frame overtakes it (the
+ * regression this pins), and the budget only lets the run finish once nothing overtakes it.
+ */
+const STALLED_PEER_TURNS = 20_000;
+type ServerByteConnection = Parameters<Server["accept"]>[0];
 const SecondPluginService = defineService<{ read(context: Context): Promise<string> }>("test.second-plugin");
 let agentDir: string;
 
@@ -624,6 +632,107 @@ describe("experimental durable server composition", () => {
 				"run_end",
 			]),
 		);
+		// The run's terminal event closes the stream the committed entry belongs to.
+		expect(eventTypes.indexOf("run_end")).toBeGreaterThan(eventTypes.lastIndexOf("entry_added"));
+	});
+
+	test("streams every prompt event before the prompt response when the peer stalls", async ({ onTestFinished }) => {
+		const spawn = vi
+			.spyOn(processRuntime, "spawnInternalProcess")
+			.mockImplementation((role, args, options) =>
+				realSpawnInternalProcess(
+					role,
+					args,
+					role === "session-worker" ? { ...options, entryUrl: fauxWorkerEntryUrl } : options,
+				),
+			);
+		onTestFinished(() => spawn.mockRestore());
+
+		// Fault injection: the presentation peer stops draining while the run's trailing update is on
+		// the wire. The write is released either when the peer catches up (a bounded number of
+		// event-loop turns, no wall clock) or the moment a response frame overtakes it - the exact
+		// shape of senpi#1676, where the prompt response reached the client first and the client tore
+		// its transcript subscription down on top of the undelivered `run_end`.
+		const frames: { kind: "service_update" | "response" | "other"; text: string }[] = [];
+		let releaseStalledWrite: (() => void) | undefined;
+		const realAccept = Server.prototype.accept;
+		const accept = vi.spyOn(Server.prototype, "accept").mockImplementation(function (
+			this: Server,
+			connection: ServerByteConnection,
+		) {
+			const send = connection.send.bind(connection);
+			connection.send = async (chunk: Uint8Array): Promise<void> => {
+				const text = Buffer.from(chunk).toString("utf8");
+				const kind = text.includes("service_update")
+					? "service_update"
+					: text.includes("response")
+						? "response"
+						: "other";
+				if (kind === "response") releaseStalledWrite?.();
+				if (releaseStalledWrite === undefined && kind === "service_update" && text.includes("run_end")) {
+					await new Promise<void>((resolve) => {
+						let released = false;
+						releaseStalledWrite = () => {
+							if (released) return;
+							released = true;
+							resolve();
+						};
+						let turns = 0;
+						const drain = (): void => {
+							if (released) return;
+							if (turns++ >= STALLED_PEER_TURNS) {
+								releaseStalledWrite?.();
+								return;
+							}
+							setImmediate(drain);
+						};
+						setImmediate(drain);
+					});
+				}
+				// Recorded where the frame reaches the transport, so the list is the peer's receive
+				// order rather than the order the server started writing.
+				frames.push({ kind, text });
+				await send(chunk);
+			};
+			return realAccept.call(this, connection);
+		});
+		onTestFinished(() => {
+			releaseStalledWrite?.();
+			accept.mockRestore();
+		});
+
+		const { directory } = await makeServer();
+		const eventTypes: string[] = [];
+		const result = await runClient(
+			{ command: "client", sessionId: "demo-1", prompt: "question" },
+			{
+				directory,
+				onEvent(event) {
+					eventTypes.push(event.type);
+				},
+			},
+		);
+
+		expect(result).toMatchObject({ kind: "prompted", text: "deterministic remote answer" });
+		expect(eventTypes).toEqual(
+			expect.arrayContaining([
+				"run_start",
+				"message_start",
+				"message_update",
+				"message_end",
+				"entry_added",
+				"run_end",
+			]),
+		);
+		expect(eventTypes.indexOf("run_end")).toBeGreaterThan(eventTypes.lastIndexOf("entry_added"));
+		const runEndFrame = frames.findIndex(
+			(frame) => frame.kind === "service_update" && frame.text.includes("run_end"),
+		);
+		const promptResponseFrame = frames.findIndex(
+			(frame) => frame.kind === "response" && frame.text.includes("operationId"),
+		);
+		expect(runEndFrame).toBeGreaterThanOrEqual(0);
+		expect(promptResponseFrame).toBeGreaterThan(runEndFrame);
 	});
 
 	test("replicates terminal operation state after consecutive prompts", async ({ onTestFinished }) => {

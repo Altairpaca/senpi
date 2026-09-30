@@ -1,7 +1,8 @@
 import {
 	type AssistantMessage,
-	describeProviderStallForUser,
+	describeProviderFailureForUser,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
+	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
 import { formatDuration } from "../../../utils/duration.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
@@ -20,6 +21,7 @@ export type AssistantRenderDescriptor = {
 
 type AssistantRenderDescriptorOptions = {
 	readonly expanded: boolean;
+	readonly providerErrorOwned?: boolean;
 	readonly hiddenThinkingLabel: string;
 	readonly hideThinkingBlock: boolean;
 	/** Per-run click overrides of `hideThinkingBlock`, keyed by thinking run index. */
@@ -143,21 +145,26 @@ export function createAssistantRenderDescriptors(
 			break;
 		case "aborted": {
 			if (options.hasToolCalls) break;
+			if (options.providerErrorOwned) break;
 			const abortMessage =
 				message.errorMessage && message.errorMessage !== "Request was aborted"
-					? message.errorMessage
+					? stripTurnRetrySuppressionPrefix(message.errorMessage)
 					: "Operation aborted";
 			addError(abortMessage);
 			break;
 		}
 		case "error": {
 			if (options.hasToolCalls) break;
+			if (options.providerErrorOwned) break;
 			if (message.diagnostics?.some((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)) break;
-			// A provider-stream stall carries the watchdog's own wording so the retry
-			// engine can classify it; the transcript gets the plain-language version,
-			// without the recovery advice a retry still in flight would contradict.
-			const stall = describeProviderStallForUser(message.errorMessage);
-			addError(stall ?? `Error: ${message.errorMessage || "Unknown error"}`);
+			// A provider-stream stall or transport drop carries the classifier's own
+			// wording so the retry engine can read it; the transcript gets the
+			// plain-language version, without the recovery advice a retry still in
+			// flight would contradict, and never the internal replay marker.
+			const described = describeProviderFailureForUser(message.errorMessage);
+			addError(
+				described ?? `Error: ${stripTurnRetrySuppressionPrefix(message.errorMessage ?? "") || "Unknown error"}`,
+			);
 			break;
 		}
 		case "pending":

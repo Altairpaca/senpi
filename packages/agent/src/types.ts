@@ -8,6 +8,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderDiagnostic,
 	SimpleStreamOptions,
 	TextContent,
 	ThinkingSelection,
@@ -16,7 +17,6 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
-import type { StreamThroughputOptions } from "./stream-throughput-watchdog.ts";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
@@ -179,15 +179,6 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Unset or non-positive values disable the start bound.
 	 */
 	streamStartTimeoutMs?: number;
-
-	/**
-	 * Sustained-throughput guard for an in-progress stream. The start bound stops
-	 * applying once the first event arrives and the idle bound is re-armed by
-	 * every event, so a provider answering at a uselessly low rate trips neither.
-	 * Unset fields fall back to the shipped defaults (floor 8 units/s measured
-	 * over 20s after a 5s grace); a floor or window of `0` disables the guard.
-	 */
-	streamThroughput?: StreamThroughputOptions;
 
 	/** Provider/SDK timeout override for only the first request in this loop invocation. */
 	initialRequestTimeoutMs?: number;
@@ -421,6 +412,8 @@ export interface AgentState {
 	/** Available tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
+	/** Tool list the provider receives when it differs from `tools`; see {@link AgentContext.declaredTools}. */
+	declaredTools?: AgentTool<any>[];
 	/** Conversation transcript. Assigning a new array copies the top-level array. */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
@@ -436,6 +429,8 @@ export interface AgentState {
 	readonly pendingToolCalls: ReadonlySet<string>;
 	/** Error message from the most recent failed or aborted assistant turn, if any. */
 	readonly errorMessage?: string;
+	/** Structured provider failure family of the turn that set `errorMessage`, when its provider adapter supplied one. */
+	readonly providerDiagnostic?: ProviderDiagnostic;
 }
 
 /** Final or partial result produced by a tool. */
@@ -504,6 +499,12 @@ export interface AgentContext {
 	messages: AgentMessage[];
 	/** Tools available for this run. */
 	tools?: AgentTool<any>[];
+	/**
+	 * Superset of `tools` to declare to the provider, keeping the tool prefix byte-stable while the
+	 * callable set changes (senpi#2095). Honored only for models that accept an allowed-tools
+	 * restriction; tool calls still resolve against `tools` alone.
+	 */
+	declaredTools?: AgentTool<any>[];
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Provider-scoped compaction opt-out for the `claude-sdk-oauth` main lane.
+ * Provider-scoped compaction opt-out for the `anthropic-subscription` main lane.
  *
  * That lane keeps one resident SDK session per senpi session, and the Claude
  * Agent SDK runs its own native auto-compaction over that session's transcript.
@@ -17,15 +17,17 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
+import type { SessionEntry } from "../../../session-manager.ts";
 import type { CompactionReason } from "../../types.ts";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../claude-sdk-oauth/account-management.ts";
-import type { ClaudeSdkOauthProviderSettings } from "../claude-sdk-oauth/settings.ts";
-import { loadClaudeSdkOauthProviderSettingsFromDisk } from "../claude-sdk-oauth/settings.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../anthropic-subscription/account-management.ts";
+import { isColdSeedOverflowMessage } from "../anthropic-subscription/cold-seed-budget.ts";
+import type { AnthropicSubscriptionProviderSettings } from "../anthropic-subscription/settings.ts";
+import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "../anthropic-subscription/settings.ts";
 
 /** Custom session entry type carrying a mirrored SDK compaction boundary. */
-export const CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE = "claude-sdk-oauth-compact";
+export const ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE = "claude-sdk-oauth-compact";
 /** Assistant-message diagnostic the lane uses to transport a received boundary. */
-export const CLAUDE_SDK_OAUTH_COMPACT_BOUNDARY_DIAGNOSTIC = "claude_sdk_oauth_compact_boundary";
+export const ANTHROPIC_SUBSCRIPTION_COMPACT_BOUNDARY_DIAGNOSTIC = "claude_sdk_oauth_compact_boundary";
 /**
  * Reason reported when senpi declines to compact an SDK-native lane. The
  * `external-owner` rejection cause carries the machine-readable policy while
@@ -54,6 +56,8 @@ export interface LaneContext {
 	 * stand-down no longer applies even with a resident SDK session.
 	 */
 	getCompactionSettings?: () => { model?: string };
+	/** Branch reader (present on the real ExtensionContext) used to find a failed cold-seed turn. */
+	sessionManager?: { getBranch(): readonly SessionEntry[] };
 }
 
 export interface CompactionLanePolicy {
@@ -70,6 +74,23 @@ export interface CompactBoundaryEntry {
 	compactMetadata: Record<string, unknown>;
 }
 
+/**
+ * A cold-seed re-sends senpi's own history as one message the SDK cannot compact,
+ * so an overflow of that request is senpi's to recover. Only the newest assistant
+ * since the latest compaction counts: an already-compacted failure is settled.
+ */
+function lastTurnIsColdSeedOverflow(context: LaneContext): boolean {
+	const branch = context.sessionManager?.getBranch() ?? [];
+	for (let index = branch.length - 1; index >= 0; index -= 1) {
+		const entry = branch[index];
+		if (entry?.type === "compaction") return false;
+		if (entry?.type === "message" && entry.message.role === "assistant") {
+			return isColdSeedOverflowMessage(entry.message);
+		}
+	}
+	return false;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -79,7 +100,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * callers that already know the resolved resume mode never touch disk.
  */
 export function isSdkNativeCompactionLane(input: SdkNativeLaneInput): boolean {
-	if (input.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+	if (input.model?.provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) return false;
 	return input.resumeMode !== "off";
 }
 
@@ -89,15 +110,15 @@ export function isSdkNativeCompactionLane(input: SdkNativeLaneInput): boolean {
  * other providers never pay for the lookup.
  */
 export function createCompactionLanePolicy(
-	options: { loadProviderSettings?: (cwd: string) => ClaudeSdkOauthProviderSettings } = {},
+	options: { loadProviderSettings?: (cwd: string) => AnthropicSubscriptionProviderSettings } = {},
 ): CompactionLanePolicy {
-	const load = options.loadProviderSettings ?? loadClaudeSdkOauthProviderSettingsFromDisk;
+	const load = options.loadProviderSettings ?? loadAnthropicSubscriptionProviderSettingsFromDisk;
 	let cachedCwd: string | undefined;
 	let cachedResumeMode: string | undefined;
 	// Declared as a local so `ownsCompaction` never depends on `this`: the policy object
 	// is routinely destructured at call sites, which would otherwise unbind the receiver.
 	const disablesSenpiCompaction = (context: LaneContext): boolean => {
-		if (context.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+		if (context.model?.provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) return false;
 		// A configured compaction model override makes senpi own summarization
 		// for the lane, so the SDK-native stand-down no longer applies. This is
 		// the escape hatch for lanes whose SDK never fires native compaction.
@@ -123,7 +144,8 @@ export function createCompactionLanePolicy(
 		ownsCompaction(context: LaneContext, reason: CompactionReason): boolean {
 			// Manual is senpi-owned everywhere: it is the user's explicit recovery path,
 			// including on an SDK-native lane whose automatic routes stay SDK-owned.
-			return reason === "manual" || !disablesSenpiCompaction(context);
+			if (reason === "manual" || !disablesSenpiCompaction(context)) return true;
+			return reason === "overflow" && lastTurnIsColdSeedOverflow(context);
 		},
 	};
 }
@@ -152,7 +174,7 @@ function messageDiagnostics(message: AgentMessage): readonly AssistantMessageDia
 export function collectCompactBoundaryEntries(message: AgentMessage): CompactBoundaryEntry[] {
 	const entries: CompactBoundaryEntry[] = [];
 	for (const diagnostic of messageDiagnostics(message)) {
-		if (diagnostic.type !== CLAUDE_SDK_OAUTH_COMPACT_BOUNDARY_DIAGNOSTIC) continue;
+		if (diagnostic.type !== ANTHROPIC_SUBSCRIPTION_COMPACT_BOUNDARY_DIAGNOSTIC) continue;
 		const entry = parseCompactBoundaryMessage(diagnostic.details);
 		if (entry) entries.push(entry);
 	}

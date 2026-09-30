@@ -62,6 +62,7 @@ export type ThemeColor =
 	| "mdHeading"
 	| "mdLink"
 	| "mdLinkUrl"
+	| "skillMention"
 	| "mdCode"
 	| "mdCodeBlock"
 	| "mdCodeBlockBorder"
@@ -99,7 +100,7 @@ export type ThemeBg =
 	| "toolSuccessBg"
 	| "toolErrorBg";
 
-type OptionalThemeColor = "scrollbarTrack" | "scrollbarThumb" | "thinkingMax" | "searchMatchText";
+type OptionalThemeColor = "scrollbarTrack" | "scrollbarThumb" | "thinkingMax" | "searchMatchText" | "skillMention";
 type OptionalThemeBg = "searchMatchBg";
 
 type ColorMode = "truecolor" | "256color";
@@ -265,6 +266,7 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 	thinkingMax: ColorValue;
 	searchMatchBg: ColorValue;
 	searchMatchText: ColorValue;
+	skillMention: ColorValue;
 } {
 	return {
 		...colors,
@@ -273,6 +275,7 @@ function withThemeColorFallbacks(colors: ThemeJson["colors"]): ThemeJson["colors
 		thinkingMax: colors.thinkingMax ?? colors.thinkingXhigh,
 		searchMatchBg: colors.searchMatchBg ?? colors.selectedBg,
 		searchMatchText: colors.searchMatchText ?? colors.text,
+		skillMention: colors.skillMention ?? colors.mdLink,
 	};
 }
 
@@ -307,6 +310,7 @@ export class Theme {
 			scrollbarThumb: fgColors.scrollbarThumb ?? fgColors.text,
 			thinkingMax: fgColors.thinkingMax ?? fgColors.thinkingXhigh,
 			searchMatchText: fgColors.searchMatchText ?? fgColors.text,
+			skillMention: fgColors.skillMention ?? fgColors.mdLink,
 		};
 		for (const [key, value] of Object.entries(colors) as [ThemeColor, string | number][]) {
 			this.fgColors.set(key, fgAnsi(value, mode));
@@ -1212,6 +1216,7 @@ export function getSelectListTheme(): SelectListTheme {
 export function getEditorTheme(): EditorTheme {
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
+		mention: (text: string) => theme.fg("skillMention", `\x1b[1m${text}\x1b[22m`),
 		selectList: getSelectListTheme(),
 	};
 }
