@@ -21,6 +21,7 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- Meta (Muse subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
 - Kimi Code (kimi.com / kimi.ai subscriptions)
 - Radius
@@ -101,7 +102,7 @@ If your Claude Pro/Max subscription usage through `anthropic-subscription` feels
 
    | Lane | Effective TTL | Who controls it | How to override |
    | --- | --- | --- | --- |
-   | Anthropic Subscription (subscription, `anthropic-subscription`) | 5 minutes | The Claude SDK owns `cache_control`; senpi cannot add breakpoints. senpi reports 300s for this lane so cache-aware budgets (tool waits, goal timing) size themselves correctly. | Not overridable |
+   | Anthropic Subscription (subscription, `anthropic-subscription`) | 1 hour on a Claude subscription; 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch is set | Claude Code owns `cache_control` and picks the TTL; senpi cannot add breakpoints. senpi reports the same TTL so cache-aware budgets (tool waits, goal timing) size themselves correctly. A subscription past its usage limits drops to 5 minutes, which senpi cannot observe. | `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` or `1h` (also read by Claude Code) |
    | Direct Anthropic API (`api.anthropic.com`, API key or OAuth token) | 5 minutes | senpi follows Anthropic's default cache retention. Opting into 1h retention makes cache writes cost 2x base input vs 1.25x for 5m ([Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)). | Set `PI_CACHE_RETENTION=long` or `cacheRetention: "long"` |
    | Anthropic-compatible providers (kimi-coding, fireworks, gateways) | 5 minutes | The 1h TTL is gated on the native `api.anthropic.com` base URL, so these lanes stay short. | `cacheRetention` |
 
@@ -119,6 +120,11 @@ If your Claude Pro/Max subscription usage through `anthropic-subscription` feels
 
 - Run `/login xai`, then select **Use a subscription**
 - `XAI_API_KEY` remains available through **Use an API key**
+
+### Meta (Muse subscription)
+
+- Run `/login meta`, then select **Sign in with Meta** to use Muse Spark models with your Muse subscription; the Model API key is refreshed automatically
+- `META_API_KEY` remains available through **Use an API key**
 
 ### OpenRouter
 
@@ -282,6 +288,8 @@ senpi
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`) | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
+| Meta | `META_API_KEY` | `meta` |
+| TypeSafe ([classifier models](models.md#classifier-models)) | `TYPESAFE_API_KEY` | `typesafe` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | OpenGateway | `OPENGATEWAY_API_KEY` | `opengateway` |

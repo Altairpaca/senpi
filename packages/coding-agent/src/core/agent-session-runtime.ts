@@ -3,6 +3,7 @@ import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
+import type { PromptSurface } from "./dynamic-prompt/types.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type {
 	ProjectTrustContext,
@@ -50,6 +51,8 @@ export interface AgentSessionLaunchProfile {
 	 * ignores the host-wide `--auto-title-sessions` / appMode default.
 	 */
 	autoTitle?: boolean;
+	/** Per-session prompt surface (`open_session.promptSurface`); absent means `SENPI_PROMPT_SURFACE`. */
+	promptSurface?: PromptSurface;
 }
 
 /**
@@ -108,7 +111,7 @@ export class AgentSessionRuntime {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
-	private readonly _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	private _launchProfile?: Readonly<AgentSessionLaunchProfile>;
 	// Advertises the open session file to other processes so none moves it out from under this one.
 	private _sessionHold?: SessionHold;
 	private _removedOnReplacement?: {
@@ -162,6 +165,12 @@ export class AgentSessionRuntime {
 
 	get launchProfile(): Readonly<AgentSessionLaunchProfile> | undefined {
 		return this._launchProfile;
+	}
+
+	/** Moves this session to another prompt surface; later replacements (switch, new, fork) keep it. */
+	setPromptSurface(surface: PromptSurface): void {
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), promptSurface: surface });
+		this._session.setPromptSurface(surface);
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -359,7 +368,7 @@ export class AgentSessionRuntime {
 		);
 		if (options?.setup) {
 			await options.setup(this.session.sessionManager);
-			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
+			this.session.refreshContext();
 		}
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
@@ -417,9 +426,7 @@ export class AgentSessionRuntime {
 			}
 
 			if (!existsSync(currentSessionFile)) {
-				throw new Error(
-					"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
-				);
+				throw new Error("This session has not been saved yet. Send a message before cloning or forking it.");
 			}
 			const sessionManager = SessionManager.open(currentSessionFile, sessionDir);
 			const forkedSessionPath = sessionManager.createBranchedSession(targetLeafId);

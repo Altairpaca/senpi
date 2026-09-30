@@ -697,8 +697,8 @@ describe("resolveCliModel", () => {
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-6-sol");
-		expect(defaultModelPerProvider["chatgpt-subscription"]).toBe("gpt-6-sol");
+		expect(defaultModelPerProvider.openai).toBe("gpt-6.1-sol");
+		expect(defaultModelPerProvider["chatgpt-subscription"]).toBe("gpt-6.1-sol");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
@@ -726,11 +726,16 @@ describe("default model selection", () => {
 		}
 	});
 
-	test("built-in defaults exist in generated provider catalogs", () => {
+	test("built-in chat providers have defaults in their generated catalogs", () => {
 		for (const provider of getBuiltinProviders()) {
+			const chatModels = getBuiltinModels(provider);
 			const defaultId = defaultModelPerProvider[provider];
+			if (chatModels.length === 0) {
+				expect(defaultId, `${provider} has no chat models and should have no chat default`).toBeUndefined();
+				continue;
+			}
 			expect(
-				getBuiltinModels(provider).some((model) => model.id === defaultId),
+				chatModels.some((model) => model.id === defaultId),
 				`${provider} default ${defaultId} should exist in its generated catalog`,
 			).toBe(true);
 		}

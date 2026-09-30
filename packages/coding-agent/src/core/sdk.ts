@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ThinkingSelection } from "@earendil-works/pi-ai";
+import type { SimpleStreamOptions, ThinkingSelection } from "@earendil-works/pi-ai";
 import { type Api, type Message, type Model, modelsAreEqual, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -10,6 +10,7 @@ import { AuthStorage } from "./auth-storage.ts";
 import { estimateTokens } from "./compaction/compaction.ts";
 import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import type { PromptSurface } from "./dynamic-prompt/types.ts";
 import { ModelUsabilityBudgetError } from "./extensions/builtin/compaction/model-usability-budget.ts";
 import { planResumeSlice } from "./extensions/builtin/compaction/resume-slice.ts";
 import { type ServiceTier, supportsServiceTier } from "./extensions/builtin/service-tier.ts";
@@ -28,7 +29,7 @@ import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
-import { SettingsManager } from "./settings-manager.ts";
+import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
 import { getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
 import {
@@ -42,9 +43,9 @@ import {
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
-	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+import { getBranchSelection, isVirtualModel } from "./virtual-models.ts";
 
 // Preserve the pre-0.81 fallback for extensions that construct Agent instances
 // or invoke low-level agent loops without supplying streamFn. Agent core remains
@@ -98,7 +99,7 @@ export interface CreateAgentSessionOptions {
 	/**
 	 * Optional allowlist of tool names.
 	 *
-	 * When omitted, pi uses the `defaultTools` setting for the initial built-in
+	 * When omitted, pi uses the resolved `defaultTools` setting for the initial
 	 * selection when configured. Otherwise it enables the default built-in tools
 	 * (read, bash, edit, write, grep). Eval-exposed tools are withheld from direct
 	 * model calls when eval is registered. Extension/custom tools remain enabled unless
@@ -123,6 +124,8 @@ export interface CreateAgentSessionOptions {
 	sessionStartEvent?: SessionStartEvent;
 	/** Generate a session title after the first successful turn. */
 	autoTitleSessions?: boolean;
+	/** Where this session's replies render; omitted means `SENPI_PROMPT_SURFACE` decides. */
+	promptSurface?: PromptSurface;
 }
 
 /** Result from createAgentSession */
@@ -281,20 +284,27 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 	}
 
+	// Assistant messages name the physical model that answered, so a virtual selection is only in
+	// model_change entries. Every physical selection keeps the session context's restore rules
+	// (fallback windows, explicit selections, legacy provider ids).
+	const branchSelection = getBranchSelection(sessionManager.getBranch(), (provider, modelId) =>
+		modelRuntime.getModel(provider, modelId),
+	);
+	const branchSelectionModel =
+		branchSelection && modelRuntime.getModel(branchSelection.provider, branchSelection.modelId);
+	const sessionModel =
+		branchSelectionModel && isVirtualModel(branchSelectionModel) ? branchSelection : existingSession.model;
+
 	// If session has data, try to restore model from it
-	if (!model && hasExistingSession && existingSession.model) {
-		const restored = resolveStoredModelReference(
-			existingSession.model.provider,
-			existingSession.model.modelId,
-			modelRuntime,
-		);
+	if (!model && hasExistingSession && sessionModel) {
+		const restored = resolveStoredModelReference(sessionModel.provider, sessionModel.modelId, modelRuntime);
 		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
 			model = restored.model;
 			initialResolvedThinkingLevel = restored.thinkingLevel;
 			initialThinkingSelection = restored.thinkingSelection;
 		}
 		if (!model) {
-			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
+			modelFallbackMessage = `Could not restore model ${sessionModel.provider}/${sessionModel.modelId}`;
 		}
 	}
 
@@ -370,7 +380,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 	if (thinkingSelection) thinkingSelection = { ...thinkingSelection, level: thinkingLevel };
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write", "grep"];
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
 	const sessionDefaultToolNames =
 		options.tools === undefined && options.noTools === undefined ? configuredDefaultToolNames : undefined;
@@ -378,7 +387,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
 	const initialActiveToolNames = (
-		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))
+		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? DEFAULT_TOOL_NAMES))
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
@@ -415,6 +424,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			return session.effectiveServiceTier;
 		}
 		return modelRuntime.getCompatibilityRequestConfig(requestModel).serviceTier;
+	};
+
+	const handleProviderStreamEvent: NonNullable<SimpleStreamOptions["onProviderStreamEvent"]> = async (data, model) => {
+		const runner = extensionRunnerRef.current;
+		if (!runner?.isActive || !runner.hasHandlers("provider_stream_event")) return;
+		await runner.emit({
+			data,
+			type: "provider_stream_event",
+			provider: model.provider,
+			api: model.api,
+			model: model.id,
+		});
 	};
 
 	agent = new Agent({
@@ -487,6 +508,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				headers: response.headers,
 			});
 		},
+		onProviderStreamEvent: handleProviderStreamEvent,
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {
 			const runner = extensionRunnerRef.current;
@@ -546,6 +568,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
+		promptSurface: options.promptSurface,
 	});
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)

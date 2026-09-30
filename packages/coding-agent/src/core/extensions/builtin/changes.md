@@ -1,3 +1,40 @@
+## 2026-09-30 - Unrestorable resumed ask-user calls settle without pending UI (omo#9268)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a dangling ask-user call whose recorded arguments no longer parse into a valid question set is marked resumed and settled as `orphaned-after-restart` immediately (settlement entry plus the framed answer to the model), instead of being turned into a pending request with `questions: []`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: `deliverAnswer` is exported so the resume path delivers that settlement through the same steer/follow-up and notification path as every other outcome.
+
+### Why
+
+- omo#9268: resume converted a parse failure into an empty request and registered it as pending; the widget showed "0 unanswered" and expanding it dereferenced a missing question and crashed the TUI. An unrestorable call cannot be answered after a restart, so it takes the existing orphan settlement instead of entering the UI.
+
+### Why an extension could not handle it
+
+- The ask-user feature is this builtin. Its resume hook owns dangling-call recovery, settlement records, and delivery to the model.
+
+### Expected merge conflict zones
+
+- LOW: `requestFromCall` and `settleUnrestorable` in `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`; the `deliverAnswer` export in `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`.
+
+## 2026-09-30 - Hook trust reads no longer create the project config folder (senpi#2386)
+
+### What changed
+
+- `hooks/trust-storage.ts` `FileHookStateStorage.read()`: when no parseable snapshot exists and the state file's directory does not exist, it returns the empty trust state instead of creating that directory to take the writer lock. With a directory present, the locked re-read that closes the legacy-writer ABA (f9200fc1ab) is unchanged.
+
+### Why
+
+- senpi#2386: every session read the project scope, so every project gained an empty `<cwd>/.omo/` (or `.senpi/`) holding only a transient `hooks-state.json.lock`. With no directory there is no writer to exclude: writers create it before they lock.
+
+### Why an extension could not handle it
+
+- The fix is inside the builtin hooks extension's own storage.
+
+### Expected merge conflict zones
+
+- LOW: `read()` in `hooks/trust-storage.ts` between the snapshot fast path and the lock acquisition.
+
 ## 2026-09-24 - Pin the refreshed pi-* extension releases (senpi#2079)
 
 ### What changed

@@ -4,11 +4,144 @@
 
 ### Breaking Changes
 
+- Changed the inherited provider-facing `ProviderStreams` and `StreamFunction` inputs from `Context` to normalized `TranscriptContext` values. System prompts and tool declarations now live in transcript system messages; custom providers read them with `getCurrentSystemPrompt()` and `getCurrentTools()`. The fork's `activeToolNames` rides on `TranscriptContext` and survives `normalizeContext()` ([#9548](https://github.com/earendil-works/pi/pull/9548)).
+
+- Restricted inherited `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly. `ToolResultMessage<unknown>` resolves to `never`; use `ToolResultMessage` or `ToolResultMessage<JsonValue>`.
+
+- Image models are inherited onto the regular `Provider`/`Models` surface as `ImageModel` with a required `type: "image"`: use `models.getModelOfType("image", ...)`, `models.generateImages()` and `createProvider({ models, images })`. The generated model data schema is version 6, so every entry carries `type` and one upstream ID can have separate chat, image and classifier entries. The fork keeps `ImagesModel`, `ImagesApi` and `KnownImagesApi` as aliases of the new names.
+
+- The inherited `TranscriptContext` is branded, so only `normalizeContext()` produces it and a raw `Context` no longer type-checks where a provider stream or the agent `StreamFn` expects one; it has no `systemPrompt` field because the system prompt travels as the leading system message.
+
+### Added
+
+- Added inherited transcript-backed mid-conversation system prompt and tool changes, replayed natively on models that accept mid-conversation system messages and collapsed for other providers ([#9548](https://github.com/earendil-works/pi/pull/9548)).
+
+- Added the inherited optional model `type` (`"chat"`, `"image"` or `"classifier"`), `isModelType()` and `getModelType()`, and `getModelsOfType()`, `getModelOfType()`, `getAvailableOfType()`, `getAllModels()` and `getAllAvailable()` on `Models`. Chat models may omit `type`, so existing chat models, providers and stores keep working.
+
+- Added inherited classifier models and `Models.classify()` with a provider-neutral `choice`/`score`/`bool` contract and token usage on `ClassifierResult`. The built-in TypeSafe provider (`TYPESAFE_API_KEY`) serves `jev-latest`; Jev models are also listed on OpenRouter, Cloudflare Workers AI, Vercel AI Gateway and OpenCode Zen, and the `llama-cpp-classify` API answers from llama-server next-token probabilities.
+
+- Added the inherited Meta provider (Model API key `META_API_KEY` and Muse subscription sign-in) with Muse Spark models ([#9096](https://github.com/earendil-works/pi/pull/9096) by [@xl0](https://github.com/xl0)).
+
+- Added inherited `onProviderStreamEvent` to observe parsed provider stream events before normalization, including provider-specific fields that assistant messages do not keep ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+
+- Added the inherited optional `AssistantMessage.thinkingLevel`, which records the thinking level the agent loop requested for a response.
+
+- Added inherited per-model image-input limits and cache-safe resize metadata to the generated catalog ([#9631](https://github.com/earendil-works/pi/issues/9631)).
+
+- Added inherited array-based `models.all.json` and `providers/{id}.all.json` catalog variants that allow one upstream ID per model type; the keyed `models.json` and `providers/{id}.json` stay chat-only.
+
+- Added an inherited runtime chat-model check to the `Models` stream entry points, so non-chat models fail with a clear `ModelsError`.
+
+### Changed
+
+- ChatGPT Subscription, OpenRouter and Radius browser sign-in share the inherited callback server, which rejects provider authorization-error redirects and falls back to pasting the redirect URL when the callback port is in use. The OAuth page helpers are available as `utils/oauth-page`. The provider id stays `chatgpt-subscription`; the upstream "OpenAI Codex (legacy)" rename and Sign in with ChatGPT on the `openai` provider are not adopted.
+
+- Radius browser sign-in exchanges the authorization code before showing the browser page, so token exchange failures appear in the browser (inherited).
+
+### Fixed
+
+- Fixed inherited 1-hour Anthropic cache writes reported by Vercel AI Gateway in streaming deltas being priced at the 5-minute rate ([#9210](https://github.com/earendil-works/pi/issues/9210)), and Amazon Bedrock one-hour cache writes priced at the five-minute rate ([#9457](https://github.com/earendil-works/pi/issues/9457)).
+
+- Fixed inherited model-level `samplingParams` being dropped by direct `stream()`/`complete()` calls on OpenAI-compatible APIs ([#9506](https://github.com/earendil-works/pi/issues/9506)).
+
+- Fixed inherited Mistral GLM models producing empty text blocks and split thinking blocks from empty content deltas ([#9674](https://github.com/earendil-works/pi/issues/9674)), and Mistral reasoning models ignoring the requested thinking level ([#9678](https://github.com/earendil-works/pi/issues/9678)).
+
+- Fixed inherited OpenAI Fast mode requests being priced at the standard rate when the response reports `service_tier: "fast"` ([#10034](https://github.com/earendil-works/pi/issues/10034)).
+
+- Fixed inherited OpenCode Zen and OpenCode Go `qwen3.8-flash` thinking being replayed as plain text on later turns ([#10047](https://github.com/earendil-works/pi/issues/10047)).
+
+- Fixed inherited OpenAI Responses streams returning unfinished tool calls as runnable when a server omits `output_index`, such as llama.cpp; those streams now end with an error ([#9974](https://github.com/earendil-works/pi/issues/9974)).
+
+- Fixed inherited GitHub Copilot Claude Opus 5.5 offering unsupported thinking levels when upstream model metadata is incomplete, and GitHub Copilot GPT models using the Chat Completions adapter instead of the Responses adapter ([#9253](https://github.com/earendil-works/pi/pull/9253) by [@petrroll](https://github.com/petrroll)).
+
+- Fixed inherited image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797)).
+
+- Fixed inherited unknown OpenAI-compatible Chat Completions endpoints receiving strict tool schemas unless they advertise support ([#9816](https://github.com/earendil-works/pi/issues/9816)), and Cerebras models advertising unsupported strict tool schemas ([#9804](https://github.com/earendil-works/pi/pull/9804) by [@EdenGottlieb](https://github.com/EdenGottlieb)).
+
+- Fixed inherited z.ai `Prompt too long` errors not being recognized as context overflow ([#9805](https://github.com/earendil-works/pi/issues/9805)), and bodyless HTTP 400/413 errors from non-Cerebras providers being misclassified as context overflow ([#9482](https://github.com/earendil-works/pi/issues/9482)).
+
+- Fixed inherited DeepSeek V4.1 thinking levels on OpenRouter and OpenCode Go ([#9485](https://github.com/earendil-works/pi/issues/9485)), Vercel AI Gateway replaying unsigned thinking as assistant text ([#9676](https://github.com/earendil-works/pi/issues/9676)), and Google Generative AI and Vertex AI using unsupported thinking levels ([#9455](https://github.com/earendil-works/pi/issues/9455)).
+
+- Fixed inherited Anthropic-compatible relays breaking signed thinking replay when they report a different response model ([#9188](https://github.com/earendil-works/pi/issues/9188)).
+
+- Fixed inherited OpenAI-compatible Responses errors to name the actual provider ([#9298](https://github.com/earendil-works/pi/issues/9298)), Baseten requests to send session-affinity headers from `sessionId` ([#9629](https://github.com/earendil-works/pi/issues/9629)), and retry classification for Cloudflare 520 responses ([#9627](https://github.com/earendil-works/pi/issues/9627)) and transient Azure peak-load errors ([#9669](https://github.com/earendil-works/pi/issues/9669)).
+
+### Removed
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The `anthropic-subscription` (Claude SDK) lane now reports the prompt-cache TTL Claude Code actually uses: 1 hour on a Claude subscription, 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch puts Claude Code on API, gateway or cloud billing. `CLAUDE_CODE_PROMPT_CACHE_TTL`, `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` are honored the way Claude Code honors them. Cache-aware waits sized from the TTL (the prompt-cache safe-wait budget) grow accordingly on a subscription. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+- GPT-6.1 Sol (`gpt-6.1-sol`, released 2026-09-29) joins the catalog on OpenAI, ChatGPT Subscription, Azure OpenAI, GitHub Copilot, OpenCode Zen, OpenRouter (`openai/gpt-6.1-sol`, `-pro`, `:batch`), Venice (`openai-gpt-61-sol`) and Vercel AI Gateway, with `-fast` Fast-tier (`service_tier: priority`, 2x list price at request time) variants on OpenAI and ChatGPT Subscription. It carries its published prices (\$2/\$10 per 1M tokens with \$0.10 cache reads and \$2.50 cache writes, doubling input and 1.5x output past 272k), 128k output, text and image input, tool search, additional tools and mid-session `configuration_update` support on both first-party lanes, and the documented effort ladder `low`/`medium`/`high`/`xhigh`/`max` — `none` and `minimal` are not offered, so `off` is not selectable and a map-less `gpt-6.1-sol` row from a custom provider is inferred the same way. Its project prompt budget is 400k, like GPT-6 Sol. Ultrafast is not added: OpenAI does not offer it for GPT-6.1 Sol yet. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
 ### Added
 
 ### Changed
 
 ### Fixed
+
+- `classifyErrorMessage` / `isRetryableAssistantError` treat an Anthropic `forbidden` error whose message is only `Request not allowed` as retryable; `permission_error` and forbidden rejections that carry a reason stay terminal. ([#2376](https://github.com/code-yeongyu/senpi/issues/2376))
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A provider module that disappeared because the installed package was replaced while the session was running now ends the turn once with `The installed package changed while this session was running, so <file> can no longer be loaded. Restart and resume this session to continue.`, instead of the same `Cannot find module` failure on every retry and fallback model. ([#2358](https://github.com/code-yeongyu/senpi/issues/2358))
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Cursor tool calls run once in the npm package. The bundle's Cursor provider carried its own copy of the marker that tells the agent loop a call was already executed, so every tool Cursor ran was run a second time under the same id and a replayed stale write could revert a file the model had already fixed. The same split also kept the Cursor conversation cache from being released when a session closed, and kept the context ceiling Cursor reports from reaching the running session until a restart. ([#2334](https://github.com/code-yeongyu/senpi/issues/2334))
+
+- Native OpenAI Responses requests no longer fail every turn with `Tool choice 'web_search' not found in 'tools' parameter.` when hosted web search replaces the `web_search` function tool ([#2234](https://github.com/code-yeongyu/senpi/issues/2234)).
+
+- Fixed Bedrock Converse requests rejecting tool schemas with root `anyOf`, `oneOf`, `allOf`, or a missing object type, while preserving parameter alternatives and strict sampling ([#1947](https://github.com/code-yeongyu/senpi/issues/1947)).
+
+- Rejected OpenAI Responses WebSocket requests now show the provider's HTTP status and error message instead of `Error Code undefined: undefined` ([#2235](https://github.com/code-yeongyu/senpi/issues/2235)).
+
+- Adjacent user messages sent through the OpenAI-compatible Chat Completions adapter are folded into one ordered message for non-OpenAI hosts, while direct OpenAI requests retain their existing message boundaries. ([#2120](https://github.com/code-yeongyu/senpi/issues/2120))
 
 ### Removed
 
@@ -26,7 +159,6 @@
 
 ### Fixed
 
-- Cursor tool calls run once in the npm package. The bundle's Cursor provider carried its own copy of the marker that tells the agent loop a call was already executed, so every tool Cursor ran was run a second time under the same id and a replayed stale write could revert a file the model had already fixed. The same split also kept the Cursor conversation cache from being released when a session closed, and kept the context ceiling Cursor reports from reaching the running session until a restart. ([#2334](https://github.com/code-yeongyu/senpi/issues/2334))
 - `isContextOverflow` classifies the `anthropic-subscription` refusal "The conversation is too long to resend (about N tokens, limit M). Compacting it and retrying." as a context overflow, so overflow recovery compacts and retries it. ([code-yeongyu/senpi#2329](https://github.com/code-yeongyu/senpi/issues/2329))
 
 - A `claude_code_version_too_old` rejection on an Anthropic OAuth request now raises the advertised version to the one Anthropic names and retries the request once, so a model released after the last senpi build works the first time it is asked for. If the retry still fails, the error names the version senpi advertised and how to pin a newer one. ([#2321](https://github.com/code-yeongyu/senpi/issues/2321))

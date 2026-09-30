@@ -1,3 +1,40 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): settings, entrypoints and resource loading
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: `packages/coding-agent/src/cli/args.ts`: upstream `--mode` validation diagnostics (#9045), `builtin:<name>` help text, `META_API_KEY` (D-8) adopted; upstream `mcp <command>` help lines removed (no fork `mcp` subcommand).
+- `packages/coding-agent/src/cli/startup-ui.ts`: Silent rows read and accepted as merged: `cli/startup-ui.ts` (system theme startup, D-14), `core/keybindings.ts` (descriptions), `core/prompt-templates.ts` (diagnostics result), `core/trust-manager.ts` (adds `mcp.json`; the fork MCP reads project `.senpi/mcp.json`; the `.pi` legacy-trust fix is untouched), `experimental/process.ts` (`--import` URL), `package-manager-cli.ts` (builtin names into config), tests `args`, `package-manager`, `stdout-cleanliness`, `5943-session-start-notify`.
+
+### Why
+
+Upstream v0.99.1 settings/resource-loading features are adopted where they carry no excluded subsystem; D-2/D-5/D-6 exclusions remove codemode, MCP, tool-search, cache-warming and /bug surfaces; fork runtime contracts (tool defaults, loader ordering, global-default shims, session profiles) win on conflict.
+
+### Why an extension could not handle it
+
+Settings layering, resource/extension resolution, the package barrel and CLI entrypoints are core loader/bootstrap code that runs before any extension loads.
+
+### Expected merge conflict zones
+
+`settings-manager.ts` Settings interface + deepMergeSettings + getDefaultTools; `resource-loader.ts` constructor, loadCurrentExtensionSet, loadExtensionPaths, loadFinalExtensionSet; `index.ts` extension type export block; `main.ts` createCliRuntimeFactory diagnostics; upstream re-adding cacheWarming/codemode/mcp settings or exports.
+
+## 2026-09-29 - Help-flag extension loading drops `sharedHostEnabled` (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/cli/help-extension-flags.ts`: `resolveHelpExtensionFlags` no longer passes `sharedHostEnabled: false` to `DefaultResourceLoader`; the option is removed (`src/core/changes.md`, same date).
+
+### Why
+
+- `pi.sharedHostEnabled` is removed from the extension API with the interactive shared-host join (senpi#2328).
+
+### Why an extension could not handle it
+
+- The help path constructs the resource loader before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `DefaultResourceLoader` options literal in `help-extension-flags.ts`.
+
 ## 2026-09-28 - `app-server --extension` in the help text (omo#9117)
 
 ### What changed

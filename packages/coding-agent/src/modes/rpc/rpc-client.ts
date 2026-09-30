@@ -8,11 +8,13 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
 export class RpcCommandError extends Error {
@@ -55,12 +57,14 @@ import type {
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
+import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
 	sendSocketHandshake,
 	socketSecretPath,
 } from "./socket-transport.ts";
+import { socketNeedsHandshake } from "./tui-socket.ts";
 
 // ============================================================================
 // Types
@@ -107,6 +111,7 @@ type PromptOptions = {
 	preflightResult?: (success: boolean) => void;
 	sessionTitlePrompt?: string | false;
 	expandPromptTemplates?: boolean;
+	unknownCommandAsText?: boolean;
 };
 
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
@@ -335,7 +340,7 @@ export class RpcClient {
 	}
 
 	private async startSocket(path: string): Promise<void> {
-		const secret = process.platform === "win32" ? await readSocketSecret(socketSecretPath(path)) : undefined;
+		const secret = socketNeedsHandshake(path) ? await readSocketSecret(socketSecretPath(path)) : undefined;
 		const socket = createConnection(resolveSocketTransportAddress(path, process.platform, secret));
 		this.socket = socket;
 		await new Promise<void>((resolve, reject) => {
@@ -408,6 +413,8 @@ export class RpcClient {
 		retain_on_disconnect?: boolean;
 		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
 		auto_title?: boolean;
+		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
+		promptSurface?: PromptSurface;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
@@ -473,8 +480,8 @@ export class RpcClient {
 
 	/**
 	 * Send a prompt to the agent.
-	 * Returns immediately after sending; use onEvent() to receive streaming events.
-	 * Use waitForIdle() to wait for completion.
+	 * Returns the prompt's disposition after acceptance; use onEvent() to receive streaming events.
+	 * If the disposition is "handled", no run started for this prompt, so don't wait for agent_settled.
 	 *
 	 * The disposition/preflight callbacks mirror AgentSession's local prompt contract:
 	 * they fire synchronously while the response frame is dispatched — before any
@@ -482,9 +489,9 @@ export class RpcClient {
 	 * order. A success response without a disposition (older host) maps to "handled"
 	 * so the echo degrades to canonical-only rendering instead of double-rendering.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void>;
-	async prompt(message: string, options?: PromptOptions): Promise<void>;
-	async prompt(message: string, optionsOrImages?: PromptOptions | ImageContent[]): Promise<void> {
+	async prompt(message: string, images?: ImageContent[]): Promise<PromptDisposition>;
+	async prompt(message: string, options?: PromptOptions): Promise<PromptDisposition>;
+	async prompt(message: string, optionsOrImages?: PromptOptions | ImageContent[]): Promise<PromptDisposition> {
 		const options: PromptOptions = Array.isArray(optionsOrImages)
 			? { images: optionsOrImages }
 			: (optionsOrImages ?? {});
@@ -499,6 +506,7 @@ export class RpcClient {
 				...(options.expandPromptTemplates !== undefined
 					? { expandPromptTemplates: options.expandPromptTemplates }
 					: {}),
+				...(options.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 			},
 			true,
 			{
@@ -517,8 +525,15 @@ export class RpcClient {
 			},
 		);
 		if (!response.success) {
-			throw new Error((response as Extract<RpcResponse, { success: false }>).error);
+			const failure = response as Extract<RpcResponse, { success: false }>;
+			const unknownCommand =
+				failure.errorCode === RPC_ERROR_UNKNOWN_COMMAND
+					? unknownCommandErrorFromWire(failure.errorData)
+					: undefined;
+			throw unknownCommand ?? new Error(failure.error);
 		}
+		// Older hosts omit the disposition; "handled" matches the promptDisposition callback fallback.
+		return (response as { data?: { disposition?: PromptDisposition } }).data?.disposition ?? "handled";
 	}
 
 	async appendUserMessage(content: unknown): Promise<void> {
@@ -539,15 +554,27 @@ export class RpcClient {
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(message: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		await this.send({ type: "steer", message, images, enqueueOrder: recovery?.enqueueOrder });
+	async steer(
+		message: string,
+		images?: ImageContent[],
+		recovery?: { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({ type: "steer", message, images, enqueueOrder: recovery?.enqueueOrder });
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
-	async followUp(message: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		await this.send({ type: "follow_up", message, images, enqueueOrder: recovery?.enqueueOrder });
+	async followUp(
+		message: string,
+		images?: ImageContent[],
+		recovery?: { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({ type: "follow_up", message, images, enqueueOrder: recovery?.enqueueOrder });
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
@@ -1108,7 +1135,9 @@ export class RpcClient {
 				}
 				return;
 			}
-			for (const listener of this.eventListeners) {
+			// Iterate a snapshot so listeners that unsubscribe during dispatch
+			// do not cause later listeners to miss this event.
+			for (const listener of [...this.eventListeners]) {
 				listener(data as RpcClientEvent);
 			}
 		} catch {
@@ -1122,7 +1151,7 @@ export class RpcClient {
 		this.pendingSessionEventBytes = 0;
 		for (const { sessionId, event } of pending) {
 			if (sessionId !== this.sessionId) continue;
-			for (const listener of this.eventListeners) listener(event);
+			for (const listener of [...this.eventListeners]) listener(event);
 		}
 	}
 

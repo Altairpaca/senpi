@@ -1,5 +1,62 @@
 # todotools Fork Tracker
 
+## 2026-09-30 - The first-turn opener never arms on an ask-user answer frame (senpi#2419)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` `shouldArmFirstTurn`: returns `false` when the prompt parses as an ask-user answer frame (`parseAskUserAnswerFrame` from `../ask-user/format.ts`, the parser `todo-ask.ts` already uses), and the "no user request on the branch" check skips user messages that are answer frames.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-ask.ts`: `firstTextBlock` is exported so the gate reads a user message's text the same way Ask capture does.
+- `test/suite/regressions/2419-first-turn-answer-frame.test.ts`: gate rows for an answer frame (LF and CRLF), for a work request after an earlier answer, and for a text-less (image-only) user message still counting as a request; a faux-`pi` case where an answer frame gets no reminder and no forced `todo` tool_choice; a real-session case (an extension-triggered bootstrap, then an answer, then a work request) where only the work request arms. The faux `pi` scaffolding is shared with `test/suite/todo-first-turn.test.ts` through `test/suite/todo-first-turn-harness.ts`.
+
+### Why
+
+- When every earlier turn was an extension or custom message (an onboarding bootstrap, a control-endpoint delivery), the answer to an async question was the branch's first user message, so the opener armed on it. Under `force` the model got a named `todo` tool_choice instead of acting on the answer, and the user's real first request after it then got no opener.
+
+### Why an extension could not handle it
+
+- The gate is this builtin's own logic; no core file changed.
+
+### Expected merge conflict zones
+
+- Fork-only files. `shouldArmFirstTurn` and its doc comment; the `firstTextBlock` export in `todo-ask.ts`.
+
+## 2026-09-30 - No handoff cue on the chat surface (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the handoff moment is skipped when the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `resolvePromptSurface(process.env)`) is `chat`, so no "Handoff due ... write the Ask / For you / Now / Next block" line is appended. Terminal and app keep the cue.
+- `test/suite/todo-handoff-cue.test.ts`: the four-call harness run asserts the cues on `terminal` and `app` and no cue on `chat`.
+
+### Why
+
+- The chat surface's prompt has no handoff block; a cue asking for one would bring it back right before the reply.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- Fork-only file. The cue call in `tools/todo.ts` `execute`.
+
+## 2026-09-29 - The all-closed handoff cue stops handing the model an English `none` to copy (senpi#2366)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `HANDOFF_CUES["all-closed"]` says `the Ask / For you / Now / Next block, with Now and Next saying no task remains` instead of `the Ask / For you / Now: none / Next: none block`.
+
+### Why
+
+- The cue lands right before the final message, and a Korean-rule run on `claude-opus-5-5` copied its literal `Now: none. Next: none.` into an otherwise Korean handoff. The shared handoff rule (`dynamic-prompt/handoff.ts` `HANDOFF_LANGUAGE_RULE`) keeps the labels fixed and puts the slot contents in the user's language; the cue now describes the slot contents instead of dictating English ones. Same length.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- None (fork-only file).
+
 ## 2026-09-28 - The first-turn opener stops forcing a model that refused a forced choice (senpi#2218)
 
 ### What changed

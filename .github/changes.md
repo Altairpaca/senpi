@@ -1,5 +1,80 @@
 # changes
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: `.github/workflows/publish-model-catalog.yml`: adopted the `scripts/model-catalog-protocol.ts` path trigger.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-29 - Model catalog publish runs only in the upstream repository (senpi#1522)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: the `publish` job runs only when `github.repository` is `badlogic/pi-mono`, and a new `Check R2 credentials` step skips the R2 upload with a notice when the access key or secret is empty. The `generate` job still builds and validates the catalog in every repository.
+
+### Why
+
+- The upload targets the upstream pi-artifacts R2 bucket, and this fork has no credentials for it, so every scheduled run inside the publication window failed at `aws s3 cp` with `Unable to locate credentials`.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `publish` job `if:` line and the steps before `Publish model catalog to R2` in `publish-model-catalog.yml`.
+
+## 2026-09-29 - Node bundle CI step runs the reinstall regression file (senpi#2358)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/node-bundle-reinstall.test.ts`, which replaces the installed package with a different build under a running RPC session and requires the next prompt to succeed under Node and Bun.
+
+### Why
+
+- A session started before a global reinstall died at its next lazy chunk import; the test keeps the runtime snapshot that prevents it from regressing.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
+## 2026-09-29 - Static checks install Bun for the bun.lock drift gate (senpi#2352)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Static checks` job sets up Bun 1.4.2 before `npm run check`, which now runs `check:bun-lock`.
+
+### Why
+
+- `check:bun-lock` resolves bun.lock with Bun in an isolated island and fails when a fresh `bun install` would rewrite it; the job had no Bun.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Static checks` job steps in `ci.yml`.
+
 ## 2026-09-29 - Node bundle CI step runs the Cursor exec regression file (senpi#2334)
 
 ### What changed

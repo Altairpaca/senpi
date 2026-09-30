@@ -63,6 +63,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
+	initialModelProvenance?: CreateAgentSessionOptions["initialModelProvenance"];
 	thinkingLevel?: ThinkingLevel;
 	thinkingSelection?: ThinkingSelection;
 	scopedModels?: Array<{
@@ -82,6 +83,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
 	autoTitleSessions?: boolean;
+	promptSurface?: CreateAgentSessionOptions["promptSurface"];
 }
 
 /**
@@ -219,6 +221,18 @@ export async function createAgentSessionServices(
 	} else if (registeredProviders.size > 0) {
 		await modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] });
 	}
+	for (const { definition, extensionPath } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+		try {
+			modelRuntime.registerVirtualModel(definition);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${extensionPath}" error: ${message}`,
+			});
+		}
+	}
+	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
 	return {
@@ -253,6 +267,7 @@ export async function createAgentSessionFromServices(
 		resourceLoader: options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,
+		initialModelProvenance: options.initialModelProvenance,
 		thinkingLevel: options.thinkingLevel,
 		thinkingSelection: options.thinkingSelection,
 		scopedModels: options.scopedModels,
@@ -263,5 +278,6 @@ export async function createAgentSessionFromServices(
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
+		promptSurface: options.promptSurface,
 	});
 }

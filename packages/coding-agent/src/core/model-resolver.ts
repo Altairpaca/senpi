@@ -44,9 +44,9 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"anthropic-subscription": "claude-opus-4-8",
 	anthropic: "claude-opus-4-8",
 	bai: "gpt-5.6-sol",
-	openai: "gpt-6-sol",
+	openai: "gpt-6.1-sol",
 	"azure-openai-responses": "gpt-5.4",
-	"chatgpt-subscription": "gpt-6-sol",
+	"chatgpt-subscription": "gpt-6.1-sol",
 	ollama: "qwen3.5:397b",
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
 	// the Cursor agent's native model auto-selection once models exist.
@@ -79,6 +79,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	opencode: "kimi-k2.6",
 	"opencode-go": "kimi-k3",
 	"kimi-coding": "kimi-for-coding",
+	meta: "muse-spark-1.3",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
 	"cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
 	"qwen-token-plan": "qwen3.7-max",
