@@ -3,6 +3,7 @@ import {
 	type AssistantMessage,
 	convertResponsesMessages,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -183,7 +184,7 @@ function nextTurnPayload(entries: SessionEntry[]) {
 		model: CODEX_MODEL.id,
 		input: convertResponsesMessages(
 			CODEX_MODEL,
-			{ messages: convertToLlm(marked) },
+			normalizeContext({ messages: convertToLlm(marked) }),
 			new Set(["chatgpt-subscription"]),
 			{
 				includeSystemPrompt: false,

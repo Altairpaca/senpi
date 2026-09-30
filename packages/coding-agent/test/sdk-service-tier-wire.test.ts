@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,7 +19,8 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
-type RegisteredModel = NonNullable<ProviderConfigInput["models"]>[number];
+// Chat member of the chat/image/classifier model-config union.
+type RegisteredModel = Extract<NonNullable<ProviderConfigInput["models"]>[number], { type?: "chat" }>;
 
 const PROVIDER = "tier-provider";
 const BASE_MODEL_ID = "tier-base";
@@ -114,7 +116,7 @@ describe("createAgentSession request service tier without extensions", () => {
 		captured: Captured,
 		requestOptions: SimpleStreamOptions = {},
 	): Promise<ServiceTier | undefined> {
-		const stream = await session.agent.streamFunction(model, { messages: [] }, requestOptions);
+		const stream = await session.agent.streamFunction(model, normalizeContext({ messages: [] }), requestOptions);
 		await stream.result();
 		return captured.options?.serviceTier;
 	}

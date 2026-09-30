@@ -8,7 +8,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createConnection, type Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
@@ -480,8 +480,8 @@ export class RpcClient {
 
 	/**
 	 * Send a prompt to the agent.
-	 * Returns immediately after sending; use onEvent() to receive streaming events.
-	 * Use waitForIdle() to wait for completion.
+	 * Returns the prompt's disposition after acceptance; use onEvent() to receive streaming events.
+	 * If the disposition is "handled", no run started for this prompt, so don't wait for agent_settled.
 	 *
 	 * The disposition/preflight callbacks mirror AgentSession's local prompt contract:
 	 * they fire synchronously while the response frame is dispatched — before any
@@ -489,9 +489,9 @@ export class RpcClient {
 	 * order. A success response without a disposition (older host) maps to "handled"
 	 * so the echo degrades to canonical-only rendering instead of double-rendering.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void>;
-	async prompt(message: string, options?: PromptOptions): Promise<void>;
-	async prompt(message: string, optionsOrImages?: PromptOptions | ImageContent[]): Promise<void> {
+	async prompt(message: string, images?: ImageContent[]): Promise<PromptDisposition>;
+	async prompt(message: string, options?: PromptOptions): Promise<PromptDisposition>;
+	async prompt(message: string, optionsOrImages?: PromptOptions | ImageContent[]): Promise<PromptDisposition> {
 		const options: PromptOptions = Array.isArray(optionsOrImages)
 			? { images: optionsOrImages }
 			: (optionsOrImages ?? {});
@@ -532,6 +532,8 @@ export class RpcClient {
 					: undefined;
 			throw unknownCommand ?? new Error(failure.error);
 		}
+		// Older hosts omit the disposition; "handled" matches the promptDisposition callback fallback.
+		return (response as { data?: { disposition?: PromptDisposition } }).data?.disposition ?? "handled";
 	}
 
 	async appendUserMessage(content: unknown): Promise<void> {
@@ -552,15 +554,27 @@ export class RpcClient {
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(message: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		await this.send({ type: "steer", message, images, enqueueOrder: recovery?.enqueueOrder });
+	async steer(
+		message: string,
+		images?: ImageContent[],
+		recovery?: { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({ type: "steer", message, images, enqueueOrder: recovery?.enqueueOrder });
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
-	async followUp(message: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		await this.send({ type: "follow_up", message, images, enqueueOrder: recovery?.enqueueOrder });
+	async followUp(
+		message: string,
+		images?: ImageContent[],
+		recovery?: { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({ type: "follow_up", message, images, enqueueOrder: recovery?.enqueueOrder });
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
@@ -1121,7 +1135,9 @@ export class RpcClient {
 				}
 				return;
 			}
-			for (const listener of this.eventListeners) {
+			// Iterate a snapshot so listeners that unsubscribe during dispatch
+			// do not cause later listeners to miss this event.
+			for (const listener of [...this.eventListeners]) {
 				listener(data as RpcClientEvent);
 			}
 		} catch {
@@ -1135,7 +1151,7 @@ export class RpcClient {
 		this.pendingSessionEventBytes = 0;
 		for (const { sessionId, event } of pending) {
 			if (sessionId !== this.sessionId) continue;
-			for (const listener of this.eventListeners) listener(event);
+			for (const listener of [...this.eventListeners]) listener(event);
 		}
 	}
 

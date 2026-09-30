@@ -4,6 +4,46 @@
 
 ### Breaking Changes
 
+- Replaced the inherited `TUI.queryTerminalColorScheme()` and `TUI.queryTerminalBackgroundColor()` with `TUI.queryTerminalColors()`, which reads the default foreground, background and 16 ANSI colors (OSC 10, 11 and 4) in one round trip and returns `TerminalColors`. `parseOsc11BackgroundColor()` is removed.
+
+### Added
+
+- Added inherited color values and styling: the `Color` type (indexed ANSI, sRGB or OKLCH), `parseColor()` for `#rgb`, `#rrggbb`, `oklch()` and `okhsl()` values, `indexedColor()`, `rgbColor()`, `oklchColor()`, `okhslColor()`, `mixColors()`, `colorToHex()`, `colorToRgb()`, `colorToOklch()`, `colorToOkhsl()`, `styleText()` and `getTerminalColorMode()`.
+
+- Added inherited `"auto"` for `TuiAltScreenOptions.wheelScrollLines`, which speeds up fast wheel spins on terminals that send one event per notch, and `TuiAltScreen.setWheelScrollLines()` for runtime updates ([#9758](https://github.com/earendil-works/pi/issues/9758)).
+
+- Added the inherited bundled asynchronous native clipboard readers for macOS, Windows and X11 through `getNativeClipboard()` ([#9163](https://github.com/earendil-works/pi/pull/9163)), and `NativeClipboard.getFilePaths()`, which reads file URLs from the macOS clipboard ([#9999](https://github.com/earendil-works/pi/issues/9999), [#10136](https://github.com/earendil-works/pi/pull/10136) by [@christianklotz](https://github.com/christianklotz)).
+
+### Changed
+
+- Terminals with `TERM=*-direct` are detected as truecolor (inherited).
+
+- Reduced inherited fuzzy search latency for long texts by using native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)).
+
+### Fixed
+
+- Fixed inherited `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)), and skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
+
+- Fixed inherited path and `@` autocomplete not working after opening wrappers such as `(`, `[`, `{`, `<` or a backtick, and file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).
+
+- Fixed inherited image stretching in terminals that use the Kitty graphics protocol ([#8938](https://github.com/earendil-works/pi/issues/8938), [#9957](https://github.com/earendil-works/pi/pull/9957) by [@rwachtler](https://github.com/rwachtler)), and fullscreen Kitty images being erased by later row clears in WezTerm ([#9169](https://github.com/earendil-works/pi/issues/9169)).
+
+- Fixed inherited keyboard input being lost after a component that forwarded a mouse event to a child, such as `SettingsList` with an open submenu, removed that child.
+
+- Fixed the inherited shell cursor staying hidden after exit when an extension closed an overlay during shutdown ([#10026](https://github.com/earendil-works/pi/issues/10026)).
+
+- Fixed inherited fullscreen clipboard failures hiding actionable backend error messages behind a generic notice, and extended failure notices to five seconds ([#9618](https://github.com/earendil-works/pi/issues/9618)).
+
+- Fixed inherited LaTeX legacy font switches falling back to raw source, centered `cases` layouts, and nested display scripts, ported into the fork's `components/latex.ts` ([#8827](https://github.com/earendil-works/pi/issues/8827), [#9564](https://github.com/earendil-works/pi/issues/9564), [#7929](https://github.com/earendil-works/pi/issues/7929)).
+
+- Improved inherited rendering performance for styled text: `visibleWidth()` measures ANSI-styled ASCII without grapheme segmentation, `Box` checks its render cache without re-padding every line, and `Markdown` reuses parsed tokens across theme and width changes.
+
+### Removed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
 ### Added
 
 ### Changed
