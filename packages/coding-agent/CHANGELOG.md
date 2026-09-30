@@ -131,6 +131,8 @@
 
 ### Changed
 
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
 - A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
 
 - The recommended OpenAI model is now GPT-6.1 Sol at `medium`, one slot below GPT-6 Astra where GPT-6 Sol was; `gpt-6.1-sol-fast` counts as recommended like the other `-fast` ids. Your explicitly configured `recommendedModels` are untouched. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
