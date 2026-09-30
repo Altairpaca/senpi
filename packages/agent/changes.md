@@ -1,3 +1,23 @@
+## 2026-09-30 - Keep the docs/ mobile-handoff prototype out of the agent test run (senpi#2447)
+
+### What changed
+
+- `packages/agent/vitest.config.ts`: `exclude` adds `docs/**`, and keeps vitest's defaults through `configDefaults.exclude`.
+
+### Why
+
+- `docs/mobile-handoff/01-harness/01-delta/delta.test.ts` is historical prototype evidence (its `delta.md` says so), not production source.
+- It ran 54 tests in every agent CI run. About 40 of them repeat `packages/chord/test/delta.test.ts` word for word, and one contradicts production: the prototype keeps delete-then-set, while chord collapses it.
+- The file stays on disk, because `delta.bench.ts` and `delta.examples.ts` import `delta-impl.ts`, and deleting an upstream-owned file would conflict on the next sync.
+
+### Why an extension could not handle it
+
+- Test runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/agent/vitest.config.ts`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired pico handoff
 
 ### What changed
