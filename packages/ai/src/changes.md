@@ -38,6 +38,24 @@
 - `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: service-tier type unions.
 - `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: request/response service-tier types and pricing switches.
 
+## 2026-09-30 - Claude Code fingerprint floor 2.1.285 (senpi#752)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `claudeCodeVersion` floor declaration is 2.1.285, the Claude Code version `@anthropic-ai/claude-agent-sdk` 0.3.285 ships. The declaration keeps its literal `const claudeCodeVersion = "X.Y.Z";` form.
+
+### Why
+
+- Regression #2033 keeps the floor equal to the pinned SDK's `claudeCodeVersion`; the pin moved (`packages/coding-agent/changes.md`).
+
+### Why an extension could not handle it
+
+- The OAuth fingerprint is built inside the Anthropic API module before any extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `claudeCodeVersion` declaration line.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired and renamed AI source paths
 
 ### What changed
