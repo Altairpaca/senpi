@@ -112,6 +112,72 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price s
 	});
 });
 
+describe("ChatGPT Subscription routing hint", () => {
+	const astra = getModel("chatgpt-subscription", "gpt-6-astra");
+	const cases = [
+		[undefined, "model=gpt-6-astra"],
+		["priority", "model=gpt-6-astra;tier=priority"],
+		["ultrafast", "model=gpt-6-astra;tier=ultrafast"],
+	] as const;
+
+	it.each(cases)("sends the SSE request with tier %s as %s", async (serviceTier, hint) => {
+		let headers: Headers | undefined;
+		const result = await streamCodex(astra, context, {
+			apiKey: token,
+			transport: "sse",
+			serviceTier,
+			fetch: async (_input, init) => {
+				headers = new Headers(init?.headers);
+				return completion(serviceTier ?? "default");
+			},
+		}).result();
+		expect(result.stopReason).toBe("stop");
+		expect(headers?.get("x-codex-routing-hint")).toBe(hint);
+	});
+
+	it.each(cases)("opens the WebSocket with tier %s as %s", async (serviceTier, hint) => {
+		const handshakes: Record<string, string>[] = [];
+		class MockWebSocket extends EventTarget {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+			constructor(_url: string, options: { headers: Record<string, string> }) {
+				super();
+				handshakes.push(
+					Object.fromEntries(Object.entries(options.headers).map(([key, value]) => [key.toLowerCase(), value])),
+				);
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+			send(): void {
+				const response = {
+					id: "resp_1",
+					status: "completed",
+					output: [],
+					usage: { input_tokens: 1, output_tokens: 0 },
+				};
+				queueMicrotask(() =>
+					this.dispatchEvent(
+						Object.assign(new Event("message"), {
+							data: JSON.stringify({ type: "response.completed", response }),
+						}),
+					),
+				);
+			}
+			close(): void {
+				this.readyState = 3;
+			}
+		}
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		const result = await streamCodex(astra, context, {
+			apiKey: token,
+			sessionId: `routing-hint-${serviceTier ?? "none"}`,
+			transport: "websocket",
+			serviceTier,
+		}).result();
+		expect(result.stopReason).toBe("stop");
+		expect(handshakes.map((headers) => headers["x-codex-routing-hint"])).toEqual([hint]);
+	});
+});
+
 describe("Ultrafast WebSocket continuations", () => {
 	it.each(EFFORTS)("keeps %s effort and resets the chain when entering or leaving Ultrafast", async (effort) => {
 		const bodies: Array<{
