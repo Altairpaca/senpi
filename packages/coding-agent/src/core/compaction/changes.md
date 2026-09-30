@@ -1,3 +1,23 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): compaction
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/branch-summarization.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/core/compaction/utils.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; compaction keeps the fork machinery and cache-friendly safety tokens and adopts upstream split-turn and retain-none fixes (plan D-15).
+
+### Why an extension could not handle it
+
+Compaction mechanics run inside the session core; the compaction extension only sets policy.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-16 - Bound one compaction and settle its stream inside the watchdog (#1741)
 
 ### What changed
