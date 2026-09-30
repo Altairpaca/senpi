@@ -119,6 +119,10 @@ function attachDebugger(url: string, sockets: WebSocket[], states: InspectorStat
 	states.push(state);
 	const socket = new WebSocket(url);
 	sockets.push(socket);
+	// `Runtime.runIfWaitingForDebugger` must not be sent until `Debugger.enable`
+	// has been ACKNOWLEDGED. Pipelining both on `open` lets the child resume before
+	// the debugger domain is active, so `Debugger.paused` never arrives, `resumed`
+	// stays false, and the run hangs until the outer timeout.
 	socket.addEventListener("open", () => {
 		socket.send(JSON.stringify({ id: 1, method: "Debugger.enable" }));
 	});
