@@ -57,6 +57,39 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 	});
 
+	it("includes Claude Opus 5.5 with its always-on effort levels and official pricing", () => {
+		const model = getModel("anthropic", "claude-opus-5-5");
+		expect(model).toMatchObject({
+			cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+			contextWindow: 1_000_000,
+			maxTokens: 128_000,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsMidConvoEffort: true,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+			},
+		});
+		expect(getSupportedThinkingLevels(model)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
+	it("includes Claude Sonnet 5.5 with managed effort levels and official pricing", () => {
+		const model = getModel("anthropic", "claude-sonnet-5-5");
+		expect(model).toMatchObject({
+			cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+			contextWindow: 1_000_000,
+			maxTokens: 128_000,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsMidConvoEffort: true,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+				supportsTemperature: false,
+			},
+		});
+		expect(getSupportedThinkingLevels(model)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
 	it("includes max but not xhigh for Anthropic Sonnet 4.6 on anthropic-messages API", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-6");
 		expect(model).toBeDefined();
@@ -88,14 +121,20 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).not.toContain("max");
 	});
 
-	it.each(["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"] as const)(
-		"includes xhigh for openai-codex %s models",
-		(modelId) => {
-			const model = getModel("chatgpt-subscription", modelId);
-			expect(model).toBeDefined();
-			expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
-		},
-	);
+	it.each([
+		"gpt-5.5",
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
+		"gpt-6-astra",
+		"gpt-6-sol",
+		"gpt-6-luna",
+		"gpt-6.1-sol",
+	] as const)("includes xhigh for openai-codex %s models", (modelId) => {
+		const model = getModel("chatgpt-subscription", modelId);
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+	});
 
 	it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
 		"includes xhigh and max for OpenAI %s models",
@@ -113,6 +152,65 @@ describe("getSupportedThinkingLevels", () => {
 			]);
 		},
 	);
+
+	// The fork GPT-6 ladder has no minimal effort (gpt-6-family-catalog.test.ts).
+	it.each(["gpt-6-sol", "gpt-6-luna"] as const)(
+		"includes xhigh and max without minimal for OpenAI %s models",
+		(modelId) => {
+			const model = getModel("openai", modelId);
+			expect(model).toBeDefined();
+			expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+		},
+	);
+
+	// OpenAI and Codex reject reasoning.effort "none" for GPT-6.1 Sol.
+	it("does not support off for GPT-6.1 Sol", () => {
+		const expected = {
+			openai: ["low", "medium", "high", "xhigh", "max"],
+			"azure-openai-responses": ["low", "medium", "high", "xhigh", "max"],
+			"chatgpt-subscription": ["low", "medium", "high", "xhigh", "max"],
+		} as const;
+		for (const [provider, levels] of Object.entries(expected)) {
+			const model = getModel(provider as keyof typeof expected, "gpt-6.1-sol");
+			expect(model).toBeDefined();
+			expect(getSupportedThinkingLevels(model!)).toEqual(levels);
+			expect(model!.thinkingLevelMap?.off).toBeNull();
+		}
+	});
+
+	it.each([
+		// Fork context windows: Sol and 6.1 Sol 400k, Luna the full 922k input cap (gpt-6-family-catalog.test.ts).
+		["gpt-6-sol", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }, 400000],
+		["gpt-6-luna", { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }, 922000],
+		["gpt-6.1-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 400000],
+	] as const)("includes official metadata for OpenAI and Codex %s", (modelId, cost, contextWindow) => {
+		for (const provider of ["openai", "chatgpt-subscription"] as const) {
+			const model = getModel(provider, modelId);
+			expect(model).toMatchObject({
+				input: ["text", "image"],
+				cost: {
+					...cost,
+					tiers: [
+						{
+							inputTokensAbove: 272000,
+							input: cost.input * 2,
+							output: cost.output * 1.5,
+							cacheRead: cost.cacheRead * 2,
+							cacheWrite: cost.cacheWrite * 2,
+						},
+					],
+				},
+				contextWindow,
+				maxTokens: 128000,
+				compat: {
+					supportsAdditionalTools: true,
+					supportsMidConvoSystemMessages: true,
+					supportsOpenAIGrammarTools: true,
+					supportsToolSearch: true,
+				},
+			});
+		}
+	});
 
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
 		const model = getModel("openai", "gpt-5.5-pro");
@@ -136,6 +234,18 @@ describe("getSupportedThinkingLevels", () => {
 		const model = getModel("opencode-go", "deepseek-v4-flash");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
+	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on OpenRouter", () => {
+		const model = getModel("openrouter", "deepseek/deepseek-v4.1-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
+	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on opencode-go", () => {
+		const model = getModel("opencode-go", "deepseek-v4.1-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
 	});
 
 	it("excludes thinking off for Moonshot Kimi K2.7 Code models", () => {
