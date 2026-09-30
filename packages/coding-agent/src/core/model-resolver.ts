@@ -21,6 +21,7 @@ import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { selectProviderDefault } from "./provider-default-selection.ts";
+import { ultrafastSelectionWarning } from "./ultrafast-lanes.ts";
 
 /**
  * Scope resolution only ever reads the available-model list, so a caller that
@@ -383,25 +384,9 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 }
 
 const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority", "ultrafast"];
-const ULTRAFAST_DOCUMENTED_PROVIDERS = new Set(["openai", "chatgpt-subscription"]);
 
 function isServiceTier(value: string): value is ServiceTier {
 	return (SERVICE_TIER_VALUES as readonly string[]).includes(value);
-}
-
-/**
- * Advisory for an Ultrafast selection OpenAI has not documented. The selection is kept:
- * the provider may reject it or serve another tier, and that is reported rather than refused.
- * Returns undefined for GPT-6 Astra and for providers other than OpenAI and ChatGPT Subscription.
- */
-function ultrafastSelectionWarning(
-	model: { provider: string; id: string },
-	serviceTier: ServiceTier | undefined,
-): string | undefined {
-	if (serviceTier !== "ultrafast") return undefined;
-	if (!ULTRAFAST_DOCUMENTED_PROVIDERS.has(model.provider)) return undefined;
-	if (model.id === "gpt-6-astra") return undefined;
-	return `Ultrafast is documented for GPT-6 Astra only; ${model.provider}/${model.id} may reject or ignore it`;
 }
 
 /** Invalid-decorator warnings discard the decorators parsed with them. An Ultrafast advisory does not. */

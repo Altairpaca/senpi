@@ -104,6 +104,34 @@ describe("Ultrafast service-tier selection", () => {
 		expect(notify).toHaveBeenCalledWith("Service tier is fixed to ultrafast by the active model selection.", "info");
 	});
 
+	it.each([
+		["openai", { service_tier: "ultrafast" }],
+		["opencode", {}],
+	] as const)(
+		"puts an Ultrafast pin or OpenAI setting on the %s wire only for first-party providers",
+		async (provider, tier) => {
+			const selections = [
+				{ serviceTier: "ultrafast" as const },
+				{ fileSettings: true, settings: { openai: { serviceTier: "ultrafast" as const } } },
+			];
+			for (const selection of selections) {
+				const harness = await createHarness({
+					api: "openai-responses",
+					provider,
+					models: [{ id: MODEL }],
+					extensionFactories: [serviceTierExtension],
+					...selection,
+				});
+				harnesses.push(harness);
+				await harness.session.bindExtensions({});
+				expect(await harness.getExtensionRunner().emitBeforeProviderRequest({ model: MODEL })).toEqual({
+					model: MODEL,
+					...tier,
+				});
+			}
+		},
+	);
+
 	it("preserves an Ultrafast pin in an extension-less session with fast mode already on", async () => {
 		const harness = await createHarness({ serviceTier: "ultrafast" });
 		harnesses.push(harness);

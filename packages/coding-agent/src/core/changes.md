@@ -1,3 +1,25 @@
+## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
+
+### What changed
+
+- `packages/coding-agent/src/core/ultrafast-lanes.ts` (fork-only): `serviceTierForProvider` drops an `ultrafast` tier for any provider other than `openai` and `chatgpt-subscription`; `ultrafastSelectionWarning` (moved here from `model-resolver.ts`) also warns for those providers.
+- `packages/coding-agent/src/core/sdk.ts`: the stream function passes every request tier through `serviceTierForProvider`, and always sets `serviceTier` so a dropped tier cannot survive through the spread caller options.
+- `packages/coding-agent/src/core/model-resolver.ts`: imports the warning instead of defining it.
+
+### Why
+
+- `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/model-resolver.ts`: gateways and other providers that serve an OpenAI model on the Responses API (for example `github-copilot` or `opencode` `gpt-6-astra`) received `service_tier: "ultrafast"`. codex only sends a tier the model's backend catalog lists, and oh-my-pi sends Ultrafast only to first-party OpenAI and Codex models; senpi now matches both.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/sdk.ts`: SDK sessions without builtin extensions compose the request tier here; the service-tier builtin's payload hook applies the same gate for extension sessions.
+- `packages/coding-agent/src/core/model-resolver.ts`: the selection warning is produced during model pattern parsing, before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: the `serviceTier` line in the `streamFn` passed to `new Agent`.
+- `packages/coding-agent/src/core/model-resolver.ts`: the import block and the Ultrafast advisory helpers above `parseModelPattern`.
+
 ## 2026-09-29 - Carry model tier decorators into session startup (senpi#2399)
 
 ### What changed

@@ -108,11 +108,13 @@ describe("service-tier decorators", () => {
 		}
 	});
 
-	test("ultrafast on a gateway model is unchanged and does not warn", () => {
-		const gateway = model("openrouter", "gpt-6.1-sol", "GPT-6.1 Sol");
-		const result = parseModelPattern("openrouter/gpt-6.1-sol:ultrafast", [gateway]);
+	test("ultrafast on a gateway model warns that the request runs at its default tier", () => {
+		const gateway = model("opencode", "gpt-6-astra", "GPT-6 Astra");
+		const result = parseModelPattern("opencode/gpt-6-astra:ultrafast", [gateway]);
 		expect(result.serviceTier).toBe("ultrafast");
-		expect(result.warning).toBeUndefined();
+		expect(result.warning).toBe(
+			"Ultrafast is only sent to OpenAI and ChatGPT Subscription; opencode/gpt-6-astra runs at its default tier",
+		);
 	});
 
 	test("a model id that literally ends in :priority still matches whole (full-string precedence)", () => {

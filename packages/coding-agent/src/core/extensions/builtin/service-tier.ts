@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ModelRegistry } from "../../model-registry.ts";
 import { type ModelServiceTier, SettingsManager } from "../../settings-manager.ts";
+import { serviceTierForProvider } from "../../ultrafast-lanes.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ServiceTier } from "../types.ts";
 
 export type { ServiceTier };
@@ -373,6 +374,10 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		} else {
 			effectiveServiceTier = ctx.serviceTier ?? settingsServiceTier;
 		}
-		return addServiceTierToPayload(ctx.model?.api, event.payload, effectiveServiceTier);
+		return addServiceTierToPayload(
+			ctx.model?.api,
+			event.payload,
+			serviceTierForProvider(ctx.model?.provider, effectiveServiceTier),
+		);
 	});
 }

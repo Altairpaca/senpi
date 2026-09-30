@@ -1,3 +1,21 @@
+## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the `before_provider_request` hook passes the tier it would add through `serviceTierForProvider`, so an Ultrafast pin or `openai.serviceTier: "ultrafast"` is never added for a provider other than `openai` and `chatgpt-subscription`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the hook added the tier for any model on the Responses APIs, so gateways serving GPT-6 Astra received `service_tier: "ultrafast"`. codex and oh-my-pi never send it there.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is the existing service-tier builtin; the change stays inside its request hook.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the import block and the final `addServiceTierToPayload` call in `before_provider_request`.
+
 ## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
 
 ### What changed

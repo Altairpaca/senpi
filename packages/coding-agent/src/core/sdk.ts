@@ -46,6 +46,7 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+import { serviceTierForProvider } from "./ultrafast-lanes.ts";
 
 // Preserve the pre-0.81 fallback for extensions that construct Agent instances
 // or invoke low-level agent loops without supplying streamFn. Agent core remains
@@ -453,10 +454,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 					: declaredPolicy.providerRequest.enabled
 						? declaredPolicy.providerRequest.maxRetries
 						: 0;
-			const serviceTier = options?.serviceTier ?? resolveRequestServiceTier(model);
+			const serviceTier = serviceTierForProvider(
+				model.provider,
+				options?.serviceTier ?? resolveRequestServiceTier(model),
+			);
 			return modelRuntime.streamSimple(model, context, {
 				...options,
-				...(serviceTier !== undefined ? { serviceTier } : {}),
+				serviceTier,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? profileMaxRetries,
