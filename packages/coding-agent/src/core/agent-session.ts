@@ -2557,7 +2557,10 @@ export class AgentSession {
 			const requiredAutoCompaction = lastAssistant
 				? this._getRequiredAutoCompactionReason(lastAssistant)
 				: undefined;
-			if (requiredAutoCompaction) {
+			// A retry owns the queue the same way: the retry handler drops the failed
+			// assistant from agent state, so the core's post-run check would otherwise
+			// see a user tail and drain queued steering into the doomed retry request.
+			if (requiredAutoCompaction || this._willRetryAfterAgentEnd(event.messages)) {
 				this.agent.suppressQueuedMessageDrain();
 			}
 			// agent_before_settle (D-15) decides the post-run queue: it continues first (queued follow-ups
