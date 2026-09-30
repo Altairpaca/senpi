@@ -12,6 +12,7 @@ import {
 } from "../../../scripts/model-catalog-protocol.ts";
 import { VERSION } from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { getPiUserAgent } from "../src/utils/pi-user-agent.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 // Runs the current client against the catalog selection pi.dev performs, using
@@ -53,10 +54,11 @@ const objects = new Map<string, unknown>([
 ]);
 
 /** Minimal stand-in for pi.dev's /api/models/providers/:provider route. */
-function startCatalogServer(requests: string[]): Promise<Server> {
+function startCatalogServer(requests: string[], userAgents: string[]): Promise<Server> {
 	const server = createServer((request, response) => {
 		const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
 		requests.push(`${url.pathname}${url.search}`);
+		userAgents.push(request.headers["user-agent"] ?? "");
 		const provider = /^\/api\/models\/providers\/([^/]+)$/.exec(url.pathname)?.[1];
 		const catalogRequest = parseModelCatalogRequest(url, request.headers["user-agent"]);
 		if (!provider) {
@@ -95,11 +97,12 @@ function startCatalogServer(requests: string[]): Promise<Server> {
 
 describe("model catalog protocol with the current client", () => {
 	const requests: string[] = [];
+	const userAgents: string[] = [];
 	let server: Server;
 	let catalogBaseUrl: string;
 
 	beforeAll(async () => {
-		server = await startCatalogServer(requests);
+		server = await startCatalogServer(requests, userAgents);
 		catalogBaseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 	});
 
@@ -120,10 +123,13 @@ describe("model catalog protocol with the current client", () => {
 		expect([...refresh.errors]).toEqual([]);
 
 		const catalogUrl = "/api/models/providers/openrouter?types=chat%2Cimage%2Cclassifier";
-		expect(requests).toEqual([catalogUrl, `${catalogUrl}&pi-version=${VERSION}`]);
+		// Fork brand wire identity (fixB-misc decision): a senpi/ User-Agent is not a pi/ client, so pi.dev skips the pi-version redirect and serves its default catalog.
+		expect(userAgents).toEqual([getPiUserAgent(VERSION)]);
+		expect(requests).toEqual([catalogUrl]);
 
 		const expectedModel =
-			selectModelCatalog(index, VERSION)?.revision === legacyRevision ? legacyModel : mixedApiModel;
+			selectModelCatalog(index, undefined)?.revision === legacyRevision ? legacyModel : mixedApiModel;
+		expect(expectedModel).toBe(mixedApiModel);
 		const model = runtime.getModel("openrouter", modelId);
 		expect(model).toMatchObject({ api: expectedModel.api, baseUrl: expectedModel.baseUrl });
 		if (!model) throw new Error(`Missing model: openrouter/${modelId}`);
