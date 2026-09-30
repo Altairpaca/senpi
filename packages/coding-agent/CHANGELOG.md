@@ -6,6 +6,20 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
+
+### Removed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Added
+
 - Added the `accept-edits` permission preset: project reads and edits are allowed, while shell commands, outside paths and other tools require approval. Multi-session hosts advertise `permission_preset_accept_edits` so clients can fall back to `ask` on older engines. ([#2430](https://github.com/code-yeongyu/senpi/issues/2430))
 
 - `SENPI_PROMPT_SURFACE=chat` (or `open_session.promptSurface: "chat"`, host capability `prompt_surface_chat`) renders every built-in system prompt for a chat bridge that posts each reply to people in a conversation: everything the `app` surface does, plus no Ask / For you / Now / Next handoff block and no todo or ledger lines in replies; the todo tool stops appending its "Handoff due" cue, and a finalized reply that still carries a routing line, a handoff block or todo-ledger lines has them removed before it is emitted or saved (streamed deltas are not rewritten). Terminal and app prompts are unchanged. ([#2398](https://github.com/code-yeongyu/senpi/issues/2398))
@@ -28,7 +42,7 @@
 
 - Answering a pending question no longer gets the first-turn todo reminder or a forced `todo` tool call when the question came from a turn the user did not type, such as a first-launch onboarding greeting or a request delivered through the session control endpoint. The model now acts on the answer, and the first request the user types afterwards now opens with a phased todo list. ([#2419](https://github.com/code-yeongyu/senpi/issues/2419))
 
-- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
+- The prompt-cache keep-alive pings again in real sessions, and each ping sends the same tool list as the turn it keeps warm. It used to try to arm while the run was still finishing, stand down as busy and never re-arm; and when it did ping, it rebuilt the tools in registry order, so its cache prefix never matched the turn's. Thanks to @MoerAI. ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))
 
 ### Removed
 
@@ -57,8 +71,6 @@
 - A session no longer leaves an empty `.omo/` (or `.senpi/`) folder in the project. Reading the project hook trust state when the project has no config folder returns the empty state without creating the folder for a lock. ([#2386](https://github.com/code-yeongyu/senpi/issues/2386))
 
 - RPC `get_auth_providers` gives each login method row its own status: a stored OAuth login no longer also marks the provider's API-key row connected, and vice versa, and `login_api_key` / `logout` answer only after the status reflects the change ([#2384](https://github.com/code-yeongyu/senpi/issues/2384)).
-
-- Fixed the prompt-cache keep-alive never arming in real sessions and pinging with a different tool list than the turn it keeps warm ([#2389](https://github.com/code-yeongyu/senpi/issues/2389))
 
 ### Removed
 
