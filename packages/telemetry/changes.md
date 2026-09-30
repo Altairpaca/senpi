@@ -1,3 +1,21 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/telemetry/src/index.ts`: same types as the pinned upstream file; the schema span/event conditional types are laid out the way the fork's formatter prints them.
+
+### Why
+
+The fork runs biome with its own formatter over every package (`npm run check` fails on warnings). No behavior differs from upstream.
+
+### Why an extension could not handle it
+
+Source formatting of package files is enforced by the repository check, not by any runtime surface.
+
+### Expected merge conflict zones
+
+- LOW: upstream edits to the `TelemetrySchemaSpanEvent*` conditional types; take upstream's content and re-format.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): chord, client, protocol, server, telemetry, sqlite-node
 
 ### What changed

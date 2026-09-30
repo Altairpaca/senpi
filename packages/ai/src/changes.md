@@ -1,3 +1,21 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/ai/src/image-models.ts`: same code as the pinned upstream file; the `BuiltinImageModel` conditional type is laid out the way the fork's formatter prints it.
+
+### Why
+
+The fork runs biome with its own formatter over every package (`npm run check` fails on warnings). No behavior differs from upstream; the fork image stack consumes this module through `@earendil-works/pi-ai/compat` (sync decision D-3).
+
+### Why an extension could not handle it
+
+Source formatting of package files is enforced by the repository check, not by any runtime surface.
+
+### Expected merge conflict zones
+
+- LOW: an upstream edit to `BuiltinImageModel`; take upstream's content and re-format.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): shared type roots (contract wave)
 
 ### What changed

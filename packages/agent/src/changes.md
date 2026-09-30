@@ -1,3 +1,22 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/agent/src/harness/pico3/harness.ts`: same code as the pinned upstream file; the `export { isCoreKind, withAbortSignal }` line sits after the view re-exports with its names sorted, as the fork's biome configuration orders them.
+- `packages/agent/src/harness/pico3/types.ts`: same types as the pinned upstream file; conditional types (`ConfigOfKinds`, `TaskOf`, `InputOf`, `HooksOf`, `ConfigOf`, `SlotOf`) are laid out the way the fork's formatter prints them and the trailing `export type { ... }` list is sorted.
+
+### Why
+
+The fork runs biome with its own formatter and import-sorting rules over every package (`npm run check` fails on warnings), so upstream-added files are stored in the fork's layout. No behavior differs from upstream.
+
+### Why an extension could not handle it
+
+Source formatting of package files is enforced by the repository check, not by any runtime surface.
+
+### Expected merge conflict zones
+
+- LOW: any upstream edit to the reformatted conditional types in `types.ts` or the export lines at the end of `harness.ts`; take upstream's content and let the formatter re-apply the fork layout.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): shared type roots (contract wave)
 
 ### What changed

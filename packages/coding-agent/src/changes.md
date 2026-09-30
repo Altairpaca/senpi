@@ -1,3 +1,21 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/coding-agent/src/experimental/radius-auth.ts`: kept the fork version. It defines `ENV_RADIUS_GATEWAY` itself and defaults the gateway from that variable or `DEFAULT_RADIUS_GATEWAY` (`@earendil-works/pi-ai/providers/radius-config`); the pinned upstream file imports both from `../core/radius.ts`.
+
+### Why
+
+The fork deleted `packages/coding-agent/src/core/radius.ts` (the Radius share/upload service is not used; sync decision D-6 keeps it deleted), so the relay auth resolver cannot import from it. The gateway resolution is the same: environment variable first, then the default gateway.
+
+### Why an extension could not handle it
+
+The experimental relay client imports this module directly at startup; there is no extension hook in front of it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import block and the `RadiusRelayAuthResolver` constructor default whenever upstream changes `core/radius.ts` exports; keep the local `ENV_RADIUS_GATEWAY` and the `DEFAULT_RADIUS_GATEWAY` fallback.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): settings, entrypoints and resource loading
 
 ### What changed

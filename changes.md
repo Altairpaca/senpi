@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/pty/tsconfig.build.json`: the fork's own build config for `packages/pty` (present since before the previous pin, not in the pinned upstream tree). Git rename detection pairs it with upstream's `packages/codemode/tsconfig.build.json`, which this sync does not add (Exclusion list), because the two files are byte-identical.
+
+### Why
+
+`packages/pty` is a fork-only package; its build config matches the generic package template upstream also uses. The rename pairing is a content match, not an upstream ownership.
+
+### Why an extension could not handle it
+
+Workspace build configuration is read by `scripts/build-all.mjs` before any runtime or extension loads.
+
+### Expected merge conflict zones
+
+- NONE for this path; a future upstream change to `packages/codemode/tsconfig.build.json` stays excluded by `.github/agent/upstream-exclusions.txt`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
 
 ### What changed
