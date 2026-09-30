@@ -4,11 +4,11 @@ import {
 	streamSimple as streamCodex,
 } from "../src/api/openai-codex-responses.ts";
 import { streamSimple as streamResponses } from "../src/api/openai-responses.ts";
-import { getModel } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Context, SimpleStreamOptions } from "../src/types.ts";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-const context: Context = { messages: [{ role: "user", content: "Hello", timestamp: 0 }] };
+const context = normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 0 }] });
 const token = `test.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test" } })).toString("base64url")}.test`;
 
 afterEach(() => {
@@ -223,13 +223,17 @@ describe("Ultrafast WebSocket continuations", () => {
 		const transcript: Context = { messages: [] };
 		for (const serviceTier of [undefined, "ultrafast", "ultrafast", undefined] as const) {
 			transcript.messages.push({ role: "user", content: `Turn ${bodies.length + 1}`, timestamp: bodies.length });
-			const result = await streamCodex(getModel("chatgpt-subscription", "gpt-6-astra"), transcript, {
-				apiKey: token,
-				sessionId: `ultrafast-${effort}`,
-				transport: "websocket-cached",
-				serviceTier,
-				reasoning: effort,
-			}).result();
+			const result = await streamCodex(
+				getModel("chatgpt-subscription", "gpt-6-astra"),
+				normalizeContext(transcript),
+				{
+					apiKey: token,
+					sessionId: `ultrafast-${effort}`,
+					transport: "websocket-cached",
+					serviceTier,
+					reasoning: effort,
+				},
+			).result();
 			expect(result.stopReason).toBe("stop");
 		}
 		expect(bodies.map((body) => body.service_tier)).toEqual([undefined, "ultrafast", "ultrafast", undefined]);

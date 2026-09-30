@@ -123,7 +123,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
+| `theme` | string | `"system"` | Theme name (`"system"`, `"dark"`, `"light"`, a `light/dark` pair, or custom). `system` derives colors from the terminal's palette; see [Themes](themes.md#use-your-terminals-colors) |
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean | `false` | Hide startup header |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
@@ -144,6 +144,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling or while the pointer is over its rightmost-column track, `"always"` reserves that column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
 | `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
+| `fullscreenWheelScrollLines` | `"auto"` or number | `"auto"` | Lines per mouse-wheel event in fullscreen mode, from 1 to 100. `"auto"` moves one line per event in local macOS terminals, which already accelerate wheel and trackpad input; elsewhere, and over SSH, it speeds up fast wheel spins to at most 6 lines per event. Alt+wheel moves five times as far |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
 
@@ -326,9 +327,9 @@ Anthropic streaming refusals are identified from typed `stopDetails`. A configur
 When a chain entry fails with a provider-health failure, Senpi opens a circuit for that entry: a transient failure (timeout, overload, 429, 5xx, transport drop) once its retry budget is spent, or a billing, credit, quota, or budget exhaustion at once, including on the last entry of the chain. Authentication (401/403) and request-shape rejections do not open a circuit. The circuit is shared by every session in the process that uses the same agent directory - sessions started with `/new`, `/resume`, or `/fork`, and in-process subagents - so they skip the entry without sending it a request or spending its retry budget:
 
 - A session whose current model has an open circuit moves to the next chain entry with a closed circuit at the turn boundary (shown as a `transient` model fallback). Mid-turn fallbacks skip open entries the same way.
-- The cooldown starts at `fallback.circuitCooldownMs` and doubles on each consecutive failure, up to `fallback.circuitMaxCooldownMs`. A provider `Retry-After` (seconds or HTTP-date, on 429 and 503 responses) keeps the circuit open until that time when it is longer, and a later failure without a hint never shortens it. An accepted response from the entry closes the circuit and resets the escalation.
+- The cooldown starts at `fallback.circuitCooldownMs` and doubles on each consecutive failure, up to `fallback.circuitMaxCooldownMs`. A provider `Retry-After` (seconds or HTTP-date, on 429 and 503 responses) keeps the circuit open until that time when it is longer, up to `fallback.circuitMaxCooldownMs`, and a later failure without a hint never shortens it. A hint longer than that ceiling (a weekly window, or a gateway replaying a stale wait) keeps the circuit open only until the ceiling; then one half-open probe checks the entry, and a probe that is rate limited again re-opens the circuit with the fresh hint. An accepted response from the entry closes the circuit and resets the escalation.
 - After the cooldown the circuit is half-open: the first request to use the entry again - a session's turn or a background 429 probe-back - holds its only probe until the probe settles, and every other request keeps skipping it, including the other request lane of the same session. While the circuit tracks an entry, its clock (monotonic, like every cooldown) decides when a fallback returns to it. The probe closes the circuit as soon as the entry streams a response; its first provider-health failure re-opens the circuit with the doubled cooldown and falls back immediately, without same-model retries. A user abort, a request-shaped error, or disposal hands the probe back. A probe that never answers is aborted as a provider failure after the stream-start guard (5 minutes when `retry.provider.streamStartTimeoutMs` is 0).
-- 429 probe-back probes of a demoted primary respect the circuit: none is sent before the provider's retry-after or the cooldown elapses, or while another session holds the probe.
+- 429 probe-back probes of a demoted primary respect the circuit: none is sent before the circuit's open time (the provider's retry-after, bounded by `fallback.circuitMaxCooldownMs`, or the cooldown) elapses, or while another session holds the probe.
 - The chain never refuses a turn: if every remaining entry is open, the request still goes to the current entry (or the first open candidate) as a probe.
 - Refusals and request-shaped hard errors do not open circuits. Selecting a model yourself closes its circuit.
 
@@ -500,7 +501,15 @@ On Windows, select `powershell` instead of `bash`, or include both:
 }
 ```
 
-An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
+A list of only `+name` and `-name` entries changes the inherited selection instead of replacing it. This replaces `bash` with `powershell` and enables `grep` on top of the defaults:
+
+```json
+{
+  "defaultTools": ["-bash", "+powershell", "+grep"]
+}
+```
+
+An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools and does not accept `+name` or `-name`, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array of plain names replaces the global array; a project list of only `+name` and `-name` entries applies on top of the global selection.
 
 #### Eval-only tools
 
