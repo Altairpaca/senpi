@@ -8,11 +8,23 @@
 
 - Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. Selecting Ultrafast on any other OpenAI or ChatGPT Subscription model warns that the tier is documented for GPT-6 Astra only, and the request is still sent. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
 
+- `SENPI_PROMPT_SURFACE=chat` (or `open_session.promptSurface: "chat"`, host capability `prompt_surface_chat`) renders every built-in system prompt for a chat bridge that posts each reply to people in a conversation: everything the `app` surface does, plus no Ask / For you / Now / Next handoff block and no todo or ledger lines in replies; the todo tool stops appending its "Handoff due" cue, and a finalized reply that still carries a routing line, a handoff block or todo-ledger lines has them removed before it is emitted or saved (streamed deltas are not rewritten). Terminal and app prompts are unchanged. ([#2398](https://github.com/code-yeongyu/senpi/issues/2398))
+
 ### Changed
+
+- The recommended OpenAI model is now GPT-6.1 Sol at `medium`, one slot below GPT-6 Astra where GPT-6 Sol was; `gpt-6.1-sol-fast` counts as recommended like the other `-fast` ids. Your explicitly configured `recommendedModels` are untouched. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
 
 ### Fixed
 
 - `--model` and `--models` now honor a service-tier decorator (`:priority`, `:flex`, `:auto`). Previously the decorator was parsed and then dropped before the session was created, so an explicit `:priority` was sent and billed as Standard. ([#2412](https://github.com/code-yeongyu/senpi/issues/2412))
+
+- On the `anthropic-subscription` lane, a `write` or `edit` to a file outside the working directory no longer comes back as `File has not been read yet` while senpi still makes the change. Claude Code's built-in Write/Edit ran their own read check before senpi could answer, so one call got a refusal and a success, and a model that retried applied the edit twice. senpi now offers `write` and `edit` to Claude Code as its own tools, so each call runs once and returns one result, as on the direct Anthropic lanes. Existing sessions reattach once to pick up the new tool list. Reported by @haamsuk-collab. ([#2401](https://github.com/code-yeongyu/senpi/issues/2401))
+
+- A running session survives an update that changes how the package's dependencies are laid out (for example a release with `bundledDependencies` followed by one without). Its runtime snapshot used to link each dependency back to the install, so after such an update every PTY tool (bash, monitor) and `eval` failed with `ENOENT` on the missing directory until restart. The snapshot now holds its own copy of every package the install's dependency graph reaches (copy-on-write clones where the filesystem supports them, otherwise hardlinks, otherwise plain copies; type declarations and source maps are left out). The first launch after an update builds it once, which added about 2 to 3 s on macOS in our measurements; every later launch starts as before. ([#2408](https://github.com/code-yeongyu/senpi/issues/2408))
+
+- A shared RPC host keeps running the build it started with when the install is replaced. The host supervisor and its host children used to start the install's unbundled `dist/cli-main.js`, even from a runtime snapshot, so an update could break or silently change a running shared host. They now start the snapshot's own bundled CLI and claim the snapshot like a session does, and a new launch still picks up the new build. ([#2409](https://github.com/code-yeongyu/senpi/issues/2409))
+
+- An answer sent to a terminal session's pending question through its control endpoint now reaches the model with its text. A text-only answer (`answers: {}` plus a `comment`, which relaying clients send) used to arrive as an empty `[Answer to question <id>]`; the terminal now settles every answer by the same rule as a multi-session host, so both surfaces deliver the same message, and a frame with neither answers nor a comment is refused `question_incomplete` instead of resolving empty. ([#2407](https://github.com/code-yeongyu/senpi/issues/2407))
 
 ### Removed
 

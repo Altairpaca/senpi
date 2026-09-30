@@ -1,5 +1,26 @@
 # prompt-preset Extension Changes
 
+## 2026-09-30 - Chat surface for every core (senpi#2398)
+
+### What changed
+
+- Every `INTENT_GATE_LEAD` table (Claude Fable 5 / 5.1, Opus 5 / 5.5, Sonnet 5.5, Grok 4.5 / 4.6 / 4.7, Kimi K3, GPT-5.5 / 5.6 / 6 Astra) is keyed by `TerminalOrApp` and looked up through `terminalOrApp(context.surface)`, and every `context.surface === "app"` branch reads `!== "terminal"`, so `chat` gets the app wording. `kimi-k2-6.ts` / `kimi-k2-code.ts`: the "routing line is required every turn" sentence renders only on `terminal`.
+- Final-message rules on `chat` say the final message is the answer itself instead of opening with the Handoff block: Claude cores and Kimi K3 through `CHAT_FINAL_MESSAGE`, Opus 5 / 5.5 and Sonnet 5.5 as "When you finish, your reply is the answer itself:", Grok 4.5 as "the final message is the answer itself, leading with the outcome", GPT-5.5 / 5.6 without the You need slot.
+- `gpt-5.5.ts`, `gpt-5.6.ts`: the inline `## Handoff` section is `CHAT_REPLIES_SECTION` on `chat`. `gpt-6-astra.ts`: `SURFACE_DIRECTIVE` gains a `chat` entry (app steering, `CHAT_REPLY_RULE` in place of the handoff paragraph, the final-message shape without the handoff block). `gpt-surface.ts`: `GPT_HANDOFF_MOMENTS` is keyed by `TerminalOrApp`.
+- `test/suite/prompt-presets-app-surface.test.ts`: the app assertions run for `app` and `chat`; for every prompt, `chat` carries no `> Ask:`, `For you`, `Now: [`, `You need` or "handoff block" while `app` still carries a handoff slot; `resolvePromptSurface` accepts `chat`; a harness session with `SENPI_PROMPT_SURFACE=chat` renders the chat prompt. RED on main: 96 of 337 tests in the targeted files failed.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (2026-09-30, senpi#2398).
+
+### Why an extension could not handle it
+
+- These are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- The `INTENT_GATE_LEAD` tables and final-message sentences in each core; `SURFACE_DIRECTIVE` in `gpt-6-astra.ts`.
+
 ## 2026-09-30 - App surface: every core's claim audit covers an unrun check with the evidence that did run (senpi#2377)
 
 ### What changed
