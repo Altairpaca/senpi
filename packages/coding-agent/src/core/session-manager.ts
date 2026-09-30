@@ -52,6 +52,7 @@ import {
 	reserveSessionWrite,
 	unregisterSessionWriter,
 } from "./session-write-reservation.ts";
+import { isVirtualModel } from "./virtual-models.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -597,7 +598,13 @@ function getSessionContextSettings(
 					isModelSelectionExplicit = true;
 				}
 			}
-		} else if (entry.type === "message" && entry.message.role === "assistant" && !isInFallbackWindow) {
+		} else if (
+			entry.type === "message" &&
+			entry.message.role === "assistant" &&
+			!isInFallbackWindow &&
+			// A failed routing attempt names the virtual model; no model answered it.
+			!isVirtualModel(entry.message)
+		) {
 			if (isModelSelectionExplicit && model?.provider === normalizeProviderId(entry.message.provider)) continue;
 			model = { provider: normalizeProviderId(entry.message.provider), modelId: entry.message.model };
 			isModelSelectionExplicit = false;

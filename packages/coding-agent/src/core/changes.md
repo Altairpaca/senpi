@@ -55,6 +55,24 @@ The default compaction summary request is assembled inside the core session; an 
 
 - The return type of `_getCompactionRequestAuth`, the parameter list and `compact()` call of `_runDefaultCompaction`, and its caller in the auto/manual compaction path of `agent-session.ts`.
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): a failed routing response does not restore as the session model
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the session-context model derivation skips assistant messages of a virtual model (`isVirtualModel`, api `pi-virtual`). Such a message is the error response of a failed routing attempt; no model answered it. Resuming a transcript that ends with one now restores the physical model that answered last instead of failing to restore the virtual id and falling back to the first available model.
+
+### Why
+
+The fork restores physical selections from the session context (fallback windows, explicit selections, legacy provider ids), while upstream reads them from `getBranchSelection()`, which already skips virtual responses. Without the skip, `createAgentSession` resumed the wrong model and reported a fallback (`test/virtual-models.test.ts` "falls back to the last physical response when the transcript ends with a routing failure").
+
+### Why an extension could not handle it
+
+Session restore runs in the core session manager before any extension can observe or change the selection.
+
+### Expected merge conflict zones
+
+- The assistant-message branch of the session-context settings loop in `session-manager.ts` and one import line.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
 
 ### What changed
