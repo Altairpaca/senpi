@@ -54,6 +54,7 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 				body,
 				authorization: req.headers.authorization || null,
 				apiKeyHeader: req.headers["x-api-key"] || null,
+				routingHint: req.headers["x-codex-routing-hint"] || null,
 				model: body.model,
 				stream: !!body.stream,
 				messages: body.messages,

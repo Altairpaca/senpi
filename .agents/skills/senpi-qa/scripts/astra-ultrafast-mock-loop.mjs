@@ -1,4 +1,7 @@
-/** Real source CLI proof: all five Astra efforts with Ultrafast on both first-party lanes. */
+/**
+ * Real source CLI proof: all five Astra efforts with Ultrafast on both first-party lanes, the
+ * ChatGPT Subscription routing hint, and no Ultrafast on the wire for a gateway provider.
+ */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, runCli } from "./lib/common.mjs";
@@ -18,18 +21,24 @@ async function main() {
 	installCleanupHooks();
 	const auth = guardRealAuth();
 	const evidence = evidenceDir("astra-ultrafast-mock-loop");
-	for (const provider of ["openai", "chatgpt-subscription"]) {
-		for (const scenario of [
-			...EFFORTS.map((effort) => ({ effort, selection: "model" })),
-			{ effort: "xhigh", selection: "scope" },
-			{ effort: "xhigh", selection: "alias" },
-		]) {
+	for (const provider of ["openai", "chatgpt-subscription", "opencode"]) {
+		const firstParty = provider !== "opencode";
+		for (const scenario of firstParty
+			? [
+					...EFFORTS.map((effort) => ({ effort, selection: "model" })),
+					{ effort: "xhigh", selection: "scope" },
+					{ effort: "xhigh", selection: "alias" },
+				]
+			: [
+					{ effort: "xhigh", selection: "model" },
+					{ effort: "xhigh", selection: "scope" },
+				]) {
 			const { effort, selection } = scenario;
 			const tag = `${provider}-${effort}-${selection}`;
 			const box = makeSandbox(`senpi-qa-${tag}`);
 			const server = await startFakeModelServer({ turns: [{ text: MARKER }] });
 			try {
-				const api = provider === "openai" ? "openai-responses" : "openai-codex-responses";
+				const api = provider === "chatgpt-subscription" ? "openai-codex-responses" : "openai-responses";
 				writeFileSync(join(box.agentDir, "models.json"), JSON.stringify({
 					providers: {
 						[provider]: {
@@ -60,7 +69,14 @@ async function main() {
 				check(`${tag}: CLI exit and reply`, result.code === 0 && result.stdout.includes(MARKER));
 				check(`${tag}: exactly one request`, server.requests.length === 1);
 				const body = server.requests[0]?.body;
-				check(`${tag}: model, effort, tier`, body?.model === "gpt-6-astra" && body?.reasoning?.effort === effort && body?.service_tier === "ultrafast");
+				const tier = firstParty ? "ultrafast" : undefined;
+				check(`${tag}: model, effort, tier ${tier ?? "absent"}`, body?.model === "gpt-6-astra" && body?.reasoning?.effort === effort && body?.service_tier === tier);
+				if (provider === "chatgpt-subscription") {
+					check(`${tag}: routing hint`, server.requests[0]?.routingHint === "model=gpt-6-astra;tier=ultrafast");
+				}
+				if (!firstParty) {
+					check(`${tag}: gateway warning`, `${result.stdout}${result.stderr}`.includes("Ultrafast is only sent to OpenAI and ChatGPT Subscription"));
+				}
 				check(`${tag}: real auth unchanged`, auth.assertUnchanged());
 				writeFileSync(join(evidence, `${tag}-request.json`), JSON.stringify(body ?? null, null, 2));
 				writeFileSync(join(evidence, `${tag}-cli.json`), JSON.stringify(result, null, 2));
