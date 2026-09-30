@@ -98,6 +98,17 @@ function getPromptResponses(outputLines: string[], id: string): ParsedOutputLine
 	);
 }
 
+// D-15 (fork semantics win): the fork queue_update also carries `ordered`, the cross-mode enqueue order.
+function expectedQueueUpdate(type: "steer" | "follow_up"): ParsedOutputLine {
+	const mode = type === "steer" ? "steer" : "followUp";
+	return {
+		type: "queue_update",
+		steering: type === "steer" ? ["B"] : [],
+		followUp: type === "follow_up" ? ["B"] : [],
+		ordered: [{ text: "B", mode, enqueueOrder: expect.any(Number) }],
+	};
+}
+
 async function createRuntimeHost(options: {
 	withAuth: boolean;
 	holdResponse?: boolean;
@@ -461,11 +472,7 @@ describe("RPC prompt response semantics", () => {
 						success: true,
 						data: { disposition: "handled" },
 					});
-					expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
-						type: "queue_update",
-						steering: type === "steer" ? ["B"] : [],
-						followUp: type === "follow_up" ? ["B"] : [],
-					});
+					expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(expectedQueueUpdate(type));
 				});
 				await vi.waitFor(() => {
 					expect(
@@ -502,11 +509,7 @@ describe("RPC prompt response semantics", () => {
 					success: true,
 					data: { disposition: "queued" },
 				});
-				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
-					type: "queue_update",
-					steering: type === "steer" ? ["B"] : [],
-					followUp: type === "follow_up" ? ["B"] : [],
-				});
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(expectedQueueUpdate(type));
 			});
 		} finally {
 			await cleanup();
