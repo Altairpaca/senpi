@@ -238,6 +238,21 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 	low: null,
 	medium: null,
 } as const;
+const TOGGLE_ONLY_THINKING_FORMATS = new Set([
+	"deepseek",
+	"qwen",
+	"qwen-chat-template",
+	"string-thinking",
+	"together",
+	"zai",
+]);
+const TOGGLE_ONLY_THINKING_LEVEL_MAP = {
+	minimal: null,
+	low: null,
+	medium: null,
+	xhigh: null,
+	max: null,
+} as const;
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
@@ -749,6 +764,23 @@ function applyModelsDevReasoningOptionMetadata(model: Model<Api>): void {
 	if (!reasoningOptions || !supportsDirectReasoningEffort(model)) return;
 	const thinkingLevelMap = getEffortThinkingLevelMap(reasoningOptions);
 	if (thinkingLevelMap) mergeThinkingLevelMap(model, thinkingLevelMap);
+}
+
+function applyToggleOnlyThinkingLevelMap(model: Model<Api>): void {
+	if (model.api !== "openai-completions" || !model.reasoning || model.thinkingLevelMap !== undefined) return;
+
+	const compat = model.compat as OpenAICompletionsCompat | undefined;
+	const reasoningOptions = modelsDevReasoningOptions.get(getModelKey(model));
+	if (
+		compat?.supportsReasoningEffort !== false ||
+		compat.thinkingFormat === undefined ||
+		!TOGGLE_ONLY_THINKING_FORMATS.has(compat.thinkingFormat) ||
+		reasoningOptions?.some((option) => option.type === "effort")
+	) {
+		return;
+	}
+
+	model.thinkingLevelMap = { ...TOGGLE_ONLY_THINKING_LEVEL_MAP };
 }
 
 function getTogetherCompat(modelId: string, reasoning: boolean): OpenAICompletionsCompat {
@@ -4133,6 +4165,7 @@ async function generateModels() {
 		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
 		applyThinkingLevelMetadata(model);
+		applyToggleOnlyThinkingLevelMap(model);
 		applyStrictToolCompatMetadata(model);
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);

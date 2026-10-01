@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
+
 - Deferred extension tools, including computer use, keep working after hot-reload. The session now retires old lazy-tool activation callbacks before binding the replacement extension generation ([omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
 
 - Manual and automatic compaction now accept Amazon Bedrock sessions authenticated through the ambient AWS credential chain, and other providers such as Google Vertex that explicitly resolve ambient request-time credentials, while providers that require a missing key are still rejected before a summary request. Thanks @jerilkuriakose for the report. ([#2441](https://github.com/code-yeongyu/senpi/issues/2441))
