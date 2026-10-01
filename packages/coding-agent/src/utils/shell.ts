@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
+import { withBundledBunCommands } from "./bundled-bun.ts";
 
 /** Family of a resolved shell executable, used to pick invocation arguments. */
 export type ShellKind = "bash" | "sh" | "cmd" | "powershell";
@@ -195,10 +196,10 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 	const hasBinDir = pathEntries.includes(binDir);
 	const updatedPath = hasBinDir ? currentPath : [binDir, currentPath].filter(Boolean).join(delimiter);
 
-	return {
+	return withBundledBunCommands({
 		...process.env,
 		[pathKey]: updatedPath,
-	};
+	});
 }
 
 /**

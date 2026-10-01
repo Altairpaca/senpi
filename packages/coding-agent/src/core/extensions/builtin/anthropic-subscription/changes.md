@@ -1,3 +1,25 @@
+## 2026-10-01 - Cold seed replays tool-read images as tool output, deduplicated and capped (senpi#2490)
+
+### What changed
+
+- New `cold-seed-images.ts`: `replayHistoryImages` rewrites the image entries of a cold-seed history. A tool-result image is preceded by `[image returned by the <tool> tool (tool output, not a user attachment)]`; identical decoded bytes (sha256) are sent once and later occurrences become a text reference to the first; at most `MAX_REPLAYED_HISTORY_IMAGES` (8) distinct historical images are replayed, the user's own uploads first and then the most recent tool images, the rest becoming a one-line note; image data that is empty or not base64 at all is dropped with a note. Line-wrapped, URL-safe or unpadded base64 is accepted, hashed by its decoded bytes, and a kept image is replayed re-encoded as canonical standard base64. Entries with no data or an unsupported media type keep the shared mapper's existing placeholder.
+- The rewrite applies to every whole-conversation replay `buildPromptBlocks` builds: the resident lane's cold seed / flatten (`session-stream.ts`) and the non-resident lane, which rebuilds the whole conversation on every turn (`stream.ts`).
+- `prompt-bridge.ts`: `buildPromptBlocks` passes each history message's rewritten content (when it holds an image) to the shared mapper. The final user message is not history and is unchanged, so a fresh re-attachment still goes out.
+- `content-blocks.ts`: exports `isSdkImageMediaType` so the replay selects only images the mapper would send.
+
+### Why
+
+- `buildPromptBlocks` appended every historical tool-result image as a bare image block inside the single cold-seed user frame, with no provenance and no dedup. One upload read five times became six images; the model took the reads for new user uploads, read them again, and each later cold seed replayed the new reads too (observed 2 -> 4 -> 8 -> 10).
+
+### Why an extension could not handle it
+
+- The flatten payload is built privately inside this builtin provider; no extension hook sees the SDK content blocks.
+
+### Expected merge conflict zones
+
+- LOW: the history loop in `prompt-bridge.ts` `buildPromptBlocks` (the `replayedImages` lookup) and the export block of `content-blocks.ts`. `session-sync.ts` (resume deltas) is untouched.
+- All production paths are fork-only.
+
 ## 2026-09-30 - Accepted senpi compaction replaces the resident Claude transcript
 
 ### What changed

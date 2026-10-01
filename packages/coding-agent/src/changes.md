@@ -1,3 +1,20 @@
+## 2026-10-01 - Export the bundled-bun PATH helper for eval kernels (omo#9362)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `withBundledBunCommands` from `utils/bundled-bun.ts`, next to the shell utilities.
+
+### Why
+
+- The eval extension (`senpi-codemode`) gives its kernels the same `bun`/`bunx` directory that `getShellEnv()` puts on the bash tool's `PATH`, so a cell's `bun test` in a compiled executable runs Bun instead of the engine. The extension reaches it only through the package's public exports.
+
+### Why an extension could not handle it
+
+- The helper lives in the core package; an extension can only import what `index.ts` exports.
+
+### Expected merge conflict zones
+
+- LOW: the shell-utilities export block in `index.ts`.
 ## 2026-10-01 - Experimental picker preserves optional command arguments (senpi#2479)
 
 ### What changed
