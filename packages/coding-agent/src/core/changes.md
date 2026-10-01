@@ -1,3 +1,21 @@
+## 2026-10-01 - Skill catalog: read a skill when it would change the work, not on a loose match (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/skills.ts`: the catalog preamble (both the `read` and the `bash` variants) says "load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason." instead of "whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work".
+
+### Why
+
+- GPT-6 Astra obeys the old sentence literally: in three same-day review sessions with an identical opener it read 6-8 SKILL.md files before its first action while Claude Fable read none, and a 2026-09-27 A/B measured the catalog as the largest pre-action cost (removing it cut time and cost by about 40%). OpenAI's guide warns that Astra "can be more sensitive to instructions contained in skills and other files"; codex's own template says "Do not use a skill based solely on keywords, superficial relevance, or the availability of a potentially applicable skill". The new sentence is the codex stance and is token-neutral.
+
+### Why an extension could not handle it
+
+- The preamble is rendered by the core skills loader for every session.
+
+### Expected merge conflict zones
+
+- `skills.ts` `formatSkillsForPrompt` lines array.
+
 ## 2026-10-01 - Explicit command argument requirements (senpi#2479)
 
 ### What changed

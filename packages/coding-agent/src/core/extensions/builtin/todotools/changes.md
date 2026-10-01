@@ -1,5 +1,23 @@
 # todotools Fork Tracker
 
+## 2026-10-01 - The first-turn opener asks for the phases the request needs (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` `FIRST_TURN_REMINDER`: "a phased list covering the whole request end to end, with only the phases this request needs - a question needs none past answering it" replaces the enumerated "investigation, implementation, verification (diagnostics, tests, build, manual check), and the final report". The gate, the forced `tool_choice` and the tests are unchanged.
+
+### Why
+
+- The enumeration made every first request, including a yes/no status question, plan a verification phase; GPT-6 Astra then had to reason the planned "run diagnostics, tests and build" item away ("no code change, so tests and build are not run") after spending the turn around it. The decomposition mandate itself stays in `TASK_MANAGEMENT_SECTION`.
+
+### Why an extension could not handle it
+
+- This is the todotools builtin's own reminder text.
+
+### Expected merge conflict zones
+
+- `first-turn.ts` `FIRST_TURN_REMINDER`.
+
 ## 2026-10-01 - The first gateway delivery gets the first-turn opener (senpi#2424)
 
 ### What changed
