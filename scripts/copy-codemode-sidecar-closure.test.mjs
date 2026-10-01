@@ -41,8 +41,11 @@ it("preserves every source dependency edge when three nesting levels can shadow 
 	pkg(join(modules, "x"), "x1");
 	writeFileSync(join(modules, "c/index.js"), "module.exports = require('x') + ';' + require('b');");
 	writeFileSync(join(modules, "b/index.js"), "module.exports = 'b1:' + require('x');");
-	const edges = ["c", "c/node_modules/x", "d", "d/node_modules/b", "b", "x"].flatMap((path) => {
-		const manifest = join(modules, path, "package.json");
+	const packagePaths = ["@code-yeongyu/senpi-codemode", "c", "c/node_modules/x", "d", "d/node_modules/b", "b", "x"];
+	const edges = packagePaths.flatMap((path) => {
+		const manifest = path === "@code-yeongyu/senpi-codemode"
+			? join(source, "package.json")
+			: join(modules, path, "package.json");
 		return Object.keys(JSON.parse(readFileSync(manifest)).dependencies ?? {}).map((dep) => ({
 			path, dep, version: createRequire(manifest)(`${dep}/package.json`).version,
 		}));
