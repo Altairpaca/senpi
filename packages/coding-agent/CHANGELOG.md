@@ -104,6 +104,8 @@
 
 ### Fixed
 
+- In a compiled build with no Bun on `PATH` (for example a desktop app started from Finder, or a standalone binary on a machine without Bun), `bun` and `bunx` from an eval cell, the bash tool and the terminal now run Bun itself. Before this fix, an eval cell's `bun test` started a second agent and returned its reply as a passing result with exit code 0, and the bash tool reported `bun: command not found`. A Bun you installed and put on `PATH` is still used first. ([omo#9362](https://github.com/code-yeongyu/oh-my-openagent/issues/9362))
+
 - Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 
 - An updated client can retire a shared host left running by an older release. While such a host was alive, every `host ensure` in the agent directory (including each desktop thread's own endpoint) was refused with `legacy_host`, and `host stop --drain` answered `unknown_owner`, so nothing short of killing the process by hand freed the machine. Now `host stop --drain` drains it when its old record still proves the process, and an ensure drains and replaces it on its own once it holds no session. With a session open the refusal says which process it is, which socket it serves, and the `host stop --drain --socket <socket>` that retires it. ([#2423](https://github.com/code-yeongyu/senpi/issues/2423))
