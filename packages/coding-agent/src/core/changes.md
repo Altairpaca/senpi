@@ -356,7 +356,7 @@ The package manager starts these subprocesses in core before an extension can al
 
 ### What changed
 
-- `packages/coding-agent/src/core/high-reasoning-warning.ts`: the Astra-only `max` threshold is gone; every sensitive model, GPT-6 Astra included, warns at `xhigh` and `max` and stays quiet at `high` and below (`test/high-reasoning-warning.test.ts`, `test/high-reasoning-warning-event.test.ts`, `test/suite/astra-high-reasoning-warning.test.ts`). This reverses the 2026-09-10 Astra `max`-only entry in `src/changes.md`.
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: the Astra-only `max` threshold is gone; every sensitive model, GPT-6 Astra included, warns at `xhigh` and `max` and stays quiet at `high` and below (`test/high-reasoning-warning.test.ts`, `test/high-reasoning-warning-event.test.ts`, `test/suite/astra-high-reasoning-warning.test.ts`). This reverses the `max`-only rule from `packages/coding-agent/src/changes.md` "2026-09-10 - Restrict GPT-6 Astra high-reasoning warning to max" (#1564).
 
 ### Why
 
