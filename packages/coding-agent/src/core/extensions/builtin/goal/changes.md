@@ -4,8 +4,9 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/goal/goal-file-lock.ts` (new): `withGoalFileLock(ref, fn)` runs `fn` inside the existing in-process `serializeByKey` tail and, inside that, holds a proper-lockfile lock acquired with `FILE_STORAGE_LOCK_OPTIONS` and the same bounded retry loop as `credential-pool/state-store.ts` (100ms..1s backoff, 5.5s budget). The lock directory is `.goal-lock-<sha256(basename)[:40]>` beside the goal file (`goalLockFilePath`), because the default `<file>.lock` overflows NAME_MAX for a goal basename already at 255 bytes. An exhausted budget throws `GoalStoreBusyError`; a lock reclaimed as stale while held throws `GoalStoreLockCompromisedError` instead of writing. Only the parent directory is created before locking, never a placeholder goal file, so `migrateLegacyGoalFile` still imports a pending legacy goal.
-- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `writeGoal`, `createGoal`, `updateGoal`, `clearGoal`, `accountGoalUsage`, `recordContinuationDelivered`, and `resetContinuationStreak` call `withGoalFileLock(ref, ...)` instead of `serializeByKey(goalFilePath(ref), ...)`. The mutation bodies are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/goal/goal-file-lock.ts` (new): `withGoalFileLock(ref, fn)` runs `fn` inside the existing in-process `serializeByKey` tail and, inside that, holds a proper-lockfile lock for the whole read-modify-write, using the lockfile-policy backoff (100ms..1s) and `isLockError`. `GOAL_LOCK_OPTIONS` (`stale: 10s`, `update: 2s`, `realpath: false`) is shared by every goal-lock contender: a goal RMW takes milliseconds, so a live holder is never seen as stale, while a holder killed mid-mutation is reclaimed within ~10s. `GOAL_LOCK_WAIT_BUDGET_MS` (15s) exceeds the stale window, so waiters ride through a crashed holder; only an exhausted budget throws `GoalStoreBusyError`. `fn` receives `HeldGoalLock`: `write(goal)` and `assertHeld()` throw `GoalStoreLockCompromisedError` right before a write once the lock was reclaimed. The lock directory is `.goal-lock-<sha256(basename)[:40]>` beside the goal file (`goalLockFilePath`), because the default `<file>.lock` overflows NAME_MAX for a goal basename already at 255 bytes. Only the parent directory is created before locking, never a placeholder goal file, so a pending legacy import still runs.
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `writeGoal`, `createGoal`, `updateGoal`, `clearGoal`, `accountGoalUsage`, `recordContinuationDelivered`, and `resetContinuationStreak` run under `withGoalFileLock` and write through `held.write`, with `held.assertHeld()` before the history and full-objective side writes. New `migrateLegacyGoal(ref)` runs `migrateLegacyGoalFile` under the same lock.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: `session_start` calls `migrateLegacyGoal` instead of `migrateLegacyGoalFile`, so a concurrent mutation in another process cannot overwrite a freshly imported legacy goal.
 
 ### Why
 
@@ -17,7 +18,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the import block and each mutation's opening `return withGoalFileLock(ref, ...)` line in `store.ts`. An upstream pi-goal sync that restores `serializeByKey(goalFilePath(ref), ...)` must keep the cross-process lock.
+- LOW: the import block, each mutation's `withGoalFileLock(ref, async (held) => ...)` opening and `held.write` call in `store.ts`, and the `session_start` migration call in `index.ts`. An upstream pi-goal sync that restores `serializeByKey(goalFilePath(ref), ...)` or direct `writeGoalFile` calls must keep the cross-process lock and the guarded write.
 
 ## 2026-09-30 - Drop test-only goal exports (senpi#2447)
 
