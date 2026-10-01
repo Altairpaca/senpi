@@ -18,6 +18,9 @@ task-tool names are known.
 	events, tool-call summaries, elapsed duration, and structured display state;
 	a terminal peek preserves the exact final result.
 - Loopback, bearer-authenticated kernel bridge with bounded JSONL frames.
+- Tool calls retain the submitting cell's host context, including its RPC approval
+  channel, even after detachment or kernel reuse. Headless sessions deny commands
+  that require approval rather than waiting for an absent UI.
 - Structured status events for file operations, environment access, phases,
   bridge activity, and delegated task progress.
 - One versioned `senpi.eval.execution` event at terminal cell settlement. The
