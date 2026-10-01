@@ -92,6 +92,7 @@ export class ModelRegistry {
 		if (this.runtime.hasAvailabilitySnapshot()) {
 			return [...this.runtime.getAvailableSnapshot()];
 		}
+		this.retryBusyCredentialRead();
 		return this.runtime.getProviders().flatMap((provider) => {
 			if (!this.authStorage.hasAuth(provider.id) && !this.runtime.getProviderAuthStatus(provider.id).configured) {
 				return [];
@@ -115,7 +116,17 @@ export class ModelRegistry {
 	}
 
 	hasConfiguredAuth(model: Model<Api>): boolean {
+		this.retryBusyCredentialRead();
 		return this.authStorage.hasAuth(model.provider) || this.runtime.getProviderAuthStatus(model.provider).configured;
+	}
+
+	/**
+	 * The live auth check reads the in-memory credentials. When the last read found the store
+	 * locked they were never loaded, so re-read now (bounded by the sync lock budget) instead
+	 * of answering from the empty fallback for the rest of the process.
+	 */
+	private retryBusyCredentialRead(): void {
+		if (this.authStorage.isCredentialStoreBusy()) this.authStorage.reload();
 	}
 
 	getUpstreamModelId(model: Model<Api>): string | undefined {
