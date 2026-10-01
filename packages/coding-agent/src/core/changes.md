@@ -352,6 +352,24 @@ The package manager starts these subprocesses in core before an extension can al
 
 - LOW: the spawn option literals in `packages/coding-agent/src/core/package-manager.ts` and the `command spawning` tests in `packages/coding-agent/test/package-manager.test.ts`.
 
+## 2026-10-01 - GPT-6 Astra high-reasoning warning shows above high (xhigh and max) (senpi#2496)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: the Astra-only `max` threshold is gone; every sensitive model, GPT-6 Astra included, warns at `xhigh` and `max` and stays quiet at `high` and below (`test/high-reasoning-warning.test.ts`, `test/high-reasoning-warning-event.test.ts`, `test/suite/astra-high-reasoning-warning.test.ts`). This reverses the 2026-09-10 Astra `max`-only entry in `src/changes.md`.
+
+### Why
+
+The owner wants the Astra warning to appear for any effort above high, so `xhigh` must warn too.
+
+### Why an extension could not handle it
+
+The warning predicate is core session policy evaluated before the warning event is emitted.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
 ## 2026-09-30 - High-reasoning warning covers Venice's dotless gpt-61-sol (senpi#2390)
 
 ### What changed

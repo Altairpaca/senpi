@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The GPT-6 Astra high-reasoning warning now shows at `xhigh` as well as `max`, the same rule as GPT-5.6 Sol and GPT-6 Sol: any effort above `high` warns, and `high` or below stays quiet ([#2496](https://github.com/code-yeongyu/senpi/issues/2496)).
+
 ### Fixed
 
 ### Removed
