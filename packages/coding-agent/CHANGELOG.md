@@ -4,6 +4,32 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.286: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.285 to 0.3.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - `before_agent_start` extensions can now receive `event.trigger: "delivery"` when a turn starts from an admitted session-control delivery. Extensions with exhaustive trigger handling must add the new case; `"prompt"` and `"extension"` keep their existing meanings. ([#2424](https://github.com/code-yeongyu/senpi/issues/2424))
 
 - Removed the inherited `shouldStopAfterTurn` agent option. Use `finishTurn` and return `{ action: "end" }` instead; it runs before `turn_end`, applies its decision afterward, and also receives error and aborted responses, so return `undefined` for those hard exits. The `packages/agent` changelog has a before-and-after example.
@@ -72,8 +98,6 @@
 
 - A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
 
-- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.286: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.285 to 0.3.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
-
 - Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
 
 - The built-in `dark` and `light` themes use the revised inherited colors written in OKHSL, and light/dark detection reads the reported background color first, then the terminal's light/dark report, then `COLORFGBG`. The `[Themes]` section is removed from the startup banner; custom themes remain in `/settings` and theme conflicts are still reported.
@@ -93,6 +117,10 @@
 - Terminals with `TERM=*-direct` are treated as truecolor, and fuzzy search on long texts uses native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)) (inherited).
 
 ### Fixed
+
+- On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
+
+- In a compiled build with no Bun on `PATH` (for example a desktop app started from Finder, or a standalone binary on a machine without Bun), `bun` and `bunx` from an eval cell, the bash tool and the terminal now run Bun itself. Before this fix, an eval cell's `bun test` started a second agent and returned its reply as a passing result with exit code 0, and the bash tool reported `bun: command not found`. A Bun you installed and put on `PATH` is still used first. ([omo#9362](https://github.com/code-yeongyu/oh-my-openagent/issues/9362))
 
 - Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 
@@ -116,7 +144,7 @@
 - A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
 
 - Fixed inherited new sessions being lost when the process exits before the first assistant response. The session file is now created when the first user message is sent ([#10000](https://github.com/earendil-works/pi/issues/10000)).
-- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
+- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. Thanks to @effortprogrammer. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
 
 - Fixed inherited split-turn compaction summaries being refused by Claude Fable 5.1, mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)), and cancellation races that could start automatic compaction, leave stale retry state or miss cancellation during summarization auth ([#9340](https://github.com/earendil-works/pi/issues/9340), [#9777](https://github.com/earendil-works/pi/issues/9777)) ([#9908](https://github.com/earendil-works/pi/pull/9908) by [@davidbrai](https://github.com/davidbrai)).
 

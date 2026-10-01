@@ -4,6 +4,32 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Changed the inherited provider-facing `ProviderStreams` and `StreamFunction` inputs from `Context` to normalized `TranscriptContext` values. System prompts and tool declarations now live in transcript system messages; custom providers read them with `getCurrentSystemPrompt()` and `getCurrentTools()`. The fork's `activeToolNames` rides on `TranscriptContext` and survives `normalizeContext()` ([#9548](https://github.com/earendil-works/pi/pull/9548)).
 
 - Restricted inherited `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly. `ToolResultMessage<unknown>` resolves to `never`; use `ToolResultMessage` or `ToolResultMessage<JsonValue>`.
@@ -35,8 +61,6 @@
 - Added an inherited runtime chat-model check to the `Models` stream entry points, so non-chat models fail with a clear `ModelsError`.
 
 ### Changed
-
-- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
 
 - The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
 
