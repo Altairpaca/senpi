@@ -488,6 +488,7 @@ export class ModelRuntime implements Models {
 	}
 
 	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<void> {
+		const busyReadsBefore = this.credentials.busyReadCount();
 		const providers = this.models.getProviders();
 		const [available, checks, credentials] = await Promise.all([
 			this.models.getAvailable(undefined, { signal }),
@@ -502,6 +503,7 @@ export class ModelRuntime implements Models {
 			this.credentials.list({ signal }),
 		]);
 		if (seq !== this.availabilityRefreshSeq) return;
+		if (this.answeredFromBusyStore(busyReadsBefore, errorSeq)) return;
 		const auth = new Map(checks);
 		const configuredProviders = new Set(
 			checks
@@ -540,6 +542,7 @@ export class ModelRuntime implements Models {
 		const providerSeq = (this.providerAvailabilitySeq.get(providerId) ?? 0) + 1;
 		this.providerAvailabilitySeq.set(providerId, providerSeq);
 		const errorSeq = ++this.availabilityErrorSeq;
+		const busyReadsBefore = this.credentials.busyReadCount();
 		try {
 			const [available, auth, credential] = await Promise.all([
 				this.models.getAvailable(providerId, { signal }),
@@ -548,6 +551,7 @@ export class ModelRuntime implements Models {
 			]);
 			signal.throwIfAborted();
 			if (this.providerAvailabilitySeq.get(providerId) !== providerSeq) return;
+			if (this.answeredFromBusyStore(busyReadsBefore, errorSeq)) return;
 			const configuredProviders = new Set(this.snapshot.configuredProviders);
 			const storedProviders = new Set(this.snapshot.storedProviders);
 			const authByProvider = new Map(this.snapshot.auth);
@@ -585,6 +589,19 @@ export class ModelRuntime implements Models {
 			}
 			throw error;
 		}
+	}
+
+	/**
+	 * A pass whose credential reads hit a locked store saw the cached snapshot (empty in a
+	 * fresh process), not the store. Such a pass must not publish availability or mark it
+	 * initialized; it records the contention so the next refresh re-reads the store.
+	 */
+	private answeredFromBusyStore(busyReadsBefore: number, errorSeq: number): boolean {
+		if (this.credentials.busyReadCount() === busyReadsBefore) return false;
+		if (errorSeq === this.availabilityErrorSeq) {
+			this.availabilityError = "Credential store was busy; availability will be re-read on the next refresh";
+		}
+		return true;
 	}
 
 	getProviders(): readonly Provider[] {
