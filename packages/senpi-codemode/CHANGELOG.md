@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed the running eval spinner freezing between output updates. ([#2503](https://github.com/code-yeongyu/senpi/issues/2503))
+
 ### Removed
 
 ## [2026.10.1-2] - 2026-10-01
