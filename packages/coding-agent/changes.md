@@ -1,3 +1,22 @@
+## 2026-10-01 - claude-agent-sdk 0.3.286 (senpi#2481)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.285 -> 0.3.286 (Claude Code 2.1.285 -> 2.1.286). `bun.lock`, `package-lock.json` and `install-lock/package-lock.json` regenerated with `bun run refresh-lock`; the eight platform packages were relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- The engine's Claude Code fingerprint floor moves with it (`packages/ai/src/changes.md`), which regression #2033 requires.
+
+### Why
+
+- The nightly Releasability gate's `Claude Agent SDK currency` job fails while the pin trails npm latest (0.3.286, published 2026-09-30). The patch is safe for `anthropic-subscription`: senpi explicitly passes `permissionMode: "dontAsk"`, so the new omitted-permission-mode default cannot change approvals; its SDK MCP tool schemas are valid, and the invalid-schema handling now omits only the bad tool instead of hiding every tool; senpi does not call `toggleMcpServer()` or send priority `now` messages; and it does not expose Claude Code's task-tracking tools or foreground subagents. The initialize response only gains optional SDK MCP manifest status/capability fields, while transcript/resume shapes, model ids and CLI flags are unchanged.
+
+### Why an extension could not handle it
+
+- Dependency pin and the bundled executable/fingerprint version.
+
+### Expected merge conflict zones
+
+- LOW: the pin line, Claude Code fingerprint floor and lock files.
+
 ## 2026-09-30 - claude-agent-sdk 0.3.285 (senpi#752)
 
 ### What changed
