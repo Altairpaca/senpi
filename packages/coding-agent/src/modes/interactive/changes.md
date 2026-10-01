@@ -26,6 +26,8 @@
 
 - The progressive transcript container keeps the last painted rows of a live (unrevisioned) child that is entirely inside native scrollback; it renders again once it settles, scrolls back on screen, or the width, capabilities or theme change.
 
+- In the regular (main-screen) mode the progressive container paints only the most recent history (`mainScreenHistoryLines()`), led by one muted marker line (`N earlier messages · /tree to browse, or switch to fullscreen`); the kept window grows to 1.5x its budget before its top moves, so appends never rewrite history. Fullscreen and renders outside a frame still return the full transcript, and `interactive-mode.ts` passes the themed marker. Decision from the lead (user side): instant resume and repaint over scrollback the terminal discards anyway; nothing is lost because the session file, `/tree`, fullscreen, copy and export use the full history.
+
 ### Why
 
 Typing, streaming a background-triggered reply, or a spinner frame re-rendered every message, card and exploration group of the session; read cards even walked the filesystem per frame for their classification. An exploration spinner that had scrolled into the terminal history changed a row the terminal cannot repaint in place, so every spinner frame replayed the entire transcript.
