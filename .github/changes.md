@@ -1,3 +1,21 @@
+## 2026-10-01 - Session gateway Windows parity suites run, by name, in `rpc-windows` (senpi#2328)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`rpc-windows`): every step runs vitest with `--reporter=verbose`, and two steps are added: `test/suite/rpc-endpoint-registry.test.ts` (endpoint.json `registry_version`/`endpoint_kind` read back on Windows paths) and `test/suite/interactive-session-control-win32.test.ts` (an interactive TUI on win32 starts, its endpoint request answers `unsupported_platform`, and nothing is registered).
+
+### Why
+
+- The session gateway is POSIX-only, so its Windows contract is refusal plus registry compatibility. Those suites never ran on Windows, and the default dot reporter printed only per-file counts, so a Windows-only case could not be shown to have run rather than been counted.
+
+### Why an extension could not handle it
+
+- Which suites the Windows runner executes, and how it reports them, belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `rpc-windows` step list.
+
 ## 2026-10-01 - Windows Python bootstrap is a required CI gate (senpi#2452)
 
 ### What changed

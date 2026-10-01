@@ -256,27 +256,40 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
-      # Each suite runs in its own process; lifecycle failures are not retried in-process.
+      # Each suite runs in its own process; lifecycle failures are not retried in-process. The verbose
+      # reporter names every test in the log, so a Windows-only case is provably run, not just counted.
       - name: Run RPC host ensure tests
-        run: bunx vitest run test/rpc-host-ensure.test.ts
+        run: bunx vitest run test/rpc-host-ensure.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC host lifecycle tests
-        run: bunx vitest run test/rpc-host-lifecycle.test.ts
+        run: bunx vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC socket transport tests
-        run: bunx vitest run test/rpc-socket-transport.test.ts
+        run: bunx vitest run test/rpc-socket-transport.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       # The `senpi host` contract over the named-pipe transport: a second ensure reuses the daemon
       # on the pipe, and a generation handoff refuses (a pipe can be neither renamed nor drained).
       - name: Run senpi host CLI tests (named pipes)
-        run: bunx vitest run test/suite/host-cli-win32.test.ts
+        run: bunx vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run app-server daemon tests
-        run: bunx vitest run test/suite/app-server-daemon.test.ts
+        run: bunx vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # endpoint.json written and read back on Windows paths: registry_version, endpoint_kind, and a
+      # legacy record read as rpc_host.
+      - name: Run endpoint registry tests
+        run: bunx vitest run test/suite/rpc-endpoint-registry.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # The session gateway is POSIX-only: an interactive TUI on win32 starts normally, its endpoint
+      # request answers unsupported_platform, and nothing is registered.
+      - name: Run interactive TUI control endpoint tests (win32)
+        run: bunx vitest run test/suite/interactive-session-control-win32.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
   compiled-extensions-windows:
