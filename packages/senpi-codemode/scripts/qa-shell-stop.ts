@@ -1,5 +1,7 @@
 import { createServer, type Socket } from "node:net";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
+import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
+import { executeEvalControl } from "../src/tool/detached-eval-result.ts";
 
 const connected = Promise.withResolvers<void>();
 const disconnected = Promise.withResolvers<void>();
@@ -19,6 +21,7 @@ const kernel = new JavaScriptKernel({
 	interruptBounds: { ackMs: 20_000, graceMs: 50, terminateDeadlineMs: 20_000 },
 });
 const mode = process.argv[2] ?? "shell";
+const manager = new EvalDetachedCellManager();
 const childCode = `const socket = Bun.connect({hostname:"127.0.0.1",port:${address.port},socket:{data(){},open(){},close(){}}}); await socket; await new Promise(()=>{});`;
 try {
 	if (mode === "normal" || mode === "finished") {
@@ -44,16 +47,25 @@ try {
 	const expression = mode === "lines" ? `for await (const line of ${shell}.lines()) { print(line); }`
 		: mode === "text" ? `await ${shell}.text();`
 		: `await ${shell};`;
+	const code = `globalThis.saved = 41; ${expression}`;
+	const managed = manager.create("shell-stop", { language: "js", code, summary: "Verify shell Stop outcome" });
+	manager.bindKernel(managed, kernel, () => ({
+		content: [],
+		details: { language: "js", durationMs: 0, toolCalls: [], truncated: false },
+	}));
 	const run = kernel.run({
 		cellId: "shell-stop",
-		code: `globalThis.saved = 41; ${expression}`,
+		code,
+		onStarted: () => manager.markRunning(managed),
 		timeoutMs: 60_000,
 	});
 	await connected.promise;
-	const handle = await kernel.interrupt("stop", "shell-stop");
+	if (!manager.detach(managed)) throw new Error("Shell cell did not detach");
+	const control = await executeEvalControl(manager, { action: "stop", cell_id: "shell-stop" });
+	const snapshot = manager.peek("shell-stop");
 	const result = await run;
 	const next = await kernel.run({ cellId: "after", code: "return globalThis.saved", timeoutMs: 60_000 });
-	console.log(JSON.stringify({ result, retained: await handle.stateRetained, note: handle.note, next }));
+	console.log(JSON.stringify({ result, retained: snapshot.stateRetained, note: snapshot.interruptNote, control, next }));
 	await Promise.race([
 		disconnected.promise,
 		new Promise<never>((_, reject) => {
@@ -64,6 +76,7 @@ try {
 	console.log("COMMAND_EXITED");
 	}
 } finally {
+	await manager.dispose();
 	await kernel.close();
 	for (const socket of sockets) socket.destroy();
 	server.close();
