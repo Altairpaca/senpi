@@ -1,3 +1,25 @@
+## 2026-10-01 - Experimental picker preserves optional command arguments (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/services/slash-commands.ts`: command contributions expose `requiresArguments`.
+- `packages/coding-agent/src/experimental/services/slash-commands-provider.ts`: model, thinking and compact explicitly allow bare invocation.
+- `packages/coding-agent/src/experimental/client-tui.ts`: forward the explicit requirement to the shared autocomplete provider.
+
+### Why
+
+The experimental client uses the same picker as the classic TUI; optional selectors and compaction must submit on first Enter there too.
+
+### Why an extension could not handle it
+
+The service contract and client mapping own the metadata before dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/experimental/services/slash-commands.ts`: command contribution interface.
+- `packages/coding-agent/src/experimental/services/slash-commands-provider.ts`: builtin command metadata.
+- `packages/coding-agent/src/experimental/client-tui.ts`: updateAutocomplete mapping.
+
 ## 2026-09-30 - Legacy tool warnings require a legacy tool entry point (senpi#2451)
 
 ### What changed
