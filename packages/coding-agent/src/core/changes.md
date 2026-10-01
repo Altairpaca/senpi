@@ -40,6 +40,25 @@
 - `packages/coding-agent/src/core/model-runtime.ts`: the guard after the sequence checks in `runAvailabilityRefresh()` and `refreshProviderAvailability()`.
 - `packages/coding-agent/src/core/model-registry.ts`: the fallback branch of `getAvailable()` and `hasConfiguredAuth()`.
 
+## 2026-10-01 - Retire lazy activators on extension reload (omo#9365)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: reset lazy-tool activation registrations before binding a rebuilt extension runtime.
+- `packages/coding-agent/src/core/lazy-tool-activation.ts`: extracted deferred-tool activation ownership and existing exposure fallback from the session orchestrator.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` retained retired tool-search callbacks after reload. A deferred computer tool then consulted the old generation on its next capabilities call.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns registration and runtime replacement for every extension. Only the host can discard callbacks before binding the replacement generation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: lazy activation field, activation dispatch, extension core binding, and runtime rebuild.
+
 ## 2026-10-01 - Explicit command argument requirements (senpi#2479)
 
 ### What changed
