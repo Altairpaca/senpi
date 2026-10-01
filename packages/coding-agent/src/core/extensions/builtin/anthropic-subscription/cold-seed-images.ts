@@ -43,7 +43,7 @@ type ImageOccurrence = {
 	readonly decoded: DecodedImage | undefined;
 };
 
-type DecodedImage = { readonly sha256: string; readonly canonicalBase64: string };
+type DecodedImage = { readonly sha256: string; readonly compactBase64: string };
 
 // Standard or URL-safe alphabet, padding optional; line wrapping is stripped first.
 const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
@@ -51,8 +51,7 @@ const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
 function decodeImageData(data: string): DecodedImage | undefined {
 	const compact = data.replace(/\s+/g, "");
 	if (compact.length === 0 || compact.replace(/=+$/, "").length % 4 === 1 || !BASE64.test(compact)) return undefined;
-	const bytes = Buffer.from(compact, "base64");
-	return { sha256: createHash("sha256").update(bytes).digest("hex"), canonicalBase64: bytes.toString("base64") };
+	return { sha256: createHash("sha256").update(Buffer.from(compact, "base64")).digest("hex"), compactBase64: compact };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -147,7 +146,7 @@ export function replayHistoryImages(
 				replacement = [{ type: "text", text: coldSeedImageText.duplicate(origin, first) }];
 			} else {
 				firstShown.set(hash, origin);
-				const canonical = { ...entry, data: decoded.canonicalBase64 };
+				const canonical = { ...entry, data: Buffer.from(decoded.compactBase64, "base64").toString("base64") };
 				replacement =
 					origin.kind === "tool"
 						? [{ type: "text", text: coldSeedImageText.toolOutput(origin.toolName) }, canonical]
