@@ -36,6 +36,7 @@ import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
 	cachedExtensionFactory,
 	type ExtensionModuleImporter,
@@ -744,6 +745,7 @@ function createExtensionAPI(
 			},
 		},
 	} as ExtensionAPI;
+	recordExtensionLoadKey(api, runtime);
 
 	return {
 		api,

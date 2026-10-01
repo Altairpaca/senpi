@@ -180,7 +180,7 @@ import {
 import { WAKE_SOURCE_STATE_EVENT } from "./extensions/builtin/monitor-state-event.ts";
 import { CODEX_RESPONSES_API, type ServiceTier } from "./extensions/builtin/service-tier.ts";
 import { deriveExtensionRegistrationId } from "./extensions/builtin/tool-search/engine/marker.ts";
-import { getToolSearchService } from "./extensions/builtin/tool-search/service.ts";
+import { adoptToolSearchServiceForSession, type ToolSearchService } from "./extensions/builtin/tool-search/service.ts";
 import {
 	type AgentActivityOutcome,
 	type BoundaryContextPreview,
@@ -1540,19 +1540,23 @@ export class AgentSession {
 		});
 	}
 
+	/** The tool-search service of the current extension generation; undefined when the builtin is not loaded. */
+	private _toolSearchService: ToolSearchService | undefined;
+
+	/** Own the service the new extension load created and retire the previous generation's one. */
+	private _adoptToolSearchService(extensionLoad: object): void {
+		const next = adoptToolSearchServiceForSession(extensionLoad);
+		if (this._toolSearchService !== next) this._toolSearchService?.dispose(this.sessionId, "replaced by a reload");
+		this._toolSearchService = next;
+	}
+
 	/**
 	 * Let tool_search answer a query that names an eval-only or removed tool with that
 	 * tool's redirect hint. Idempotent: called at construction and again once the
-	 * extension runtime is bound, whichever creates the session-scoped service first.
+	 * extension runtime is bound and this session owns its service.
 	 */
 	private _bindToolSearchRemovedHints(): void {
-		let service: ReturnType<typeof getToolSearchService>;
-		try {
-			service = getToolSearchService();
-		} catch {
-			return;
-		}
-		service.bindRemovedToolHints(() => this.agent.removedToolHints);
+		this._toolSearchService?.bindRemovedToolHints(() => this.agent.removedToolHints);
 	}
 
 	private _installAgentToolHooks(): void {
@@ -3661,6 +3665,8 @@ export class AgentSession {
 		this._extensionRunner.invalidate(
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
+		this._toolSearchService?.dispose(this.sessionId, "session disposed");
+		this._toolSearchService = undefined;
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
@@ -4016,13 +4022,7 @@ export class AgentSession {
 	}
 
 	private _toolSearchCatalogNames(): string[] {
-		try {
-			return getToolSearchService()
-				.getCatalog()
-				.map((doc) => doc.name);
-		} catch {
-			return [];
-		}
+		return this._toolSearchService?.getCatalog().map((doc) => doc.name) ?? [];
 	}
 
 	private _activateLazyTool(toolName: string): boolean {
@@ -9047,6 +9047,7 @@ export class AgentSession {
 			this._modelRegistry,
 			extensionsResult.eventBus,
 		);
+		this._adoptToolSearchService(extensionsResult.runtime);
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
 		}
@@ -9293,11 +9294,7 @@ export class AgentSession {
 	}
 
 	private _takeNativeToolSearchInjectionFailure(): string | null {
-		try {
-			return getToolSearchService().takeNativeInjectionFailure();
-		} catch {
-			return null;
-		}
+		return this._toolSearchService?.takeNativeInjectionFailure() ?? null;
 	}
 
 	private _getProviderRetryDelayMs(errorMessage: string): number | undefined {

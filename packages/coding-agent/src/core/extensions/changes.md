@@ -1,3 +1,22 @@
+## 2026-10-01 - Extension load key (senpi#2509)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/extension-load-key.ts` (new): `extensionLoadKey(api)` returns the opaque identity of the extension load that created an `ExtensionAPI`, the same object the host holds as that load's runtime.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `createExtensionAPI` records that key for every API it builds.
+
+### Why
+
+The tool-search builtin registers its service per extension load, and the session that binds that load adopts it, so no service is shared across sessions.
+
+### Why an extension could not handle it
+
+Only the loader knows which load created an API. The public `ExtensionAPI` is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the import block and the end of `createExtensionAPI`.
+
 ## 2026-10-01 - Commands declare required arguments (senpi#2479)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session adopts the tool-search service its extension load created (`_adoptToolSearchService`, called right after the `ExtensionRunner` is built), disposes the previous generation's service on reload and its own on `dispose()`, and reads the catalog, removed-tool hints and native-injection failure through that service instead of the module-level `getToolSearchService()`.
+
+### Why
+
+- Outside the RPC host the builtin rebound one shared service to each loading session, so when another in-process session closed, the live session's `context` and `before_provider_request` hooks threw the stale-ctx error and its tool search stopped working.
+
+### Why an extension could not handle it
+
+- The session must own and retire the service of each extension generation, which only the host knows.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the tool-search service field and lookups, `dispose()`, and the line after `new ExtensionRunner` in `_buildRuntime`.
+
 ## 2026-10-01 - Skill catalog: read a skill when it would change the work, not on a loose match (senpi#2505)
 
 ### What changed
