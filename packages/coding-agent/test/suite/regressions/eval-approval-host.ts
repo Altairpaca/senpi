@@ -10,8 +10,7 @@ import { createRpcSessionBinding, type RpcSessionBinding } from "../../../src/mo
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
-
-type Frame = Readonly<Record<string, unknown>>;
+import { type ApprovalFrame, ApprovalHostEvents } from "./eval-approval-events.ts";
 
 export async function createEvalApprovalHost() {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-2512-"));
@@ -66,17 +65,11 @@ export async function createEvalApprovalHost() {
 			},
 		),
 	});
-	const client: Frame[] = [];
-	const stdout: Frame[] = [];
-	const listeners = new Set<(frame: Frame) => void>();
-	const observe = (line: string, records: Frame[]): void => {
-		const frame: Frame = JSON.parse(line);
-		records.push(frame);
-		for (const listener of listeners) listener(frame);
-	};
-	const writer = new SessionEventWriter((line) => observe(line, stdout));
+	const events = new ApprovalHostEvents();
+	const { client, stdout } = events;
+	const writer = new SessionEventWriter((line) => events.observe(line, "stdout"));
 	writer.registerConnection("client", {
-		writeRaw: (line) => observe(line, client),
+		writeRaw: (line) => events.observe(line, "client"),
 		waitForBackpressure: async () => {},
 	});
 	let liveBinding: RpcSessionBinding | undefined;
@@ -92,20 +85,6 @@ export async function createEvalApprovalHost() {
 		await writer.flush();
 		return result ?? client.find((frame) => frame.id === id);
 	};
-	const waitFor = (predicate: (frame: Frame) => boolean): Promise<Frame> =>
-		new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				listeners.delete(listener);
-				reject(new Error("Host approval event did not arrive"));
-			}, 30_000);
-			const listener = (frame: Frame): void => {
-				if (!predicate(frame)) return;
-				clearTimeout(timer);
-				listeners.delete(listener);
-				resolve(frame);
-			};
-			listeners.add(listener);
-		});
 	return {
 		client,
 		stdout,
@@ -152,19 +131,24 @@ export async function createEvalApprovalHost() {
 			const binding = liveBinding;
 			if (!binding) throw new Error("Opened session has no RPC binding");
 			// Warm outside any client command, as a retained kernel can outlive its creating connection.
-			await session.executeTool("eval", { language: "js", code: "1", summary: "warm kernel" });
-			const decision = waitFor(
+			await session.executeTool("eval", {
+				language: "js",
+				code: "1",
+				summary: "warm kernel",
+				on_timeout: "error",
+			});
+			const decision = events.waitFor(
 				(frame) =>
 					frame.type === "extension_ui_request" &&
 					frame.method === "select" &&
 					typeof frame.title === "string" &&
 					frame.title.startsWith("Permission required: bash"),
 			);
-			const idle = waitFor((frame) => frame.type === "agent_idle" && frame.sessionId === sessionId);
+			const idle = events.waitFor((frame) => frame.type === "agent_idle" && frame.sessionId === sessionId);
 			const turn = send({ type: "prompt", sessionId, message: "run which bun with the bash tool" });
 			const settled =
 				mode === "detached"
-					? waitFor(
+					? events.waitFor(
 							(frame) =>
 								frame.type === "extension_event" &&
 								frame.name === "senpi.eval.execution" &&
@@ -174,10 +158,10 @@ export async function createEvalApprovalHost() {
 								frame.data.detached === true,
 						)
 					: undefined;
-			let notificationIdle: Promise<Frame> | undefined;
+			let notificationIdle: Promise<ApprovalFrame> | undefined;
 			if (mode === "detached") {
 				await idle;
-				notificationIdle = waitFor((frame) => frame.type === "agent_idle" && frame.sessionId === sessionId);
+				notificationIdle = events.waitFor((frame) => frame.type === "agent_idle" && frame.sessionId === sessionId);
 				releaseGate();
 			}
 			const approval = await decision;
@@ -220,6 +204,7 @@ export async function createEvalApprovalHost() {
 			return { approval, result, sessionId };
 		},
 		async dispose() {
+			events.dispose();
 			await router.dispose();
 			await rm(scratch, { recursive: true, force: true });
 		},

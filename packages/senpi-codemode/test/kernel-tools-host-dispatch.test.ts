@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 import {
 	type AgentToolResult,
 	type ExtensionContext,
@@ -214,6 +215,9 @@ describe("kernel tools on the real worker tool-call path", () => {
 			{ type: "tool-call", callId: "py-1", toolName: "probe", args: { phase: "py" } },
 			result("kernel-tools-host-dispatch-py", "done"),
 		]);
+		const workerContext = new AsyncResource("non-js-worker");
+		const run = kernel.run.bind(kernel);
+		kernel.run = (...args) => workerContext.runInAsyncScope(run, kernel, ...args);
 		const ctx = hostContext();
 		const observations: HostObservation[] = [];
 		const executeTool = async (_toolName: string, params: unknown): Promise<AgentToolResult<unknown>> => {
@@ -228,17 +232,22 @@ describe("kernel tools on the real worker tool-call path", () => {
 			executeTool,
 		});
 
-		const cell = await tool.execute(
-			"kernel-tools-host-dispatch-py",
-			{
-				language: "py",
-				code: "tool.probe(phase='py')",
-				summary: "call a host tool from a python cell",
-			},
-			undefined,
-			undefined,
-			ctx,
+		const cell = await kernelToolsStorage.run(
+			{ describe: async () => undefined, invoke: async () => undefined },
+			() =>
+				tool.execute(
+					"kernel-tools-host-dispatch-py",
+					{
+						language: "py",
+						code: "tool.probe(phase='py')",
+						summary: "call a host tool from a python cell",
+					},
+					undefined,
+					undefined,
+					ctx,
+				),
 		);
+		workerContext.emitDestroy();
 
 		expect(observations).toEqual([{ phase: "py", kernelToolsDefined: false }]);
 		expect(cell.details.toolCalls[0]).toMatchObject({ name: "probe", ok: true });

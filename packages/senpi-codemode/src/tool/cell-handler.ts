@@ -55,12 +55,18 @@ export class CellHandler {
 	readonly #state: CellState;
 	readonly #runtime: CellBridgeRuntime;
 	readonly #resultBuilder: CellResultBuilder;
-	readonly #dispatchContext = AsyncLocalStorage.snapshot();
+	readonly #dispatchContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
 		this.#state = state;
 		this.#runtime = runtime;
+		// Construct in the submitting cell's host context; worker callbacks cannot supply it (#2512).
+		// Bind this cell's capability once; undefined clears any enclosing JS grant for non-JS cells.
+		this.#dispatchContext =
+			runtime.kernelTools === undefined
+				? kernelToolsStorage.exit(() => AsyncLocalStorage.snapshot())
+				: kernelToolsStorage.run(runtime.kernelTools, () => AsyncLocalStorage.snapshot());
 		const settings = runtime.settings.outputSink;
 		this.#resultBuilder = new CellResultBuilder({
 			state,
@@ -92,12 +98,7 @@ export class CellHandler {
 				return;
 			case "tool-call": {
 				// A retained worker carries its creation context, not this cell's RPC connection.
-				const pending = this.#dispatchContext(() => {
-					const kernelTools = this.#runtime.kernelTools;
-					return kernelTools === undefined
-						? this.#handleToolCall(message)
-						: kernelToolsStorage.run(kernelTools, () => this.#handleToolCall(message));
-				});
+				const pending = this.#dispatchContext(() => this.#handleToolCall(message));
 				this.#state.pendingBridgeCalls.push(pending);
 				await pending;
 				return;
