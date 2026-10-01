@@ -222,12 +222,12 @@ import type {
 	ApplyCompactionResult,
 	CompactionReason,
 	CompactionRejectionCause,
-	LazyToolActivator,
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
+import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import {
 	isManualContinueSubmission,
 	MANUAL_CONTINUE_CUSTOM_TYPE,
@@ -1199,7 +1199,11 @@ export class AgentSession {
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
-	private _lazyToolActivators: LazyToolActivator[] = [];
+	private _lazyToolActivation = new LazyToolActivation({
+		getToolDefinition: (name) => this.getToolDefinition(name),
+		getActiveTools: () => this.getActiveToolNames(),
+		setActiveTools: (names) => this.setActiveToolsByName(names),
+	});
 	/** Created on the first `ctx.executeTool()` call. */
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
@@ -4022,18 +4026,7 @@ export class AgentSession {
 	}
 
 	private _activateLazyTool(toolName: string): boolean {
-		const definition = this._toolDefinitions.get(toolName)?.definition;
-		if (!definition) return false;
-		const exposure = normalizeToolExposure(definition);
-		if (!exposure.allowLazyActivation) return false;
-		if (this._lazyToolActivators.some((activate) => activate(toolName))) return true;
-		// Exposure metadata owns the by-name path: when no catalog service is loaded (or it
-		// declines), the session promotes a search-exposed tool directly so a deferred tool
-		// still activates. Eval-exposed tools are reached through the eval cell, never promoted.
-		if (exposure.exposure === "search" && !this.getActiveToolNames().includes(toolName)) {
-			this.setActiveToolsByName([...this.getActiveToolNames(), toolName]);
-		}
-		return this.getActiveToolNames().includes(toolName);
+		return this._lazyToolActivation.activate(toolName);
 	}
 
 	private _isEvalOnlyPolicyArmed(): boolean {
@@ -8615,7 +8608,7 @@ export class AgentSession {
 					this.agent.removedToolHints[name] = hint;
 				},
 				registerLazyToolActivator: (activator) => {
-					this._lazyToolActivators.push(activator);
+					this._lazyToolActivation.register(activator);
 				},
 				getCommands,
 				setModel: async (model) => {
@@ -9012,6 +9005,7 @@ export class AgentSession {
 		previousActiveToolRegistrationIds?: ReadonlyMap<string, string>;
 	}): void {
 		this._delegatedCompactionKey = undefined;
+		this._lazyToolActivation.reset();
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
