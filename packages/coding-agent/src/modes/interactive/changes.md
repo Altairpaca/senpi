@@ -16,6 +16,24 @@
 
 - LOW: the TUI import and clipboard dispatch condition in `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`.
 
+## 2026-10-01 - Release render caches of rows above the kept main-screen history (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: when the kept history window's first child moves forward, `releaseRenders()` drops the cached renders, heights and live-row records of the children that left it and invalidates them, so their own line caches go too.
+
+### Why
+
+In a long regular-mode run every message that scrolled above the kept window kept its rendered lines (and its component's own caches) forever, although the main screen never paints it again. Over a 10-minute event stream this grew the heap about 3 KB per added entry beyond what a cold open of the same session holds. Fullscreen, `/tree` and width or theme changes render those rows again on demand.
+
+### Why an extension could not handle it
+
+This is the interactive transcript container.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: `keptHistoryStart` and the new `releaseRenders`.
+
 ## 2026-10-01 - Release session memory after the first render of a resumed session (senpi#2508)
 
 ### What changed

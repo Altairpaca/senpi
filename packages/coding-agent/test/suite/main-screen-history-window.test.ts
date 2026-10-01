@@ -175,4 +175,39 @@ describe("the main screen keeps a bounded history of a huge session", () => {
 		expect(full.some((line) => line.includes("earlier messages"))).toBe(false);
 		tui.stop();
 	});
+
+	it("shows messages that scrolled above the kept history with their latest content in fullscreen", async () => {
+		// Given: a long regular-mode run whose kept history has moved past its first messages
+		const terminal = new RecordingTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const transcript = transcriptOf(500);
+		const early = transcript.children[3] as Text;
+		tui.addChild(transcript);
+		tui.start();
+		tui.renderNow();
+		await hydrate();
+		for (let index = 0; index < 1500; index++) {
+			transcript.addChild(new Text(`live ${index}`, 0, 0));
+			if (index % 50 === 0) tui.renderNow();
+		}
+		tui.renderNow();
+		expect(terminal.writes.slice(-5).join("")).not.toContain("message 3\r");
+
+		// When: that early message changes, and the user switches to fullscreen
+		early.setText("message 3 (edited)");
+		tui.stop();
+		const fullscreen = new TuiAltScreen(new RecordingTerminal(), false);
+		fullscreen.addChild(transcript);
+		fullscreen.start();
+		fullscreen.renderNow();
+		await hydrate();
+		const document = transcript.render(terminal.columns);
+
+		// Then: every message is there in order, the early one with its latest text
+		expect(document[0]).toContain("message 0");
+		expect(document[3]).toContain("message 3 (edited)");
+		expect(document.at(-1)).toContain("live 1499");
+		expect(document).toHaveLength(2000);
+		fullscreen.stop();
+	});
 });

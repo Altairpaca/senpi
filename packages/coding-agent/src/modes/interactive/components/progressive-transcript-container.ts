@@ -238,8 +238,26 @@ export class ProgressiveTranscriptContainer extends Container {
 			}
 			start = index;
 		}
+		if (start > this.historyStart) this.releaseRenders(this.historyStart, start);
 		this.historyStart = start;
 		return start;
+	}
+
+	/**
+	 * Children that moved above the kept window are never painted on the main screen again; their
+	 * cached lines (here and inside the component) would otherwise grow with every message of a long
+	 * run. Fullscreen and a width or theme change render them again on demand.
+	 */
+	private releaseRenders(from: number, to: number): void {
+		for (let index = from; index < to; index++) {
+			const child = this.children[index];
+			if (child === undefined) continue;
+			this.childRenders.delete(child);
+			this.childHeights.delete(child);
+			this.scrolledLiveRows.delete(child);
+			child.invalidate();
+		}
+		this.stablePrefix = undefined;
 	}
 
 	private heightOf(child: Component, key: RenderKey): number {
