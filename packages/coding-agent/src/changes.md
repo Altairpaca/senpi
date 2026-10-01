@@ -1,20 +1,3 @@
-## 2026-10-01 - Export the bundled-bun PATH helper for eval kernels (omo#9362)
-
-### What changed
-
-- `packages/coding-agent/src/index.ts`: exports `withBundledBunCommands` from `utils/bundled-bun.ts`, next to the shell utilities.
-
-### Why
-
-- The eval extension (`senpi-codemode`) gives its kernels the same `bun`/`bunx` directory that `getShellEnv()` puts on the bash tool's `PATH`, so a cell's `bun test` in a compiled executable runs Bun instead of the engine. The extension reaches it only through the package's public exports.
-
-### Why an extension could not handle it
-
-- The helper lives in the core package; an extension can only import what `index.ts` exports.
-
-### Expected merge conflict zones
-
-- LOW: the shell-utilities export block in `index.ts`.
 ## 2026-10-01 - Experimental picker preserves optional command arguments (senpi#2479)
 
 ### What changed
@@ -37,6 +20,41 @@ The service contract and client mapping own the metadata before dispatch.
 - `packages/coding-agent/src/experimental/services/slash-commands-provider.ts`: builtin command metadata.
 - `packages/coding-agent/src/experimental/client-tui.ts`: updateAutocomplete mapping.
 
+## 2026-10-01 - GPT-6 Astra high-reasoning warning shows above high again (senpi#2496)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: GPT-6 Astra warns at `xhigh` and `max` again, like every other sensitive model, and stays quiet at `high` and below. This reverses the 2026-09-10 "Restrict GPT-6 Astra high-reasoning warning to max" entry below. The full record, with tests, is the 2026-10-01 entry in `src/core/changes.md`.
+
+### Why
+
+- The owner wants the Astra warning shown for any effort above high.
+
+### Why an extension could not handle it
+
+- The warning predicate is core session policy evaluated before the warning event is emitted.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
+## 2026-10-01 - Export the bundled-bun PATH helper for eval kernels (omo#9362)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `withBundledBunCommands` from `utils/bundled-bun.ts`, next to the shell utilities.
+
+### Why
+
+- The eval extension (`senpi-codemode`) gives its kernels the same `bun`/`bunx` directory that `getShellEnv()` puts on the bash tool's `PATH`, so a cell's `bun test` in a compiled executable runs Bun instead of the engine. The extension reaches it only through the package's public exports.
+
+### Why an extension could not handle it
+
+- The helper lives in the core package; an extension can only import what `index.ts` exports.
+
+### Expected merge conflict zones
+
+- LOW: the shell-utilities export block in `index.ts`.
 ## 2026-09-30 - Legacy tool warnings require a legacy tool entry point (senpi#2451)
 
 ### What changed
