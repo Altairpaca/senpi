@@ -18,6 +18,10 @@
 			"types": "./dist/harness/context.d.ts",
 			"import": "./dist/harness/context.js"
 		},
+		"./experimental/pico3": {
+			"types": "./dist/harness/pico3/index.d.ts",
+			"import": "./dist/harness/pico3/index.js"
+		},
 		"./harness/env/nodejs": {
 			"types": "./dist/harness/env/nodejs.d.ts",
 			"import": "./dist/harness/env/nodejs.js"
@@ -46,7 +50,7 @@
 		"clean": "shx rm -rf dist",
 		"generate-telemetry-docs": "node scripts/generate-telemetry-docs.ts",
 		"check:telemetry-docs": "node scripts/generate-telemetry-docs.ts --check",
-		"build": "tsgo -p tsconfig.build.json",
+		"build": "tsc -p tsconfig.build.json",
 		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
 		"bench:session:memory": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/loaded-footprint.ts",
 		"bench:session:allocations": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/allocation-profile.ts",
@@ -57,7 +61,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "0.85.1",
+		"@earendil-works/chord": "0.99.1",
 		"@earendil-works/pi-ai": "^2026.9.30",
 		"@earendil-works/pi-telemetry": "^2026.9.30",
 		"diff": "9.0.0",

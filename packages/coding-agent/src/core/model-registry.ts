@@ -3,13 +3,21 @@ import type {
 	Api,
 	AssistantMessage,
 	AssistantMessageEventStream,
+	AuthOperationOptions,
 	AuthResult,
+	ClassifierApi,
+	ClassifierContext,
+	ClassifierModel,
+	ClassifierResult,
 	Context,
 	Model,
 	ModelsApiStreamOptions,
+	ModelsClassifierOptions,
 	ModelsRefreshOptions,
 	ModelsRefreshResult,
 	ModelsSimpleStreamOptions,
+	ModelType,
+	ModelTypeMap,
 	Provider,
 	ProviderHeaders,
 } from "@earendil-works/pi-ai";
@@ -19,6 +27,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelRuntime as DefaultModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
+import type { VirtualModelDefinition } from "./virtual-models.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
 export type ResolvedRequestAuth =
@@ -29,7 +38,7 @@ export type ResolvedRequestAuth =
 			extraBody?: Record<string, unknown>;
 			baseUrl?: string;
 			upstreamModelId?: string;
-			serviceTier?: "auto" | "flex" | "priority";
+			serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 			env?: Record<string, string>;
 	  }
 	| { ok: false; error: string };
@@ -96,6 +105,15 @@ export class ModelRegistry {
 		return this.runtime.getModel(provider, modelId);
 	}
 
+	/** Find a model of a non-chat type, e.g. `findOfType("classifier", "typesafe", "jev-latest")`. */
+	findOfType<TType extends ModelType>(
+		type: TType,
+		provider: string,
+		modelId: string,
+	): ModelTypeMap[TType] | undefined {
+		return this.runtime.getModelOfType(type, provider, modelId);
+	}
+
 	hasConfiguredAuth(model: Model<Api>): boolean {
 		return this.authStorage.hasAuth(model.provider) || this.runtime.getProviderAuthStatus(model.provider).configured;
 	}
@@ -104,7 +122,7 @@ export class ModelRegistry {
 		return this.runtime.getCompatibilityRequestConfig(model).upstreamModelId;
 	}
 
-	getServiceTier(model: Model<Api>): "auto" | "flex" | "priority" | undefined {
+	getServiceTier(model: Model<Api>): "auto" | "flex" | "priority" | "ultrafast" | undefined {
 		return this.runtime.getCompatibilityRequestConfig(model).serviceTier;
 	}
 
@@ -173,6 +191,37 @@ export class ModelRegistry {
 		return this.runtime.complete(model, context, options);
 	}
 
+	/** Every known model of a type (chat, image, classifier), optionally for one provider. */
+	getModelsOfType<TType extends ModelType>(type: TType, provider?: string): readonly ModelTypeMap[TType][] {
+		return this.runtime.getModelsOfType(type, provider);
+	}
+
+	/** Models of a type whose provider has working credentials. */
+	getAvailableOfType<TType extends ModelType>(
+		type: TType,
+		provider?: string,
+		options?: AuthOperationOptions,
+	): Promise<readonly ModelTypeMap[TType][]> {
+		return this.runtime.getAvailableOfType(type, provider, options);
+	}
+
+	getModelOfType<TType extends ModelType>(
+		type: TType,
+		provider: string,
+		modelId: string,
+	): ModelTypeMap[TType] | undefined {
+		return this.runtime.getModelOfType(type, provider, modelId);
+	}
+
+	/** Classify structured state with request-time authentication. Never rejects. */
+	classify(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ModelsClassifierOptions,
+	): Promise<ClassifierResult> {
+		return this.runtime.classify(model, context, options);
+	}
+
 	getProviderDisplayName(provider: string): string {
 		return this.runtime.getProvider(provider)?.name ?? BUILT_IN_PROVIDER_DISPLAY_NAMES[provider] ?? provider;
 	}
@@ -211,6 +260,14 @@ export class ModelRegistry {
 
 	unregisterProvider(providerName: string): void {
 		this.runtime.unregisterProvider(providerName);
+	}
+
+	registerVirtualModel(definition: VirtualModelDefinition): void {
+		this.runtime.registerVirtualModel(definition);
+	}
+
+	unregisterVirtualModel(providerName: string, id: string): void {
+		this.runtime.unregisterVirtualModel(providerName, id);
 	}
 
 	getRegisteredProviderConfig(providerName: string): ProviderConfigInput | undefined {
