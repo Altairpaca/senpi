@@ -84,6 +84,8 @@
 
 ### Fixed
 
+- Fixed `/model`, `/thinking`, `/login`, `/rename` and optional builtin extension commands requiring a second Enter from the command picker. Required-argument commands still complete and wait. Extensions can declare `requiresArguments: true`; skills and prompt templates can declare `requires-arguments: true` ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
+
 - `--model` and `--models` now honor a service-tier decorator (`:priority`, `:flex`, `:auto`, `:ultrafast`). Previously the decorator was parsed and then dropped before the session was created, so an explicit tier could run at the provider default. ([#2412](https://github.com/code-yeongyu/senpi/issues/2412))
 
 - A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))

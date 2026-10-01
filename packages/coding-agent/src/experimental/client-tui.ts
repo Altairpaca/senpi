@@ -425,6 +425,7 @@ export class ExperimentalClientTui implements Component {
 					name: command.name,
 					description: command.description,
 					...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+					requiresArguments: command.requiresArguments === true,
 					...(command.getArgumentCompletions === undefined
 						? {}
 						: {

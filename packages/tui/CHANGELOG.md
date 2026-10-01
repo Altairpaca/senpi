@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed optional-argument command picker rows requiring two Enter presses. Commands declare `requiresArguments` independently of their display hint; required-argument rows still complete and wait ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
+
 - Fixed inherited `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)), and skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
 
 - Fixed inherited path and `@` autocomplete not working after opening wrappers such as `(`, `[`, `{`, `<` or a backtick, and file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).

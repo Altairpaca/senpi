@@ -70,6 +70,7 @@ export interface SkillFrontmatter {
 	description?: string;
 	"disable-model-invocation"?: boolean;
 	"argument-hint"?: string;
+	"requires-arguments"?: boolean;
 	[key: string]: unknown;
 }
 
@@ -80,8 +81,9 @@ export interface Skill {
 	baseDir: string;
 	sourceInfo: SourceInfo;
 	disableModelInvocation: boolean;
-	/** Usage hint from the `argument-hint` frontmatter; marks `/skill:<name>` as taking arguments. */
+	/** Usage hint from the `argument-hint` frontmatter, independent of argument requirements. */
 	argumentHint?: string;
+	requiresArguments?: boolean;
 }
 
 export interface LoadSkillsResult {
@@ -339,6 +341,7 @@ function loadSkillFromFile(
 			baseDir: skillDir,
 			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
 			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+			requiresArguments: frontmatter["requires-arguments"] === true,
 			...(typeof argumentHint === "string" && argumentHint.trim() !== "" && { argumentHint: argumentHint.trim() }),
 		},
 		diagnostics,

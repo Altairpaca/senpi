@@ -12,11 +12,11 @@ import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
-// omo #9042 A: Enter on a picker row whose command declares an argument hint completes `/name `
-// and waits for the arguments; a row without a hint still submits in one press.
+// senpi #2479: only required arguments defer picker submission, independently of usage hints.
 const COMMANDS = [
 	{ name: "new", description: "Start a new session" },
-	{ name: "skill:ulw-execute", description: "Execute a plan", argumentHint: "<plan>" },
+	{ name: "model", description: "Select model", argumentHint: "<provider/model>", requiresArguments: false },
+	{ name: "skill:ulw-execute", description: "Execute a plan", argumentHint: "<plan>", requiresArguments: true },
 ];
 
 // Hands each suggestion result to the test in order, so it can await the editor's own requests
@@ -72,14 +72,24 @@ async function openPicker(typed: string, expectedFirst: string) {
 }
 
 describe("Editor slash rows with an argument hint", () => {
-	it("marks only hinted commands as awaiting arguments", () => {
+	// senpi #2479: a usage hint does not make an argument mandatory.
+	it("Enter once on /mod submits /model to open its selector", async () => {
+		const { editor, submitted } = await openPicker("/mod", "model");
+
+		editor.handleInput("\r");
+
+		assert.deepStrictEqual(submitted, ["/model"]);
+	});
+
+	it("marks only required-argument commands as awaiting arguments", () => {
 		const items = getSlashCommandSuggestions(COMMANDS, "skill:");
 		const byValue = new Map(items.map((item) => [item.value, item.awaitsArguments]));
 		assert.strictEqual(byValue.get("skill:ulw-execute"), true);
 		assert.strictEqual(getSlashCommandSuggestions(COMMANDS, "ne")[0]?.awaitsArguments, undefined);
+		assert.strictEqual(getSlashCommandSuggestions(COMMANDS, "mod")[0]?.awaitsArguments, undefined);
 	});
 
-	it("Enter on a hinted row completes the command and waits for arguments", async () => {
+	it("Enter on a required-argument row completes the command and does not submit", async () => {
 		const { editor, submitted } = await openPicker("/ulw", "skill:ulw-execute");
 
 		editor.handleInput("\r");

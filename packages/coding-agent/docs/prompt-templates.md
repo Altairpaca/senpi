@@ -31,6 +31,7 @@ Review the staged changes (`git diff --cached`). Focus on:
 - The filename becomes the command name. `review.md` becomes `/review`.
 - `description` is optional. If missing, the first non-empty line is used.
 - `argument-hint` is optional. When set, the hint is displayed before the description in the autocomplete dropdown.
+- `requires-arguments: true` makes picker Enter complete the command and wait for arguments. It defaults to false and is independent of the display hint.
 
 ### Argument Hints
 
@@ -40,6 +41,7 @@ Use `argument-hint` in frontmatter to show expected arguments in autocomplete. U
 ---
 description: Review PRs from URLs with structured issue and code analysis
 argument-hint: "<PR-URL>"
+requires-arguments: true
 ---
 ```
 

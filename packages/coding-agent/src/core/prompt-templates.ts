@@ -13,6 +13,7 @@ export interface PromptTemplate {
 	name: string;
 	description: string;
 	argumentHint?: string;
+	requiresArguments?: boolean;
 	content: string;
 	sourceInfo: SourceInfo;
 	filePath: string; // Absolute path to the template file
@@ -145,6 +146,7 @@ function loadTemplateFromFile(
 			name,
 			description,
 			...(argumentHint && { argumentHint }),
+			requiresArguments: frontmatter["requires-arguments"] === true,
 			content: body,
 			sourceInfo,
 			filePath,

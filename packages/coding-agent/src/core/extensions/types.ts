@@ -2120,6 +2120,8 @@ export interface RegisteredCommand {
 	description?: string;
 	/** Compact usage hint shown alongside the command in compatible UIs. */
 	argumentHint?: string;
+	/** Picker Enter completes and waits only when true; hints alone do not require arguments. */
+	requiresArguments?: boolean;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }

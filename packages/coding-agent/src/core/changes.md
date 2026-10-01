@@ -1,3 +1,23 @@
+## 2026-10-01 - Explicit command argument requirements (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/core/slash-commands.ts`: model, thinking, rename and login arguments are explicitly optional; import requires a path.
+- `packages/coding-agent/src/core/prompt-templates.ts` and `packages/coding-agent/src/core/skills.ts`: load boolean `requires-arguments` frontmatter separately from display hints.
+
+### Why
+
+Picker Enter must submit commands that work without arguments, not infer mandatory arguments from a usage hint.
+
+### Why an extension could not handle it
+
+Builtin definitions and resource loaders own the metadata consumed before extension dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/slash-commands.ts`: builtin definitions.
+- `packages/coding-agent/src/core/prompt-templates.ts` and `packages/coding-agent/src/core/skills.ts`: resource interfaces and frontmatter loading.
+
 ## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
 
 ### What changed

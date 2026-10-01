@@ -69,7 +69,9 @@ export function getSlashCommandSuggestions(
 				label: name,
 				description: fullDesc || undefined,
 				searchText: isSkill && !explicitSkillNamespace ? skillName : name,
-				awaitsArguments: hint !== undefined,
+				awaitsArguments:
+					("requiresArguments" in cmd && cmd.requiresArguments === true) ||
+					("awaitsArguments" in cmd && cmd.awaitsArguments === true),
 			},
 		];
 	});

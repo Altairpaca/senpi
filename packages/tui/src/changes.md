@@ -1,5 +1,25 @@
 # TUI delta rendering fork changes
 
+## 2026-10-01 - Optional command arguments submit on picker Enter (senpi#2479)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: add `SlashCommand.requiresArguments`, independent of `argumentHint`.
+- `packages/tui/src/slash-command-autocomplete.ts`: derive `awaitsArguments` only from explicit requirements (or a prebuilt item's explicit flag), never hint text.
+
+### Why
+
+Optional-argument commands such as `/model` must submit on the first Enter; required-argument commands still complete and wait.
+
+### Why an extension could not handle it
+
+The shared autocomplete provider determines the editor's submission decision before command dispatch.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/autocomplete.ts`: slash command metadata.
+- `packages/tui/src/slash-command-autocomplete.ts`: command item construction.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tui package
 
 ### What changed
