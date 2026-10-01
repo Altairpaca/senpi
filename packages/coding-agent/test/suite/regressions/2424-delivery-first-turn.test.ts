@@ -108,12 +108,18 @@ function responseWithChoice(text: string, choices: unknown[]): FauxResponseStep 
 }
 
 async function deliver(harness: Harness, deliveryId: string, text: string): Promise<void> {
-	const settled = new Promise<void>((resolve) => {
+	const settled = new Promise<void>((resolve, reject) => {
+		let timeout: ReturnType<typeof setTimeout> | undefined;
 		const unsubscribe = harness.session.subscribe((event) => {
 			if (event.type !== "agent_settled") return;
 			unsubscribe();
+			if (timeout !== undefined) clearTimeout(timeout);
 			resolve();
 		});
+		timeout = setTimeout(() => {
+			unsubscribe();
+			reject(new Error(`delivery ${deliveryId} did not settle`));
+		}, 10_000);
 	});
 	expect(
 		harness.session.externalAdmission.admit({
@@ -188,7 +194,12 @@ describe("delivery opener through the real AgentSession (senpi#2424)", () => {
 
 		// When
 		await harness.session.sendCustomMessage(
-			{ customType: SESSION_CONTROL_DELIVERY_TYPE, content: "Greet the user.", display: false },
+			{
+				customType: SESSION_CONTROL_DELIVERY_TYPE,
+				content: "Greet the user.",
+				display: false,
+				details: { delivery_id: "spoofed", source: "session_control", deliverAs: "nextTurn" },
+			},
 			{ triggerTurn: true },
 		);
 

@@ -3,7 +3,7 @@ import { getAnthropicCompat } from "@earendil-works/pi-ai/utils/prompt-cache-ttl
 import { hasRefusedForcedToolChoice } from "@earendil-works/pi-ai/utils/tool-choice-fallback";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
-import { SESSION_CONTROL_DELIVERY_TYPE } from "../../session-control-types.ts";
+import { isSessionControlDeliveryDetails, SESSION_CONTROL_DELIVERY_TYPE } from "../../session-control-types.ts";
 import type { BeforeAgentStartEvent, ExtensionMode } from "../../types.ts";
 import { parseAskUserAnswerFrame } from "../ask-user/format.ts";
 import { firstTextBlock } from "./todo-ask.ts";
@@ -68,15 +68,7 @@ function isRequestEntry(entry: SessionEntry): boolean {
 
 function isAdmittedDeliveryEntry(entry: SessionEntry): entry is Extract<SessionEntry, { type: "custom_message" }> {
 	if (entry.type !== "custom_message" || entry.customType !== SESSION_CONTROL_DELIVERY_TYPE) return false;
-	const details: unknown = entry.details;
-	return (
-		typeof details === "object" &&
-		details !== null &&
-		"delivery_id" in details &&
-		typeof details.delivery_id === "string" &&
-		"source" in details &&
-		details.source === "session_control"
-	);
+	return isSessionControlDeliveryDetails(entry.details);
 }
 
 /**

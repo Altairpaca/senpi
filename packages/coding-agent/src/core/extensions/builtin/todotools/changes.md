@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `shouldArmFirstTurn` treats `trigger: "delivery"` like `"prompt"` and counts earlier `session_control_delivery` entries as requests. Question/exclamation, print/json and ask-user-answer exclusions apply equally to both paths; answer-frame deliveries do not consume the opener.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `shouldArmFirstTurn` treats `trigger: "delivery"` like `"prompt"` and counts earlier `session_control_delivery` entries with full admission provenance as requests, using the same shared predicate as the host. Question/exclamation, print/json and ask-user-answer exclusions apply equally to both paths; answer-frame deliveries do not consume the opener.
 - `test/suite/regressions/2424-delivery-first-turn.test.ts`: covers the delivery gate table, gateway-only first/later deliveries with forced `todo` choice, both prompt/delivery orders, hidden extension turns, and typed or delivered answer frames through the real `AgentSession`.
 
 ### Why

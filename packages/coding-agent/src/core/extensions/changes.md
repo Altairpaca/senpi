@@ -5,6 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartEvent.trigger` adds `"delivery"` for a turn started by an admitted `session_control_delivery`; `"prompt"` and `"extension"` retain their existing meanings.
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `isSessionControlDeliveryDetails` is the shared predicate for the full admission provenance (`delivery_id`, `source`, and `deliverAs`) consumed by the host and todotools.
 
 ### Why
 
