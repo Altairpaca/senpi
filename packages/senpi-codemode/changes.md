@@ -1,5 +1,30 @@
 # senpi-codemode fork changes
 
+## 2026-10-01 - Event-driven Python bootstrap with stage-specific hang detection (senpi#2452)
+
+### What changed
+
+- `src/kernels/py/prelude.py` emits bootstrap status frames before stdlib imports, runtime initialization, and the host init loop; `ready` remains the only admission event.
+- `src/kernels/py/startup.ts` owns a per-stage inactivity guard. The default 11 seconds is twice the measured fresh-cache Windows p99 of 5,220 ms, rounded up to a second (Actions run 36882163342, 30 samples). Only forward stage transitions refresh it.
+- `src/kernels/py/transport.ts` waits for that ready event and retains the stalled stage, interpreter stderr, and original error cause. `startupTimeoutMs` is now a per-stage override.
+- `src/kernels/py/kernel.ts` applies the measured default guard; `src/kernels/py/kernel-contract.ts` documents per-stage `startupTimeoutMs` and exposes the separate `onStartupProgress` observer.
+- Bootstrap control frames stay out of ordinary cell output and status-disabled sessions. The optional `onStartupProgress` diagnostic callback observes accepted stage transitions separately.
+- `test/py-kernel-startup.test.ts` covers progressing startup beyond the former total deadline, hung imports, and duplicate or unknown progress that cannot postpone a hang.
+- The direct prelude SIGINT regression subscribes to ready and running-cell display events without chunk-order assumptions or timing sleeps.
+- `scripts/qa-python-startup.ts` bounds its post-ready cell and records the error class separately, retaining a failing exit code for retirement failures.
+
+### Why
+
+- A healthy cold interpreter exceeded the five-second total readiness deadline on Windows; the host killed it before it could report ready. Warm starts passed.
+
+### Why an extension could not handle it
+
+- The interpreter bootstrap and child retirement belong to the Python transport.
+
+### Expected merge conflict zones
+
+- LOW: Python transport initialization and prelude imports; no prompt or eval schema changes.
+
 ## 2026-10-01 - The bun-1-4 pointer names the cells that need the skill (senpi#2505)
 
 ### What changed

@@ -56,6 +56,14 @@ task-tool names are known.
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
 
+Python startup waits for the interpreter's `ready` event. It reports progress
+through `stdlib-imports`, `runtime-init`, and `host-init`; advancing to the next
+stage resets an inactivity guard rather than consuming a total startup budget.
+The default guard is 11 seconds per stage, derived from a measured 5.220-second
+Windows fresh-cache bootstrap p99 (30 samples). A stalled or failed start names
+the last stage and retains the interpreter's diagnostic error. The low-level
+`PythonKernel.start({ startupTimeoutMs })` override applies per stage.
+
 ### Session environment
 
 Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,
