@@ -107,7 +107,7 @@ function addedDiffLines(base, path) {
 function collectPrFacts(base) {
 	const pin = readUpstreamPin(UPSTREAM_PIN_PATH);
 	ensureCommitExists(pin.sha);
-	const { changedFiles, renames, deletions } = resolvePrNameStatus(base);
+	const { changedFiles, renames } = resolvePrNameStatus(base);
 	const pinChanged = changedFiles.includes(UPSTREAM_PIN_PATH);
 	const upstreamTree = filesInCommit(pin.sha);
 	const upstreamRenames = renames.filter((rename) => upstreamTree.has(rename.from));
@@ -135,7 +135,6 @@ function collectPrFacts(base) {
 			trackerDiffs,
 			existingTrackers,
 			renames: upstreamRenames,
-			deletions,
 			upstreamSync: pinChanged ? { pinChanged: true, divergentFiles } : undefined,
 		},
 	};
