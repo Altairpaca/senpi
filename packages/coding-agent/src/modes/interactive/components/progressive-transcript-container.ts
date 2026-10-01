@@ -42,12 +42,13 @@ export class ProgressiveTranscriptContainer extends Container {
 	private readonly requestRender: () => void;
 
 	/**
-	 * Index of the first child proven renderable, or `PENDING_FIRST_PAINT` before
-	 * any frame has been painted. Walks down to 0 as hydration warms the history.
-	 * A distinct sentinel is required because 0 legitimately means "fully
-	 * hydrated", which is also the state of a freshly cleared transcript.
+	 * Index of the first child published to the TUI. It stays at the first
+	 * frame's tail boundary until the deferred head is fully warmed, then drops
+	 * to zero in one atomic completion repaint.
 	 */
-	private hydratedFrom: number = PENDING_FIRST_PAINT;
+	private visibleFrom: number = PENDING_FIRST_PAINT;
+	/** Index of the first child whose render cache is warmed. */
+	private warmedFrom: number = PENDING_FIRST_PAINT;
 	private hydrationScheduled = false;
 	private hydrationGeneration = 0;
 	/**
@@ -70,30 +71,32 @@ export class ProgressiveTranscriptContainer extends Container {
 
 	/** True when every child has been rendered at least once and no work is pending. */
 	get isFullyHydrated(): boolean {
-		return this.hydratedFrom === 0 && !this.hydrationScheduled;
+		return this.warmedFrom === 0 && !this.hydrationScheduled;
 	}
 
 	override render(width: number): string[] {
 		this.lastRenderWidth = width;
 		const total = this.children.length;
-		if (this.hydratedFrom === 0 || total === 0) {
-			this.hydratedFrom = 0;
+		if (this.visibleFrom === 0 || total === 0) {
+			this.visibleFrom = 0;
+			this.warmedFrom = 0;
 			return super.render(width);
 		}
 
 		const firstVisible = Math.max(0, total - this.tailBudget);
 		if (firstVisible === 0) {
 			// Whole transcript fits the visible budget: nothing is worth deferring.
-			this.hydratedFrom = 0;
+			this.visibleFrom = 0;
+			this.warmedFrom = 0;
 			return super.render(width);
 		}
 
-		// Never move the watermark forward: a child warmed by an earlier chunk must
-		// stay warm even when later frames only need the tail.
-		this.hydratedFrom =
-			this.hydratedFrom === PENDING_FIRST_PAINT ? firstVisible : Math.min(this.hydratedFrom, firstVisible);
+		if (this.visibleFrom === PENDING_FIRST_PAINT) {
+			this.visibleFrom = firstVisible;
+			this.warmedFrom = firstVisible;
+		}
 		this.scheduleHydration();
-		return this.renderRange(this.hydratedFrom, total, width);
+		return this.renderRange(this.visibleFrom, total, width);
 	}
 
 	// `addChild` is inherited: a live message appended before hydration finishes
@@ -123,7 +126,8 @@ export class ProgressiveTranscriptContainer extends Container {
 	 * immediately after setting the halt, so re-arming there would undo teardown.
 	 */
 	private rearmHydration(): void {
-		this.hydratedFrom = PENDING_FIRST_PAINT;
+		this.visibleFrom = PENDING_FIRST_PAINT;
+		this.warmedFrom = PENDING_FIRST_PAINT;
 		this.hydrationHalted = false;
 	}
 
@@ -173,19 +177,20 @@ export class ProgressiveTranscriptContainer extends Container {
 	 */
 	private warmNextChunk(generation: number): void {
 		if (this.hydrationHalted || generation !== this.hydrationGeneration) return;
-		if (this.hydratedFrom === 0) return;
+		if (this.warmedFrom === 0) return;
 
-		const chunkEnd = this.hydratedFrom;
+		const chunkEnd = this.warmedFrom;
 		const chunkStart = Math.max(0, chunkEnd - this.warmChunkSize);
 		const width = this.lastRenderWidth;
 		if (width !== undefined) {
 			// Discard the lines: this pass exists only to fill each child's cache.
 			this.renderRange(chunkStart, chunkEnd, width);
 		}
-		this.hydratedFrom = chunkStart;
+		this.warmedFrom = chunkStart;
 
 		if (chunkStart === 0) {
-			// The whole transcript is renderable now; ask the TUI to repaint it.
+			// Publish the fully warmed history in one atomic height increase.
+			this.visibleFrom = 0;
 			this.requestRender();
 			return;
 		}
