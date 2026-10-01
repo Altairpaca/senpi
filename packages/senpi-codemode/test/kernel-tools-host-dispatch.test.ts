@@ -1,4 +1,9 @@
-import { type AgentToolResult, type ExtensionContext, kernelToolsStorage } from "@code-yeongyu/senpi";
+import {
+	type AgentToolResult,
+	type ExtensionContext,
+	type ExtensionToolContext,
+	kernelToolsStorage,
+} from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
@@ -22,7 +27,7 @@ type HostObservation = {
  * `kernelToolsStorage.getStore()` in packages/coding-agent/src/core/extensions/runner.ts, resolved
  * when a tool's `execute` touches it.
  */
-function hostContext(): ExtensionContext {
+function hostContext(): ExtensionToolContext {
 	return {
 		...fakeExtensionContext(),
 		get kernelTools() {

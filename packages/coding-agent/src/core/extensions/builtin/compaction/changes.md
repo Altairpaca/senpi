@@ -1,3 +1,35 @@
+## 2026-09-30 - Recover stalled pre-prompt compaction across unsafe split turns (senpi#1735)
+
+### What changed
+
+- `pre_prompt` compaction now enters deterministic failure recovery only when
+  known usage has reached the effective hard cap. A failed proactive
+  below-cap attempt remains fail-closed and preserves the full context.
+- When every prepared or earlier boundary retains unsafe split-turn content,
+  deterministic recovery now scans forward and selects the earliest suffix that
+  already passes the existing replay-safety, atomic tool-chain, and effective
+  token-budget checks.
+
+### Why
+
+- A resumed session at its hard cap could stall during provider summarization,
+  reject compaction, and then fail admission without attempting the
+  deterministic fallback. Below the cap, provider admission remains possible,
+  so destructive recovery would lose context without a liveness benefit.
+- Long split turns can contain an unsafe historical tool result with no later
+  user boundary. Scanning only prepared, user, and earlier boundaries retains
+  that unsafe result forever even when a later assistant boundary is safe.
+
+### Why an extension could not handle it
+
+- Required-compaction recovery and the retained-suffix candidate order are this
+  builtin's own policy.
+
+### Expected merge conflict zones
+
+- `extension-wiring.ts`: required fallback reason classification.
+- `deterministic-fallback.ts`: retained-suffix candidate ordering.
+
 ## 2026-09-29 - ChatGPT subscription remote compaction goes through responses-v2 and replays on its own lane (senpi#2378)
 
 ### What changed

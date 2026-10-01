@@ -56,19 +56,17 @@ export function ensureCommitExists(sha) {
 	runGit(["cat-file", "-e", `${sha}^{commit}`], `verifying pinned upstream commit ${sha}`);
 }
 
-/** Parses `git diff --name-status` text into paths, renames, and deletions. */
+/** Parses `git diff --name-status` text into paths and renames. Deleted paths stay in changedFiles. */
 export function parseNameStatus(text) {
 	const changedFiles = [];
 	const renames = [];
-	const deletions = [];
 	for (const line of splitLines(text)) {
 		const [status, ...paths] = line.split("\t");
 		if (paths.length === 0) continue;
 		changedFiles.push(...paths);
 		if (status.startsWith("R")) renames.push({ from: paths[0], to: paths[1] });
-		else if (status.startsWith("D")) deletions.push(paths[0]);
 	}
-	return { changedFiles, renames, deletions };
+	return { changedFiles, renames };
 }
 
 /** Rename-aware PR diff (base...HEAD) with change kinds. */

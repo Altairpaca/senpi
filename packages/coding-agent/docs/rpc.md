@@ -339,7 +339,18 @@ path (a desktop reader that finds one takes the host over; a `senpi` from before
 client's sessions. Without it those clients fail CLOSED - they find no host of their own, refuse, and leave
 the daemon alone. Nothing here ever writes a legacy-shaped file, and nothing here ever REMOVES one: a flat
 `host.pid` that does exist belongs to a legacy host, is read-only to this build, and while the process it
-names is alive an ensure refuses (`legacy_host`) rather than starting a second host beside it.
+names is alive an ensure never starts a second host beside it.
+
+That record is still the proof that retires a legacy host (`host-legacy.ts`). It describes the endpoint it
+stamps as `socket`, or, when unstamped, the agent directory's default socket `<agentDir>/rpc/rpc.sock`; its
+pid and start time must match the live process, so a recycled pid proves nothing:
+
+- `stopHost({ drain: true })` (`host stop --drain`) accepts it when that endpoint is the target socket and
+  the host advertises `generation_handoff`, and sends the drain. A hard stop still needs a layout-2 owner.
+- An ensure on ANY endpoint of the agent directory drains a live legacy host and waits for it to exit when
+  its endpoint answers with `generation_handoff` and `list_sessions` (workers included) lists no session.
+  Otherwise it refuses `legacy_host`, and the CLI refusal carries `detail`: the pid, its endpoint, how many
+  sessions it holds and the `host stop --drain --socket <endpoint>` that retires it.
 
 `ensureHost` fails with a typed `HostDaemonStateError` naming the directory it could not create or write,
 and starts no host in that case.
@@ -1290,6 +1301,12 @@ containment, or containment of arbitrary native code. They are not an extension 
 
 ### D1 normative table (multi-session mode)
 
+Hosts that support `open_session.permissionPreset: "accept-edits"` advertise
+`permission_preset_accept_edits`. This preset allows project read/list/grep/edit
+and asks for bash, external_directory and other tools. Clients without that
+capability must use `ask`, never `workspace`, for an edit-only approval promise.
+Explicit permission rules and remembered approvals retain their existing precedence.
+
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
@@ -1449,8 +1466,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "steer", "success": true}
+{"type": "response", "command": "steer", "success": true, "data": {"disposition": "queued"}}
 ```
+
+`data.disposition` is `"handled"` if an input handler consumed this steer, or `"queued"` if senpi queued it (including after a handler transformed it). It does not guarantee the message stays queued. Like the prompt response, `data` is optional: older hosts omit it.
 
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
 
@@ -1471,8 +1490,10 @@ The `images` field is optional. Each image uses `ImageContent` format (same as `
 
 Response:
 ```json
-{"type": "response", "command": "follow_up", "success": true}
+{"type": "response", "command": "follow_up", "success": true, "data": {"disposition": "queued"}}
 ```
+
+`data.disposition` has the same optional `"handled"` or `"queued"` meaning as for `steer`, applied to this follow-up.
 
 See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up messages are processed.
 

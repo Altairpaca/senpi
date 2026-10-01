@@ -1,3 +1,71 @@
+## 2026-09-30 - Drop the dead deletions input and a test-only pack-check seam (senpi#2447)
+
+### What changed
+
+- `scripts/changes-md-git.mjs` `parseNameStatus` no longer returns `deletions`, and `check-pr-changelog.mjs` and `audit-changes-md.mjs` stop passing it. Deleted paths stay in `changedFiles`.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertPublishedWorkspacePackFiles` drops its `options.nativePrebuildTargets` argument, and `publishedWorkspacePackageChecks` its `nativeTargets` parameter. Neither is exported any more, and nor is `SUPPORTED_NATIVE_PREBUILD_TARGETS`.
+
+### Why
+
+- `normalizeTrackerPolicy` never read `deletions`, so it was dead data.
+- The only production caller (`scripts/publish.mjs`) passes two arguments, so the all-OS target seam and both exports existed only for tests.
+- Gate verdicts are unchanged.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: `parseNameStatus` in `changes-md-git.mjs` and the `publishedWorkspacePackageChecks` signature.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `scripts/build-binaries.sh`: `scripts/build-binaries.sh`: fork compile flags kept; no codemode worker entrypoint.
+- `scripts/build-coding-agent-bundle.mjs`: `scripts/build-coding-agent-bundle.mjs`: fork `buildBundle()` kept; adopted the `meta` and `openai-chatgpt` lazy OAuth entries and the check that every `importOAuthModule()` flow in `packages/ai/src/auth/oauth/load.ts` has a lazy entry; no codemode worker; upstream compile-cache launcher not adopted.
+- `scripts/check-browser-smoke.mjs`: `scripts/check-browser-smoke.mjs`, `scripts/check-entry-graphs.mjs`: OURS; upstream durable browser-bundle smoke and the durable/codemode/mcp workspace entries dropped (D-2, D-7).
+- `scripts/check-entry-graphs.mjs`: `scripts/check-browser-smoke.mjs`, `scripts/check-entry-graphs.mjs`: OURS; upstream durable browser-bundle smoke and the durable/codemode/mcp workspace entries dropped (D-2, D-7).
+- `scripts/check-runtime-deps.mjs`: `scripts/check-ts-relative-imports.mjs`, `scripts/check-runtime-deps.mjs`: OURS (classic TypeScript API via @typescript/typescript6).
+- `scripts/check-ts-relative-imports.mjs`: `scripts/check-ts-relative-imports.mjs`, `scripts/check-runtime-deps.mjs`: OURS (classic TypeScript API via @typescript/typescript6).
+- `scripts/local-release.mjs`: `scripts/local-release.mjs`: fork package list kept; no durable/codemode/mcp packages.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): upstream features excluded on record
+
+### What changed
+
+Upstream paths below are not added (or stay deleted) in this sync; `.github/agent/upstream-exclusions.txt` lists them for mechanical re-exclusion after every upstream merge.
+
+- `scripts/durable-browser-smoke-entry.ts` (not added / kept deleted)
+
+### Why
+
+The fork keeps one implementation per capability: its own builtin mcp, tool-search and senpi-codemode instead of upstream's codemode/MCP/tool-search built-ins and packages (plan D-2, owner default Q1); builtin cache-keepalive instead of upstream cache warming, whose default spends paid refreshes (D-5, Q3); report-bug skills instead of `/bug` uploads to Radius (D-6, Q4); no `packages/durable`, which nothing in the fork imports (D-7). Paths the fork had already deleted (core/index.ts, core/radius.ts, session-share.ts, tui latex.ts, providers/openai-codex.ts, npm-shrinkwrap.json) stay deleted.
+
+### Why an extension could not handle it
+
+Exclusion is a repository-level decision about which upstream files exist at all; an extension can add behavior but cannot remove files an upstream merge adds.
+
+### Expected merge conflict zones
+
+Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
 ## 2026-09-29 - Published packages ship no sourcemaps (senpi#2362)
 
 ### What changed
