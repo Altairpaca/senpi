@@ -12,8 +12,10 @@ import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
 import toolSearchExtension from "../../../src/core/extensions/builtin/tool-search/index.ts";
+import { getToolSearchService } from "../../../src/core/extensions/builtin/tool-search/service.ts";
 import type { ResourceLoader } from "../../../src/core/resource-loader.ts";
 import type { ExtensionAPI, LoadExtensionsResult } from "../../../src/index.ts";
+import { type CapturingPi, capturingPi } from "../../mcp/fixtures/register-call.ts";
 import {
 	cleanupRoots,
 	makeRoot,
@@ -22,6 +24,8 @@ import {
 	stdioServer,
 	type TestRoot,
 } from "../../mcp/fixtures/service-lifecycle.ts";
+import { sharingHttpFixture } from "../../mcp/fixtures/sharing-http.ts";
+import { assertProcessDead } from "../../mcp/fixtures/spawn-fixture.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../../utilities.ts";
 import { createHarness, getMessageText, type Harness } from "../harness.ts";
 
@@ -30,6 +34,7 @@ const REGISTRATION_TIMEOUT_MS = 8_000;
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 const open = new Set<Harness>();
+const scopes: ProviderScope[] = [];
 const originalAgentDir = process.env[ENV_AGENT_DIR];
 let root: TestRoot;
 let spawnCounter: string;
@@ -146,7 +151,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-	for (const harness of [...open]) close(harness);
+	// Quit every session still open, so a session-owned (provider-scoped) service is disposed even
+	// when its test failed before its own shutdown.
+	for (const harness of [...open]) await shutDown(harness, "quit");
+	for (const scope of scopes.splice(0)) scope.close();
 	await getMcpService().dispose("quit");
 	resetMcpServiceForTests();
 	vi.unstubAllEnvs();
@@ -236,13 +244,13 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 		await untilToolRegistered(classic, TOOL);
 		const shared = getMcpService();
 		const scope = new ProviderScope();
+		scopes.push(scope);
 		const scopedExtensions = await runWithProviderScope(scope, () => mcpExtensions());
 		const scoped = await openSession(scopedExtensions);
 		const scopedResult = await callMcpTool(scoped, "scoped");
 
 		// When: the provider-scoped session quits.
 		await shutDown(scoped, "quit");
-		scope.close();
 		const result = await callMcpTool(classic, "after-scoped-quit");
 
 		// Then: it ran its own server process and never attached to the shared service, which keeps serving.
@@ -252,3 +260,183 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 		expect(result).toContain("fixture tool_1 value=after-scoped-quit");
 	});
 });
+
+async function attachFake(pi: CapturingPi): Promise<void> {
+	await getMcpService().attachSession(
+		{ type: "session_start", reason: "startup" },
+		{ cwd: root.cwd, isProjectTrusted: () => true },
+		pi,
+		{ agentDir: root.agentDir },
+	);
+}
+
+function untilFakeRegistered(pi: CapturingPi, name: string): Promise<void> {
+	const service = getMcpService();
+	return new Promise((resolve, reject) => {
+		if (pi.registeredTools.includes(name)) {
+			resolve();
+			return;
+		}
+		const timeout = setTimeout(() => {
+			unsubscribe();
+			reject(new Error(`${name} never registered`));
+		}, REGISTRATION_TIMEOUT_MS);
+		const unsubscribe = service.onMcpRegistrationChanged(() => {
+			if (!pi.registeredTools.includes(name)) return;
+			clearTimeout(timeout);
+			unsubscribe();
+			resolve();
+		});
+	});
+}
+
+function nextRegistration(): Promise<void> {
+	const service = getMcpService();
+	return new Promise((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			unsubscribe();
+			reject(new Error("no MCP registration"));
+		}, REGISTRATION_TIMEOUT_MS);
+		const unsubscribe = service.onMcpRegistrationChanged(() => {
+			clearTimeout(timeout);
+			unsubscribe();
+			resolve();
+		});
+	});
+}
+
+async function httpServer(): Promise<Awaited<ReturnType<typeof sharingHttpFixture>>> {
+	const fixture = await sharingHttpFixture();
+	cleanupTasks.push(() => fixture.close());
+	setConfig(root, { fx: { type: "http", url: fixture.url, auth: false, lifecycle: "eager" } });
+	return fixture;
+}
+
+/** Attach two sessions to the http server, then drain the connect's own refresh so later refreshes are the test's. */
+async function twoHttpSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: CapturingPi }> {
+	const alphaPi = capturingPi();
+	const bravoPi = capturingPi();
+	await attachFake(alphaPi);
+	await attachFake(bravoPi);
+	await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+	const drained = nextRegistration();
+	getMcpService().getConnection("fx")?.markToolsChanged();
+	await drained;
+	await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+	await untilFakeRegistered(bravoPi, "mcp_fx_echo");
+	return { alphaPi, bravoPi };
+}
+
+describe("senpi#2514: the shared service keeps sessions apart under concurrency and failure", () => {
+	it("gives each session without its own tool-search service a separate fallback service", async () => {
+		// Given: two sessions whose extension loads own no tool-search service attach to the shared service.
+		configureServer();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		const alphaSearch = getToolSearchService({
+			getAllTools: () => [],
+			getActiveTools: () => alphaPi.getActiveTools(),
+			setActiveTools: (names) => alphaPi.setActiveTools([...names]),
+		});
+		await attachFake(alphaPi);
+		await untilFakeRegistered(alphaPi, TOOL);
+		await attachFake(bravoPi);
+		await untilFakeRegistered(bravoPi, TOOL);
+
+		// When: the first session's tool search activates an MCP tool.
+		const activated = alphaSearch.activateTool(TOOL);
+
+		// Then: the tool is active in that session only.
+		expect(activated).toBe(true);
+		expect(alphaPi.getActiveTools()).toContain(TOOL);
+		expect(bravoPi.getActiveTools()).not.toContain(TOOL);
+	});
+
+	it("keeps the shared service alive for a session whose attach is queued when the last bound session quits", async () => {
+		// Given: one bound session with the server connected.
+		configureServer();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		await attachFake(alphaPi);
+		await untilFakeRegistered(alphaPi, TOOL);
+		const pid = service.getConnection("fx")?.getRootPid();
+
+		// When: a second session's attach is queued, and the first quits before it binds.
+		const bravoPi = capturingPi();
+		const bravoAttach = attachFake(bravoPi);
+		await service.releaseSession(alphaPi, "quit");
+		await bravoAttach;
+
+		// Then: the queued session binds to the live service on the same server process, and its own quit cleans up.
+		expect(service.isDisposed()).toBe(false);
+		expect(bravoPi.registeredTools).toContain(TOOL);
+		expect(service.getConnection("fx")?.getRootPid()).toBe(pid);
+		await service.releaseSession(bravoPi, "quit");
+		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0 });
+		if (pid !== null && pid !== undefined) await assertProcessDead(pid);
+	});
+
+	it("refuses an attach to a disposed service instead of opening connections nobody can close", async () => {
+		// Given: the shared service was disposed.
+		configureServer();
+		const service = getMcpService();
+		await service.dispose("quit");
+
+		// When / Then: a late attach fails loudly and spawns no server.
+		await expect(attachFakeTo(service, capturingPi())).rejects.toThrow(/disposed/);
+		expect(service.getSnapshot().connectionCount).toBe(0);
+		await expect(readCounter(spawnCounter)).rejects.toThrow();
+	});
+
+	it("re-registers a session that attached while a tool-list refresh was in flight", async () => {
+		// Given: one session on an http server whose tool list then changes, with the refresh's listing held.
+		const fixture = await httpServer();
+		const alphaPi = capturingPi();
+		await attachFake(alphaPi);
+		await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		const drained = nextRegistration();
+		getMcpService().getConnection("fx")?.markToolsChanged();
+		await drained;
+		const listing = fixture.holdLists();
+		await fixture.changeTools("late");
+		await listing;
+
+		// When: a second session attaches mid-refresh, then the listing completes.
+		const bravoPi = capturingPi();
+		await attachFake(bravoPi);
+		const refreshed = untilFakeRegistered(bravoPi, "mcp_fx_late");
+		fixture.releaseLists();
+		await refreshed;
+
+		// Then: both sessions carry the refreshed tool list.
+		expect(alphaPi.registeredTools).toContain("mcp_fx_late");
+		expect(bravoPi.registeredTools).toContain("mcp_fx_late");
+	});
+
+	it("still delivers a refreshed tool list to the other sessions when one session's registration throws", async () => {
+		// Given: two sessions on an http server, the first of which can no longer register tools.
+		const fixture = await httpServer();
+		const { alphaPi, bravoPi } = await twoHttpSessions();
+		alphaPi.registerTool = () => {
+			throw new Error("alpha's tool registry is broken");
+		};
+
+		// When: the server's tool list changes.
+		const refreshed = untilFakeRegistered(bravoPi, "mcp_fx_late");
+		await fixture.changeTools("late");
+
+		// Then: the second session still receives the new tool.
+		await refreshed;
+		expect(bravoPi.registeredTools).toContain("mcp_fx_late");
+		expect(alphaPi.registeredTools).not.toContain("mcp_fx_late");
+	});
+});
+
+async function attachFakeTo(service: ReturnType<typeof getMcpService>, pi: CapturingPi): Promise<void> {
+	await service.attachSession(
+		{ type: "session_start", reason: "startup" },
+		{ cwd: root.cwd, isProjectTrusted: () => true },
+		pi,
+		{ agentDir: root.agentDir },
+	);
+}

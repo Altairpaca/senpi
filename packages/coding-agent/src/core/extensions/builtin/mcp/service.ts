@@ -5,7 +5,7 @@ import {
 	getToolSearchService,
 	getToolSearchServiceForExtension,
 	resetToolSearchServiceForTests,
-	type ToolSearchService,
+	ToolSearchService,
 } from "../tool-search/service.ts";
 import { resolveAuthMode } from "./auth/context.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
@@ -67,6 +67,8 @@ interface McpSessionBinding {
 	readonly pi: McpToolRegistrar;
 	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
 	readonly fallbackToolSearch: ToolSearchService | undefined;
+	/** True when `fallbackToolSearch` is the process-wide fallback rather than a private one. */
+	readonly holdsProcessFallback: boolean;
 	readonly context: McpSessionContext;
 	readonly registeredIdentities: Map<string, string>;
 	registration: McpSessionRegistration | undefined;
@@ -95,6 +97,7 @@ export class McpService {
 	#wireStatusRefreshQueue: Promise<void> = Promise.resolve();
 	#refreshActiveSetWhenNoTools = false;
 	readonly #bindings = new Map<object, McpSessionBinding>();
+	#pendingAttaches = 0;
 	#sessionOptions: McpSessionOptions = {};
 	readonly #skillServerWarnings = new Set<string>();
 	#attachQueue: Promise<void> = Promise.resolve();
@@ -122,7 +125,13 @@ export class McpService {
 		_pi?: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 		options: McpSessionOptions = {},
 	): Promise<void> {
+		// Counted from the moment it queues, so a session's release cannot dispose the service
+		// under an attach that has not bound yet.
+		this.#pendingAttaches += 1;
 		const attach = this.#attachQueue.then(async () => {
+			if (this.#disposed) {
+				throw new Error("The MCP service is disposed; attach the session to a live service instead.");
+			}
 			this.#sessionContext = ctx;
 			this.#skillServerWarnings.clear();
 			this.#sessionStartCount += 1;
@@ -161,7 +170,11 @@ export class McpService {
 			() => undefined,
 			() => undefined,
 		);
-		await attach;
+		try {
+			await attach;
+		} finally {
+			this.#pendingAttaches -= 1;
+		}
 	}
 
 	#bind(pi: McpToolRegistrar, ctx: McpSessionContext): McpSessionBinding {
@@ -169,11 +182,20 @@ export class McpService {
 			getActiveTools: () => pi.getActiveTools(),
 			setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
 		};
+		const previous = this.#bindings.get(pi);
+		// A session-owned service serves exactly one session: a new attach takes over its binding.
+		if (!this.#servesManySessions) this.#bindings.clear();
 		let fallbackToolSearch: ToolSearchService | undefined;
+		let holdsProcessFallback = false;
 		const sessionToolSearch = getToolSearchServiceForExtension(pi);
 		if (sessionToolSearch !== undefined) {
 			sessionToolSearch.bindActivationRuntime(activationRuntime);
+		} else if (this.#liveBindings().some((other) => other.pi !== pi && other.holdsProcessFallback)) {
+			// The process-wide fallback already serves another live session; rebinding it would move that
+			// session's activation runtime and catalog hook here, so this session gets its own (#2514).
+			fallbackToolSearch = new ToolSearchService({ getAllTools: () => [], ...activationRuntime });
 		} else {
+			holdsProcessFallback = true;
 			try {
 				fallbackToolSearch = getToolSearchService();
 				fallbackToolSearch.bindActivationRuntime(activationRuntime);
@@ -181,12 +203,10 @@ export class McpService {
 				fallbackToolSearch = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
 			}
 		}
-		const previous = this.#bindings.get(pi);
-		// A session-owned service serves exactly one session: a new attach takes over its binding.
-		if (!this.#servesManySessions) this.#bindings.clear();
 		const binding: McpSessionBinding = {
 			pi,
 			fallbackToolSearch,
+			holdsProcessFallback,
 			context: ctx,
 			registeredIdentities: previous?.registeredIdentities ?? new Map(),
 			registration: previous?.registration,
@@ -228,7 +248,8 @@ export class McpService {
 			if (released !== undefined && this.#sessionContext === released.context) this.#sessionContext = latest.context;
 			return;
 		}
-		if (disposeReason !== undefined) await this.dispose(disposeReason);
+		// A session whose attach is still queued has not bound yet but will use this service.
+		if (disposeReason !== undefined && this.#pendingAttaches === 0) await this.dispose(disposeReason);
 	}
 
 	/**
@@ -502,18 +523,30 @@ export class McpService {
 						pi: binding?.pi,
 						registerDirectTools: async () => {
 							// The catalog is shared, so it lands in every live session, not only the one that
-							// started the connect (#2514).
+							// started the connect (#2514). One session's failure must not starve the others:
+							// each registers on its own, and the failures are reported together afterwards.
+							const failures: unknown[] = [];
 							for (const live of this.#liveBindings()) {
-								await this.#registerDirectTools(live);
-								// A raced attach ran its history replay before this catalog
-								// existed; replay now so restored tools still land on the
-								// first turn's payload (idempotent: already-active names skip).
-								this.#rehydrateFromSessionHistory(live);
+								try {
+									await this.#registerDirectTools(live);
+									// A raced attach ran its history replay before this catalog
+									// existed; replay now so restored tools still land on the
+									// first turn's payload (idempotent: already-active names skip).
+									this.#rehydrateFromSessionHistory(live);
+								} catch (error) {
+									failures.push(error);
+								}
 							}
 							// The session instructions block was likewise captured at attach
 							// time, before this server connected; rebuild it so the first
 							// turn carries this server's instructions after a raced connect.
 							refreshMcpInstructionsForSession(this);
+							if (failures.length > 0) {
+								throw new AggregateError(
+									failures,
+									`MCP ${name} catalog failed to register in ${failures.length} session(s)`,
+								);
+							}
 						},
 						serverConfig: server.config,
 						shouldRefreshTools: () => !this.#disposed && this.#toolRefreshGeneration === toolRefreshGeneration,
@@ -545,13 +578,15 @@ export class McpService {
 
 	async #handleServerToolsChanged(entry: McpConnectionEntry, connectOnly: boolean): Promise<void> {
 		const config = this.#config;
-		const bindings = this.#liveBindings();
-		if (config === null || bindings.length === 0) return;
-		const targets = bindings.map((binding) => ({
-			pi: binding.pi,
-			registeredIdentity: binding.registeredIdentities.get(entry.key),
-			register: () => this.#registerDirectTools(binding),
-		}));
+		if (config === null || this.#liveBindings().length === 0) return;
+		// Resolved when the refresh registers, not when it starts: a session that attaches while the
+		// refresh is still listing tools must receive the refreshed catalog too.
+		const targets = () =>
+			this.#liveBindings().map((binding) => ({
+				pi: binding.pi,
+				registeredIdentity: () => binding.registeredIdentities.get(entry.key),
+				register: () => this.#registerDirectTools(binding),
+			}));
 		await refreshMcpToolsOnListChanged(entry, targets, config, connectOnly);
 	}
 

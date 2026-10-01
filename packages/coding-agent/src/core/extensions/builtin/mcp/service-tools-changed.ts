@@ -18,7 +18,7 @@ type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" |
 /** One session's registration of a server's catalog: a refresh re-registers it there when stale. */
 export interface McpToolsRefreshTarget {
 	readonly pi: McpToolRegistrar;
-	readonly registeredIdentity: string | undefined;
+	readonly registeredIdentity: () => string | undefined;
 	readonly register: () => Promise<void>;
 }
 
@@ -55,11 +55,13 @@ export function subscribeMcpToolsChanged(
  * and removed tools are tombstoned so a stale call fails cleanly. Every connect
  * raises the signal too; a connect-only refresh leaves an unchanged catalog
  * registered, so the catalog lands once per session (#2177). Every live session sharing the
- * connection is a target: each re-registers in its own tool set (#2514).
+ * connection is a target, resolved when registration starts and again until no session that
+ * attached mid-refresh is left out; each re-registers in its own tool set, and one session's
+ * failure is reported without starving the others (#2514).
  */
 export async function refreshMcpToolsOnListChanged(
 	entry: McpConnectionEntry,
-	targets: readonly McpToolsRefreshTarget[],
+	targets: () => readonly McpToolsRefreshTarget[],
 	config: ResolvedMcpConfig,
 	connectOnly: boolean,
 ): Promise<void> {
@@ -92,7 +94,8 @@ export async function refreshMcpToolsOnListChanged(
 				).map(({ name }) => name));
 	const diff = diffMcpToolNames(knownNames, newNames);
 	const identity = mcpRegistrationIdentity(catalog, entry.cachedCatalog);
-	const stale = connectOnly ? targets.filter((target) => target.registeredIdentity !== identity) : targets;
+	const initial = targets();
+	const stale = connectOnly ? initial.filter((target) => target.registeredIdentity() !== identity) : initial;
 	if (stale.length > 0) {
 		// Registration reads entry.cachedCatalog. A shared lease refreshed it above; nothing else
 		// refreshes a non-shared connection's catalog after its startup connect (#2188).
@@ -102,9 +105,30 @@ export async function refreshMcpToolsOnListChanged(
 		}
 		// Tombstone removed tools BEFORE re-registration so the subsequent
 		// setActiveTools (which excludes them) leaves the tombstones inactive.
-		for (const target of stale) {
-			for (const removed of diff.removed) target.pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
-			await target.register();
+		const seen = new Set<object>(initial.map((target) => target.pi));
+		const failures: unknown[] = [];
+		let pending: readonly McpToolsRefreshTarget[] = stale;
+		while (pending.length > 0) {
+			for (const target of pending) {
+				try {
+					for (const removed of diff.removed)
+						target.pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
+					await target.register();
+				} catch (error) {
+					failures.push(error);
+				}
+			}
+			// A session that attached during this refresh registered the catalog cached before it.
+			pending = targets().filter((target) => !seen.has(target.pi));
+			for (const target of pending) seen.add(target.pi);
+		}
+		if (failures.length > 0) {
+			entry.knownToolNames = newNames;
+			entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
+			throw new AggregateError(
+				failures,
+				`MCP ${entry.name} tool refresh failed in ${failures.length} of ${seen.size} session(s)`,
+			);
 		}
 	}
 	entry.knownToolNames = newNames;
