@@ -78,7 +78,7 @@ describe("copy-codemode-sidecar", () => {
 		const require = createRequire(join(outputRoot, "node_modules", "@code-yeongyu", "senpi-codemode", "package.json"));
 		assert.equal(require("./index.js"), "codemode");
 		assert.equal(require("fake-dependency"), "1.0.0");
-		assert.equal(require("fake-transitive"), "2.0.0");
+		assert.equal(createRequire(require.resolve("fake-dependency"))("fake-transitive"), "2.0.0");
 		assert.equal(existsSync(join(outputRoot, "node_modules", "@code-yeongyu", "senpi-codemode", "test")), false);
 	});
 
@@ -143,10 +143,11 @@ describe("copy-codemode-sidecar", () => {
 
 	it("removes stale dependency files when staging twice into the same output", () => {
 		// Given an already-staged output with removed packages and stale files.
-		declareDependencies({ "@babel/parser": "1.0.0" });
+		declareDependencies({ "@babel/parser": "1.0.0", "removed-dep": "1.0.0" });
 		addPackage(join(sourceRoot, "node_modules", "@babel", "parser"), { name: "@babel/parser", version: "1.0.0" });
+		addPackage(join(sourceRoot, "node_modules", "removed-dep"), { name: "removed-dep", version: "1.0.0" });
 		assert.equal(runCopier().status, 0);
-		addPackage(join(outputRoot, "node_modules", "removed-dep"), { name: "removed-dep", version: "1.0.0" });
+		declareDependencies({ "@babel/parser": "1.0.0" });
 		writeFileSync(join(outputRoot, "node_modules", "@babel", "parser", "STALE.txt"), "stale");
 		// When staging again.
 		const result = runCopier();

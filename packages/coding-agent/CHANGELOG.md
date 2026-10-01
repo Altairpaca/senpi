@@ -14,7 +14,7 @@
 
 - On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
 
-- Binary sidecar staging now derives the codemode package's complete runtime dependency closure instead of copying only the parser, while preserving host-provided virtual modules and naming unresolved dependencies during packaging. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+- Binary sidecar staging now derives the codemode package's complete runtime dependency closure, including present optional dependencies, instead of copying only the parser. Staging preserves source dependency versions, skips host-provided virtual modules, dereferences symlinks, removes only previously staged packages, refuses package output roots, and names unresolved dependencies during packaging. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 
 ### Removed
 

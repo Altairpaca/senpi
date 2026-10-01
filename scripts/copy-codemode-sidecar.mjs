@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, parse, resolve, sep } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -40,9 +40,23 @@ if (!Array.isArray(manifest.files)) {
 	throw new Error(`${manifestPath} must declare a files array`);
 }
 
-// This node_modules tree is owned by the sidecar copier, including its dependency closure.
-rmSync(sidecarNodeModulesRoot, { recursive: true, force: true });
+const outputRoot = resolve(outputRootArgument);
+if (existsSync(join(outputRoot, "package.json"))) {
+	throw new Error(`Refusing codemode sidecar output in a package root: ${outputRoot}`);
+}
+const ownershipPath = join(outputRoot, ".codemode-sidecar.json");
+const ownedPaths = existsSync(ownershipPath) ? JSON.parse(readFileSync(ownershipPath, "utf8")) : [];
+for (const path of ownedPaths) {
+	if (typeof path !== "string" || !path.startsWith(`node_modules${sep}`) || path.split(sep).includes("..")) {
+		throw new Error("Invalid codemode sidecar ownership path");
+	}
+	rmSync(join(outputRoot, path), { recursive: true, force: true });
+}
+// The extension itself was also owned by the original copier before manifests existed.
+rmSync(targetRoot, { recursive: true, force: true });
 mkdirSync(targetRoot, { recursive: true });
+const stagedPaths = [relative(outputRoot, targetRoot)];
+writeFileSync(ownershipPath, JSON.stringify(stagedPaths));
 cpSync(realpathSync(manifestPath), join(targetRoot, "package.json"), { dereference: true });
 
 for (const entry of manifest.files) {
@@ -62,17 +76,26 @@ for (const entry of manifest.files) {
 
 const excludedPackage = process.env.SENPI_SIDECAR_EXCLUDE;
 const copiedPackages = new Map();
-const pendingPackages = Object.keys(manifest.dependencies ?? {}).map((packageName) => [
-	packageName,
-	manifestPath,
-	join(targetRoot, "package.json"),
-]);
+const edges = [];
+const pendingPackages = [];
+function enqueueDependencies(packageManifest, sourceManifest, targetManifest) {
+	for (const packageName of new Set([
+		...Object.keys(packageManifest.dependencies ?? {}),
+		...Object.keys(packageManifest.optionalDependencies ?? {}),
+	])) {
+		pendingPackages.push([packageName, sourceManifest, targetManifest, packageName in (packageManifest.optionalDependencies ?? {})]);
+	}
+}
+enqueueDependencies(manifest, manifestPath, join(targetRoot, "package.json"));
 
-function resolvePackageManifest(packageName, requiringManifestPath) {
+function resolvePackageManifest(packageName, requiringManifestPath, optional = false) {
 	const require = createRequire(requiringManifestPath);
 	try {
 		return require.resolve(`${packageName}/package.json`);
 	} catch (error) {
+if (optional && error instanceof Error && error.code === "MODULE_NOT_FOUND") {
+			return undefined;
+		}
 		if (!(error instanceof Error) || error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") {
 			throw new Error(`Unable to resolve codemode sidecar dependency ${packageName}`, { cause: error });
 		}
@@ -87,42 +110,51 @@ function resolvePackageManifest(packageName, requiringManifestPath) {
 }
 
 while (pendingPackages.length > 0) {
-	const [packageName, requiringManifestPath, requiringTargetManifestPath] = pendingPackages.pop();
+	const [packageName, requiringManifestPath, requiringTargetManifestPath, optional] = pendingPackages.pop();
 	if (HOST_PROVIDED_MODULES.has(packageName) || packageName === excludedPackage) {
 		continue;
 	}
 
-	const packageManifestPath = realpathSync(resolvePackageManifest(packageName, requiringManifestPath));
-	const packageRoot = dirname(packageManifestPath);
-	const requiringRoot = dirname(requiringTargetManifestPath);
-	let visiblePackage;
-	for (
-		let parentRoot = requiringRoot;
-		parentRoot !== parse(parentRoot).root;
-		parentRoot = dirname(parentRoot)
-	) {
-		const candidate = join(parentRoot, "node_modules", packageName);
-		if (copiedPackages.has(candidate)) {
-			visiblePackage = copiedPackages.get(candidate);
-			break;
-		}
-	}
-	if (visiblePackage === packageRoot) {
+	const resolvedManifest = resolvePackageManifest(packageName, requiringManifestPath, optional);
+	if (!resolvedManifest) {
 		continue;
 	}
-	// Hoist only while the name is free. A conflicting version belongs beside its dependent.
-	const packageTarget = visiblePackage
-		? join(requiringRoot, "node_modules", packageName)
-		: join(sidecarNodeModulesRoot, packageName);
+	const packageManifestPath = realpathSync(resolvedManifest);
+	const packageRoot = dirname(packageManifestPath);
+	// Preserve the full source nesting, independent of traversal order. Workspace
+	// roots outside node_modules use the root slot; the edge audit rejects conflicts.
+	const modulesMarker = `${sep}node_modules${sep}`;
+	const modulesIndex = packageRoot.indexOf(modulesMarker);
+	const packageTarget = modulesIndex < 0
+		? join(sidecarNodeModulesRoot, packageName)
+		: join(sidecarNodeModulesRoot, packageRoot.slice(modulesIndex + modulesMarker.length));
+	edges.push([packageName, requiringTargetManifestPath, packageRoot]);
+	if (copiedPackages.get(packageTarget) === packageRoot) {
+		continue;
+	}
+	if (copiedPackages.has(packageTarget)) {
+		throw new Error(`Conflicting codemode sidecar dependency ${packageName} at ${packageTarget}`);
+	}
+	if (existsSync(packageTarget)) {
+		throw new Error(`Refusing to overwrite unowned codemode sidecar dependency ${packageName}`);
+	}
 	const packageManifest = JSON.parse(readFileSync(packageManifestPath, "utf8"));
+	stagedPaths.push(relative(outputRoot, packageTarget));
+	writeFileSync(ownershipPath, JSON.stringify(stagedPaths));
 	cpSync(packageRoot, packageTarget, {
 		recursive: true,
 		dereference: true,
 		filter: (sourcePath) => sourcePath !== join(packageRoot, "node_modules"),
 	});
 	copiedPackages.set(packageTarget, packageRoot);
-	for (const dependencyName of Object.keys(packageManifest.dependencies ?? {})) {
-		pendingPackages.push([dependencyName, packageManifestPath, join(packageTarget, "package.json")]);
+	enqueueDependencies(packageManifest, packageManifestPath, join(packageTarget, "package.json"));
+}
+
+for (const [packageName, targetManifest, sourcePackageRoot] of edges) {
+	const stagedManifest = resolvePackageManifest(packageName, targetManifest);
+	const stagedPath = resolve(outputRoot, relative(realpathSync(outputRoot), dirname(realpathSync(stagedManifest))));
+	if (copiedPackages.get(stagedPath) !== sourcePackageRoot) {
+		throw new Error(`Conflicting codemode sidecar dependency ${packageName} required by ${targetManifest}`);
 	}
 }
 

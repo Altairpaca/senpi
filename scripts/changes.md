@@ -1,3 +1,22 @@
+## 2026-10-01 - Preserve sidecar dependency resolution and staging ownership (senpi#2452)
+
+### What changed
+
+- `scripts/copy-codemode-sidecar.mjs` mirrors source package nesting, audits every staged dependency edge, follows present optional dependencies, and tracks staged package paths rather than clearing the entire output install.
+- `scripts/copy-codemode-sidecar.test.mjs` and `scripts/copy-codemode-sidecar-closure.test.mjs` cover nested shadowing, workspace resolution, selected-file links, diagnostics, optional payloads, and owned cleanup.
+
+### Why
+
+- Traversal-order hoisting could silently change a descendant's resolved version; whole-install cleanup could delete unrelated output packages.
+
+### Why an extension could not handle it
+
+- Release asset staging runs before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The dependency traversal and sidecar cleanup in `scripts/copy-codemode-sidecar.mjs`.
+
 ## 2026-10-01 - Release path stops running the removed image-model generator (senpi#2484)
 
 ### What changed
