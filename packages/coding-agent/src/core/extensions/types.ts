@@ -113,7 +113,7 @@ export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } fro
 export * from "./session-control-types.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 
-export type ServiceTier = "auto" | "flex" | "priority";
+export type ServiceTier = "auto" | "flex" | "priority" | "ultrafast";
 // biome-ignore format: keep literal union alias consistent with nearby ServiceTier style.
 export type CompactionReason = "manual" | "threshold" | "overflow" | "pre_prompt" | "branch" | "extension";
 export type CompactionRejectionCause =

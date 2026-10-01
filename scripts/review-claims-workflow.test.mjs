@@ -35,4 +35,10 @@ describe("Review claim gate on review events", () => {
 		assert.match(gate.body, /github\.paginate\(github\.rest\.issues\.listLabelsOnIssue/);
 		assert.doesNotMatch(gate.body, /context\.payload\.pull_request\.labels/);
 	});
+
+	it("never cancels another gate run, since a cancelled run blocks the merge as a required result", () => {
+		assert.ok(gate, "missing gate job");
+		assert.doesNotMatch(gate.body, /^\s+concurrency:/m);
+		assert.doesNotMatch(gate.body, /cancel-in-progress/);
+	});
 });

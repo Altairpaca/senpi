@@ -578,6 +578,8 @@ function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<str
 
 export interface AgentSessionConfig {
 	agent: Agent;
+	/** Explicit service tier for the initial model. */
+	serviceTier?: ServiceTier;
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
 	cwd: string;
@@ -1313,7 +1315,10 @@ export class AgentSession {
 		const initialModel = this.agent.state.model;
 		if (initialModel) {
 			const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, initialModel));
-			this._currentServiceTier = this._resolveServiceTier(initialModel, scopedMatch?.serviceTier);
+			this._currentServiceTier = this._resolveServiceTier(
+				initialModel,
+				config.serviceTier ?? scopedMatch?.serviceTier,
+			);
 		}
 
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
@@ -3719,7 +3724,10 @@ export class AgentSession {
 	 * `serviceTier` stays the single request-side source.
 	 */
 	isFastModeActive(): boolean {
-		return this._sessionFastMode || this._currentServiceTier === "priority";
+		// An explicit Ultrafast tier outranks stale Priority-mode state.
+		return (
+			this._currentServiceTier !== "ultrafast" && (this._sessionFastMode || this._currentServiceTier === "priority")
+		);
 	}
 
 	/**

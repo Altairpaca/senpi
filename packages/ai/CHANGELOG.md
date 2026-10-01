@@ -4,6 +4,30 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Changed the inherited provider-facing `ProviderStreams` and `StreamFunction` inputs from `Context` to normalized `TranscriptContext` values. System prompts and tool declarations now live in transcript system messages; custom providers read them with `getCurrentSystemPrompt()` and `getCurrentTools()`. The fork's `activeToolNames` rides on `TranscriptContext` and survives `normalizeContext()` ([#9548](https://github.com/earendil-works/pi/pull/9548)).
 
 - Restricted inherited `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly. `ToolResultMessage<unknown>` resolves to `never`; use `ToolResultMessage` or `ToolResultMessage<JsonValue>`.
@@ -13,6 +37,8 @@
 - The inherited `TranscriptContext` is branded, so only `normalizeContext()` produces it and a raw `Context` no longer type-checks where a provider stream or the agent `StreamFn` expects one; it has no `systemPrompt` field because the system prompt travels as the leading system message.
 
 ### Added
+
+- Added `ultrafast` as an OpenAI Responses and ChatGPT Subscription request tier, with support for all five Astra reasoning efforts (`low` through `max`). The published 6x Standard price applies to GPT-6 Astra only; any other model keeps its base rate. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
 
 - Added inherited transcript-backed mid-conversation system prompt and tool changes, replayed natively on models that accept mid-conversation system messages and collapsed for other providers ([#9548](https://github.com/earendil-works/pi/pull/9548)).
 
@@ -33,6 +59,10 @@
 - Added an inherited runtime chat-model check to the `Models` stream entry points, so non-chat models fail with a clear `ModelsError`.
 
 ### Changed
+
+- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
+- ChatGPT Subscription requests now send the `x-codex-routing-hint` header that codex sends (`model=<id>`, plus `;tier=<tier>` when a service tier is requested), on both SSE requests and the WebSocket handshake. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410))
 
 - ChatGPT Subscription, OpenRouter and Radius browser sign-in share the inherited callback server, which rejects provider authorization-error redirects and falls back to pasting the redirect URL when the callback port is in use. The OAuth page helpers are available as `utils/oauth-page`. The provider id stays `chatgpt-subscription`; the upstream "OpenAI Codex (legacy)" rename and Sign in with ChatGPT on the `openai` provider are not adopted.
 
@@ -76,8 +106,6 @@
 ### Added
 
 ### Changed
-
-- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
 
 - The `anthropic-subscription` (Claude SDK) lane now reports the prompt-cache TTL Claude Code actually uses: 1 hour on a Claude subscription, 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch puts Claude Code on API, gateway or cloud billing. `CLAUDE_CODE_PROMPT_CACHE_TTL`, `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` are honored the way Claude Code honors them. Cache-aware waits sized from the TTL (the prompt-cache safe-wait budget) grow accordingly on a subscription. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
 

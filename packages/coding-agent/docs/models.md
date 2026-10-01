@@ -202,6 +202,8 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `id` | Yes | — | Model identifier (passed to the API) |
+| `upstreamModelId` | No | `id` | Request model id when this entry is a local alias |
+| `serviceTier` | No | omitted | OpenAI Responses tier: `auto`, `flex`, `priority`, or `ultrafast` |
 | `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown as secondary model detail text. |
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |

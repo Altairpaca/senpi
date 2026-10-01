@@ -4,6 +4,36 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+- The GPT-6 Astra high-reasoning warning now shows at `xhigh` as well as `max`, the same rule as GPT-5.6 Sol and GPT-6 Sol: any effort above `high` warns, and `high` or below stays quiet ([#2496](https://github.com/code-yeongyu/senpi/issues/2496)).
+
+### Fixed
+
+- On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In a compiled build with no Bun on `PATH` (for example a desktop app started from Finder, or a standalone binary on a machine without Bun), `bun` and `bunx` from an eval cell, the bash tool and the terminal now run Bun itself. Before this fix, an eval cell's `bun test` started a second agent and returned its reply as a passing result with exit code 0, and the bash tool reported `bun: command not found`. A Bun you installed and put on `PATH` is still used first. ([omo#9362](https://github.com/code-yeongyu/oh-my-openagent/issues/9362))
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - `before_agent_start` extensions can now receive `event.trigger: "delivery"` when a turn starts from an admitted session-control delivery. Extensions with exhaustive trigger handling must add the new case; `"prompt"` and `"extension"` keep their existing meanings. ([#2424](https://github.com/code-yeongyu/senpi/issues/2424))
 
 - Removed the inherited `shouldStopAfterTurn` agent option. Use `finishTurn` and return `{ action: "end" }` instead; it runs before `turn_end`, applies its decision afterward, and also receives error and aborted responses, so return `undefined` for those hard exits. The `packages/agent` changelog has a before-and-after example.
@@ -21,6 +51,10 @@
 - `AgentSession.steer()` and `followUp()` now resolve to a `QueuedInputDisposition` and `RpcClient.prompt()` to a `PromptDisposition` instead of `void` (inherited from upstream v0.99.1), so SDK consumers that declare these calls as `Promise<void>` must widen their types.
 
 ### Added
+
+- `web_search` has two new hosted routes. **ChatGPT subscription route:** a ChatGPT subscription session now searches through the subscription's own web search tool with your ChatGPT login, on by default for those sessions, ahead of the free engines; it uses subscription usage, not an API account. **Google Search grounding:** opt-in only; it runs when you list a `google` entry in `websearch.json` (without `apiKey` it uses your senpi Google API-key login) and may be billed by Google beyond its free allowance. A Google model session without that entry is unchanged. Both routes count a result only when the provider actually searched: its sources and citations are returned, never URLs typed into the answer, and Google results link through Google's grounding redirect. See [Web Search](docs/web-search.md). ([#2341](https://github.com/code-yeongyu/senpi/issues/2341))
+
+- Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. Selecting Ultrafast on any other OpenAI or ChatGPT Subscription model warns that the tier is documented for GPT-6 Astra only, and the request is still sent. Other providers, including gateways that serve GPT-6 Astra, never receive Ultrafast: selecting it there warns and the request uses that provider's default tier. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
 
 - Added inherited experimental virtual models: extensions register them with `pi.registerVirtualModel()` and pick a physical model and thinking level for each request. The footer shows the routed model, `/session` lists cost per physical model, and `examples/extensions/jev-router.ts` routes with the Jev classifier. See [Virtual Models](docs/virtual-models.md).
 
@@ -64,6 +98,12 @@
 
 ### Changed
 
+- Leaner, stronger tests: 5 test files and 58 test cases that could not fail were removed (882 test lines net). Two deleted guards are back: one keeps `semver` out of the engine build identity, one keeps the legacy Claude SDK package name out of the package manifest. The image registry's import-failure test mock is repaired, and CI now runs the Bun provider-coverage and compiled provider-probe tests, which never ran there before. ([#2447](https://github.com/code-yeongyu/senpi/issues/2447), [#2458](https://github.com/code-yeongyu/senpi/pull/2458), [#2466](https://github.com/code-yeongyu/senpi/pull/2466), [#2468](https://github.com/code-yeongyu/senpi/pull/2468), [#2469](https://github.com/code-yeongyu/senpi/pull/2469), [#2470](https://github.com/code-yeongyu/senpi/pull/2470), [#2472](https://github.com/code-yeongyu/senpi/pull/2472), [#2474](https://github.com/code-yeongyu/senpi/pull/2474))
+
+- A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
+
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
 - The built-in `dark` and `light` themes use the revised inherited colors written in OKHSL, and light/dark detection reads the reported background color first, then the terminal's light/dark report, then `COLORFGBG`. The `[Themes]` section is removed from the startup banner; custom themes remain in `/settings` and theme conflicts are still reported.
 
 - Built-in extensions and tools are named `builtin:<name>` in errors, diagnostics and RPC source info instead of `<inline:name>` and `<builtin:name>` (inherited).
@@ -82,6 +122,12 @@
 
 ### Fixed
 
+- Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
+
+- An updated client can retire a shared host left running by an older release. While such a host was alive, every `host ensure` in the agent directory (including each desktop thread's own endpoint) was refused with `legacy_host`, and `host stop --drain` answered `unknown_owner`, so nothing short of killing the process by hand freed the machine. Now `host stop --drain` drains it when its old record still proves the process, and an ensure drains and replaces it on its own once it holds no session. With a session open the refusal says which process it is, which socket it serves, and the `host stop --drain --socket <socket>` that retires it. ([#2423](https://github.com/code-yeongyu/senpi/issues/2423))
+
+- `--model` and `--models` now honor a service-tier decorator (`:priority`, `:flex`, `:auto`, `:ultrafast`). Previously the decorator was parsed and then dropped before the session was created, so an explicit tier could run at the provider default. ([#2412](https://github.com/code-yeongyu/senpi/issues/2412))
+
 - A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))
 
 - Resuming a long session no longer makes the transcript jump while older history loads in the background. The part already on screen now stays put, and the full history appears once it has finished loading, in a single repaint (#1076; thanks @effortprogrammer).
@@ -98,9 +144,7 @@
 - A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
 
 - Fixed inherited new sessions being lost when the process exits before the first assistant response. The session file is now created when the first user message is sent ([#10000](https://github.com/earendil-works/pi/issues/10000)).
-- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
-
-### Removed
+- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. Thanks to @effortprogrammer. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
 
 - Fixed inherited split-turn compaction summaries being refused by Claude Fable 5.1, mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)), and cancellation races that could start automatic compaction, leave stale retry state or miss cancellation during summarization auth ([#9340](https://github.com/earendil-works/pi/issues/9340), [#9777](https://github.com/earendil-works/pi/issues/9777)) ([#9908](https://github.com/earendil-works/pi/pull/9908) by [@davidbrai](https://github.com/davidbrai)).
 
@@ -147,17 +191,9 @@
 
 ### Changed
 
-- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
-
-- A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
-
 - The recommended OpenAI model is now GPT-6.1 Sol at `medium`, one slot below GPT-6 Astra where GPT-6 Sol was; `gpt-6.1-sol-fast` counts as recommended like the other `-fast` ids. Your explicitly configured `recommendedModels` are untouched. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
 
 ### Fixed
-
-- An updated client can retire a shared host left running by an older release. While such a host was alive, every `host ensure` in the agent directory (including each desktop thread's own endpoint) was refused with `legacy_host`, and `host stop --drain` answered `unknown_owner`, so nothing short of killing the process by hand freed the machine. Now `host stop --drain` drains it when its old record still proves the process, and an ensure drains and replaces it on its own once it holds no session. With a session open the refusal says which process it is, which socket it serves, and the `host stop --drain --socket <socket>` that retires it. ([#2423](https://github.com/code-yeongyu/senpi/issues/2423))
-
-- Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 
 - Resuming a session whose pending ask-user question was recorded with arguments that no longer form a valid question set no longer leaves a "0 unanswered" question widget that crashes the TUI (`Cannot read properties of undefined (reading 'question')`) when expanded. The call now settles as `orphaned-after-restart`, the same way a question lost in a restart does, so the model learns it was lost and can ask again. The question overlay also keeps its active question in range for any requested index, and clicking the collapsed widget when every question already has an answer submits those answers instead of opening a question that does not exist. Reported by @copycatcode, thanks. ([omo#9268](https://github.com/code-yeongyu/oh-my-openagent/issues/9268))
 
@@ -286,8 +322,6 @@
 - Skills read an `argument-hint` frontmatter field (`Skill.argumentHint`), and extension commands registered with `argumentHint` now pass it to the slash picker, so choosing `/skill:<name>` or such a command with Enter fills in `/name ` and waits for the arguments.
 
 - `websearch.json` accepts `nativeModel`, the model the session's hosted web search runs on, for example `"nativeModel": "claude-haiku-4-5"`. It must be served by the same provider, endpoint and credential as the session model; any other value is ignored and `/websearch status` warns about it. When the chosen model fails or finds nothing, the same search retries on the session model before moving to the next search provider. See [Web Search](docs/web-search.md). ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
-
-- `web_search` has two new hosted routes. **ChatGPT subscription route:** a ChatGPT subscription session now searches through the subscription's own web search tool with your ChatGPT login, on by default for those sessions, ahead of the free engines; it uses subscription usage, not an API account. **Google Search grounding:** opt-in only; it runs when you list a `google` entry in `websearch.json` (without `apiKey` it uses your senpi Google API-key login) and may be billed by Google beyond its free allowance. A Google model session without that entry is unchanged. Both routes count a result only when the provider actually searched: its sources and citations are returned, never URLs typed into the answer, and Google results link through Google's grounding redirect. See [Web Search](docs/web-search.md). ([#2341](https://github.com/code-yeongyu/senpi/issues/2341))
 
 - `web_search` can use a self-hosted SearXNG instance: add `{ "provider": "searxng", "baseUrl": "http://localhost:8888" }` to `websearch.json`. A plain `http://` address is accepted for hosts on your own network only. See [Web Search](docs/web-search.md). ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
 

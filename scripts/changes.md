@@ -1,3 +1,21 @@
+## 2026-10-01 - Release path stops running the removed image-model generator (senpi#2484)
+
+### What changed
+
+- `scripts/release.mjs` and `scripts/release-artifacts.mjs`: `runGenerateImageModels` (`npm --prefix packages/ai run generate-image-models`) is removed from the release sequence.
+
+### Why
+
+- The upstream v0.99.1 sync folded image models into `generate-models` and removed the `generate-image-models` script and `image-models.generated.ts`, so the release would fail at that step; `generate-models` already regenerates the image models.
+
+### Why an extension could not handle it
+
+- Repository release scripts.
+
+### Expected merge conflict zones
+
+- LOW: the step list in `release.mjs` main and the `release-artifacts.mjs` exports.
+
 ## 2026-09-30 - Drop the dead deletions input and a test-only pack-check seam (senpi#2447)
 
 ### What changed

@@ -1,3 +1,39 @@
+## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the `before_provider_request` hook passes the resolved tier through `serviceTierForProvider`, removes a pre-populated `service_tier` when Ultrafast is disallowed, and emits the advisory for settings and models.json aliases as well as decorators.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the hook added the tier for any model on the Responses APIs, so gateways serving GPT-6 Astra received `service_tier: "ultrafast"`. codex and oh-my-pi never send it there.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is the existing service-tier builtin; the change stays inside its request hook.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the import block and the final `addServiceTierToPayload` call in `before_provider_request`.
+
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: preserve Ultrafast model pins at session start, model switch, request composition, and /fast on/off.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: Priority memory and the existing Fast toggle must not override a selected Ultrafast tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is implemented within the existing service-tier builtin, using its current host capabilities.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: applyFastMode and session_start/model_select/before_provider_request handlers.
+
 ## 2026-09-30 - Unrestorable resumed ask-user calls settle without pending UI (omo#9268)
 
 ### What changed
