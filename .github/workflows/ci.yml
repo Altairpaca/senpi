@@ -256,27 +256,59 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
-      # Each suite runs in its own process; lifecycle failures are not retried in-process.
+      # Each suite runs in its own process; lifecycle failures are not retried in-process. The verbose
+      # reporter names every test in the log, so a Windows-only case is provably run, not just counted.
       - name: Run RPC host ensure tests
-        run: bunx vitest run test/rpc-host-ensure.test.ts
+        run: bunx vitest run test/rpc-host-ensure.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC host lifecycle tests
-        run: bunx vitest run test/rpc-host-lifecycle.test.ts
+        run: bunx vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC socket transport tests
-        run: bunx vitest run test/rpc-socket-transport.test.ts
+        shell: bash
+        run: bunx vitest run test/rpc-socket-transport.test.ts --reporter=verbose --reporter=json --outputFile=vitest-socket-transport.json
         working-directory: packages/coding-agent
 
       # The `senpi host` contract over the named-pipe transport: a second ensure reuses the daemon
       # on the pipe, and a generation handoff refuses (a pipe can be neither renamed nor drained).
       - name: Run senpi host CLI tests (named pipes)
-        run: bunx vitest run test/suite/host-cli-win32.test.ts
+        run: bunx vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run app-server daemon tests
-        run: bunx vitest run test/suite/app-server-daemon.test.ts
+        run: bunx vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # endpoint.json written and read back on Windows paths: registry_version, endpoint_kind, and a
+      # legacy record read as rpc_host.
+      - name: Run endpoint registry tests
+        run: bunx vitest run test/suite/rpc-endpoint-registry.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # The session gateway is POSIX-only: an interactive TUI on win32 starts normally, its endpoint
+      # request answers unsupported_platform, and nothing is registered.
+      - name: Run interactive TUI control endpoint tests (win32)
+        shell: bash
+        run: bunx vitest run test/suite/interactive-session-control-win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
+        working-directory: packages/coding-agent
+
+      # A skipped suite exits 0: fail unless the win32-only cases (the named-pipe wrong-secret test and
+      # the TUI no-registration suite) executed and every test in those files passed.
+      - name: Require the win32 gateway parity tests to have executed
+        shell: bash
+        run: |
+          for pair in vitest-socket-transport.json:rpc-socket-transport.test.ts vitest-tui-control-win32.json:interactive-session-control-win32.test.ts; do
+            node -e '
+              const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+              const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith(process.argv[2]));
+              const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+              const other = file ? file.assertionResults.filter((a) => a.status !== "passed").length : 0;
+              console.log(process.argv[1] + ": " + process.argv[2] + " passed=" + passed + " other=" + other);
+              if (passed === 0 || other !== 0) process.exit(1);
+            ' "${pair%%:*}" "${pair#*:}"
+          done
         working-directory: packages/coding-agent
 
   compiled-extensions-windows:
