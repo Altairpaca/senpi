@@ -1,4 +1,5 @@
-import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
+import { appendFileSync } from "node:fs";
+import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { envValue } from "../../../brand.ts";
 
@@ -146,25 +147,75 @@ function formatLine(level: "debug" | "info", event: CompactionLoggerEvent, data?
 	return JSON.stringify(entry);
 }
 
+/**
+ * Lines waiting to be appended, per log file. Writing synchronously stalled the UI thread on a busy
+ * disk (one 486 ms write was measured while a background event stream ran), so lines are appended
+ * in order by one asynchronous writer per file; whatever is still queued at exit is written then.
+ */
+const pendingLines = new Map<string, { text: string; readonly maxBytes: number }>();
+
 function writeLine(filePath: string, line: string, maxBytes: number, sink?: (line: string) => void): void {
 	const text = `${line}\n`;
 	if (sink) sink(line);
-	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-	if (needsRotate(filePath, Buffer.byteLength(text), maxBytes)) {
-		const rotated = `${filePath}.1`;
-		renameSync(filePath, rotated);
+	const pending = pendingLines.get(filePath);
+	if (pending) {
+		pending.text += text;
+		return;
 	}
-	const fd = openSync(filePath, "a", 0o600);
+	pendingLines.set(filePath, { text, maxBytes });
+	if (!exitFlushRegistered) {
+		exitFlushRegistered = true;
+		process.once("exit", flushPendingLinesSync);
+	}
+	const drain = drainLines(filePath);
+	activeDrains.add(drain);
+	void drain.finally(() => activeDrains.delete(drain));
+}
+
+const activeDrains = new Set<Promise<void>>();
+
+/** Resolves once every line logged so far is on disk. */
+export async function flushCompactionLogs(): Promise<void> {
+	while (activeDrains.size > 0) await Promise.all([...activeDrains]);
+}
+
+let exitFlushRegistered = false;
+let reportedWriteFailure = false;
+
+async function drainLines(filePath: string): Promise<void> {
 	try {
-		writeSync(fd, text);
+		await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
+		for (let pending = pendingLines.get(filePath); pending && pending.text.length > 0; ) {
+			const text = pending.text;
+			pending.text = "";
+			if (await needsRotate(filePath, Buffer.byteLength(text), pending.maxBytes)) {
+				await rename(filePath, `${filePath}.1`).catch(() => undefined);
+			}
+			await appendFile(filePath, text, { mode: 0o600 });
+		}
+	} catch (error) {
+		if (!reportedWriteFailure) {
+			reportedWriteFailure = true;
+			console.error("Unable to write compaction log", error);
+		}
 	} finally {
-		closeSync(fd);
+		pendingLines.delete(filePath);
 	}
 }
 
-function needsRotate(filePath: string, incomingBytes: number, maxBytes: number): boolean {
+function flushPendingLinesSync(): void {
+	for (const [filePath, pending] of pendingLines) {
+		if (pending.text.length === 0) continue;
+		try {
+			appendFileSync(filePath, pending.text, { mode: 0o600 });
+		} catch {}
+	}
+	pendingLines.clear();
+}
+
+async function needsRotate(filePath: string, incomingBytes: number, maxBytes: number): Promise<boolean> {
 	try {
-		return statSync(filePath).size + incomingBytes > maxBytes;
+		return (await stat(filePath)).size + incomingBytes > maxBytes;
 	} catch {
 		return false;
 	}

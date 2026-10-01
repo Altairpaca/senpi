@@ -81,7 +81,7 @@ Id generation and the path/tree walks are the session store itself.
 
 - `packages/coding-agent/src/core/session-manager.ts`: the compact mirror view, the full-history view of a trimmed mirror, the leaf branch and the current projection are materialized once and then extended by the entries appended since (keyed by the mirror array identity and length; anything that rebuilds the mirror assigns a new array and invalidates them). A trimmed mirror no longer re-reads and re-parses the session file for `getEntries()`; `projectSession` builds the leaf path once.
 - `packages/coding-agent/src/core/agent-session.ts`: a turn-end boundary with no drafts projects the session itself instead of cloning the branch into an in-memory manager.
-- `packages/coding-agent/src/core/retry-fallback/chains.ts`: one canonicalization pass asks each model's fallback eligibility once.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: one canonicalization pass asks each provider's fallback eligibility once, and `rankFamilyModels` filters by family before asking.
 
 ### Why
 

@@ -48,19 +48,20 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 }
 
 /**
- * Eligibility reads provider settings from disk; one canonicalization pass asks for the same model
- * once per chain entry it expands, which took ~450 ms on the first fallback check of a session.
- * Settings cannot change within one synchronous pass, so each model is asked once per pass.
+ * Eligibility is a provider's switch (`fallbackEligible`), read from settings on disk; one
+ * canonicalization pass used to ask it once per catalog model, a 150-450 ms stall on the first
+ * fallback check of a session. Settings cannot change within one synchronous pass, so each
+ * provider is asked once per pass.
  */
 function memoizedEligibility(registry: {
 	isFallbackEligible?(model: Model<Api>): boolean;
 }): (model: Model<Api>) => boolean {
-	const known = new Map<Model<Api>, boolean>();
+	const known = new Map<string, boolean>();
 	return (model) => {
-		const cached = known.get(model);
+		const cached = known.get(model.provider);
 		if (cached !== undefined) return cached;
 		const eligible = registry.isFallbackEligible?.(model) !== false;
-		known.set(model, eligible);
+		known.set(model.provider, eligible);
 		return eligible;
 	};
 }
