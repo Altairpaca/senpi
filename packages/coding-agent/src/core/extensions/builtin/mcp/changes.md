@@ -1,5 +1,27 @@
 # mcp Extension Changes
 
+## 2026-10-01 - Give each session its own binding to the shared MCP service (senpi#2514)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: the single `#pi` / `#toolSearchService` / `#tierBRegistration` binding is replaced by one `McpSessionBinding` per attaching extension API, keyed by that `pi`. Each binding resolves its session's tool-search service per call (`getToolSearchServiceForExtension(pi)`, with the old sessionless fallback for hosts without one) and keeps its own registration and per-server registered identity. A late startup catalog and every list_changed refresh register on all live bindings; a binding whose session retired its tool-search service is dropped. `releaseSession(pi, disposeReason?)` releases one binding and disposes only when no live binding remains. The binding-reading methods (`getTierBSearchable`, `getMcpPromptServers`, `getMcpResourceServers`, `activateSkillMcpTools`, `attachSkillMcpServers`, `rehydrateActiveToolsFromHistory`, `maybeRehydrateFromHistory`) take the caller's `pi`; without one they read the most recently attached live session, for single-session SDK and test callers.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the classic (non-provider-scoped) path passes its own `pi` to those methods and releases its binding on `session_shutdown` and on `session_extensions_removed`, disposing only for the last live session (`quit`, or `reload` when the builtin is removed). The provider-scoped path is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: `refreshMcpToolsOnListChanged` takes one target per live session and re-registers the sessions whose registered identity is stale.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: the registered catalog identity moves from the shared connection entry to the session binding (`onRegistered` option).
+
+### Why
+
+- Outside the RPC host every session shares the module-level service, and each attach overwrote the one binding. A catalog that landed late or changed reached only the last session; after that session was replaced the others resolved through its stale context; and one session's quit disposed the servers every other session was using. Connections stay shared on purpose, so a new session neither re-spawns servers nor re-runs OAuth; only the binding becomes per session.
+
+### Why an extension could not handle it
+
+- The binding is internal state of the MCP builtin's service.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: the field block, `attachSession`, the startup-race `registerDirectTools` callback, `#handleServerToolsChanged`, `#registerDirectTools`, and the rehydration methods.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the `session_shutdown` and `session_extensions_removed` handlers.
+
 ## 2026-10-01 - Feed the attaching session's tool-search service (senpi#2509)
 
 ### What changed

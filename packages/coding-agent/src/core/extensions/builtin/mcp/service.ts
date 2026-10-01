@@ -56,6 +56,21 @@ type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
+type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
+
+/**
+ * One live session's binding to the service (#2514): the session's own extension API and
+ * tool-search service, resolved per call, and what was registered there. Connections stay
+ * shared across bindings; only the binding is per session.
+ */
+interface McpSessionBinding {
+	readonly pi: McpToolRegistrar;
+	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
+	readonly fallbackToolSearch: ToolSearchService | undefined;
+	readonly context: McpSessionContext;
+	readonly registeredIdentities: Map<string, string>;
+	registration: McpSessionRegistration | undefined;
+}
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -79,11 +94,9 @@ export class McpService {
 	readonly #wireStatusListeners = new Set<(sessionId: string | undefined, snapshot: McpWireStatusSnapshot) => void>();
 	#wireStatusRefreshQueue: Promise<void> = Promise.resolve();
 	#refreshActiveSetWhenNoTools = false;
-	#tierBRegistration: McpSessionRegistration | undefined;
-	#toolSearchService: ToolSearchService | undefined;
+	readonly #bindings = new Map<object, McpSessionBinding>();
 	#sessionOptions: McpSessionOptions = {};
 	readonly #skillServerWarnings = new Set<string>();
-	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
 	#attachQueue: Promise<void> = Promise.resolve();
 	readonly #deferredAttach = new McpDeferredAttach();
 	#latestWireStatus: McpWireStatusSnapshot = { servers: [] };
@@ -125,38 +138,20 @@ export class McpService {
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
 			this.#config = config;
-			this.#pi = _pi;
-			if (_pi !== undefined) {
-				const activationRuntime = {
-					getActiveTools: () => _pi.getActiveTools(),
-					setActiveTools: (names: readonly string[]) => _pi.setActiveTools([...names]),
-				};
-				const sessionToolSearch = getToolSearchServiceForExtension(_pi);
-				if (sessionToolSearch !== undefined) {
-					this.#toolSearchService = sessionToolSearch;
-					sessionToolSearch.bindActivationRuntime(activationRuntime);
-				} else {
-					try {
-						this.#toolSearchService = getToolSearchService();
-						this.#toolSearchService.bindActivationRuntime(activationRuntime);
-					} catch {
-						this.#toolSearchService = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
-					}
-				}
-			}
+			const binding = _pi === undefined ? undefined : this.#bind(_pi, ctx);
 			this.#authAgentDir = sessionOptions.agentDir;
 			this.#authEnv = sessionOptions.env;
 			this.#sessionOptions = sessionOptions;
 			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
 			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, sessionOptions, event.reason !== "reload", _pi, toolRefreshGeneration);
-			if (_pi !== undefined) await this.#registerDirectTools(_pi);
+			await this.#syncFromConfig(config, sessionOptions, event.reason !== "reload", binding, toolRefreshGeneration);
+			if (binding !== undefined) await this.#registerDirectTools(binding);
 			// Replay promotion markers from the (possibly resumed) session history
 			// BEFORE the first turn: the request tool snapshot is taken before the
 			// per-turn context event fires, so the context-event replay alone lands
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
-			if (_pi !== undefined) this.#rehydrateFromSessionHistory(ctx);
+			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
 			if (shouldCaptureWireStatus(ctx)) await this.refreshWireStatusSnapshot(ctx.sessionManager?.getSessionId?.());
 		});
 		this.#attachQueue = attach.then(
@@ -164,6 +159,71 @@ export class McpService {
 			() => undefined,
 		);
 		await attach;
+	}
+
+	#bind(pi: McpToolRegistrar, ctx: McpSessionContext): McpSessionBinding {
+		const activationRuntime = {
+			getActiveTools: () => pi.getActiveTools(),
+			setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
+		};
+		let fallbackToolSearch: ToolSearchService | undefined;
+		const sessionToolSearch = getToolSearchServiceForExtension(pi);
+		if (sessionToolSearch !== undefined) {
+			sessionToolSearch.bindActivationRuntime(activationRuntime);
+		} else {
+			try {
+				fallbackToolSearch = getToolSearchService();
+				fallbackToolSearch.bindActivationRuntime(activationRuntime);
+			} catch {
+				fallbackToolSearch = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
+			}
+		}
+		const previous = this.#bindings.get(pi);
+		const binding: McpSessionBinding = {
+			pi,
+			fallbackToolSearch,
+			context: ctx,
+			registeredIdentities: previous?.registeredIdentities ?? new Map(),
+			registration: previous?.registration,
+		};
+		// Re-inserting keeps the most recent attach last, which is what a caller naming no session gets.
+		this.#bindings.delete(pi);
+		this.#bindings.set(pi, binding);
+		return binding;
+	}
+
+	#toolSearchFor(binding: McpSessionBinding): ToolSearchService | undefined {
+		return getToolSearchServiceForExtension(binding.pi) ?? binding.fallbackToolSearch;
+	}
+
+	#liveBindings(): McpSessionBinding[] {
+		for (const [pi, binding] of this.#bindings) {
+			// A disposed session retires its own tool-search service; its binding goes with it.
+			if (getToolSearchServiceForExtension(binding.pi)?.isDisposed === true) this.#bindings.delete(pi);
+		}
+		return [...this.#bindings.values()];
+	}
+
+	/** The binding of the session that owns `pi`; without one, the most recently attached live session. */
+	#bindingFor(pi: object | undefined): McpSessionBinding | undefined {
+		return pi === undefined ? this.#liveBindings().at(-1) : this.#bindings.get(pi);
+	}
+
+	/**
+	 * Release the binding of the session that owns `pi` (#2514). The shared connections keep
+	 * serving every other live session; once none is left, `disposeReason` disposes the service
+	 * the way that last session's own exit would.
+	 */
+	async releaseSession(pi: object, disposeReason?: McpDisposeReason): Promise<void> {
+		const released = this.#bindings.get(pi);
+		this.#bindings.delete(pi);
+		const live = this.#liveBindings();
+		const latest = live.at(-1);
+		if (latest !== undefined) {
+			if (released !== undefined && this.#sessionContext === released.context) this.#sessionContext = latest.context;
+			return;
+		}
+		if (disposeReason !== undefined) await this.dispose(disposeReason);
 	}
 
 	/**
@@ -174,10 +234,10 @@ export class McpService {
 	 * returns a warning (system wins). `${VAR}` expansion follows the declaring
 	 * skill's trust (skill-server.ts); each trust warning is returned once per session.
 	 */
-	async attachSkillMcpServers(declared: ReadonlyMap<string, SkillServerRegistration>): Promise<string[]> {
+	async attachSkillMcpServers(declared: ReadonlyMap<string, SkillServerRegistration>, pi?: object): Promise<string[]> {
 		const config = this.#config;
-		const pi = this.#pi;
-		if (config === null || pi === undefined) return [];
+		const binding = this.#bindingFor(pi);
+		if (config === null || binding === undefined) return [];
 		const warnings: string[] = [];
 		const projectTrusted = this.#sessionOptions.projectTrusted ?? this.#sessionContext?.isProjectTrusted() ?? false;
 		let added = 0;
@@ -206,8 +266,8 @@ export class McpService {
 		if (added > 0) {
 			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
 			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, this.#sessionOptions, false, pi, toolRefreshGeneration);
-			await this.#registerDirectTools(pi);
+			await this.#syncFromConfig(config, this.#sessionOptions, false, binding, toolRefreshGeneration);
+			await this.#registerDirectTools(binding);
 			if (this.#sessionContext !== null && shouldCaptureWireStatus(this.#sessionContext)) {
 				await this.refreshWireStatusSnapshot(this.#sessionContext.sessionManager?.getSessionId?.());
 			}
@@ -217,18 +277,18 @@ export class McpService {
 
 	/** Registered searchable catalog (mapped name + server-side tool name),
 	 * used by the skills loader to compute activation targets. */
-	getTierBSearchable(): ReadonlyArray<{ name: string; toolName: string; server: string }> {
-		return this.#tierBRegistration?.searchable ?? [];
+	getTierBSearchable(pi?: object): ReadonlyArray<{ name: string; toolName: string; server: string }> {
+		return this.#bindingFor(pi)?.registration?.searchable ?? [];
 	}
 
 	/** Connected servers that list prompts (todo 40), for slash registration. */
-	getMcpPromptServers(): readonly import("./prompts.ts").McpPromptServer[] {
-		return this.#tierBRegistration?.promptServers ?? [];
+	getMcpPromptServers(pi?: object): readonly import("./prompts.ts").McpPromptServer[] {
+		return this.#bindingFor(pi)?.registration?.promptServers ?? [];
 	}
 
 	/** Connected servers that list resources (todo 39), for mention expansion. */
-	getMcpResourceServers(): readonly McpResourceServer[] {
-		return this.#tierBRegistration?.resourceServers ?? [];
+	getMcpResourceServers(pi?: object): readonly McpResourceServer[] {
+		return this.#bindingFor(pi)?.registration?.resourceServers ?? [];
 	}
 
 	/** Subscribe to completed catalog registrations. Consumers must inspect the
@@ -269,14 +329,14 @@ export class McpService {
 
 	/** Reveal skill-owned tools (todo 37): activation is effective the next
 	 * turn, exactly like an tool_search promotion. Unknown names are ignored. */
-	activateSkillMcpTools(names: readonly string[]): void {
-		this.#tierBRegistration?.activate(names);
+	activateSkillMcpTools(names: readonly string[], pi?: object): void {
+		this.#bindingFor(pi)?.registration?.activate(names);
 	}
 
-	#rehydrateFromSessionHistory(ctx: McpSessionContext): void {
-		const entries = ctx.sessionManager?.getEntries() ?? [];
+	#rehydrateFromSessionHistory(binding: McpSessionBinding): void {
+		const entries = binding.context.sessionManager?.getEntries() ?? [];
 		if (entries.length === 0) return;
-		this.rehydrateActiveToolsFromHistory(entries);
+		this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(entries);
 	}
 
 	async handleSessionShutdown(event: SessionShutdownEvent): Promise<void> {
@@ -288,6 +348,7 @@ export class McpService {
 		this.#disposed = true;
 		this.#disposeCount += 1;
 		this.#lastDisposeReason = reason;
+		this.#bindings.clear();
 		this.#sessionContext = null;
 		this.#config = null;
 		this.#elicitationUiProvider = undefined;
@@ -378,7 +439,7 @@ export class McpService {
 		config: ResolvedMcpConfig,
 		options: McpSessionOptions,
 		useCache: boolean,
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined,
+		binding: McpSessionBinding | undefined,
 		toolRefreshGeneration: number,
 	): Promise<void> {
 		const cache = await readMcpCatalogCache(options.agentDir);
@@ -433,13 +494,17 @@ export class McpService {
 				connects.push(
 					raceMcpStartupConnect({
 						entry,
-						pi,
-						registerDirectTools: async (targetPi) => {
-							await this.#registerDirectTools(targetPi);
-							// A raced attach ran its history replay before this catalog
-							// existed; replay now so restored tools still land on the
-							// first turn's payload (idempotent: already-active names skip).
-							if (this.#sessionContext !== null) this.#rehydrateFromSessionHistory(this.#sessionContext);
+						pi: binding?.pi,
+						registerDirectTools: async () => {
+							// The catalog is shared, so it lands in every live session, not only the one that
+							// started the connect (#2514).
+							for (const live of this.#liveBindings()) {
+								await this.#registerDirectTools(live);
+								// A raced attach ran its history replay before this catalog
+								// existed; replay now so restored tools still land on the
+								// first turn's payload (idempotent: already-active names skip).
+								this.#rehydrateFromSessionHistory(live);
+							}
 							// The session instructions block was likewise captured at attach
 							// time, before this server connected; rebuild it so the first
 							// turn carries this server's instructions after a raced connect.
@@ -474,43 +539,50 @@ export class McpService {
 	}
 
 	async #handleServerToolsChanged(entry: McpConnectionEntry, connectOnly: boolean): Promise<void> {
-		const pi = this.#pi;
 		const config = this.#config;
-		if (pi === undefined || config === null) return;
-		await refreshMcpToolsOnListChanged(entry, pi, config, (target) => this.#registerDirectTools(target), connectOnly);
+		const bindings = this.#liveBindings();
+		if (config === null || bindings.length === 0) return;
+		const targets = bindings.map((binding) => ({
+			pi: binding.pi,
+			registeredIdentity: binding.registeredIdentities.get(entry.key),
+			register: () => this.#registerDirectTools(binding),
+		}));
+		await refreshMcpToolsOnListChanged(entry, targets, config, connectOnly);
 	}
 
-	async #registerDirectTools(
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
-	): Promise<void> {
+	async #registerDirectTools(binding: McpSessionBinding): Promise<void> {
 		const config = this.#config;
 		if (config === null) return;
-		const toolSearchService = this.#toolSearchService;
+		const toolSearchService = this.#toolSearchFor(binding);
 		if (toolSearchService === undefined) return;
-		this.#tierBRegistration = await registerMcpServiceDirectTools(
-			pi,
+		binding.registration = await registerMcpServiceDirectTools(
+			binding.pi,
 			config,
 			this.#connections.values(),
 			toolSearchService,
 			{
 				refreshActiveSetWhenEmpty: this.#refreshActiveSetWhenNoTools,
+				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
 			},
 		);
-		const ctx = this.#sessionContext;
-		if (ctx?.mode === "rpc") {
+		const ctx = binding.context;
+		if (ctx.mode === "rpc") {
 			await this.refreshWireStatusSnapshot(ctx.sessionManager?.getSessionId?.());
 		}
 		for (const listener of this.#registrationListeners) listener();
 	}
 
 	/** Route compatibility callers through the shared ownership-aware scanner. */
-	rehydrateActiveToolsFromHistory(messages: readonly unknown[]): string[] {
-		return this.#toolSearchService?.maybeRehydrateFromHistory(messages) ?? [];
+	rehydrateActiveToolsFromHistory(messages: readonly unknown[], pi?: object): string[] {
+		return this.maybeRehydrateFromHistory(messages, pi);
 	}
 
 	/** Shared service memoization keeps this scan once-per-catalog-generation. */
-	maybeRehydrateFromHistory(messages: readonly unknown[]): string[] {
-		return this.#toolSearchService?.maybeRehydrateFromHistory(messages) ?? [];
+	maybeRehydrateFromHistory(messages: readonly unknown[], pi?: object): string[] {
+		const binding = this.#bindingFor(pi);
+		return (
+			(binding === undefined ? undefined : this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(messages)) ?? []
+		);
 	}
 
 	#serverSnapshot(name: string): McpServerSnapshot {

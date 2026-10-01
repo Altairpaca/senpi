@@ -15,6 +15,13 @@ import type { McpAsyncErrorSink } from "./wrap.ts";
 
 type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
 
+/** One session's registration of a server's catalog: a refresh re-registers it there when stale. */
+export interface McpToolsRefreshTarget {
+	readonly pi: McpToolRegistrar;
+	readonly registeredIdentity: string | undefined;
+	readonly register: () => Promise<void>;
+}
+
 /** Coalesce a server's tools-changed signals into one refresh. `connectOnly` is true when
  * every merged signal came from a connect rather than from a reported change. */
 export function subscribeMcpToolsChanged(
@@ -47,13 +54,13 @@ export function subscribeMcpToolsChanged(
  * tools enter INACTIVE (registerToolsPreservingActiveSet keeps the active set),
  * and removed tools are tombstoned so a stale call fails cleanly. Every connect
  * raises the signal too; a connect-only refresh leaves an unchanged catalog
- * registered, so the catalog lands once per session (#2177).
+ * registered, so the catalog lands once per session (#2177). Every live session sharing the
+ * connection is a target: each re-registers in its own tool set (#2514).
  */
 export async function refreshMcpToolsOnListChanged(
 	entry: McpConnectionEntry,
-	pi: McpToolRegistrar,
+	targets: readonly McpToolsRefreshTarget[],
 	config: ResolvedMcpConfig,
-	registerDirectTools: (pi: McpToolRegistrar) => Promise<void>,
 	connectOnly: boolean,
 ): Promise<void> {
 	const server = config.servers[entry.name];
@@ -84,7 +91,9 @@ export async function refreshMcpToolsOnListChanged(
 					),
 				).map(({ name }) => name));
 	const diff = diffMcpToolNames(knownNames, newNames);
-	if (!connectOnly || mcpRegistrationIdentity(catalog, entry.cachedCatalog) !== entry.registeredIdentity) {
+	const identity = mcpRegistrationIdentity(catalog, entry.cachedCatalog);
+	const stale = connectOnly ? targets.filter((target) => target.registeredIdentity !== identity) : targets;
+	if (stale.length > 0) {
 		// Registration reads entry.cachedCatalog. A shared lease refreshed it above; nothing else
 		// refreshes a non-shared connection's catalog after its startup connect (#2188).
 		if (!(entry.connection instanceof SharedMcpLease)) {
@@ -93,8 +102,10 @@ export async function refreshMcpToolsOnListChanged(
 		}
 		// Tombstone removed tools BEFORE re-registration so the subsequent
 		// setActiveTools (which excludes them) leaves the tombstones inactive.
-		for (const removed of diff.removed) pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
-		await registerDirectTools(pi);
+		for (const target of stale) {
+			for (const removed of diff.removed) target.pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
+			await target.register();
+		}
 	}
 	entry.knownToolNames = newNames;
 	entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
