@@ -1,3 +1,21 @@
+## 2026-10-01 - A failed assistant weighs nothing in the keep budget (senpi#2480)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `findCutPoint` and `findProjectedCutPoint` sum an entry's keep-budget weight with `keepBudgetTokens`, which counts a failed assistant (`stopReason: "error"`) as zero. Failed assistants stay valid cut points; only their weight changes.
+
+### Why
+
+- A failed assistant is never sent to the provider. The second overflow-recovery rung in `agent-session.ts` compacts with `keepRecentTokens: 0`, and walking that budget back from the newest entry stopped on the rejected attempts that followed the overflowing turn, so the kept tail held only the failure and the retry had no turn to answer. Weighing them zero lands the cut on the turn being answered.
+
+### Why an extension could not handle it
+
+- The cut-point walk is core preparation inside `prepareCompaction()`; extensions receive the finished preparation in `session_before_compact` and cannot move where the kept tail starts.
+
+### Expected merge conflict zones
+
+- LOW: the token sum inside the backward walk of `findCutPoint()` and `findProjectedCutPoint()`; keep `keepBudgetTokens` as the weight function if upstream reshapes the loop.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): compaction
 
 ### What changed
