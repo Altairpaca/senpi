@@ -16,6 +16,23 @@
 
 - LOW: the TUI import and `app.clipboard.pasteImage` row in `packages/coding-agent/src/core/keybindings.ts`.
 
+## 2026-10-01 - Queued settings saves no longer block the UI on a held lock (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `FileSettingsStorage` gains `tryWithLock` (write only when the lock is free right now) and `withLockAsync` (the same locked read-merge-publish, waiting with timers). A queued save writes synchronously when the lock is free, as before, and otherwise waits for it asynchronously.
+
+### Why
+
+Saving the tip history on a turn waited for a held settings lock with `Atomics.wait` on the UI thread: up to 2.9 s of frozen typing whenever another senpi process held the lock, which is normal with several sessions running.
+
+### Why an extension could not handle it
+
+The settings store's write path is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `SettingsStorage`, `FileSettingsStorage.withLock` and the lock helpers beside it, `enqueueWrite`, `persistScopedSettings`, `save`, `saveProjectSettings`.
 
 ## 2026-10-01 - One materialized copy of the session, released at idle (senpi#2508)
 
