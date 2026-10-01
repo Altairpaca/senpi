@@ -500,17 +500,13 @@ function isCutPointMessage(message: AgentMessage): boolean {
 /**
  * The messages of a cut-point walk that weigh in its keep budget. A failed turn is
  * never sent (`dropFailedAssistantTurns` removes error/aborted assistants and the
- * tool results only they declared), and an overflow retry strips a trailing
- * truncated (`length`) attempt, so neither may absorb the budget: a tiny budget
+ * tool results only they declared), so it may not absorb the budget: a tiny budget
  * walked back from the newest entry must reach the turn being answered instead of
- * stopping on the attempts that followed it.
+ * stopping on the rejected attempts that followed it. A truncated (`length`)
+ * response is real content and keeps its weight.
  */
 function keepBudgetWeighted(messages: readonly AgentMessage[]): Set<AgentMessage> {
-	return new Set(
-		dropFailedAssistantTurns(messages).filter(
-			(message) => message.role !== "assistant" || message.stopReason !== "length",
-		),
-	);
+	return new Set(dropFailedAssistantTurns(messages));
 }
 
 function keepBudgetTokens(messages: readonly AgentMessage[], weighted: ReadonlySet<AgentMessage>): number {

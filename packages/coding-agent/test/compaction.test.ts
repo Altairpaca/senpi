@@ -779,7 +779,7 @@ describe("findCutPoint", () => {
 
 	// senpi#2480: the attempts that follow the overflowing turn are never sent, so they
 	// must not absorb the budget of the overflow ladder's second rung (keepRecentTokens 0).
-	it("lands a zero keep budget on the turn being answered, past failed and truncated attempts", () => {
+	it("lands a zero keep budget on the turn being answered, past a failed attempt and its orphaned tool result", () => {
 		const oldUser = createMessageEntry(createUserMessage("old history"));
 		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
 		const currentUser = createMessageEntry(createUserMessage("continue the task"));
@@ -797,8 +797,7 @@ describe("findCutPoint", () => {
 			isError: false,
 			timestamp: Date.now(),
 		});
-		const truncated = createMessageEntry({ ...createAssistantMessage("y".repeat(4000)), stopReason: "length" });
-		const entries = [oldUser, oldAssistant, currentUser, failedToolCall, orphanedResult, truncated];
+		const entries = [oldUser, oldAssistant, currentUser, failedToolCall, orphanedResult];
 
 		const result = findCutPoint(entries, 0, entries.length, 0);
 

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/compaction/compaction.ts`: `findCutPoint` and `findProjectedCutPoint` weigh only the messages `keepBudgetWeighted` keeps: `dropFailedAssistantTurns` over the walked range (error/aborted assistants and the tool results only they declared) minus truncated (`length`) assistants, which the overflow retry strips. Those weigh zero; they stay valid cut points.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `findCutPoint` and `findProjectedCutPoint` weigh only the messages `keepBudgetWeighted` keeps: `dropFailedAssistantTurns` over the walked range (error/aborted assistants and the tool results only they declared). Those weigh zero; they stay valid cut points. A truncated (`length`) response keeps its weight: it is real content, and the truncated-response retry depends on where it cuts.
 
 ### Why
 
