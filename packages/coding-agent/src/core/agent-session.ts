@@ -3837,9 +3837,9 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
-	/** Whether the session has no active agent run, retry, auto-compaction, or queued continuation. */
+	/** Whether the session has no admitted prompt, active agent run, retry, or queued continuation. */
 	get isIdle(): boolean {
-		return !this._isAgentRunActive;
+		return !this._isAgentRunActive && !this._promptStartPending;
 	}
 
 	/**

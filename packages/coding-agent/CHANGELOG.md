@@ -12,6 +12,8 @@
 
 - The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
 
+- Configuration hot-reload ignores creation of an empty project configuration directory or task runtime state, while still discovering real configuration added at the same time or later. It also waits for admitted first requests and rechecks readiness after asynchronous reload vetoes ([omo#9363](https://github.com/code-yeongyu/oh-my-openagent/issues/9363), [omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
+
 ### Removed
 
 ## [2026.10.1-3] - 2026-10-01

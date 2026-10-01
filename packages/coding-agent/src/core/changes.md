@@ -34,6 +34,23 @@
 
 - `agent-session.ts`: the tool-search service field and lookups, `dispose()`, and the line after `new ExtensionRunner` in `_buildRuntime`.
 
+## 2026-10-01 - Treat admitted prompts as busy during configuration reload
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `isIdle` includes the existing prompt-admission hold instead of reporting idle while asynchronous first-turn hooks are running.
+
+### Why
+
+- A watched configuration change could request a reload during the first request's admission, retiring extension APIs that the request was still using. This complements the lazy-activation generation reset in senpi#2506 and covers the first-message failure reported in oh-my-openagent#9365.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the synchronous admission hold and the shared idleness getter consumed by extension contexts.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `isIdle`.
 ## 2026-10-01 - Skill catalog: read a skill when it would change the work, not on a loose match (senpi#2505)
 
 ### What changed
