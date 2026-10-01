@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Python eval startup waits for kernel readiness with advancing stage events instead of a five-second total deadline. Cold Windows imports can complete normally; a hung start identifies its stalled stage. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
 ### Removed
 
 ## [2026.10.1-2] - 2026-10-01
