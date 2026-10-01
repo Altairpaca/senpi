@@ -7,6 +7,8 @@
  * semver says about the same two strings. The suite pins both sides of that
  * disagreement so nobody "fixes" the parser by reaching for semver.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { VERSION } from "../../src/config.ts";
@@ -75,6 +77,15 @@ describe("compareEngineOrdinal", () => {
 		// made with semver would hand off backwards.
 		expect(semver.compare("2026.9.16", "2026.9.16-3")).toBe(1);
 		expect(compareEngineOrdinal(identity("2026.9.16"), identity("2026.9.16-3"))).toBe(-1);
+	});
+
+	it("never imports semver from the production module", () => {
+		const source = readFileSync(
+			join(import.meta.dirname, "..", "..", "src", "core", "engine-build-identity.ts"),
+			"utf8",
+		);
+
+		expect(source).not.toMatch(/from\s+["']semver["']/);
 	});
 
 	it("calls equal versions EQUAL when either side lacks a build epoch, so an uncomparable build never wins", () => {

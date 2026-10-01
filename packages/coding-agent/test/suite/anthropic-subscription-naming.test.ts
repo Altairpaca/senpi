@@ -94,6 +94,12 @@ function stringLiterals(source: string): string[] {
 }
 
 describe("anthropic subscription naming boundary", () => {
+	it("keeps the upstream SDK dependency and never depends on the legacy package name", () => {
+		const packageJson = readFileSync(join(packageRoot, "package.json"), "utf8");
+		expect(packageJson).toContain('"@anthropic-ai/claude-agent-sdk":');
+		expect(packageJson).not.toContain('"@anthropic-ai/claude-sdk-oauth"');
+	});
+
 	it("ships no string literal carrying a legacy provider name outside the allowlist", () => {
 		const leaks: string[] = [];
 		for (const root of SCAN_ROOTS) {
