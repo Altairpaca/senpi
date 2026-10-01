@@ -1,5 +1,25 @@
 # goal Extension Changes
 
+## 2026-10-01 - Goal mutations are atomic across processes (senpi#2499)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/goal-file-lock.ts` (new): `withGoalFileLock(ref, fn)` runs `fn` inside the existing in-process `serializeByKey` tail and, inside that, holds a proper-lockfile lock for the whole read-modify-write, using the lockfile-policy backoff (100ms..1s) and `isLockError`. `GOAL_LOCK_OPTIONS` (`stale: 10s`, `update: 2s`, `realpath: false`) is shared by every goal-lock contender: a goal RMW takes milliseconds, so a live holder is never seen as stale, while a holder killed mid-mutation is reclaimed within ~10s. `GOAL_LOCK_WAIT_BUDGET_MS` (15s) exceeds the stale window, so waiters ride through a crashed holder; only an exhausted budget throws `GoalStoreBusyError`. `fn` receives `HeldGoalLock`: `write(goal)` and `assertHeld()` throw `GoalStoreLockCompromisedError` right before a write once the lock was reclaimed. The lock directory is `.goal-lock-<sha256(basename)[:40]>` beside the goal file (`goalLockFilePath`), because the default `<file>.lock` overflows NAME_MAX for a goal basename already at 255 bytes. Only the parent directory is created before locking, never a placeholder goal file, so a pending legacy import still runs.
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `writeGoal`, `createGoal`, `updateGoal`, `clearGoal`, `accountGoalUsage`, `recordContinuationDelivered`, and `resetContinuationStreak` run under `withGoalFileLock` and write through `held.write`, with `held.assertHeld()` before the history and full-objective side writes. New `migrateLegacyGoal(ref)` runs `migrateLegacyGoalFile` under the same lock.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: `session_start` calls `migrateLegacyGoal` instead of `migrateLegacyGoalFile`, so a concurrent mutation in another process cannot overwrite a freshly imported legacy goal.
+
+### Why
+
+- `serializeByKey` is an in-process `Map` of promise tails, so two processes holding the same session (shared session holders, a TUI plus a desktop or daemon host, a `PI_GOAL_STORE_FILE` child) interleaved read-modify-write cycles: two processes x 300 usage updates kept 303 of 600, and a completion in one process was reverted to `active` by the other.
+
+### Why an extension could not handle it
+
+- Goal is a manually ported builtin (`MANUAL_PACKAGES` in `scripts/sync-builtin-extensions.mjs`); its store is maintained here.
+
+### Expected merge conflict zones
+
+- LOW: the import block, each mutation's `withGoalFileLock(ref, async (held) => ...)` opening and `held.write` call in `store.ts`, and the `session_start` migration call in `index.ts`. An upstream pi-goal sync that restores `serializeByKey(goalFilePath(ref), ...)` or direct `writeGoalFile` calls must keep the cross-process lock and the guarded write.
+
 ## 2026-09-30 - Drop test-only goal exports (senpi#2447)
 
 ### What changed

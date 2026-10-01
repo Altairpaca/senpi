@@ -17,6 +17,24 @@
 
 - LOW: the pin line, Claude Code fingerprint floor and lock files.
 
+## 2026-10-01 - Stage binary manifest after guarded sidecar copying (senpi#2452)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `copy-binary-assets` removes the previous build-owned `dist/package.json` before sidecar staging and copies the manifest afterward.
+
+### Why
+
+- The sidecar copier refuses output roots containing a package manifest to protect real installs. Build outputs need the manifest restored after staging, including repeated builds.
+
+### Why an extension could not handle it
+
+- Build-time asset ordering.
+
+### Expected merge conflict zones
+
+- The `copy-binary-assets` script.
+
 ## 2026-09-30 - claude-agent-sdk 0.3.285 (senpi#752)
 
 ### What changed
