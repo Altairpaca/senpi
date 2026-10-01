@@ -31,9 +31,10 @@ import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
-import { createSyntheticSourceInfo } from "../source-info.ts";
+import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
+import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import {
 	cachedExtensionFactory,
@@ -50,6 +51,7 @@ import type {
 	ExtensionFactory,
 	ExtensionRuntime,
 	ExtensionSessionProfile,
+	ExtensionVirtualModel,
 	FilesystemPolicy,
 	LazyToolActivator,
 	LoadExtensionsResult,
@@ -262,6 +264,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		executeTool: () => Promise.reject(new Error("Extension runtime not initialized")),
 		getActiveTools: notInitialized,
 		getAllTools: notInitialized,
+		getSettings: notInitialized,
 		setActiveTools: notInitialized,
 		// registerTool() is valid during extension load; refresh is only needed post-bind.
 		refreshTools: () => {},
@@ -278,6 +281,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		pendingNativeProviderRegistrations: [],
+		pendingVirtualModelRegistrations: [],
+		createContext: notInitialized,
 		assertActive,
 		invalidate: (message) => {
 			if (state.staleMessage) return;
@@ -320,6 +325,14 @@ export function createExtensionRuntime(): ExtensionRuntime {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
 			runtime.pendingNativeProviderRegistrations = runtime.pendingNativeProviderRegistrations.filter(
 				(r) => r.provider.id !== name,
+			);
+		},
+		registerVirtualModel: (definition, extensionPath = "<unknown>") => {
+			runtime.pendingVirtualModelRegistrations.push({ definition, extensionPath });
+		},
+		unregisterVirtualModel: (provider, id) => {
+			runtime.pendingVirtualModelRegistrations = runtime.pendingVirtualModelRegistrations.filter(
+				({ definition }) => definition.provider !== provider || definition.id !== id,
 			);
 		},
 	};
@@ -390,15 +403,25 @@ function createExtensionAPI(
 		sessionContext: session.sessionContext,
 
 		// Registration methods - write to extension
-		on(event: string, handler: HandlerFn, options?: BeforeAgentStartHandlerOptions): void {
+		on(event: string, handler: HandlerFn, options?: BeforeAgentStartHandlerOptions): () => void {
 			assertActive();
+			const registeredHandler: HandlerFn = (...args) => handler(...args);
 			const list = extension.handlers.get(event) ?? [];
-			list.push(handler);
+			list.push(registeredHandler);
 			extension.handlers.set(event, list);
 			if (event === "before_agent_start" && options?.previewSafe === true) {
 				extension.previewSafeHandlers ??= new WeakSet();
-				extension.previewSafeHandlers.add(handler);
+				extension.previewSafeHandlers.add(registeredHandler);
 			}
+
+			return () => {
+				const handlers = extension.handlers.get(event);
+				if (!handlers) return;
+				const handlerIndex = handlers.indexOf(registeredHandler);
+				if (handlerIndex === -1) return;
+				handlers.splice(handlerIndex, 1);
+				if (handlers.length === 0) extension.handlers.delete(event);
+			};
 		},
 
 		registerTool(tool: ToolDefinition): void {
@@ -586,6 +609,11 @@ function createExtensionAPI(
 			return runtime.getAllTools();
 		},
 
+		getSettings() {
+			assertActive();
+			return runtime.getSettings();
+		},
+
 		setActiveTools(toolNames: string[]): void {
 			assertActive();
 			runtime.setActiveTools(toolNames);
@@ -686,6 +714,23 @@ function createExtensionAPI(
 				extension.rpcHandlers = handlers;
 			},
 		},
+
+		registerVirtualModel<TState>(model: ExtensionVirtualModel<TState>) {
+			assertActive();
+			// Routing runs after the runner binds, so the context is created per request. The state
+			// comes from the session branch that this router wrote.
+			const definition: VirtualModelDefinition = {
+				...model,
+				route: (request) => model.route(request as ModelRouteRequest<TState>, runtime.createContext()),
+			};
+			applyRuntimeChange(() => runtime.registerVirtualModel(definition, extension.path));
+		},
+
+		unregisterVirtualModel(provider: string, id: string) {
+			assertActive();
+			applyRuntimeChange(() => runtime.unregisterVirtualModel(provider, id));
+		},
+
 		events: {
 			emit(channel, data) {
 				assertActive();
@@ -763,11 +808,8 @@ async function loadExtensionModule(extensionPath: string, getImporter: () => Pro
  * Create an Extension object with empty collections.
  */
 function createExtension(extensionPath: string, resolvedPath: string, registrationCwd: string): Extension {
-	const source =
-		extensionPath.startsWith("<") && extensionPath.endsWith(">")
-			? extensionPath.slice(1, -1).split(":")[0] || "temporary"
-			: "local";
-	const baseDir = extensionPath.startsWith("<") ? undefined : path.dirname(resolvedPath);
+	const source = getSyntheticPathSource(extensionPath) ?? "local";
+	const baseDir = isSyntheticPath(extensionPath) ? undefined : path.dirname(resolvedPath);
 
 	return {
 		path: extensionPath,
@@ -883,6 +925,7 @@ async function loadExtensionsInternal(
 	const session = sessionProfile(options);
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
+	const warnings: Array<{ path: string; warning: string }> = [];
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
@@ -912,6 +955,7 @@ async function loadExtensionsInternal(
 	return {
 		extensions,
 		errors,
+		warnings,
 		runtime: resolvedRuntime,
 		eventBus: resolvedEventBus,
 	};

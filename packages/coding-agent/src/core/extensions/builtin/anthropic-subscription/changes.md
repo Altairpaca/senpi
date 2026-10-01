@@ -1,3 +1,23 @@
+## 2026-09-30 - Accepted senpi compaction replaces the resident Claude transcript
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-continuity.ts`: pending or tainted compaction cold-seeds a fresh SDK session with the compacted context instead of forking the old transcript.
+- Existing continuity assertions now name compaction as the exception to resume-first. `test/suite/regressions/anthropic-subscription-manual-compact.test.ts` drives manual compaction through AgentSession and the real provider stream against the scripted SDK, checking the new session receives the summary without discarded history.
+
+### Why
+
+- Manual `/compact` rewrites senpi's context, not Claude Code's transcript. Forking at an old assistant retains the preceding uncompressed history and skips part of the replacement context, so Claude's context does not shrink.
+
+### Why an extension could not handle it
+
+- The continuity decision is private to this builtin provider. Its existing accepted-compaction hook already invalidates detached bindings; the live resident entry must also stop resuming the old transcript.
+
+### Expected merge conflict zones
+
+- MEDIUM: the pending-divergence branch in `session-continuity.ts` and the resume-first assertions in the two continuity test files.
+- All production paths are fork-only.
+
 ## 2026-09-29 - write and edit reach Claude Code as senpi's own MCP tools, so senpi alone decides and executes them (senpi#2401)
 
 ### What changed

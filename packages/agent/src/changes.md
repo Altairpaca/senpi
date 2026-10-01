@@ -1,3 +1,61 @@
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/agent/src/harness/pico3/harness.ts`: same code as the pinned upstream file; the `export { isCoreKind, withAbortSignal }` line sits after the view re-exports with its names sorted, as the fork's biome configuration orders them.
+- `packages/agent/src/harness/pico3/types.ts`: same types as the pinned upstream file; conditional types (`ConfigOfKinds`, `TaskOf`, `InputOf`, `HooksOf`, `ConfigOf`, `SlotOf`) are laid out the way the fork's formatter prints them and the trailing `export type { ... }` list is sorted.
+
+### Why
+
+The fork runs biome with its own formatter and import-sorting rules over every package (`npm run check` fails on warnings), so upstream-added files are stored in the fork's layout. No behavior differs from upstream.
+
+### Why an extension could not handle it
+
+Source formatting of package files is enforced by the repository check, not by any runtime surface.
+
+### Expected merge conflict zones
+
+- LOW: any upstream edit to the reformatted conditional types in `types.ts` or the export lines at the end of `harness.ts`; take upstream's content and let the formatter re-apply the fork layout.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): shared type roots (contract wave)
+
+### What changed
+
+- `packages/agent/src/types.ts`: What changed: adopted upstream finishTurn/FinishTurn/AgentTurnDecision, prepareRequest/PrepareRequest/AgentRequestUpdate, AgentLoopTurnUpdate.messages, AgentTurnContext, TranscriptContext StreamFn, structuredContent/outputSchema, AgentToolCallOutcome; removed shouldStopAfterTurn (mirrors upstream Breaking entry). Kept fork: optional AgentContext.systemPrompt, writable AgentState.systemPrompt, AgentToolResult.addedToolNames, thinkingSelection/reasoningBaseline/declaredTools/providerDiagnostic, Cursor exec handlers, stream-start and initial-request timeouts, restorePendingMessages, removedToolHints, resolveUnknownToolCall. Why: upstream finishTurn/prepareRequest hooks are required by the adopted agent-session projection and virtual models; the fork loop keeps its prompt carrier and lazy-tool plumbing. Why an extension could not handle it: agent-loop configuration and state types are core contracts. Expected merge conflict zones: pi-ai import list, prepareNextTurn doc, AgentState tools/messages docs, AgentToolResult tail, AgentContext.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the four shared type roots (plan D-24 contract wave, D-2, D-3, D-16).
+
+### Why an extension could not handle it
+
+They are the public type contracts every provider, the agent loop, extensions and RPC compile against; an extension consumes these types and cannot change them.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): agent core
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: What changed: kept the fork runLoop skeleton and grafted upstream v0.99.1 hooks: `finishTurn` runs after the assistant message and every tool-result message and before `turn_end`, both on normal turns (decision applied where `shouldStopAfterTurn` sat, after the abort check) and on the hard-exit branch (decision ignored); `{ action: "continue" }` drives `explicitContinuation` in the outer loop (one context-only request when no tool-result, steering or follow-up request satisfies it; it also keeps a terminating tool batch with empty queues alive for that request); `prepareRequest` runs after prepared/queued messages are appended and before the initial-request timeout selection; `AgentLoopTurnUpdate.messages` from `prepareNextTurn` are appended before the next request; `declareToolChanges` announces tool loadout deltas, fed with `providerTools(context, model).tools`; `buildProviderContext` returns `normalizeContext({ systemPrompt, messages, ...providerTools })` (TranscriptContext) with tools mapped through `toProviderToolDeclaration` (keeps fork `freeform`, drops executable fields); assistant results record `thinkingLevel`; `runToolCall`/`RunToolCallOptions`/`ToolCallHooks` exported; tool update events go through an `onUpdate` sink; `afterToolCall` `structuredContent` replacement adopted. Removed `shouldStopAfterTurn`. Kept fork: `prepareNextTurn` at the end of the iteration (not loop-top) with drain/restore, `firstProviderRequest` + initial timeouts, `isCursorExecResolved` filtering and provider tool results, `toolBatchTerminated`, `drainedTerminatingQueue` + `refreshTerminatingQueueDrain`, restore-on-prepare-failure/abort, `thinkingSelection`/`abortServerSideFallback` updates (now shared by prepareNextTurn and prepareRequest through `applyLoopUpdate`), `providerTools` allowed-tools (senpi#2095), stream-start and idle timeouts, request abort controller, empty-assistant recovery, tool-name alias correction, removed-tool hints, `addedToolNames` on tool-result messages. Why: the adopted agent-session request projection and virtual models need `finishTurn`/`prepareRequest`; the fork loop's timeouts, Cursor exec bridge, terminating-queue drain and allowed-tools prefix are pinned by fork tests. `declareToolChanges` treats the fork shorthand (systemPrompt + provider tools folded into the leading system message) as already declared, so a shorthand-only context never gains a duplicate transcript declaration. Why an extension could not handle it: the provider/tool loop and its scheduling are the core runtime every session drives; extensions only see its hooks. Expected merge conflict zones: pi-ai import list, runAgentLoop initial messages, runLoop declarations, pending-message injection + prepareRequest block, hard-exit branch, finishTurn/turn_end/terminating-batch block, outer follow-up/continuation tail, declareToolChanges, buildProviderContext, streamAssistantResponse result(), tool execution sinks and runToolCall, finalizeExecutedToolCall.
+- `packages/agent/src/agent.ts`: What changed: adopted `finishTurn` (an `end` decision also suppresses the fork post-run queue drain), `prepareRequest`, `onProviderStreamEvent` options/fields forwarded into the loop config, `peekQueuedMessages()` with a non-consuming queue `peek()`, `AgentInitialState` type, system messages in `defaultConvertToLlm`, `continue()` rejecting a system-only transcript, `buildProviderContext` returning TranscriptContext. Removed `shouldStopAfterTurn`. Kept fork: writable `systemPrompt` state not copied into `messages` (A2 C-AG-4; `reset()` clears the whole transcript), `declaredTools`, `reasoningBaseline`, `thinkingSelection`, provider diagnostics, queue clear generations + `restorePendingMessages`, `continueWithQueuedMessages`, continuation timeout overrides, Cursor exec handlers, `emitExternalEvent`, run-failure lifecycle. Why: same as agent-loop.ts; the fork keeps the prompt/tool carrier on agent state and folds it per request. Why an extension could not handle it: Agent is the core state owner. Expected merge conflict zones: pi-ai imports, createMutableAgentState/AgentInitialState, AgentOptions, PendingMessageQueue, Agent fields/constructor, reset/continue, createLoopConfig.
+- `packages/agent/src/harness/messages.ts`: upstream upstream v0.99.1 (6a4af07d6) auto-merge reviewed by L1 and accepted; fork lines unchanged.
+- `packages/agent/src/proxy.ts`: upstream upstream v0.99.1 (6a4af07d6) auto-merge reviewed by L1 and accepted; fork lines unchanged.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the agent loop keeps the fork runLoop skeleton and grafts upstream finishTurn/prepareRequest/explicitContinuation (plan D-16).
+
+### Why an extension could not handle it
+
+The turn loop, its abort/queue semantics and the provider request are the agent core that extensions run inside.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
 ## 2026-09-26 - Resolve embedded tree-sitter grammars under Node bundles (senpi#2032)
 
 ### What changed
