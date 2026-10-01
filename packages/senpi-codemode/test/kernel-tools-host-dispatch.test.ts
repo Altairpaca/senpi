@@ -233,7 +233,11 @@ describe("kernel tools on the real worker tool-call path", () => {
 		});
 
 		const cell = await kernelToolsStorage.run(
-			{ describe: async () => undefined, invoke: async () => undefined },
+			{
+				capabilities: { invokeScope: true },
+				describe: async () => undefined,
+				invoke: async () => undefined,
+			},
 			() =>
 				tool.execute(
 					"kernel-tools-host-dispatch-py",
