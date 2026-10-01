@@ -133,11 +133,15 @@
 
 ### Changed
 
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
 - A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
 
 - The recommended OpenAI model is now GPT-6.1 Sol at `medium`, one slot below GPT-6 Astra where GPT-6 Sol was; `gpt-6.1-sol-fast` counts as recommended like the other `-fast` ids. Your explicitly configured `recommendedModels` are untouched. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
 
 ### Fixed
+
+- Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 
 - Resuming a session whose pending ask-user question was recorded with arguments that no longer form a valid question set no longer leaves a "0 unanswered" question widget that crashes the TUI (`Cannot read properties of undefined (reading 'question')`) when expanded. The call now settles as `orphaned-after-restart`, the same way a question lost in a restart does, so the model learns it was lost and can ask again. The question overlay also keeps its active question in range for any requested index, and clicking the collapsed widget when every question already has an answer submits those answers instead of opening a question that does not exist. Reported by @copycatcode, thanks. ([omo#9268](https://github.com/code-yeongyu/oh-my-openagent/issues/9268))
 

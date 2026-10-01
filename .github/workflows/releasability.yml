@@ -33,6 +33,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # `npm run check` includes check:bun-lock, which needs bun (senpi#2352); same pin as ci.yml's Static checks.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
       # `npm run check` is read-only (#1443): its biome invocation reports format
       # drift instead of silently rewriting it, so the gate can fail here.
       - name: Check
