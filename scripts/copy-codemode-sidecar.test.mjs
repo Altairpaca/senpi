@@ -6,6 +6,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -117,6 +118,8 @@ describe("copy-codemode-sidecar", () => {
 	it("dereferences workspace and file symlinks when a dependency hides its manifest export", () => {
 		// Given a workspace package whose package.json cannot be resolved through exports.
 		declareDependencies({ "workspace-dependency": "1.0.0" });
+		renameSync(manifestPath, join(fixtureRoot, "manifest.json"));
+		symlinkSync(join(fixtureRoot, "manifest.json"), manifestPath);
 		const workspaceRoot = join(fixtureRoot, "workspace");
 		addPackage(workspaceRoot, {
 			name: "workspace-dependency", version: "3.0.0", exports: { ".": "./index.js" },

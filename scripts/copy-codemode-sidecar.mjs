@@ -43,7 +43,7 @@ if (!Array.isArray(manifest.files)) {
 // This node_modules tree is owned by the sidecar copier, including its dependency closure.
 rmSync(sidecarNodeModulesRoot, { recursive: true, force: true });
 mkdirSync(targetRoot, { recursive: true });
-cpSync(manifestPath, join(targetRoot, "package.json"));
+cpSync(manifestPath, join(targetRoot, "package.json"), { dereference: true });
 
 for (const entry of manifest.files) {
 	if (typeof entry !== "string" || isAbsolute(entry)) {
