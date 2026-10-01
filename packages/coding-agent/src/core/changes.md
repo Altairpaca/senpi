@@ -16,25 +16,7 @@
 
 - LOW: the TUI import and `app.clipboard.pasteImage` row in `packages/coding-agent/src/core/keybindings.ts`.
 
-## 2026-10-01 - Share shipped package resolution with read permissions (#2513)
 
-### What changed
-
-- `packages/coding-agent/src/core/resource-loader.ts`: bundled extension definitions and package resolution move into `packages/coding-agent/src/core/bundled-resources.ts`, with the source-module identity guard generalized for its new location. The shared resolver also locates shipped payload roots for permission classification; development runs trust declared asset directories rather than the whole source checkout.
-
-### Why
-
-- The loader and permissions must agree on the actual installed, snapshot, packaged or compiled sidecar package, instead of trusting a hardcoded application path.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/resource-loader.ts` resolves the engine-owned packages before their extensions can contribute resources.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/resource-loader.ts`: the bundled package resolver and its imports.
-
-## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
 ## 2026-10-01 - One materialized copy of the session, released at idle (senpi#2508)
 
 ### What changed
@@ -98,6 +80,42 @@ These are the session store and the turn-preparation paths in the core.
 - `packages/coding-agent/src/core/retry-fallback/chains.ts`: `authTiers`.
 
 ## 2026-10-01 - Context usage is computed once per message change (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage()` memoizes its result on the runtime message array, its length and last message, the branch leaf and the model window; the computation moved unchanged to `_computeContextUsage()`.
+
+### Why
+
+The footer calls it on every frame; after a compaction it re-estimated tokens over every message (19% of each frame in a 50k-entry session).
+
+### Why an extension could not handle it
+
+The footer reads the session's own usage API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage`.
+
+## 2026-10-01 - Share shipped package resolution with read permissions (#2513)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: bundled extension definitions and package resolution move into `packages/coding-agent/src/core/bundled-resources.ts`, with the source-module identity guard generalized for its new location. The shared resolver also locates shipped payload roots for permission classification; development runs trust declared asset directories rather than the whole source checkout.
+
+### Why
+
+- The loader and permissions must agree on the actual installed, snapshot, packaged or compiled sidecar package, instead of trusting a hardcoded application path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` resolves the engine-owned packages before their extensions can contribute resources.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: the bundled package resolver and its imports.
+
+## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
 
 ### What changed
 
@@ -195,20 +213,6 @@ These are the session store and the turn-preparation paths in the core.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: lazy activation field, activation dispatch, extension core binding, and runtime rebuild.
-
-## 2026-10-01 - Context usage is computed once per message change (senpi#2508)
-
-
-- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage()` memoizes its result on the runtime message array, its length and last message, the branch leaf and the model window; the computation moved unchanged to `_computeContextUsage()`.
-
-
-The footer calls it on every frame; after a compaction it re-estimated tokens over every message (19% of each frame in a 50k-entry session).
-
-
-The footer reads the session's own usage API.
-
-
-- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage`.
 
 ## 2026-10-01 - Explicit command argument requirements (senpi#2479)
 

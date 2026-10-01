@@ -8,9 +8,9 @@
 
 ### Changed
 
-- In `one-at-a-time` follow-up and steering modes, consecutive queued non-user messages (custom notices) are delivered together in one turn; user messages are still delivered one per turn and in order ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
-
 ### Fixed
+
+- In `one-at-a-time` follow-up and steering modes, consecutive queued non-user messages (custom notices) are delivered together in one turn; user messages are still delivered one per turn and in order ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
 
 ### Removed
 

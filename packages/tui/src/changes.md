@@ -62,6 +62,8 @@ Render scheduling, line normalization, diffing and the component contract live i
 - `packages/tui/src/tui-main-screen.ts`: `doRender` and press/release handling.
 - `packages/tui/src/components/{text,markdown,spacer,box,mouse-region}.ts`: invalidation and cache fields.
 
+# TUI delta rendering fork changes
+
 ## 2026-10-01 - Optional command arguments submit on picker Enter (senpi#2479)
 
 ### What changed

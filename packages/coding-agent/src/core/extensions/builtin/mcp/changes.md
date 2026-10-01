@@ -18,6 +18,8 @@ This is the builtin MCP extension's own skill scan.
 
 # mcp Extension Changes
 
+# mcp Extension Changes
+
 ## 2026-10-01 - Feed the attaching session's tool-search service (senpi#2509)
 
 ### What changed
