@@ -381,8 +381,8 @@ export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "b
 	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
 		fileReadTool === "read"
-			? "Use the read tool to load a skill's file whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work."
-			: "Use bash to load a skill's file whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work.",
+			? "Use the read tool to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason."
+			: "Use bash to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason.",
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
 		"<skill_roots>",
