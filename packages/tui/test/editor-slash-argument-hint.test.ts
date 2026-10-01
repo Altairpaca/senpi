@@ -83,7 +83,7 @@ describe("Editor slash rows with an argument hint", () => {
 		assert.deepStrictEqual(submitted, ["/model"]);
 	});
 
-	it("marks only required-argument commands as awaiting arguments", () => {
+	it("marks required-argument and hint-only commands as awaiting arguments", () => {
 		const items = getSlashCommandSuggestions(COMMANDS, "skill:");
 		const byValue = new Map(items.map((item) => [item.value, item.awaitsArguments]));
 		assert.strictEqual(byValue.get("skill:ulw-execute"), true);
