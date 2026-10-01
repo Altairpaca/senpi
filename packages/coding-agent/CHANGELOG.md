@@ -82,6 +82,8 @@
 
 ### Fixed
 
+- A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))
+
 - Resuming a long session no longer makes the transcript jump while older history loads in the background. The part already on screen now stays put, and the full history appears once it has finished loading, in a single repaint (#1076; thanks @effortprogrammer).
 
 - A session whose context has reached the hard limit no longer stays stuck when the summary for its pre-prompt compaction fails (for example the summary stream stalls past its time budget). senpi now applies the same deterministic fallback compaction that manual, threshold and overflow compaction already use, and when every earlier boundary would keep an unsafe tool result it keeps the earliest later suffix that passes the existing replay-safety, tool-chain and token-budget checks. A pre-prompt compaction that fails below the hard limit still keeps the full context. ([#1735](https://github.com/code-yeongyu/senpi/pull/1735) by [@GunP4ng](https://github.com/GunP4ng))
