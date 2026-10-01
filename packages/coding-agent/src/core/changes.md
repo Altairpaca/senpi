@@ -133,6 +133,20 @@
 
 - `packages/coding-agent/src/core/agent-session.ts`: lazy activation field, activation dispatch, extension core binding, and runtime rebuild.
 
+## 2026-10-01 - Context usage is computed once per message change (senpi#2508)
+
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage()` memoizes its result on the runtime message array, its length and last message, the branch leaf and the model window; the computation moved unchanged to `_computeContextUsage()`.
+
+
+The footer calls it on every frame; after a compaction it re-estimated tokens over every message (19% of each frame in a 50k-entry session).
+
+
+The footer reads the session's own usage API.
+
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage`.
+
 ## 2026-10-01 - Explicit command argument requirements (senpi#2479)
 
 ### What changed

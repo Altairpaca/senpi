@@ -37,6 +37,9 @@ export class ExplorationGroup extends Container {
 	calls: { readonly component: ToolExecutionComponent; readonly call: ExplorationCall }[] = [];
 	/** Rule paths injected into this group's calls; repeated paths count once. */
 	private rules: readonly string[] = [];
+	/** What the collapsed body shows; a change makes the group's previous output stale. */
+	private bodyKey = "";
+	private memberSnapshot: readonly Component[] = [];
 
 	private get expanded(): boolean {
 		return this.calls.some(({ component }) => component.presentationSnapshot.state.expanded);
@@ -93,8 +96,31 @@ export class ExplorationGroup extends Container {
 
 	/** References are replaced on each projection, never disposed by this view. */
 	setMembers(members: Component[], calls: ExplorationGroup["calls"], rules: readonly string[] = []): void {
+		const membersChanged =
+			members.length !== this.memberSnapshot.length ||
+			members.some((member, index) => member !== this.memberSnapshot[index]);
+		if (membersChanged) {
+			this.memberSnapshot = [...members];
+			this.bumpRenderRevision();
+		}
 		this.children = members;
 		this.calls = calls;
 		this.rules = rules;
+		const bodyKey = `${calls
+			.map(({ call }) => `${call.action}\u0000${call.label}\u0000${call.pending ? 1 : 0}${call.failed ? 1 : 0}`)
+			.join("\u0001")}\u0002${rules.join("\u0001")}`;
+		if (bodyKey !== this.bodyKey) {
+			this.bodyKey = bodyKey;
+			this.bumpRenderRevision();
+		}
+	}
+
+	/**
+	 * Settled groups render from their calls, rules and member cards; a pending group animates its
+	 * spinner from the clock, so it renders every frame.
+	 */
+	override getRenderRevision(): number | undefined {
+		if (this.calls.some(({ call }) => call.pending)) return undefined;
+		return this.childRenderRevision();
 	}
 }

@@ -16,6 +16,28 @@
 
 - LOW: the TUI import and clipboard dispatch condition in `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`.
 
+## 2026-10-01 - Settled transcript entries are rendered once (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`, `packages/coding-agent/src/modes/interactive/components/user-message.ts`, `packages/coding-agent/src/modes/interactive/components/custom-message.ts`, `packages/coding-agent/src/modes/interactive/components/custom-entry.ts`, `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts`, `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts`, `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts`, `packages/coding-agent/src/modes/interactive/components/bash-execution.ts`, `packages/coding-agent/src/modes/interactive/components/themed-text.ts`, `packages/coding-agent/src/modes/interactive/components/dynamic-border.ts`: report a render revision that moves at every point their render cache is dropped (or derive it from their children).
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a finished card (final result, complete args, no animation, classic presentation) reports a revision moved by every setter; running cards keep rendering every frame.
+- The fork-only transcript containers cache each revisioned child's lines per (width, capabilities, theme generation, revision), reuse the unchanged leading block of history, memoize the exploration projection and each card's exploration call, and keep their own child heights for mouse dispatch.
+
+### Why
+
+Typing, streaming a background-triggered reply, or a spinner frame re-rendered every message, card and exploration group of the session; read cards even walked the filesystem per frame for their classification.
+
+### Why an extension could not handle it
+
+These are the built-in transcript components and their containers.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: `invalidate`, `updateContent`, `render`.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `render`, `invalidateRenderCache`.
+- The other listed components: an added `getRenderRevision` override next to `setExpanded`/`invalidate`.
+
 ## 2026-10-01 - Forward explicit picker argument requirements (senpi#2479)
 
 ### What changed

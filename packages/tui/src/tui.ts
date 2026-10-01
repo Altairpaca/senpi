@@ -208,6 +208,16 @@ export interface Component {
 	 */
 	invalidate(): void;
 
+	/**
+	 * Optional render revision for containers that cache child output.
+	 *
+	 * A number promises that `render(width)` returns the same lines for the same width, terminal
+	 * capabilities and theme until the number changes; the component must change it whenever its
+	 * state changes (including in `invalidate()`). `undefined` means the output may change at any
+	 * time (streaming, animation, unknown dependencies), so the component is rendered every frame.
+	 */
+	getRenderRevision?(): number | undefined;
+
 	dispose?(): void;
 }
 
@@ -249,6 +259,12 @@ interface NormalizedLinesResult {
 	readonly firstRawChanged: number;
 	readonly compareEndExclusive: number;
 	readonly bounded: boolean;
+}
+
+/** Whether a specific line array contains an image line, so per-frame checks need not rescan it. */
+interface ImageLineScan {
+	readonly lines: string[];
+	readonly hasImage: boolean;
 }
 
 const TERMINAL_PALETTE_SIZE = 16;
@@ -594,19 +610,80 @@ type TuiConstructorOptions = {
 /**
  * Container - a component that contains other components
  */
+let renderRevisionClock = 0;
+
+/**
+ * Draw a new value from the process-wide render revision clock. Every revisioned state change uses
+ * one, so "the clock has not moved" proves no revisioned component changed and caches may skip
+ * re-reading their children's revisions.
+ */
+export function nextRenderRevision(): number {
+	renderRevisionClock += 1;
+	return renderRevisionClock;
+}
+
+/** Current value of the render revision clock (see {@link nextRenderRevision}). */
+export function currentRenderRevision(): number {
+	return renderRevisionClock;
+}
+
+/**
+ * Render revision of a component whose output is a pure function of its own state and its children's
+ * output. `bump()` records an own-state change; `read(children)` returns a revision that also changes
+ * whenever a child is replaced or a child's revision changes, and `undefined` while any child is live.
+ * Child revisions are re-read only after the clock moved, so an unchanged subtree costs one identity pass.
+ */
+export class CompositeRevision {
+	private revision = nextRenderRevision();
+	private children: readonly Component[] = [];
+	private childRevisions: readonly number[] = [];
+	private checkedAt = -1;
+
+	bump(): void {
+		this.revision = nextRenderRevision();
+	}
+
+	read(children: readonly Component[]): number | undefined {
+		let replaced = children.length !== this.children.length;
+		for (let index = 0; !replaced && index < children.length; index++) {
+			if (children[index] !== this.children[index]) replaced = true;
+		}
+		if (!replaced && this.checkedAt === renderRevisionClock) return this.revision;
+		const revisions: number[] = [];
+		for (const child of children) {
+			const revision = child.getRenderRevision?.();
+			if (revision === undefined) return undefined;
+			revisions.push(revision);
+		}
+		const changed = replaced || revisions.some((revision, index) => revision !== this.childRevisions[index]);
+		if (changed) {
+			this.revision = nextRenderRevision();
+			this.children = [...children];
+		}
+		this.childRevisions = revisions;
+		this.checkedAt = renderRevisionClock;
+		return this.revision;
+	}
+}
+
 export class Container implements Component {
 	children: Component[] = [];
 	private disposed = false;
+	private readonly composite = new CompositeRevision();
 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
+	// Every structural change moves the render revision clock, so a cache that saw the clock stand
+	// still may trust that no revisioned subtree gained, lost or swapped a child.
 	addChild(component: Component): void {
 		this.children.push(component);
+		this.composite.bump();
 	}
 
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.composite.bump();
 			component.dispose?.();
 		}
 	}
@@ -615,6 +692,7 @@ export class Container implements Component {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.composite.bump();
 		}
 	}
 
@@ -623,10 +701,12 @@ export class Container implements Component {
 			child.dispose?.();
 		}
 		this.children = [];
+		this.composite.bump();
 	}
 
 	detachAll(): void {
 		this.children = [];
+		this.composite.bump();
 	}
 
 	dispose(): void {
@@ -638,9 +718,30 @@ export class Container implements Component {
 	}
 
 	invalidate(): void {
+		this.composite.bump();
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+	}
+
+	/**
+	 * A plain `Container` only concatenates its children, so its output changes exactly when a child
+	 * changes. Subclasses may render more than their children and therefore opt in explicitly by
+	 * overriding this (usually via {@link childRenderRevision}); an inherited revision would let a
+	 * cache keep their stale output.
+	 */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === Container.prototype ? this.childRenderRevision() : undefined;
+	}
+
+	/** Revision of this container's children, for subclasses whose output depends only on them and `bump()`ed state. */
+	protected childRenderRevision(): number | undefined {
+		return this.composite.read(this.children);
+	}
+
+	/** Record an own-state change for {@link childRenderRevision}. */
+	protected bumpRenderRevision(): void {
+		this.composite.bump();
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
@@ -666,7 +767,7 @@ export class Container implements Component {
 	}
 
 	render(width: number): string[] {
-		const lines: string[] = [];
+		const chunks: string[][] = [];
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			let childLines: string[];
@@ -679,13 +780,26 @@ export class Container implements Component {
 				childLines = [`[render error: ${componentName}]`];
 			}
 			mouseChildren.push({ component: child, height: childLines.length });
-			for (const line of childLines) {
-				lines.push(line);
-			}
+			chunks.push(childLines);
 		}
 		this.mouseLayout = { width, children: mouseChildren };
-		return lines;
+		return joinLineArrays(chunks);
 	}
+}
+
+const JOIN_BATCH = 1024;
+
+/**
+ * Concatenate rendered line arrays into one new array. Native `concat` copies whole arrays at once,
+ * which keeps a frame over a long transcript from paying a per-line iterator and push.
+ */
+export function joinLineArrays(chunks: readonly (readonly string[])[]): string[] {
+	if (chunks.length <= JOIN_BATCH) return ([] as string[]).concat(...chunks);
+	const batches: string[][] = [];
+	for (let start = 0; start < chunks.length; start += JOIN_BATCH) {
+		batches.push(([] as string[]).concat(...chunks.slice(start, start + JOIN_BATCH)));
+	}
+	return ([] as string[]).concat(...batches);
 }
 
 /**
@@ -759,6 +873,9 @@ export abstract class TuiBase extends Container {
 	public terminal: Terminal;
 	protected previousLines: string[] = [];
 	private previousRawLines: string[] = [];
+	private previousImageScan: ImageLineScan | undefined;
+	/** Image presence the normalization pass already measured for the array it produced. */
+	private normalizedImageHint: ImageLineScan | undefined;
 	private normalizeMemo = new Map<string, string>();
 	protected previousKittyImageIds = new Set<number>();
 	protected previousWidth = 0;
@@ -897,7 +1014,7 @@ export abstract class TuiBase extends Container {
 	protected noteCommittedMouseFrame(): void {
 		if (this.mouseCommittedLineCount !== this.previousLines.length) this.placementEpoch++;
 		this.mouseCommittedLineCount = this.previousLines.length;
-		if (this.previousLines.some(isImageLine)) {
+		if (this.previousLinesHaveImage()) {
 			this.placementEpoch++;
 			this.anchor.kind = "unknown";
 			return;
@@ -932,7 +1049,7 @@ export abstract class TuiBase extends Container {
 			this.mouseExternalWritePending ||
 			!this.terminal.queryCursorPosition ||
 			this.previousLines.length === 0 ||
-			this.previousLines.some(isImageLine)
+			this.previousLinesHaveImage()
 		)
 			return;
 		if (
@@ -2014,6 +2131,21 @@ export abstract class TuiBase extends Container {
 		this.previousRawLines = rawLines;
 	}
 
+	/** Image presence of the committed frame, measured once per frame array instead of once per check. */
+	protected previousLinesHaveImage(): boolean {
+		const lines = this.previousLines;
+		if (this.previousImageScan?.lines !== lines) {
+			const hint = this.normalizedImageHint?.lines === lines ? this.normalizedImageHint.hasImage : undefined;
+			this.previousImageScan = { lines, hasImage: hint ?? lines.some(isImageLine) };
+		}
+		return this.previousImageScan.hasImage;
+	}
+
+	/** Record image presence for a produced array; `undefined` leaves it to a scan when it is committed. */
+	private hintNormalizedImages(lines: string[], hasImage: boolean | undefined): void {
+		this.normalizedImageHint = hasImage === undefined ? undefined : { lines, hasImage };
+	}
+
 	private normalizeLine(line: string): { line: string; normalized: boolean } {
 		if (isImageLine(line)) {
 			return { line, normalized: false };
@@ -2036,9 +2168,11 @@ export abstract class TuiBase extends Container {
 		const nextMemo = new Map<string, string>();
 		const normalizedLines: string[] = [];
 		let normalizedCount = 0;
+		let hasImage = false;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (isImageLine(line)) {
+				hasImage = true;
 				normalizedLines.push(line);
 				continue;
 			}
@@ -2051,6 +2185,7 @@ export abstract class TuiBase extends Container {
 			normalizedLines.push(normalized);
 		}
 		this.normalizeMemo = nextMemo;
+		this.hintNormalizedImages(normalizedLines, hasImage);
 		recordViewportRenderStats(normalizedCount, mode);
 		return {
 			lines: normalizedLines,
@@ -2070,10 +2205,12 @@ export abstract class TuiBase extends Container {
 			!viewportRenderEnabled() ||
 			!stableDimensions ||
 			this.previousLines.length === 0 ||
-			this.previousLines.length !== rawLines.length ||
-			this.previousRawLines.length !== rawLines.length
+			this.previousRawLines.length !== this.previousLines.length
 		) {
 			return this.applyLineResetResult(rawLines);
+		}
+		if (this.previousRawLines.length !== rawLines.length) {
+			return this.applyResizedLineResets(rawLines);
 		}
 
 		const windowStart = Math.max(0, viewportTop - VIEWPORT_RENDER_OVERSCAN);
@@ -2091,14 +2228,18 @@ export abstract class TuiBase extends Container {
 			}
 		}
 
+		const previousHadImage = this.previousLinesHaveImage();
 		const lines = this.previousLines.slice();
 		let normalizedCount = 0;
+		let changedImage = false;
 		if (firstRawChanged !== -1) {
 			for (let i = windowStart; i < windowEnd; i++) {
 				if (rawLines[i] === this.previousRawLines[i]) {
 					continue;
 				}
-				const normalized = this.normalizeLine(rawLines[i] ?? "");
+				const raw = rawLines[i] ?? "";
+				if (isImageLine(raw)) changedImage = true;
+				const normalized = this.normalizeLine(raw);
 				lines[i] = normalized.line;
 				if (normalized.normalized) {
 					normalizedCount += 1;
@@ -2106,11 +2247,54 @@ export abstract class TuiBase extends Container {
 			}
 		}
 
+		// A frame that had an image may have replaced it; only an image-free frame can be updated in place.
+		this.hintNormalizedImages(lines, previousHadImage ? undefined : changedImage);
 		recordViewportRenderStats(normalizedCount, "bounded");
 		return {
 			lines,
 			firstRawChanged,
 			compareEndExclusive: windowEnd,
+			bounded: true,
+		};
+	}
+
+	/**
+	 * A frame whose line count changed (an append, a growing editor, a removed row) keeps every
+	 * leading line that is unchanged since the last frame. Normalization is a pure function of the
+	 * raw line, so the previous normalized prefix is reused and only the changed tail is normalized;
+	 * the diff then starts where the raw lines first differ.
+	 */
+	private applyResizedLineResets(rawLines: string[]): NormalizedLinesResult {
+		const previousRaw = this.previousRawLines;
+		const sharedLength = Math.min(rawLines.length, previousRaw.length);
+		let firstRawChanged = 0;
+		while (firstRawChanged < sharedLength && rawLines[firstRawChanged] === previousRaw[firstRawChanged]) {
+			firstRawChanged++;
+		}
+		const previousHadImage = this.previousLinesHaveImage();
+		const lines = this.previousLines.slice(0, firstRawChanged);
+		let normalizedCount = 0;
+		let tailImage = false;
+		for (let i = firstRawChanged; i < rawLines.length; i++) {
+			const line = rawLines[i] ?? "";
+			if (isImageLine(line)) {
+				tailImage = true;
+				lines.push(line);
+				continue;
+			}
+			let normalized = this.normalizeMemo.get(line);
+			if (normalized === undefined) {
+				normalized = normalizeTerminalOutput(line) + TUI.SEGMENT_RESET;
+				normalizedCount += 1;
+			}
+			lines.push(normalized);
+		}
+		this.hintNormalizedImages(lines, previousHadImage ? undefined : tailImage);
+		recordViewportRenderStats(normalizedCount, "bounded");
+		return {
+			lines,
+			firstRawChanged,
+			compareEndExclusive: Math.max(rawLines.length, this.previousLines.length),
 			bounded: true,
 		};
 	}

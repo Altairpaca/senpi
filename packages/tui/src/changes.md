@@ -19,6 +19,29 @@
 
 - LOW: the Warp normalization helper in `packages/tui/src/terminal.ts` and terminal exports in `packages/tui/src/index.ts`.
 
+## 2026-10-01 - Render revisions keep long transcripts out of every frame (senpi#2508)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `Component.getRenderRevision?()` lets a component promise that its output is unchanged until the number changes; `nextRenderRevision()`/`currentRenderRevision()` are a process-wide clock every revision change draws from, and `CompositeRevision` derives a revision from children, re-reading them only after the clock moved. Plain `Container`s report their children's revision (subclasses opt in), and structural mutators move the clock. `Container.render` joins child arrays with native `concat` (`joinLineArrays`). A frame whose line count changed reuses the previous normalized prefix and normalizes only the changed tail (`applyResizedLineResets`). Image presence of the committed frame is measured once per frame array instead of twice per frame over every line.
+- `packages/tui/src/tui-main-screen.ts`: click staleness is checked by capturing the committed frame and component list at press and comparing at release, instead of walking the component tree and copying every line on every frame.
+- `packages/tui/src/components/text.ts`, `packages/tui/src/components/markdown.ts`, `packages/tui/src/components/spacer.ts`, `packages/tui/src/components/box.ts`, `packages/tui/src/components/mouse-region.ts`: exact instances report a revision (Box and MouseRegion from their children); subclasses must opt in because they may render more than the base state (e.g. the animated `Loader`). Only revision-reporting instances advance the shared clock.
+- `packages/tui/src/index.ts`: export the revision API, `joinLineArrays`, `dispatchMouseEvent` and `TuiMouseDispatchResult`.
+
+### Why
+
+Every frame, including every keystroke, re-rendered and re-scanned the whole transcript, so keystroke latency grew with session length. Containers can now reuse settled history, and the renderer no longer pays O(lines) passes for unchanged prefixes.
+
+### Why an extension could not handle it
+
+Render scheduling, line normalization, diffing and the component contract live in the renderer core.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: `Component` interface, `Container`, `applyViewportLineResets`, `setPreviousLines`, mouse frame bookkeeping.
+- `packages/tui/src/tui-main-screen.ts`: `doRender` and press/release handling.
+- `packages/tui/src/components/{text,markdown,spacer,box,mouse-region}.ts`: invalidation and cache fields.
+
 ## 2026-10-01 - Optional command arguments submit on picker Enter (senpi#2479)
 
 ### What changed

@@ -10570,8 +10570,51 @@ export class AgentSession {
 		else process.env[PROMPT_CACHE_SAFE_WAIT_ENV] = String(budget);
 	}
 
+	/**
+	 * Context usage is shown on every frame (footer), but it only changes when a message is appended or
+	 * replaced, the branch moves, or the model changes. Messages are appended in place, so the key is the
+	 * array, its length and last message, plus the leaf and the model's window.
+	 */
 	getContextUsage(): ContextUsage | undefined {
 		const model = this._limitsModel();
+		const runtimeMessages = this.messages;
+		const key = {
+			messages: runtimeMessages,
+			length: runtimeMessages.length,
+			last: runtimeMessages.at(-1),
+			leafId: this.sessionManager.getLeafId(),
+			contextWindow: model?.contextWindow,
+		};
+		const cached = this._contextUsageCache;
+		if (
+			cached !== undefined &&
+			cached.key.messages === key.messages &&
+			cached.key.length === key.length &&
+			cached.key.last === key.last &&
+			cached.key.leafId === key.leafId &&
+			cached.key.contextWindow === key.contextWindow
+		) {
+			return cached.usage;
+		}
+		const usage = this._computeContextUsage(model);
+		this._contextUsageCache = { key, usage };
+		return usage;
+	}
+
+	private _contextUsageCache:
+		| {
+				readonly key: {
+					readonly messages: AgentMessage[];
+					readonly length: number;
+					readonly last: AgentMessage | undefined;
+					readonly leafId: string | null;
+					readonly contextWindow: number | undefined;
+				};
+				readonly usage: ContextUsage | undefined;
+		  }
+		| undefined;
+
+	private _computeContextUsage(model: Model<any> | undefined): ContextUsage | undefined {
 		if (!model) return undefined;
 
 		const contextWindow = model.contextWindow ?? 0;

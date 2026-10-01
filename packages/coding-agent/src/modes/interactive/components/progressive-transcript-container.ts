@@ -1,4 +1,14 @@
-import { Container } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	currentRenderRevision,
+	dispatchMouseEvent,
+	getCapabilities,
+	joinLineArrays,
+	type TerminalCapabilities,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
 
 /**
  * Tunables for progressive transcript hydration.
@@ -22,6 +32,31 @@ export const DEFAULT_WARM_CHUNK_SIZE = 100 as const;
 
 /** Watermark sentinel: no frame has been painted yet, so nothing is proven renderable. */
 const PENDING_FIRST_PAINT = -1 as const;
+
+/** What a cached child render was produced under; any difference makes it stale. */
+type RenderKey = {
+	readonly width: number;
+	readonly capabilities: TerminalCapabilities;
+	readonly generation: number;
+};
+
+type CachedChildRender = RenderKey & { readonly revision: number; readonly lines: readonly string[] };
+
+/**
+ * The leading run of revisioned children painted last frame. While every one of them is the same
+ * object at the same revision, their joined lines are reused as-is and none of them is rendered.
+ */
+type StablePrefix = RenderKey & {
+	readonly from: number;
+	/** Render revision clock when the prefix was checked; unchanged means no revisioned child changed. */
+	readonly clock: number;
+	readonly children: readonly Component[];
+	readonly revisions: readonly number[];
+	readonly heights: readonly number[];
+	readonly lines: readonly string[];
+};
+
+type PaintedLayout = { readonly width: number; readonly children: readonly Component[]; readonly heights: number[] };
 
 /**
  * A transcript container that paints a bounded, fully-styled tail on its first
@@ -62,6 +97,12 @@ export class ProgressiveTranscriptContainer extends Container {
 	/** Width of the last painted frame, reused to warm the head at the real render width. */
 	private lastRenderWidth: number | undefined;
 
+	private readonly childRenders = new WeakMap<Component, CachedChildRender>();
+	/** Bumped by `invalidate()` (theme change): every cached render from before is stale. */
+	private generation = 0;
+	private stablePrefix: StablePrefix | undefined;
+	private paintedLayout: PaintedLayout | undefined;
+
 	constructor(options: ProgressiveTranscriptOptions) {
 		super();
 		this.tailBudget = options.tailBudget;
@@ -80,7 +121,7 @@ export class ProgressiveTranscriptContainer extends Container {
 		if (this.visibleFrom === 0 || total === 0) {
 			this.visibleFrom = 0;
 			this.warmedFrom = 0;
-			return super.render(width);
+			return this.renderRange(0, total, width, true);
 		}
 
 		const firstVisible = Math.max(0, total - this.tailBudget);
@@ -88,7 +129,7 @@ export class ProgressiveTranscriptContainer extends Container {
 			// Whole transcript fits the visible budget: nothing is worth deferring.
 			this.visibleFrom = 0;
 			this.warmedFrom = 0;
-			return super.render(width);
+			return this.renderRange(0, total, width, true);
 		}
 
 		if (this.visibleFrom === PENDING_FIRST_PAINT) {
@@ -96,7 +137,35 @@ export class ProgressiveTranscriptContainer extends Container {
 			this.warmedFrom = firstVisible;
 		}
 		this.scheduleHydration();
-		return this.renderRange(this.visibleFrom, total, width);
+		return this.renderRange(this.visibleFrom, total, width, true);
+	}
+
+	/** Drop every cached child render, e.g. after a theme change reached children outside this container. */
+	invalidateCache(): void {
+		this.generation += 1;
+		this.stablePrefix = undefined;
+		this.paintedLayout = undefined;
+	}
+
+	override invalidate(): void {
+		this.invalidateCache();
+		super.invalidate();
+	}
+
+	override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		const layout = this.paintedLayout;
+		if (layout?.width !== event.width) return super.handleMouse(event);
+		if (event.y < 0 || event.y >= event.height) return undefined;
+		let childY = 0;
+		for (let index = 0; index < layout.children.length; index++) {
+			const child = layout.children[index]!;
+			const height = layout.heights[index] ?? 0;
+			if (event.y >= childY && event.y < childY + height) {
+				return dispatchMouseEvent(child, { ...event, y: event.y - childY, height });
+			}
+			childY += height;
+		}
+		return undefined;
 	}
 
 	// `addChild` is inherited: a live message appended before hydration finishes
@@ -105,12 +174,16 @@ export class ProgressiveTranscriptContainer extends Container {
 	override clear(): void {
 		this.cancelHydration();
 		this.rearmHydration();
+		this.stablePrefix = undefined;
+		this.paintedLayout = undefined;
 		super.clear();
 	}
 
 	override detachAll(): void {
 		this.cancelHydration();
 		this.rearmHydration();
+		this.stablePrefix = undefined;
+		this.paintedLayout = undefined;
 		super.detachAll();
 	}
 
@@ -140,23 +213,123 @@ export class ProgressiveTranscriptContainer extends Container {
 	// `invalidate` is inherited: `Container.invalidate` already walks every child,
 	// so a theme switch reaches the un-warmed head and it cannot warm with a stale palette.
 
-	private renderRange(from: number, to: number, width: number): string[] {
-		const lines: string[] = [];
-		for (let index = from; index < to; index++) {
+	/**
+	 * Render children `[from, to)`. A child that reports a render revision is rendered once per
+	 * (width, capabilities, theme generation, revision) and its lines are reused afterwards; the
+	 * leading run of such children is reused as one joined block while it is unchanged. Children
+	 * without a revision (streaming, animating, unknown) render every frame exactly as before.
+	 */
+	private renderRange(from: number, to: number, width: number, painted = false): string[] {
+		const key: RenderKey = { width, capabilities: getCapabilities(), generation: this.generation };
+		const reused = painted ? this.reusablePrefix(from, to, key) : undefined;
+		const prefixChildren: Component[] = reused ? [...reused.children] : [];
+		const prefixRevisions: number[] = reused ? [...reused.revisions] : [];
+		const prefixHeights: number[] = reused ? [...reused.heights] : [];
+		const prefixChunks: (readonly string[])[] = reused ? [reused.lines] : [];
+		const tailChunks: (readonly string[])[] = [];
+		const tailChildren: Component[] = [];
+		const tailHeights: number[] = [];
+		let prefixOpen = true;
+		for (let index = from + prefixChildren.length; index < to; index++) {
 			const child = this.children[index];
 			if (child === undefined) continue;
-			let childLines: string[];
-			try {
-				childLines = child.render(width);
-			} catch {
-				const componentName = child.constructor.name || "AnonymousComponent";
-				childLines = [`[render error: ${componentName}]`];
+			const { lines, revision } = this.renderChild(child, key);
+			if (prefixOpen && revision !== undefined) {
+				prefixChildren.push(child);
+				prefixRevisions.push(revision);
+				prefixHeights.push(lines.length);
+				prefixChunks.push(lines);
+				continue;
 			}
-			for (const line of childLines) {
-				lines.push(line);
+			prefixOpen = false;
+			tailChildren.push(child);
+			tailHeights.push(lines.length);
+			tailChunks.push(lines);
+		}
+		if (!painted) return joinLineArrays([...prefixChunks, ...tailChunks]);
+
+		const prefixLines = prefixChunks.length === 1 ? prefixChunks[0]! : joinLineArrays(prefixChunks);
+		this.stablePrefix = {
+			...key,
+			clock: currentRenderRevision(),
+			from,
+			children: prefixChildren,
+			revisions: prefixRevisions,
+			heights: prefixHeights,
+			lines: prefixLines,
+		};
+		this.paintedLayout = {
+			width,
+			children: [...prefixChildren, ...tailChildren],
+			heights: [...prefixHeights, ...tailHeights],
+		};
+		return joinLineArrays([prefixLines, ...tailChunks]);
+	}
+
+	/**
+	 * The longest leading part of last frame's stable prefix whose children are still the same objects
+	 * at the same revisions. While the render revision clock has not moved no revisioned component
+	 * changed, so only identities are compared.
+	 */
+	private reusablePrefix(from: number, to: number, key: RenderKey): StablePrefix | undefined {
+		const prefix = this.stablePrefix;
+		if (
+			prefix === undefined ||
+			prefix.from !== from ||
+			prefix.width !== key.width ||
+			prefix.capabilities !== key.capabilities ||
+			prefix.generation !== key.generation
+		) {
+			return undefined;
+		}
+		const clockUnchanged = prefix.clock === currentRenderRevision();
+		const limit = Math.min(prefix.children.length, to - from);
+		let kept = 0;
+		while (kept < limit) {
+			const child = this.children[from + kept];
+			if (child !== prefix.children[kept]) break;
+			if (!clockUnchanged && child.getRenderRevision?.() !== prefix.revisions[kept]) break;
+			kept++;
+		}
+		if (kept === prefix.children.length) return prefix;
+		if (kept === 0) return undefined;
+		let keptLines = 0;
+		for (let index = 0; index < kept; index++) keptLines += prefix.heights[index] ?? 0;
+		return {
+			...prefix,
+			children: prefix.children.slice(0, kept),
+			revisions: prefix.revisions.slice(0, kept),
+			heights: prefix.heights.slice(0, kept),
+			lines: prefix.lines.slice(0, keptLines),
+		};
+	}
+
+	private renderChild(child: Component, key: RenderKey): { lines: readonly string[]; revision: number | undefined } {
+		const revision = child.getRenderRevision?.();
+		if (revision !== undefined) {
+			const cached = this.childRenders.get(child);
+			if (
+				cached !== undefined &&
+				cached.revision === revision &&
+				cached.width === key.width &&
+				cached.capabilities === key.capabilities &&
+				cached.generation === key.generation
+			) {
+				return { lines: cached.lines, revision };
 			}
 		}
-		return lines;
+		let lines: string[];
+		try {
+			lines = child.render(key.width);
+		} catch {
+			const componentName = child.constructor.name || "AnonymousComponent";
+			return { lines: [`[render error: ${componentName}]`], revision: undefined };
+		}
+		// Read the revision again: a component may settle lazily inside render (ThemedText rebuilds there).
+		const settled = child.getRenderRevision?.();
+		if (settled === undefined) return { lines, revision: undefined };
+		this.childRenders.set(child, { ...key, revision: settled, lines });
+		return { lines, revision: settled };
 	}
 
 	private scheduleHydration(): void {
