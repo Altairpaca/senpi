@@ -26,7 +26,6 @@ import { rename, rm } from "node:fs/promises";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
-	ProcessIdentityUnreadableError,
 	parseDaemonPidFile,
 	processMatchesPidFile,
 	readProcessStartTime,
@@ -169,15 +168,6 @@ export async function releaseGeneration(
 }
 
 /**
- * A LEGACY host's flat registration, if one is there. This build never writes and never removes it:
- * it is evidence that a host from before layout 2 may still own the socket, and nothing more.
- */
-export async function readLegacyHostRecord(paths: HostDaemonPaths): Promise<DaemonPidFile | undefined> {
-	const text = await readFileOrUndefined(paths.legacyPidFile);
-	return text === undefined ? undefined : parseDaemonPidFile(text);
-}
-
-/**
  * The generation serving this socket, when - and only when - its record PROVES which process that
  * is. An owner nobody can prove may not be signalled at all (I1), so an unreadable identity, a
  * missing guard or a record about another endpoint all read as "no owner".
@@ -193,25 +183,6 @@ export async function provenOwner(
 	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false))
 		? { ...identity, instanceId: registered.instanceId }
 		: undefined;
-}
-
-/**
- * Whether a LEGACY host is still running behind the flat registration. An identity that cannot be
- * read on a live pid counts as running: the point of asking is to refuse rather than start a second
- * host beside a process that may still own the socket.
- */
-export async function legacyHostIsLive(
-	paths: HostDaemonPaths,
-	probe: (pid: number) => Promise<string | undefined>,
-): Promise<boolean> {
-	const record = await readLegacyHostRecord(paths);
-	if (record === undefined) return false;
-	try {
-		return await processMatchesPidFile(record, probe);
-	} catch (error: unknown) {
-		if (error instanceof ProcessIdentityUnreadableError) return true;
-		throw error;
-	}
 }
 
 /**

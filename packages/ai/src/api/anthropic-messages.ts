@@ -75,9 +75,19 @@ import {
 	parseStickyFallbackReceipt,
 	type ServerFallbackReceipt,
 } from "../utils/server-fallback-receipt.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { resolveRootObjectSchema } from "../utils/tool-schema-compat.ts";
+import {
+	getCurrentTools,
+	getDeclaredTools,
+	getInitialSystemMessage,
+	hasToolRedefinitions,
+	normalizeContext,
+	resolveTranscript,
+	type TranscriptContext,
+} from "../utils/transcript.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -140,7 +150,7 @@ function getCacheControl(
 // The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
 // (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
 // (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
-const claudeCodeVersion = "2.1.284";
+const claudeCodeVersion = "2.1.285";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -321,6 +331,31 @@ function shouldUseServerSideFallbackBeta(model: Model<"anthropic-messages">): bo
 
 const MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01";
 const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
+const MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01";
+
+/**
+ * Stable deferred tool declared whenever native tool changes are in use. Anthropic adds
+ * hidden prompt scaffolding as soon as any tool has `defer_loading`; declaring this
+ * placeholder from the first request keeps that scaffolding in the cached prefix, so the
+ * first real late tool does not invalidate the cache (measured: full miss without it).
+ * It is never activated and the model cannot see it.
+ */
+const DEFERRED_TOOL_PLACEHOLDER: BetaTool = {
+	name: "__pi_deferred_placeholder__",
+	description: "Reserved placeholder. Never available. Never call this.",
+	input_schema: { type: "object", properties: {}, required: [] },
+	defer_loading: true,
+};
+
+// Upstream mid-conversation system messages and native tool changes. Read from the model
+// compat directly: both default off, and the shared getAnthropicCompat keeps fork defaults.
+function supportsMidConvoSystemMessages(model: Model<"anthropic-messages">): boolean {
+	return model.compat?.supportsMidConvoSystemMessages ?? false;
+}
+
+function supportsMidConvoToolChanges(model: Model<"anthropic-messages">): boolean {
+	return model.compat?.supportsMidConvoToolChanges ?? false;
+}
 
 type UnsignedThinkingReplay = "text" | "empty-signature";
 
@@ -977,6 +1012,17 @@ function isToolLoopContinuation(messages: MessageParam[]): boolean {
 	);
 }
 
+function markSystemMessageCacheCheckpoint(message: MessageParam, cacheControl: CacheControlEphemeral): void {
+	if (!Array.isArray(message.content)) return;
+	const lastBlock = message.content[message.content.length - 1];
+	if (
+		lastBlock &&
+		(lastBlock.type === "text" || lastBlock.type === "tool_addition" || lastBlock.type === "tool_removal")
+	) {
+		lastBlock.cache_control = cacheControl;
+	}
+}
+
 function markUserMessageCacheCheckpoint(message: MessageParam, cacheControl: CacheControlEphemeral): boolean {
 	if (message.role !== "user") return false;
 	if (Array.isArray(message.content)) {
@@ -1179,10 +1225,12 @@ async function* iterateAnthropicEvents(
 
 export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: AnthropicOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = resolveTranscript(context, supportsMidConvoSystemMessages(model));
+	const currentTools = getCurrentTools(normalizedContext.messages);
 
 	(async () => {
 		const providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort ?? "high") : undefined;
@@ -1226,9 +1274,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
-					const hasImages = hasCopilotVisionInput(context.messages);
+					const hasImages = hasCopilotVisionInput(normalizedContext.messages);
 					copilotDynamicHeaders = buildCopilotDynamicHeaders({
-						messages: context.messages,
+						messages: normalizedContext.messages,
 						hasImages,
 					});
 				}
@@ -1245,7 +1293,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						model,
 						apiKey,
 						options?.interleavedThinking ?? true,
-						shouldUseFineGrainedToolStreamingBeta(model, context),
+						shouldUseFineGrainedToolStreamingBeta(model, normalizedContext),
 						options?.refusalFallbacks !== undefined,
 						optionsHeaders,
 						options?.fetch,
@@ -1293,7 +1341,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					? "text"
 					: getAnthropicCompat(model).unsignedThinkingReplay;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
-				let params = buildParams(model, context, isOAuth, options, unsignedThinkingReplay);
+				let params = buildParams(model, normalizedContext, isOAuth, options, unsignedThinkingReplay);
 				const nextParams = await options?.onPayload?.(params, model);
 				if (nextParams !== undefined) {
 					params = nextParams as MessageCreateParamsStreaming;
@@ -1384,22 +1432,29 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, requestSignal)) {
+				await options?.onProviderStreamEvent?.(event, model);
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					const transformations = event.message.input_transformations;
 					if (Array.isArray(transformations)) inputTransformations = transformations;
-					output.model = event.message.model;
+					// Relays may report a renamed model for the same deployment, so the requested id stays
+					// on the message (signed thinking keeps replaying) and the reported id is recorded
+					// separately. A served model that is one of the request's allowed server-side
+					// fallbacks is a real substitution: it becomes the message model, as the fork's
+					// fallback-boundary replay and receipts expect.
+					const responseModel = event.message.model;
+					if (responseModel !== model.id) output.responseModel = responseModel;
 					const fallback =
-						output.model === model.id
+						responseModel === model.id
 							? undefined
-							: model.compat?.allowedFallbackModels?.find(
-									(candidate) =>
-										typeof candidate !== "string" &&
-										candidate.provider === model.provider &&
-										candidate.model === output.model,
+							: model.compat?.allowedFallbackModels?.find((candidate) =>
+									typeof candidate === "string"
+										? candidate === responseModel
+										: candidate.provider === model.provider && candidate.model === responseModel,
 								);
+					if (fallback !== undefined) output.model = responseModel;
 					const fallbackCost = typeof fallback === "string" ? undefined : fallback?.cost;
-					usageModel = fallbackCost ? { ...model, id: output.model, cost: fallbackCost } : model;
+					usageModel = fallbackCost ? { ...model, id: responseModel, cost: fallbackCost } : model;
 					// Capture initial token usage from message_start event
 					// This ensures we have input token counts even if the stream is aborted early
 					output.usage.input = event.message.usage.input_tokens || 0;
@@ -1462,9 +1517,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							type: "toolCall",
 							id: event.content_block.id,
 							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, context.tools)
+								? fromClaudeCodeName(event.content_block.name, currentTools)
 								: event.content_block.name,
-							arguments: isRecord(event.content_block.input) ? event.content_block.input : {},
+							arguments: isRecord(event.content_block.input)
+								? (event.content_block.input as ToolCall["arguments"])
+								: {},
 							partialJson: "",
 							index: event.index,
 						};
@@ -1597,6 +1654,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						}
 						if (event.usage.cache_creation_input_tokens != null) {
 							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+						}
+						// Vercel AI Gateway includes the TTL breakdown in deltas, though the SDK only types it on message_start.
+						const cacheCreation = (
+							event.usage as typeof event.usage & { cache_creation?: { ephemeral_1h_input_tokens?: number } }
+						).cache_creation;
+						if (cacheCreation?.ephemeral_1h_input_tokens != null) {
+							output.usage.cacheWrite1h = cacheCreation.ephemeral_1h_input_tokens;
 						}
 						// Anthropic reports reasoning tokens as a subset of output tokens.
 						const thinkingTokens = event.usage.output_tokens_details?.thinking_tokens;
@@ -1790,7 +1854,7 @@ function mapThinkingLevelToEffort(
 
 export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOptions> = (
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
@@ -1988,7 +2052,10 @@ export function buildAnthropicWarmPromptCacheParams(
 	context: Context,
 	options?: AnthropicOptions,
 ): MessageCreateParamsNonStreaming {
-	const params = buildParams(model, context, false, {
+	// Public fork entry (warmPromptCache, cache-keepalive): accepts a raw Context and builds
+	// the same transcript the turn's stream() resolves, so the warmed prefix matches.
+	const transcript = resolveTranscript(normalizeContext(context), supportsMidConvoSystemMessages(model));
+	const params = buildParams(model, transcript, false, {
 		...options,
 		maxTokens: 0,
 		thinkingEnabled: undefined,
@@ -2009,8 +2076,9 @@ export function buildAnthropicWarmPromptCacheParams(
 
 function getBetaFeatures(
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	isOAuthToken: boolean,
+	nativeToolChanges: boolean,
 	options?: AnthropicOptions,
 ): NonNullable<MessageCreateParamsStreaming["betas"]> {
 	let configuredFeatures: string | null | undefined;
@@ -2045,35 +2113,54 @@ function getBetaFeatures(
 	if (model.compat?.supportsMidConvoEffort === true) {
 		features.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA);
 	}
+	if (nativeToolChanges) features.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
 	return [...new Set(features)];
 }
 
 function buildParams(
 	model: Model<"anthropic-messages">,
-	context: Context,
+	context: TranscriptContext,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 	unsignedThinkingReplay = getAnthropicCompat(model).unsignedThinkingReplay,
 ): MessageCreateParamsStreamingWithFallbacks {
 	const compat = getAnthropicCompat(model);
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention, options?.env);
+	const initialSystemMessage = getInitialSystemMessage(context.messages);
+	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
 		preserveThinking: options?.thinkingEnabled === true,
 		preserveUnsignedThinking: true,
 	});
+	// The prompt travels in `params.system`; the leading system message is not a turn.
+	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
+	// Native tool changes reference tools by name, so a redefined name cannot be expressed,
+	// and Anthropic rejects a tool list where every tool is deferred, so there must be an
+	// initial active tool to anchor the deferred ones. Otherwise the current tool list is sent.
+	const initialTools = initialSystemMessage?.toolsAdded ?? [];
+	const nativeToolChanges =
+		supportsMidConvoSystemMessages(model) &&
+		supportsMidConvoToolChanges(model) &&
+		initialTools.length > 0 &&
+		!hasToolRedefinitions(context.messages);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
 	// A marker on a discarded pre-fallback result must not defer its tool:
 	// convertMessages drops that result, so no tool_reference would replay to
 	// load the deferred definition.
-	const discardedFallbackToolCallIds = collectDiscardedFallbackToolCallIds(transformedMessages, model);
-	const partitionMessages = transformedMessages.filter(
+	const discardedFallbackToolCallIds = collectDiscardedFallbackToolCallIds(conversationMessages, model);
+	const partitionMessages = conversationMessages.filter(
 		(message) => !(message.role === "toolResult" && discardedFallbackToolCallIds.has(message.toolCallId)),
 	);
-	const toolPlacement = splitDeferredTools(
-		{ ...context, messages: partitionMessages },
-		compat.supportsToolReferences,
-		normalizeToolName,
-	);
+	// Without native tool changes, the fork's transcript-loaded deferral applies to the current
+	// tool list: tools first surfaced by a tool result's `addedToolNames` are declared with
+	// `defer_loading` and loaded by a `tool_reference`. Native tool changes own deferral otherwise.
+	const toolPlacement = nativeToolChanges
+		? { immediate: [] as Tool[], deferred: new Map<string, Tool>() }
+		: splitDeferredTools(
+				{ tools: getCurrentTools(context.messages), messages: partitionMessages },
+				compat.supportsToolReferences,
+				normalizeToolName,
+			);
 	let immediateTools = toolPlacement.immediate;
 	let deferredTools = [...toolPlacement.deferred.values()];
 	if (immediateTools.length === 0 && deferredTools.length > 0) {
@@ -2082,9 +2169,9 @@ function buildParams(
 	}
 	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
 	const activeEffort = options?.effort ?? "high";
-	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
+	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
 	const convertedMessages = convertMessages(
-		transformedMessages,
+		conversationMessages,
 		model,
 		isOAuthToken,
 		cacheControl,
@@ -2092,6 +2179,7 @@ function buildParams(
 		deferredToolNames,
 		normalizeToolName,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
+		nativeToolChanges,
 	);
 	const messages =
 		model.compat?.supportsMidConvoEffort === true
@@ -2101,8 +2189,12 @@ function buildParams(
 	// against the actual last user/tool-result message so the marker cannot displace cache_control.
 	if (model.compat?.supportsMidConvoEffort === true && cacheControl) {
 		for (let index = messages.length - 1; index >= 0; index--) {
-			if (messages[index].role === "user") {
-				markUserMessageCacheCheckpoint(messages[index], cacheControl);
+			const message = messages[index];
+			// A native system update after the last turn already holds the checkpoint;
+			// effort markers carry no content.
+			if (message.role === "system" && Array.isArray(message.content) && message.content.length > 0) break;
+			if (message.role === "user") {
+				markUserMessageCacheCheckpoint(message, cacheControl);
 				break;
 			}
 		}
@@ -2121,22 +2213,22 @@ function buildParams(
 			{
 				type: "text",
 				text: "You are Claude Code, Anthropic's official CLI for Claude.",
-				...(!context.systemPrompt && cacheControl ? { cache_control: cacheControl } : {}),
+				...(!initialSystemText && cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
-		if (context.systemPrompt) {
+		if (initialSystemText) {
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(initialSystemText),
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			});
 		}
-	} else if (context.systemPrompt) {
+	} else if (initialSystemText) {
 		// Add cache control to system prompt for non-OAuth tokens
 		params.system = [
 			{
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(initialSystemText),
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
@@ -2152,14 +2244,40 @@ function buildParams(
 		});
 	}
 
-	if (immediateTools.length > 0 || deferredTools.length > 0) {
+	const toolCacheControl = compat.supportsCacheControlOnTools ? cacheControl : undefined;
+	if (nativeToolChanges) {
+		// Initial tools stay active with the cache breakpoint on the last one. Every later
+		// declaration is deferred and only surfaced by its `tool_addition` block; removed
+		// tools stay declared and are withdrawn by `tool_removal`. The request-level list
+		// therefore only grows, keeping the cached prefix intact across tool changes.
+		const initialNames = new Set(initialTools.map((tool) => tool.name));
+		const laterTools = getDeclaredTools(context.messages).filter((tool) => !initialNames.has(tool.name));
+		params.tools = [
+			...convertTools(
+				initialTools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+				toolCacheControl,
+			),
+			DEFERRED_TOOL_PLACEHOLDER,
+			...convertTools(
+				laterTools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+				undefined,
+				true,
+			),
+		];
+	} else if (immediateTools.length > 0 || deferredTools.length > 0) {
 		params.tools = [
 			...convertTools(
 				immediateTools,
 				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
-				compat.supportsCacheControlOnTools ? cacheControl : undefined,
+				toolCacheControl,
 			),
 			...convertTools(
 				deferredTools,
@@ -2349,10 +2467,21 @@ function convertMessages(
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
+	nativeToolChanges = false,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
 	const loadedToolNames = new Set<string>();
+	// Later system messages are held back and emitted directly before the next assistant
+	// message (or at the end of the transcript). Anthropic requires `tool_result` blocks to
+	// immediately follow their `tool_use`, so a system message between them is rejected; this
+	// also mirrors where the managed-effort system messages are inserted. As a result an
+	// update placed before a user message in the transcript lands after it on the wire.
+	const pendingSystemMessages: MessageParam[] = [];
+	const flushPendingSystemMessages = (): void => {
+		params.push(...pendingSystemMessages);
+		pendingSystemMessages.length = 0;
+	};
 	// Tool calls from a declined pre-fallback attempt are dropped from their
 	// assistant turn below; drop their tool_results in lockstep so none dangle.
 	const discardedFallbackToolCallIds = collectDiscardedFallbackToolCallIds(transformedMessages, model);
@@ -2368,7 +2497,28 @@ function convertMessages(
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
 
-		if (msg.role === "user") {
+		if (msg.role === "system") {
+			// Later system messages only reach this point when the model accepts them natively;
+			// otherwise the transcript was collapsed into the leading message before conversion.
+			const text = renderSystemMessageUpdate(msg);
+			const blocks: ContentBlockParam[] = [];
+			if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
+			if (nativeToolChanges) {
+				for (const tool of msg.toolsRemoved ?? []) {
+					blocks.push({
+						type: "tool_removal",
+						tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
+					});
+				}
+				for (const tool of msg.toolsAdded ?? []) {
+					blocks.push({
+						type: "tool_addition",
+						tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
+					});
+				}
+			}
+			if (blocks.length > 0) pendingSystemMessages.push({ role: "system", content: blocks });
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				if (msg.content.trim().length > 0) {
 					const content = sanitizeSurrogates(msg.content);
@@ -2415,6 +2565,7 @@ function convertMessages(
 				appendUserBlocks(params, filteredBlocks);
 			}
 		} else if (msg.role === "assistant") {
+			flushPendingSystemMessages();
 			const blocks: ContentBlockParam[] = [];
 			const isSameModel = isSameAnthropicModel(msg, model);
 			// Blocks before the final fallback marker are the declined attempt; the
@@ -2548,6 +2699,15 @@ function convertMessages(
 		}
 	}
 
+	flushPendingSystemMessages();
+
+	// A trailing native system update carries the history checkpoint itself (upstream);
+	// otherwise the fork's final-user and tool-loop checkpoints apply.
+	const lastParam = params[params.length - 1];
+	if (cacheControl && lastParam?.role === "system") {
+		markSystemMessageCacheCheckpoint(lastParam, cacheControl);
+		return { messages: params, assistantLevels };
+	}
 	const retainPrecedingCheckpoint = isToolLoopContinuation(params);
 	if (cacheControl && params.length > 0 && markUserMessageCacheCheckpoint(params[params.length - 1], cacheControl)) {
 		if (retainPrecedingCheckpoint) {
@@ -2580,8 +2740,11 @@ function insertThinkingLevelMessages(
 	return messages;
 }
 
-function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages">, context: Context): boolean {
-	return !!context.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
+function shouldUseFineGrainedToolStreamingBeta(
+	model: Model<"anthropic-messages">,
+	context: TranscriptContext,
+): boolean {
+	return getCurrentTools(context.messages).length > 0 && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
 
 function convertTools(
