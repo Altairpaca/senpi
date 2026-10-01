@@ -6,6 +6,8 @@ import {
 	awaitCooperativeSettlement,
 	DEFAULT_INTERRUPT_BOUNDS,
 	type JavaScriptInterruptBounds,
+	restartedResult,
+	restartOutcome,
 	type WorkerRetirement,
 } from "./interrupt-bounds.ts";
 import {
@@ -27,7 +29,6 @@ import type {
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
 import { terminateProcessTrees } from "./process-tree-host.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun } from "./run-queue.ts";
-import { restartedResult, restartOutcome } from "./shell-interrupt.ts";
 import { bridgeError, WorkerStartupCancelledError } from "./worker-host.ts";
 import { WorkerSlot } from "./worker-slot.ts";
 
