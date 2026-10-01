@@ -14,6 +14,8 @@
 
 - On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
 
+- Binary sidecar staging now derives the codemode package's complete runtime dependency closure instead of copying only the parser, while preserving host-provided virtual modules and naming unresolved dependencies during packaging. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+
 ### Removed
 
 ## [2026.10.1-2] - 2026-10-01
@@ -140,8 +142,6 @@
 
 - With a ChatGPT subscription, image requests now use the subscription's own image generation instead of falling back to an unrelated OpenAI-compatible gateway that could answer 404. The native image tool used to be enabled only for the plain OpenAI Responses API, so subscription models on the Codex route never qualified; it now also qualifies on the subscription's own host. Thanks [@DevNewbie1826](https://github.com/DevNewbie1826). ([#2432](https://github.com/code-yeongyu/senpi/issues/2432))
 - Package operations no longer flash a visible console window on Windows when the package manager starts install, update or discovery subprocesses. Thanks @willowite. ([#2450](https://github.com/code-yeongyu/senpi/issues/2450))
-
-- Binary sidecar staging now derives the codemode package's complete runtime dependency closure instead of copying only the parser, while preserving host-provided virtual modules and naming unresolved dependencies during packaging. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 
 - A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
 
