@@ -10,7 +10,10 @@ import {
 	mapPiToolNameToSdk,
 } from "../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
 import type { ContentBlockParam } from "../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
-import { buildDeltaPromptBlocks } from "../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
+import {
+	buildDeltaPromptBlocks,
+	type SentMessage,
+} from "../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
 
 const SCREENSHOT = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8ioAAAAASUVORK5CYII=";
 const READ = mapPiToolNameToSdk("read");
@@ -183,6 +186,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		const fresh = upload(image(SCREENSHOT), 5);
 
 		expect(images(rebuild([...history, fresh]))).toEqual([SCREENSHOT, SCREENSHOT]);
-		expect(images(buildDeltaPromptBlocks([...history, fresh]))).toEqual([SCREENSHOT, SCREENSHOT, SCREENSHOT]);
+		const sent = [...history, fresh].filter((message): message is SentMessage => message.role !== "assistant");
+		expect(images(buildDeltaPromptBlocks(sent))).toEqual([SCREENSHOT, SCREENSHOT, SCREENSHOT]);
 	});
 });
