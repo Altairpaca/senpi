@@ -19,6 +19,8 @@
 
 - The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. Thanks to @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
 
+- Internal bookkeeping, questions, memory, goals and terminal observation no longer ask for permission in restricted modes. Monitor commands and file watches retain execution and filesystem approval, and all tool-declared action permissions remain enforced ([#2511](https://github.com/code-yeongyu/senpi/issues/2511)).
+
 - Deferred extension tools, including computer use, keep working after hot-reload. The session now retires old lazy-tool activation callbacks before binding the replacement extension generation ([omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
 
 - Bash approvals from eval cells now reach the submitting RPC client instead of the persistent kernel's original connection, including detached cells that ask after their original turn completes. Approving returns command output to the cell; denying returns the ordinary permission error. ([#2512](https://github.com/code-yeongyu/senpi/issues/2512))
