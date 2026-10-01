@@ -36,6 +36,8 @@
 
 ### Changed
 
+- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
 - ChatGPT Subscription requests now send the `x-codex-routing-hint` header that codex sends (`model=<id>`, plus `;tier=<tier>` when a service tier is requested), on both SSE requests and the WebSocket handshake. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410))
 
 - ChatGPT Subscription, OpenRouter and Radius browser sign-in share the inherited callback server, which rejects provider authorization-error redirects and falls back to pasting the redirect URL when the callback port is in use. The OAuth page helpers are available as `utils/oauth-page`. The provider id stays `chatgpt-subscription`; the upstream "OpenAI Codex (legacy)" rename and Sign in with ChatGPT on the `openai` provider are not adopted.
@@ -80,8 +82,6 @@
 ### Added
 
 ### Changed
-
-- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
 
 - The `anthropic-subscription` (Claude SDK) lane now reports the prompt-cache TTL Claude Code actually uses: 1 hour on a Claude subscription, 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch puts Claude Code on API, gateway or cloud billing. `CLAUDE_CODE_PROMPT_CACHE_TTL`, `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` are honored the way Claude Code honors them. Cache-aware waits sized from the TTL (the prompt-cache safe-wait budget) grow accordingly on a subscription. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
 
