@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
+
 ### Removed
 
 ## [2026.10.1-2] - 2026-10-01
@@ -21,6 +23,8 @@
 ### Changed
 
 ### Fixed
+
+- In a compiled build with no Bun on `PATH` (for example a desktop app started from Finder, or a standalone binary on a machine without Bun), `bun` and `bunx` from an eval cell, the bash tool and the terminal now run Bun itself. Before this fix, an eval cell's `bun test` started a second agent and returned its reply as a passing result with exit code 0, and the bash tool reported `bun: command not found`. A Bun you installed and put on `PATH` is still used first. ([omo#9362](https://github.com/code-yeongyu/oh-my-openagent/issues/9362))
 
 ### Removed
 
@@ -115,10 +119,6 @@
 - Terminals with `TERM=*-direct` are treated as truecolor, and fuzzy search on long texts uses native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)) (inherited).
 
 ### Fixed
-
-- On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
-
-- In a compiled build with no Bun on `PATH` (for example a desktop app started from Finder, or a standalone binary on a machine without Bun), `bun` and `bunx` from an eval cell, the bash tool and the terminal now run Bun itself. Before this fix, an eval cell's `bun test` started a second agent and returned its reply as a passing result with exit code 0, and the bash tool reported `bun: command not found`. A Bun you installed and put on `PATH` is still used first. ([omo#9362](https://github.com/code-yeongyu/oh-my-openagent/issues/9362))
 
 - Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 
