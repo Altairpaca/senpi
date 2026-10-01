@@ -107,10 +107,13 @@ export class McpService {
 
 	readonly #registry: HostMcpRegistry;
 	readonly #shareConnections: boolean;
+	readonly #servesManySessions: boolean;
 
-	constructor(options: Pick<McpSessionOptions, "mcpRegistry"> = {}) {
+	/** `servesManySessions` marks the process-wide service every classic session attaches to. */
+	constructor(options: Pick<McpSessionOptions, "mcpRegistry"> & { readonly servesManySessions?: boolean } = {}) {
 		this.#registry = options.mcpRegistry ?? new HostMcpRegistry();
 		this.#shareConnections = options.mcpRegistry !== undefined;
+		this.#servesManySessions = options.servesManySessions === true;
 	}
 
 	async attachSession(
@@ -179,6 +182,8 @@ export class McpService {
 			}
 		}
 		const previous = this.#bindings.get(pi);
+		// A session-owned service serves exactly one session: a new attach takes over its binding.
+		if (!this.#servesManySessions) this.#bindings.clear();
 		const binding: McpSessionBinding = {
 			pi,
 			fallbackToolSearch,
@@ -830,7 +835,7 @@ let service: McpService | null = null;
 
 export function getMcpService(): McpService {
 	if (service === null || service.isDisposed()) {
-		service = new McpService();
+		service = new McpService({ servesManySessions: true });
 	}
 	return service;
 }
