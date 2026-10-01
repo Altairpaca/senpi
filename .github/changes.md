@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `.github/workflows/ci.yml` adds the `python-kernel-windows` job with slow/hung startup regressions and a compiled Python host exercising cold and warm cells on `windows-latest`. The `Check and test` fan-in requires that job.
+- `.github/workflows/ci.yml` adds the `python-kernel-windows` job with slow/hung startup regressions and a compiled Python host exercising cold and warm cells on `windows-latest`. The `Check and test` fan-in requires that job and includes its result in the workflow summary.
 
 ### Why
 

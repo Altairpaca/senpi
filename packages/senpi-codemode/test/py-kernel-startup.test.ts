@@ -57,7 +57,10 @@ describe("Python startup progress", () => {
 
 		// Then: the error identifies the stalled stage, and the owned child is retired.
 		const error = await outcome;
-		expect(error).toMatchObject({ stage: "stdlib-imports" });
+		expect(error).toMatchObject({
+			stage: "stdlib-imports",
+			message: expect.stringContaining("import diagnostic"),
+		});
 		expect(error instanceof Error && error.message).toContain("stdlib-imports");
 		expect(child.killSignals).toEqual(["SIGKILL"]);
 	});

@@ -576,6 +576,7 @@ jobs:
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
             echo "- claude-executable-windows: ${{ needs.claude-executable-windows.result }}"
             echo "- webview-kernel: ${{ needs.webview-kernel.result }}"
+            echo "- python-kernel-windows: ${{ needs.python-kernel-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 

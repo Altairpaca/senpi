@@ -27,7 +27,7 @@ try {
 			});
 			const readyMs = performance.now() - begin;
 			try {
-				const result = await kernel.run({ cellId: label, code: "2 + 2" });
+				const result = await kernel.run({ cellId: label, code: "2 + 2", timeoutMs: 5_000 });
 				if (!result.ok || result.valueRepr !== "4") throw new Error(`Python QA failed: ${JSON.stringify(result)}`);
 				console.log("WORKING python-startup", JSON.stringify({ label, readyMs, stages, result: result.valueRepr }));
 			} finally {
@@ -37,7 +37,13 @@ try {
 			if (!(error instanceof Error)) throw error;
 			console.error(
 				"WORKING python-startup",
-				JSON.stringify({ label, stages, failedMs: performance.now() - begin, error: error.message }),
+				JSON.stringify({
+					label,
+					stages,
+					failedMs: performance.now() - begin,
+					errorName: error.name,
+					error: error.message,
+				}),
 			);
 			process.exitCode = 1;
 		}
