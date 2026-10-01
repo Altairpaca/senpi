@@ -12,6 +12,7 @@ import {
 } from "./gate-report.ts";
 import { measureSuite } from "./gate-suite.ts";
 import { measureSurfaces } from "./gate-surfaces.ts";
+import { assertFreshTarget } from "./gate-target.ts";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(scriptRoot, "..");
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
 	});
 	const requestedTarget = resolve(values.target);
 	const target = requestedTarget.endsWith("senpi-codemode") ? requestedTarget : resolve(requestedTarget, "packages/senpi-codemode");
+	await assertFreshTarget(target);
 	const manifest: unknown = JSON.parse(await readFile(resolve(packageRoot, "test/gate/runtimes.json"), "utf8"));
 	const golden: unknown = JSON.parse(await readFile(resolve(packageRoot, "test/gate/helpers.golden.json"), "utf8"));
 	const allowlist: unknown = JSON.parse(await readFile(resolve(packageRoot, "test/gate/allowlist.json"), "utf8"));
