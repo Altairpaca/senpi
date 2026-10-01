@@ -1408,6 +1408,21 @@ The login command is interactive mode's own command handler; an extension cannot
 ## 2026-09-10 - /tree edits carry the leaf token and reach shared hosts
 # changes
 
+## 2026-09-30 - Keep progressive transcript hydration watermark private
+
+### What changed
+
+- `ProgressiveTranscriptContainer` now warms deferred transcript children behind a private cache watermark while retaining the initially painted tail boundary for every live render.
+- Once warming completes, the fully cached history is published in one completion repaint rather than in geometry-changing chunks.
+
+### Why
+
+- A live assistant or tool render could previously expose each newly warmed chunk above the painted tail, visibly moving resumed transcripts while the user watched.
+
+### Verification
+
+- The progressive transcript container regression test appends a live child after exactly one warm macrotask and verifies that the first painted component remains unchanged.
+
 ## 2026-09-11 - Show the active brand changelog without cross-source updates (senpi#1583)
 
 ### What changed
