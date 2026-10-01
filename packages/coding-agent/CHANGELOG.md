@@ -66,6 +66,8 @@
 
 ### Changed
 
+- Leaner, stronger tests: 5 test files and 58 test cases that could not fail were removed (882 test lines net). Two deleted guards are back: one keeps `semver` out of the engine build identity, one keeps the legacy Claude SDK package name out of the package manifest. The image registry's import-failure test mock is repaired, and CI now runs the Bun provider-coverage and compiled provider-probe tests, which never ran there before. ([#2458](https://github.com/code-yeongyu/senpi/pull/2458), [#2466](https://github.com/code-yeongyu/senpi/pull/2466), [#2468](https://github.com/code-yeongyu/senpi/pull/2468), [#2469](https://github.com/code-yeongyu/senpi/pull/2469), [#2470](https://github.com/code-yeongyu/senpi/pull/2470), [#2472](https://github.com/code-yeongyu/senpi/pull/2472), [#2474](https://github.com/code-yeongyu/senpi/pull/2474))
+
 - A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
 
 - Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
