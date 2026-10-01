@@ -50,6 +50,26 @@ function addPackage(root, manifest) {
 	writeFileSync(join(root, "index.js"), `module.exports = ${JSON.stringify(manifest.version)};\n`);
 }
 
+function hostPackageRoots() {
+	const loader = ts.createSourceFile("loader.ts", readFileSync(
+		resolve("packages/coding-agent/src/core/extensions/loader.ts"), "utf8",
+	), ts.ScriptTarget.Latest, true);
+	const roots = new Set();
+	function visit(node) {
+		if (ts.isVariableDeclaration(node) && node.name.getText(loader) === "VIRTUAL_MODULES") {
+			assert.ok(node.initializer && ts.isObjectLiteralExpression(node.initializer));
+			for (const property of node.initializer.properties) {
+				const specifier = property.name.text;
+				roots.add(specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/"));
+			}
+		}
+		ts.forEachChild(node, visit);
+	}
+	visit(loader);
+	assert.ok(roots.size > 0);
+	return roots;
+}
+
 function runCopier(env = {}) {
 	return spawnSync(process.execPath, [scriptPath, outputRoot, manifestPath], {
 		encoding: "utf8",
@@ -84,22 +104,7 @@ describe("copy-codemode-sidecar", () => {
 
 	it("skips every host virtual package root and its exclusive dependencies", () => {
 		// Given the host's real table, independently enumerated by the TypeScript parser.
-		const loader = ts.createSourceFile("loader.ts", readFileSync(
-			resolve("packages/coding-agent/src/core/extensions/loader.ts"), "utf8",
-		), ts.ScriptTarget.Latest, true);
-		const roots = new Set();
-		function visit(node) {
-			if (ts.isVariableDeclaration(node) && node.name.getText(loader) === "VIRTUAL_MODULES") {
-				assert.ok(node.initializer && ts.isObjectLiteralExpression(node.initializer));
-				for (const property of node.initializer.properties) {
-					const specifier = property.name.text;
-					roots.add(specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/"));
-				}
-			}
-			ts.forEachChild(node, visit);
-		}
-		visit(loader);
-		assert.ok(roots.size > 0);
+		const roots = hostPackageRoots();
 		declareDependencies(Object.fromEntries([...roots].map((root) => [root, "1.0.0"])));
 		for (const name of roots) {
 			addPackage(join(sourceRoot, "node_modules", name), {
@@ -110,6 +115,26 @@ describe("copy-codemode-sidecar", () => {
 		const result = runCopier();
 		// Then no host tree is traversed or written at the actual output location.
 		assert.equal(result.status, 0, result.stderr);
+		for (const name of roots) {
+			assert.equal(existsSync(join(outputRoot, "node_modules", name)), false, name);
+		}
+	});
+
+	it("skips host virtual packages reached through a transitive dependency", () => {
+		// Given a staged dependency that depends on every host package root.
+		const roots = hostPackageRoots();
+		declareDependencies({ "host-consumer": "1.0.0" });
+		addPackage(join(sourceRoot, "node_modules", "host-consumer"), {
+			name: "host-consumer", version: "1.0.0", dependencies: Object.fromEntries([...roots].map((root) => [root, "1.0.0"])),
+		});
+		for (const name of roots) {
+			addPackage(join(sourceRoot, "node_modules", name), { name, version: "1.0.0" });
+		}
+		// When staging the consumer.
+		const result = runCopier();
+		// Then the consumer ships and the host provides every virtual package instead.
+		assert.equal(result.status, 0, result.stderr);
+		assert.equal(createRequire(join(outputRoot, "entry.js"))("host-consumer"), "1.0.0");
 		for (const name of roots) {
 			assert.equal(existsSync(join(outputRoot, "node_modules", name)), false, name);
 		}

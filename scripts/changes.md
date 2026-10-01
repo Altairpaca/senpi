@@ -3,7 +3,8 @@
 ### What changed
 
 - `scripts/copy-codemode-sidecar.mjs` mirrors source package nesting, audits every staged dependency edge, follows present optional dependencies, and tracks staged package paths rather than clearing the entire output install.
-- `scripts/copy-codemode-sidecar.test.mjs` and `scripts/copy-codemode-sidecar-closure.test.mjs` cover nested shadowing, workspace resolution, selected-file links, diagnostics, optional payloads, and owned cleanup.
+- `scripts/copy-codemode-sidecar.test.mjs` and `scripts/copy-codemode-sidecar-closure.test.mjs` cover nested shadowing, workspace resolution, selected-file links, diagnostics, optional payloads, owned cleanup, store-linked dependencies that the edge audit must reject, diamond graphs that share one staged package, host virtual packages reached transitively, and tampered ownership journals.
+- The ownership journal `.codemode-sidecar.json` (a JSON list of relative `node_modules` paths) is written next to the staged `node_modules`, so it now ships in `packages/coding-agent/dist` and in every release platform directory. This is intended: a rerun into the same output, including an extracted or reused release directory, removes only the paths it staged before and never touches packages it did not stage.
 - `scripts/build-binaries.sh` copies the archive manifest after guarded sidecar staging. `scripts/build-binaries-staging.test.mjs` executes that staging block against an isolated filesystem fixture.
 
 ### Why

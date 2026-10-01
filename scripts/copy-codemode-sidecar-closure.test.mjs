@@ -180,3 +180,60 @@ it("refuses a dependency collision without replacing an unrelated existing packa
 	assert.equal(result.status, 1);
 	assert.equal(createRequire(join(out, "entry.js"))("a"), "unrelated-a");
 });
+
+it("refuses a store-linked dependency whose staged mirror would resolve a different version", () => {
+	// Given a dependent linked into a store copy while a different version is hoisted.
+	pkg(source, "codemode", { a: "1", dep: "1" });
+	const modules = join(source, "node_modules");
+	pkg(join(modules, "a"), "a", { dep: "1" });
+	writeFileSync(join(modules, "a/index.js"), "module.exports = require('dep');");
+	pkg(join(modules, "dep"), "dep-hoisted");
+	pkg(join(modules, ".store/dep@2/node_modules/dep"), "dep-store");
+	mkdirSync(join(modules, "a/node_modules"));
+	symlinkSync(join(modules, ".store/dep@2/node_modules/dep"), join(modules, "a/node_modules/dep"), "junction");
+	assert.equal(createRequire(join(modules, "a/package.json"))("dep"), "dep-store");
+	// When staging a closure whose mirrored edge would silently switch versions.
+	const result = run();
+	// Then packaging fails instead of shipping the hoisted version to the dependent.
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /Conflicting codemode sidecar dependency dep required by/);
+});
+
+it("stages a package shared by two dependents once when both resolve the same source", () => {
+	// Given a diamond graph whose dependents share one hoisted package.
+	pkg(source, "codemode", { left: "1", right: "1" });
+	const modules = join(source, "node_modules");
+	for (const name of ["left", "right"]) {
+		pkg(join(modules, name), name, { shared: "1" });
+		writeFileSync(join(modules, name, "index.js"), `module.exports = ${JSON.stringify(name)} + ':' + require('shared');`);
+	}
+	pkg(join(modules, "shared"), "shared");
+	// When staging the diamond.
+	const result = run();
+	// Then both dependents run against the single staged package.
+	assert.equal(result.status, 0, result.stderr);
+	rmSync(source, { recursive: true });
+	const require = createRequire(join(out, "entry.js"));
+	assert.equal(require("left"), "left:shared");
+	assert.equal(require("right"), "right:shared");
+});
+
+it("rejects tampered ownership entries without removing anything outside the output install", () => {
+	for (const tampered of [join("node_modules", "..", "..", "victim"), join(root, "victim")]) {
+		// Given a staged output whose journal points outside its install.
+		rmSync(out, { recursive: true, force: true });
+		pkg(source, "codemode", { keep: "1" });
+		pkg(join(source, "node_modules/keep"), "keep");
+		assert.equal(run().status, 0);
+		mkdirSync(join(root, "victim"), { recursive: true });
+		writeFileSync(join(root, "victim/f"), "victim");
+		writeFileSync(join(out, ".codemode-sidecar.json"), JSON.stringify([tampered]));
+		// When restaging.
+		const result = run();
+		// Then the copier refuses and both the victim and the staged install survive.
+		assert.equal(result.status, 1, tampered);
+		assert.match(result.stderr, /Invalid codemode sidecar ownership path/);
+		assert.equal(readFileSync(join(root, "victim/f"), "utf8"), "victim");
+		assert.equal(createRequire(join(out, "entry.js"))("keep"), "keep");
+	}
+});
