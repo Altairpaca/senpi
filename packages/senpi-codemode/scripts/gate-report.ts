@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
+import { GateInputError } from "./gate-input-error.ts";
+
+export { GateInputError };
 
 const strings = Type.Array(Type.String());
 const prompt = Type.Object({
@@ -37,15 +40,6 @@ export const allowlistSchema = Type.Object({
 	nodes: Type.Record(Type.String(), Type.Object({ additions: strings, reason: Type.String() })),
 });
 export const goldenSchema = Type.Record(Type.String(), strings);
-
-export class GateInputError extends Error {
-	readonly name = "GateInputError";
-	readonly input: string;
-	constructor(input: string) {
-		super(`Invalid gate input: ${input}`);
-		this.input = input;
-	}
-}
 
 export async function readReport(path: string): Promise<GateReport> {
 	const value: unknown = JSON.parse(await readFile(path, "utf8"));

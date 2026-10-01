@@ -373,6 +373,11 @@ interpreter fails rather than skipping a runtime. It does not gate wall-clock
 timing or absolute memory footprints; those belong to the paired benchmark.
 Ruby 3.4 and later also require the `base64` gem (`gem install base64 --version 0.3.0 --no-document`).
 
+The eager-import probe starts without third-party validation modules loaded.
+It validates observer records only after measurement, so a target sharing the
+harness dependency tree has the same cold census as a separate checkout.
+Module IDs are package-relative; no platform modules are skipped or allowlisted.
+
 ```bash
 bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
 bun run --cwd packages/senpi-codemode test -- test/gate

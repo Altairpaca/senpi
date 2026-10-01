@@ -2,17 +2,14 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Type } from "typebox";
-import { Check } from "typebox/value";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
-import { GateInputError } from "./gate-report.ts";
+import { GateInputError } from "./gate-input-error.ts";
 
 const target = process.argv[2];
 if (!target) throw new TypeError("Import census requires a target checkout");
 const root = await mkdtemp(join(tmpdir(), "senpi-gate-imports-"));
 const path = join(root, "imports.jsonl");
 const observer = fileURLToPath(new URL("./gate-import-observer.ts", import.meta.url));
-const entrySchema = Type.Object({ phase: Type.String(), url: Type.String(), thread: Type.Number() });
 const extension = new Set<string>();
 const firstKernel = new Set<string>();
 const sizes: Record<string, number> = {};
@@ -45,6 +42,14 @@ try {
 	if (!result.ok) throw new TypeError(`Import census first cell failed: ${result.error.message}`);
 	await manager.dispose();
 	manager = undefined;
+	// The probe must start cold in both the harness checkout and a separate --target.
+	// Loading validation dependencies first would hide their transitive imports
+	// only when the target shares the harness's module cache.
+	delete process.env.SENPI_GATE_IMPORT_FILE;
+	delete process.env.SENPI_GATE_IMPORT_PHASE;
+	const { Type } = await import("typebox");
+	const { Check } = await import("typebox/value");
+	const entrySchema = Type.Object({ phase: Type.String(), url: Type.String(), thread: Type.Number() });
 	let workerObserved = false;
 	for (const line of (await readFile(path, "utf8")).trim().split("\n")) {
 		const entry: unknown = JSON.parse(line);
