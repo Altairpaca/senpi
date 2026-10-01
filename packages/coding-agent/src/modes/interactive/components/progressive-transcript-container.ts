@@ -1,10 +1,16 @@
 import {
 	type Component,
 	Container,
+	claimFrameRow,
 	currentRenderRevision,
 	dispatchMouseEvent,
+	frameMode,
+	frameScrollbackRows,
 	getCapabilities,
 	joinLineArrays,
+	mainScreenHistoryLines,
+	renderAtFrameRow,
+	Spacer,
 	type TerminalCapabilities,
 	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
@@ -22,7 +28,17 @@ export type ProgressiveTranscriptOptions = {
 	readonly tailBudget: number;
 	readonly warmChunkSize: number;
 	readonly requestRender: () => void;
+	/** Line shown above the kept history on the main screen; `hidden` counts the earlier messages left out. */
+	readonly historyMarker?: (hidden: number) => string;
 };
+
+/** The main-screen marker above kept history, unstyled. */
+export function defaultHistoryMarker(hidden: number): string {
+	return `${hidden.toLocaleString("en-US")} earlier ${hidden === 1 ? "message" : "messages"} · /tree to browse, or switch to fullscreen`;
+}
+
+/** A kept window may grow to this multiple of its budget before its top moves; each move replays it once. */
+const HISTORY_SLACK = 1.5;
 
 /** Trailing children painted on the first frame; roughly two tall viewports of messages. */
 export const DEFAULT_TAIL_BUDGET = 60 as const;
@@ -98,38 +114,68 @@ export class ProgressiveTranscriptContainer extends Container {
 	private lastRenderWidth: number | undefined;
 
 	private readonly childRenders = new WeakMap<Component, CachedChildRender>();
+	/** Last painted output and frame row of each live child, for rows already in native scrollback. */
+	private readonly scrolledLiveRows = new WeakMap<
+		Component,
+		RenderKey & { readonly row: number; readonly lines: readonly string[] }
+	>();
 	/** Bumped by `invalidate()` (theme change): every cached render from before is stale. */
 	private generation = 0;
 	private stablePrefix: StablePrefix | undefined;
 	private paintedLayout: PaintedLayout | undefined;
+	private readonly historyMarker: (hidden: number) => string;
+	/**
+	 * First child kept on the main screen. Earlier children stay mounted (and in the session file,
+	 * `/tree` and fullscreen) but are not written to the terminal, so resume and full repaints cost
+	 * O(kept history) instead of O(session). Moves forward only in steps, see `HISTORY_SLACK`.
+	 */
+	private historyStart = 0;
+	private hiddenMessages: { readonly start: number; readonly total: number; readonly count: number } | undefined;
+	/** Children below this index are not warmed: the main screen will never paint them. */
+	private hydrationFloor = 0;
+	private readonly childHeights = new WeakMap<Component, RenderKey & { readonly height: number }>();
 
 	constructor(options: ProgressiveTranscriptOptions) {
 		super();
 		this.tailBudget = options.tailBudget;
 		this.warmChunkSize = options.warmChunkSize;
 		this.requestRender = options.requestRender;
+		this.historyMarker = options.historyMarker ?? defaultHistoryMarker;
 	}
 
 	/** True when every child has been rendered at least once and no work is pending. */
 	get isFullyHydrated(): boolean {
-		return this.warmedFrom === 0 && !this.hydrationScheduled;
+		return (
+			this.warmedFrom !== PENDING_FIRST_PAINT && this.warmedFrom <= this.hydrationFloor && !this.hydrationScheduled
+		);
 	}
 
 	override render(width: number): string[] {
 		this.lastRenderWidth = width;
+		const frameRow = claimFrameRow(this);
 		const total = this.children.length;
-		if (this.visibleFrom === 0 || total === 0) {
-			this.visibleFrom = 0;
-			this.warmedFrom = 0;
-			return this.renderRange(0, total, width, true);
+		const key: RenderKey = { width, capabilities: getCapabilities(), generation: this.generation };
+		const floor = frameMode() === "regular" ? this.keptHistoryStart(key) : 0;
+		if (floor === 0) this.historyStart = 0;
+		this.hydrationFloor = floor;
+		if (this.visibleFrom !== PENDING_FIRST_PAINT && this.visibleFrom > floor && total > 0) {
+			// The window widened (e.g. switching to fullscreen): warm the newly needed head in the
+			// background like a resume, and keep painting the already-shown range until it is ready.
+			this.scheduleHydration();
+			return this.paint(this.visibleFrom, total, width, frameRow);
+		}
+		if ((this.visibleFrom !== PENDING_FIRST_PAINT && this.visibleFrom <= floor) || total === 0) {
+			this.visibleFrom = floor;
+			this.warmedFrom = Math.min(Math.max(this.warmedFrom, 0), floor);
+			return this.paint(floor, total, width, frameRow);
 		}
 
-		const firstVisible = Math.max(0, total - this.tailBudget);
-		if (firstVisible === 0) {
-			// Whole transcript fits the visible budget: nothing is worth deferring.
-			this.visibleFrom = 0;
-			this.warmedFrom = 0;
-			return this.renderRange(0, total, width, true);
+		const firstVisible = Math.max(floor, total - this.tailBudget);
+		if (firstVisible === floor) {
+			// Everything that will be shown fits the visible budget: nothing is worth deferring.
+			this.visibleFrom = floor;
+			this.warmedFrom = floor;
+			return this.paint(floor, total, width, frameRow);
 		}
 
 		if (this.visibleFrom === PENDING_FIRST_PAINT) {
@@ -137,7 +183,76 @@ export class ProgressiveTranscriptContainer extends Container {
 			this.warmedFrom = firstVisible;
 		}
 		this.scheduleHydration();
-		return this.renderRange(this.visibleFrom, total, width, true);
+		return this.paint(this.visibleFrom, total, width, frameRow);
+	}
+
+	/** Children `[from, total)`, preceded by the marker line when earlier history is left out. */
+	private paint(from: number, total: number, width: number, frameRow: number | undefined): string[] {
+		if (from === 0 || from !== this.historyStart || this.historyStart === 0) {
+			return this.renderRange(from, total, width, true, frameRow);
+		}
+		const marker = this.historyMarker(this.hiddenMessageCount(from, total));
+		const lines = this.renderRange(from, total, width, true, frameRow === undefined ? undefined : frameRow + 1);
+		if (this.paintedLayout) {
+			this.paintedLayout = {
+				width,
+				children: [HISTORY_MARKER_SLOT, ...this.paintedLayout.children],
+				heights: [1, ...this.paintedLayout.heights],
+			};
+		}
+		return [marker, ...lines];
+	}
+
+	private hiddenMessageCount(start: number, total: number): number {
+		const cached = this.hiddenMessages;
+		if (cached?.start === start && cached.total === total) return cached.count;
+		let count = 0;
+		for (let index = 0; index < start; index++) {
+			if (!(this.children[index] instanceof Spacer)) count++;
+		}
+		this.hiddenMessages = { start, total, count };
+		return count;
+	}
+
+	/**
+	 * Index of the first child kept on the main screen. The kept window holds at least the history
+	 * budget of lines and may grow to `HISTORY_SLACK` times it before its top jumps forward, so
+	 * ordinary appends never change rows above the screen.
+	 */
+	private keptHistoryStart(key: RenderKey): number {
+		const total = this.children.length;
+		const budget = mainScreenHistoryLines();
+		let start = Math.min(this.historyStart, total);
+		let lines = 0;
+		let index = total;
+		while (index > start && lines <= budget * HISTORY_SLACK) {
+			index--;
+			lines += this.heightOf(this.children[index]!, key);
+		}
+		if (lines > budget * HISTORY_SLACK) {
+			lines = 0;
+			index = total;
+			while (index > 0 && lines < budget) {
+				index--;
+				lines += this.heightOf(this.children[index]!, key);
+			}
+			start = index;
+		}
+		this.historyStart = start;
+		return start;
+	}
+
+	private heightOf(child: Component, key: RenderKey): number {
+		const known = this.childHeights.get(child);
+		if (
+			known !== undefined &&
+			known.width === key.width &&
+			known.capabilities === key.capabilities &&
+			known.generation === key.generation
+		) {
+			return known.height;
+		}
+		return this.renderChild(child, key, undefined, 0).lines.length;
 	}
 
 	/** Drop every cached child render, e.g. after a theme change reached children outside this container. */
@@ -176,6 +291,8 @@ export class ProgressiveTranscriptContainer extends Container {
 		this.rearmHydration();
 		this.stablePrefix = undefined;
 		this.paintedLayout = undefined;
+		this.historyStart = 0;
+		this.hiddenMessages = undefined;
 		super.clear();
 	}
 
@@ -184,6 +301,8 @@ export class ProgressiveTranscriptContainer extends Container {
 		this.rearmHydration();
 		this.stablePrefix = undefined;
 		this.paintedLayout = undefined;
+		this.historyStart = 0;
+		this.hiddenMessages = undefined;
 		super.detachAll();
 	}
 
@@ -219,8 +338,15 @@ export class ProgressiveTranscriptContainer extends Container {
 	 * leading run of such children is reused as one joined block while it is unchanged. Children
 	 * without a revision (streaming, animating, unknown) render every frame exactly as before.
 	 */
-	private renderRange(from: number, to: number, width: number, painted = false): string[] {
+	private renderRange(
+		from: number,
+		to: number,
+		width: number,
+		painted = false,
+		frameRow: number | undefined = undefined,
+	): string[] {
 		const key: RenderKey = { width, capabilities: getCapabilities(), generation: this.generation };
+		const scrollbackRows = frameRow === undefined ? 0 : frameScrollbackRows();
 		const reused = painted ? this.reusablePrefix(from, to, key) : undefined;
 		const prefixChildren: Component[] = reused ? [...reused.children] : [];
 		const prefixRevisions: number[] = reused ? [...reused.revisions] : [];
@@ -230,10 +356,13 @@ export class ProgressiveTranscriptContainer extends Container {
 		const tailChildren: Component[] = [];
 		const tailHeights: number[] = [];
 		let prefixOpen = true;
+		let row = frameRow === undefined ? undefined : frameRow + (reused?.lines.length ?? 0);
 		for (let index = from + prefixChildren.length; index < to; index++) {
 			const child = this.children[index];
 			if (child === undefined) continue;
-			const { lines, revision } = this.renderChild(child, key);
+			const { lines, revision } = this.renderChild(child, key, row, scrollbackRows);
+			this.childHeights.set(child, { ...key, height: lines.length });
+			if (row !== undefined) row += lines.length;
 			if (prefixOpen && revision !== undefined) {
 				prefixChildren.push(child);
 				prefixRevisions.push(revision);
@@ -304,8 +433,26 @@ export class ProgressiveTranscriptContainer extends Container {
 		};
 	}
 
-	private renderChild(child: Component, key: RenderKey): { lines: readonly string[]; revision: number | undefined } {
+	private renderChild(
+		child: Component,
+		key: RenderKey,
+		row: number | undefined,
+		scrollbackRows: number,
+	): { lines: readonly string[]; revision: number | undefined } {
 		const revision = child.getRenderRevision?.();
+		const scrolled = revision === undefined && row !== undefined ? this.scrolledLiveRows.get(child) : undefined;
+		if (
+			scrolled !== undefined &&
+			scrolled.row === row &&
+			scrolled.width === key.width &&
+			scrolled.capabilities === key.capabilities &&
+			scrolled.generation === key.generation &&
+			row + scrolled.lines.length <= scrollbackRows
+		) {
+			// Native scrollback cannot be repainted in place: changing a row there replays the whole
+			// transcript. A live child that scrolled out entirely keeps the rows the terminal shows.
+			return { lines: scrolled.lines, revision: undefined };
+		}
 		if (revision !== undefined) {
 			const cached = this.childRenders.get(child);
 			if (
@@ -320,14 +467,17 @@ export class ProgressiveTranscriptContainer extends Container {
 		}
 		let lines: string[];
 		try {
-			lines = child.render(key.width);
+			lines = renderAtFrameRow(child, key.width, row);
 		} catch {
 			const componentName = child.constructor.name || "AnonymousComponent";
 			return { lines: [`[render error: ${componentName}]`], revision: undefined };
 		}
 		// Read the revision again: a component may settle lazily inside render (ThemedText rebuilds there).
 		const settled = child.getRenderRevision?.();
-		if (settled === undefined) return { lines, revision: undefined };
+		if (settled === undefined) {
+			if (row !== undefined) this.scrolledLiveRows.set(child, { ...key, row, lines });
+			return { lines, revision: undefined };
+		}
 		this.childRenders.set(child, { ...key, revision: settled, lines });
 		return { lines, revision: settled };
 	}
@@ -353,7 +503,8 @@ export class ProgressiveTranscriptContainer extends Container {
 		if (this.warmedFrom === 0) return;
 
 		const chunkEnd = this.warmedFrom;
-		const chunkStart = Math.max(0, chunkEnd - this.warmChunkSize);
+		const floor = Math.min(this.hydrationFloor, chunkEnd);
+		const chunkStart = Math.max(floor, chunkEnd - this.warmChunkSize);
 		const width = this.lastRenderWidth;
 		if (width !== undefined) {
 			// Discard the lines: this pass exists only to fill each child's cache.
@@ -361,9 +512,9 @@ export class ProgressiveTranscriptContainer extends Container {
 		}
 		this.warmedFrom = chunkStart;
 
-		if (chunkStart === 0) {
+		if (chunkStart === floor) {
 			// Publish the fully warmed history in one atomic height increase.
-			this.visibleFrom = 0;
+			this.visibleFrom = floor;
 			this.requestRender();
 			return;
 		}
@@ -377,3 +528,6 @@ export class ProgressiveTranscriptContainer extends Container {
 		this.hydrationScheduled = false;
 	}
 }
+
+/** Placeholder for the marker row in the painted mouse layout; it handles no events. */
+const HISTORY_MARKER_SLOT: Component = { render: () => [], invalidate: () => {} };

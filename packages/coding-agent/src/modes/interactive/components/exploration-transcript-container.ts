@@ -1,4 +1,11 @@
-import { type Component, Container, currentRenderRevision, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	claimFrameRow,
+	currentRenderRevision,
+	renderAtFrameRow,
+	type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
 import { AssistantMessageComponent } from "./assistant-message.ts";
 import { CustomEntryComponent } from "./custom-entry.ts";
 import { type ExplorationCall, explorationCall } from "./exploration-call.ts";
@@ -36,7 +43,7 @@ export class ExplorationTranscriptContainer extends Container {
 
 	override render(width: number): string[] {
 		this.display.children = this.project();
-		return this.display.render(width);
+		return renderAtFrameRow(this.display, width, claimFrameRow(this));
 	}
 
 	/**

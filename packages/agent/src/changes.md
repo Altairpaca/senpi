@@ -1,3 +1,21 @@
+## 2026-10-01 - Back-to-back background notices share one turn (senpi#2508)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: in `one-at-a-time` mode a queue that starts with non-user messages (custom notices such as monitor, task or background-command events) drains that whole leading run at once; a user message still drains alone, and a user message ends a run of notices.
+
+### Why
+
+Every queued notice started its own model turn, so a burst of 100 monitor events meant 100 turns, each re-preparing the whole context while the TUI streamed each reply; input froze for seconds. Notices are context for the agent, not separate requests.
+
+### Why an extension could not handle it
+
+The queue drain policy is inside the agent loop; extensions only enqueue.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: `PendingMessageQueue.peek`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
 
 ### What changed

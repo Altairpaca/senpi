@@ -2,6 +2,7 @@
  * Minimal TUI implementation with differential rendering
  */
 
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -610,6 +611,100 @@ type TuiConstructorOptions = {
 /**
  * Container - a component that contains other components
  */
+/**
+ * Facts about the frame being rendered, published by the main-screen renderer for containers that
+ * can skip work for rows the terminal cannot repaint cheaply.
+ */
+const renderFrame: {
+	scrollbackRows: number;
+	offset: number;
+	next: Component | undefined;
+	mode: TuiMode | undefined;
+	rows: number;
+} = {
+	scrollbackRows: 0,
+	offset: 0,
+	next: undefined,
+	mode: undefined,
+	rows: 0,
+};
+
+/** Mode of the renderer drawing the current frame, or `undefined` outside a frame. */
+export function frameMode(): TuiMode | undefined {
+	return renderFrame.mode;
+}
+
+const DEFAULT_HISTORY_LINES = 2000;
+/** Writing this many lines into a terminal takes ~0.2 s, the most a resume or repaint may spend on history. */
+const MAX_HISTORY_LINES = 5000;
+let terminalScrollbackLines: number | null | undefined;
+
+function readTerminalScrollbackLines(): number | null {
+	const override = Number(process.env.PI_TUI_HISTORY_LINES);
+	if (Number.isFinite(override) && override > 0) return Math.floor(override);
+	if (!process.env.TMUX) return null;
+	try {
+		const result = spawnSync("tmux", ["display-message", "-p", "#{history_limit}"], {
+			encoding: "utf8",
+			timeout: 500,
+		});
+		const limit = Number(result.stdout.trim());
+		return result.status === 0 && Number.isFinite(limit) && limit > 0 ? limit : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Lines of transcript history a main-screen frame keeps above the live area: the terminal's own
+ * scrollback size where it can be read (tmux `history-limit`, or `PI_TUI_HISTORY_LINES`), else
+ * 2,000; never less than two screens, never more than 5,000 so a resume or repaint stays instant.
+ */
+export function mainScreenHistoryLines(rows = renderFrame.rows): number {
+	if (terminalScrollbackLines === undefined) terminalScrollbackLines = readTerminalScrollbackLines();
+	const preferred = Math.min(MAX_HISTORY_LINES, terminalScrollbackLines ?? DEFAULT_HISTORY_LINES);
+	return Math.max(2 * Math.max(1, rows), preferred);
+}
+
+/** Forget the measured terminal scrollback size, e.g. after the environment changed in a test. */
+export function resetMainScreenHistoryLines(): void {
+	terminalScrollbackLines = undefined;
+}
+
+/**
+ * Rows at the top of the last committed frame that now live in the terminal's native scrollback
+ * (main-screen renderer, same terminal size). Changing any of them forces a full scrollback replay.
+ * 0 outside such a frame.
+ */
+export function frameScrollbackRows(): number {
+	return renderFrame.scrollbackRows;
+}
+
+/**
+ * The absolute frame row where `component` starts, when its parent rendered it through
+ * {@link renderAtFrameRow}; `undefined` when the position is unknown (any other parent).
+ */
+export function claimFrameRow(component: Component): number | undefined {
+	if (renderFrame.next !== component) return undefined;
+	renderFrame.next = undefined;
+	return renderFrame.offset;
+}
+
+/** Render `child` as starting at absolute frame row `row`, so it can {@link claimFrameRow} it. */
+export function renderAtFrameRow(child: Component, width: number, row: number | undefined): string[] {
+	if (row === undefined) return child.render(width);
+	const previousOffset = renderFrame.offset;
+	const previousNext = renderFrame.next;
+	renderFrame.offset = row;
+	renderFrame.next = child;
+	try {
+		return child.render(width);
+	} finally {
+		renderFrame.offset = previousOffset;
+		renderFrame.next = previousNext;
+	}
+}
+
 let renderRevisionClock = 0;
 
 /**
@@ -769,10 +864,11 @@ export class Container implements Component {
 	render(width: number): string[] {
 		const chunks: string[][] = [];
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
+		let row = claimFrameRow(this);
 		for (const child of this.children) {
 			let childLines: string[];
 			try {
-				childLines = child.render(width);
+				childLines = renderAtFrameRow(child, width, row);
 			} catch (error) {
 				logRenderErrorOnce(child, error);
 				const componentName = componentRenderErrorName(child);
@@ -781,6 +877,7 @@ export class Container implements Component {
 			}
 			mouseChildren.push({ component: child, height: childLines.length });
 			chunks.push(childLines);
+			if (row !== undefined) row += childLines.length;
 		}
 		this.mouseLayout = { width, children: mouseChildren };
 		return joinLineArrays(chunks);
@@ -2688,8 +2785,21 @@ export abstract class TuiBase extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
-		// Render all components to get new lines
-		let newLines = this.render(width);
+		// Render all components to get new lines. The main screen tells containers which rows of the
+		// last frame are in native scrollback, so live content there can stay as the terminal shows it.
+		renderFrame.scrollbackRows =
+			this.mode === "regular" && !widthChanged && !heightChanged && this.previousLines.length > 0
+				? prevViewportTop
+				: 0;
+		renderFrame.mode = this.mode;
+		renderFrame.rows = height;
+		let newLines: string[];
+		try {
+			newLines = renderAtFrameRow(this, width, 0);
+		} finally {
+			renderFrame.scrollbackRows = 0;
+			renderFrame.mode = undefined;
+		}
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {

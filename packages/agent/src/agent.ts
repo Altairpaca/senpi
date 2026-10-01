@@ -190,10 +190,19 @@ class PendingMessageQueue {
 		return this.clearGeneration;
 	}
 
+	/**
+	 * `one-at-a-time` gives each user message its own turn. Background notices (any non-user
+	 * message, such as monitor or task events) queued back to back are one batch: a burst of events
+	 * is answered by one turn instead of one turn per event.
+	 */
 	peek(): AgentMessage[] {
 		if (this.mode === "all") return this.messages.slice();
 		const first = this.messages[0];
-		return first ? [first] : [];
+		if (!first) return [];
+		if (first.role === "user") return [first];
+		let end = 1;
+		while (end < this.messages.length && this.messages[end]?.role !== "user") end++;
+		return this.messages.slice(0, end);
 	}
 
 	drain(): AgentMessage[] {
