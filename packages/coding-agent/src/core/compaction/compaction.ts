@@ -497,6 +497,22 @@ function isCutPointMessage(message: AgentMessage): boolean {
 	return false;
 }
 
+/**
+ * The messages of a cut-point walk that weigh in its keep budget. A failed turn is
+ * never sent (`dropFailedAssistantTurns` removes error/aborted assistants and the
+ * tool results only they declared), so it may not absorb the budget: a tiny budget
+ * walked back from the newest entry must reach the turn being answered instead of
+ * stopping on the rejected attempts that followed it. A truncated (`length`)
+ * response is real content and keeps its weight.
+ */
+function keepBudgetWeighted(messages: readonly AgentMessage[]): Set<AgentMessage> {
+	return new Set(dropFailedAssistantTurns(messages));
+}
+
+function keepBudgetTokens(messages: readonly AgentMessage[], weighted: ReadonlySet<AgentMessage>): number {
+	return messages.reduce((sum, message) => (weighted.has(message) ? sum + estimateTokens(message) : sum), 0);
+}
+
 function isTurnStartMessage(message: AgentMessage): boolean {
 	switch (message.role) {
 		case "user":
@@ -597,13 +613,13 @@ export function findCutPoint(
 	// Walk backwards from newest, accumulating estimated message sizes
 	let accumulatedTokens = 0;
 	let cutIndex = cutPoints[0]; // Default: keep from first message (not header)
+	const entryMessages = entries.map((entry, index) =>
+		index >= startIndex && index < endIndex ? contextMessagesForCompactionEntry(entry) : [],
+	);
+	const weighted = keepBudgetWeighted(entryMessages.flat());
 
 	for (let i = endIndex - 1; i >= startIndex; i--) {
-		const entry = entries[i];
-		const messageTokens = contextMessagesForCompactionEntry(entry).reduce(
-			(sum, message) => sum + estimateTokens(message),
-			0,
-		);
+		const messageTokens = keepBudgetTokens(entryMessages[i] ?? [], weighted);
 		if (messageTokens === 0) continue;
 		accumulatedTokens += messageTokens;
 
@@ -1121,8 +1137,9 @@ function findProjectedCutPoint(
 	let accumulatedTokens = 0;
 	let exceededBudget = false;
 	let cutIndex = cutPoints[0];
+	const weighted = keepBudgetWeighted(entries.slice(startIndex, endIndex).flatMap((entry) => entry.messages));
 	for (let i = endIndex - 1; i >= startIndex; i--) {
-		const messageTokens = entries[i].messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+		const messageTokens = keepBudgetTokens(entries[i].messages, weighted);
 		if (messageTokens === 0) continue;
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {

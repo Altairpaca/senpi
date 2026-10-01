@@ -333,6 +333,16 @@ function evalHelperCall(name: string): string {
 	return `tool.${name}({ ... })`;
 }
 const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
+/**
+ * Compact-and-retry rungs one overflow may climb before the turn gives up: the first
+ * keeps the configured recent tail, the second keeps only the summary and the turn
+ * being answered. A new turn
+ * admission starts over, so a user prompt or goal continuation is never refused by a
+ * rung spent in an earlier turn (oh-my-openagent#8411, senpi#2480).
+ */
+const OVERFLOW_RECOVERY_RUNGS = 2;
+const OVERFLOW_RECOVERY_EXHAUSTED_MESSAGE =
+	"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.";
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 
 // ============================================================================
@@ -1043,7 +1053,7 @@ export class AgentSession {
 	 */
 	private readonly _wakeSources = new WakeSourceTracker();
 	private _unsubscribeWakeSources: (() => void) | undefined;
-	private _overflowRecoveryAttempted = false;
+	private _overflowRecoveryRungs = 0;
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
 	private _requiredCompactionAdmissionError: RequiredCompactionError | undefined;
@@ -2787,7 +2797,7 @@ export class AgentSession {
 		return (
 			this._skipNextPostCompactionAssistantCheck &&
 			!this._assistantsPendingAtCompaction.has(message) &&
-			!this._overflowRecoveryAttempted
+			this._overflowRecoveryRungs === 0
 		);
 	}
 
@@ -2918,7 +2928,7 @@ export class AgentSession {
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
-			this._overflowRecoveryAttempted = false;
+			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
 			const messageText = contentText(event.message.content, "");
 			if (messageText) {
@@ -3019,7 +3029,7 @@ export class AgentSession {
 					!isClassifierRefusal(assistantMsg);
 				if (succeeded) this._retryFallback.probes.accept(`${assistantMsg.provider}/${assistantMsg.model}`);
 				if (succeeded && assistantMsg.stopReason !== "length") {
-					this._overflowRecoveryAttempted = false;
+					this._overflowRecoveryRungs = 0;
 				}
 
 				// Reset retry state only after a genuinely successful response. Provider
@@ -7393,6 +7403,24 @@ export class AgentSession {
 	 * nothing is duplicated; the queued message_end still owns exactly-once
 	 * persistence for the rest.
 	 */
+	private _stripTrailingFailedAssistants(): number {
+		const messages = this.agent.state.messages;
+		let end = messages.length;
+		while (end > 0) {
+			const candidate = messages[end - 1];
+			if (candidate?.role !== "assistant") break;
+			const stopReason = (candidate as AssistantMessage).stopReason;
+			if (stopReason !== "error" && stopReason !== "length") break;
+			end -= 1;
+		}
+		const stripped = messages.length - end;
+		if (stripped > 0) {
+			this.agent.state.messages = messages.slice(0, end);
+			this._incrementMessageRevision();
+		}
+		return stripped;
+	}
+
 	private _restoreAgentMessagesFromSession(): void {
 		const sessionMessages = this.sessionManager.buildSessionContext().messages;
 		const seen = new Set<AgentMessage>(sessionMessages);
@@ -7772,9 +7800,11 @@ export class AgentSession {
 				return compacted;
 			}
 
-			if (this._overflowRecoveryAttempted) {
-				const errorMessage =
-					"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.";
+			// A new turn admission is a fresh overflow episode, whatever an earlier turn spent:
+			// the prompt or continuation it admits must reach a compaction, not a stale latch.
+			if (inlineReason === "pre_prompt") this._overflowRecoveryRungs = 0;
+			if (this._overflowRecoveryRungs >= OVERFLOW_RECOVERY_RUNGS) {
+				const errorMessage = OVERFLOW_RECOVERY_EXHAUSTED_MESSAGE;
 				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
@@ -7790,8 +7820,12 @@ export class AgentSession {
 			}
 
 			// Case 1: remove the failed or truncated message from agent state, compact, and
-			// retry once. The message remains in session history but is excluded from retry context.
-			this._overflowRecoveryAttempted = true;
+			// retry. The message remains in session history but is excluded from retry context.
+			// The second rung keeps nothing but the summary and the turn being answered: a
+			// retry that is still too long after the configured tail was kept needs a
+			// smaller re-send, not the same one.
+			this._overflowRecoveryRungs += 1;
+			const keepRecentTokensOverride = this._overflowRecoveryRungs >= 2 ? 0 : undefined;
 			// Remove the error message from agent state (it IS saved to session for history,
 			// but we don't want it in context for the retry)
 			const messages = this.agent.state.messages;
@@ -7802,8 +7836,17 @@ export class AgentSession {
 				this._incrementMessageRevision();
 			}
 			const compacted = inlineReason
-				? await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, "overflow", willRetry)
-				: await this._runAutoCompaction("overflow", willRetry);
+				? await this._runPrePromptCompaction(
+						assistantMessage,
+						skipAbortedCheck,
+						"overflow",
+						willRetry,
+						false,
+						keepRecentTokensOverride,
+					)
+				: keepRecentTokensOverride === undefined
+					? await this._runAutoCompaction("overflow", willRetry)
+					: await this._runAutoCompaction("overflow", willRetry, { keepRecentTokensOverride });
 			if (!compacted && removedOverflowAssistant) {
 				this._restoreAgentMessagesFromSession();
 				this._incrementMessageRevision();
@@ -7956,7 +7999,7 @@ export class AgentSession {
 				lastAssistantMessage &&
 				isContextOverflow(lastAssistantMessage, this.model?.contextWindow ?? 0)
 			) {
-				this._overflowRecoveryAttempted = false;
+				this._overflowRecoveryRungs = 0;
 			}
 			return execution.accepted;
 		} catch (error) {
@@ -7964,7 +8007,7 @@ export class AgentSession {
 				return false;
 			}
 			if (lastAssistantMessage && isContextOverflow(lastAssistantMessage, this.model?.contextWindow ?? 0)) {
-				this._overflowRecoveryAttempted = false;
+				this._overflowRecoveryRungs = 0;
 			}
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			this._compactionSkippedTooSmall = shouldRetryOverflowWithoutCompact(false, errorMessage);
@@ -8167,8 +8210,13 @@ export class AgentSession {
 	 * @param willRetry Whether to continue the interrupted turn after overflow compaction
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+	private async _runAutoCompaction(
+		reason: "overflow" | "threshold",
+		willRetry: boolean,
+		options: { keepRecentTokensOverride?: number } = {},
+	): Promise<boolean> {
 		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
+		const { keepRecentTokensOverride } = options;
 		// Model identity is captured before the auth await below: a model switch during
 		// that await must not change the token budgets this compaction was admitted with.
 		const model = this.model;
@@ -8183,7 +8231,7 @@ export class AgentSession {
 		};
 		const endStarted = (): false => {
 			if (reason === "overflow" && this._autoCompactionAbortController === autoCompactionController) {
-				this._overflowRecoveryAttempted = false;
+				this._overflowRecoveryRungs = 0;
 			}
 			// A synchronous compaction_start listener can supersede this controller with a new
 			// operation, which then owns its own start/end lifecycle; publishing another terminal
@@ -8230,9 +8278,16 @@ export class AgentSession {
 			if (isSuperseded()) return false;
 			if (autoCompactionController.signal.aborted) return endBeforeExecution();
 
+			const resolvedSettings = this._getCompactionSettings(model);
 			const preparation = prepareCompaction(
 				this.sessionManager.getBranch(),
-				cursorOverflowCompactionSettings(this._getCompactionSettings(model), model?.provider, reason),
+				cursorOverflowCompactionSettings(
+					keepRecentTokensOverride === undefined
+						? resolvedSettings
+						: { ...resolvedSettings, keepRecentTokens: keepRecentTokensOverride },
+					model?.provider,
+					reason,
+				),
 				reason === "overflow",
 			);
 			if (!preparation) {
@@ -8250,9 +8305,10 @@ export class AgentSession {
 				requestId,
 				willRetry,
 				agentMessagesAtStart,
+				keepRecentTokensOverride,
 			});
 			if (!execution.accepted) {
-				if (reason === "overflow") this._overflowRecoveryAttempted = false;
+				if (reason === "overflow") this._overflowRecoveryRungs = 0;
 				return false;
 			}
 			if (this._autoCompactionAbortController === autoCompactionController) {
@@ -8260,16 +8316,10 @@ export class AgentSession {
 			}
 
 			if (willRetry) {
-				const messages = this.agent.state.messages;
-				const lastMsg = messages[messages.length - 1];
-				if (
-					lastMsg?.role === "assistant" &&
-					((lastMsg as AssistantMessage).stopReason === "error" ||
-						(lastMsg as AssistantMessage).stopReason === "length")
-				) {
-					this.agent.state.messages = messages.slice(0, -1);
-					this._incrementMessageRevision();
-				}
+				// The rebuilt context ends with every rejected attempt of this turn that the
+				// kept tail still covers (one per rung climbed so far); the retry must
+				// continue from the turn they failed to answer, so strip the whole run.
+				this._stripTrailingFailedAssistants();
 
 				this._scheduleContinuationAfterCurrentEvent();
 				return true;
@@ -8286,7 +8336,7 @@ export class AgentSession {
 			if (!compactionExecutionOwnsTerminalTransition(error)) {
 				return false;
 			}
-			if (reason === "overflow") this._overflowRecoveryAttempted = false;
+			if (reason === "overflow") this._overflowRecoveryRungs = 0;
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			const aborted = isCompactionExecutionAborted(error);
 			const formattedErrorMessage = aborted

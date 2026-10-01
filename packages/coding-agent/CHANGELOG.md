@@ -20,6 +20,8 @@
 
 - Binary sidecar staging now derives the codemode package's complete runtime dependency closure, including present optional dependencies, instead of copying only the parser. Staging preserves source dependency versions, skips host-provided virtual modules, dereferences symlinks, removes only the packages its ownership record lists (plus the codemode package an earlier version staged before that record existed), refuses to overwrite any other existing codemode package, refuses to follow a symlinked output `node_modules` or package path, refuses package output roots, and names unresolved dependencies during packaging. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 
+- A long run on `anthropic-subscription` no longer dies when the resident session is lost and the re-sent conversation is rejected as "Prompt is too long". Overflow recovery now climbs two compaction rungs inside the turn (the configured recent tail, then the summary alone) before giving up, a new prompt or goal continuation always gets its own attempt instead of the previous turn's "recovery failed" latch, and when the API reports how many tokens it counted, the lane sizes the next re-send from that count and refuses one that still cannot fit before dispatching it. ([#2480](https://github.com/code-yeongyu/senpi/issues/2480), [oh-my-openagent#8411](https://github.com/code-yeongyu/oh-my-openagent/issues/8411))
+
 ### Removed
 
 ## [2026.10.1-2] - 2026-10-01
