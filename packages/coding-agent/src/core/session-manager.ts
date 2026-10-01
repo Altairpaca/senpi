@@ -531,8 +531,12 @@ function buildSessionPath(
 	}
 
 	const path: SessionEntry[] = [];
+	const visited = new Set<SessionEntry>();
 	let current: SessionEntry | undefined = leaf;
-	while (current) {
+	// A file with a reused id has a cycle in its parent chain; stop at the first revisit so the
+	// session still opens instead of walking forever.
+	while (current && !visited.has(current)) {
+		visited.add(current);
 		path.push(current);
 		current = current.parentId ? index.get(current.parentId) : undefined;
 	}
@@ -1052,6 +1056,13 @@ export class SessionManager {
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
 	private mirrorTrimmed = false;
+	/**
+	 * Ids of entries a compaction trimmed from the resident mirror. They are still in the session file,
+	 * so a new entry must not reuse one: a reused id turns the file's parent chain into a cycle and the
+	 * next resume never finishes opening the session.
+	 */
+	private trimmedIds = new Set<string>();
+	private readonly idsInUse = { has: (id: string): boolean => this.byId.has(id) || this.trimmedIds.has(id) };
 	// Counts loaded/appended entries, including those removed from the resident mirror.
 	private fullEntryCount = 0;
 	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
@@ -1158,6 +1169,7 @@ export class SessionManager {
 		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
+		this.trimmedIds.clear();
 		this.residentStore.clear();
 		if (existsSync(this.sessionFile)) {
 			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
@@ -1247,6 +1259,7 @@ export class SessionManager {
 		};
 		this.fileEntries = [header];
 		this.mirrorTrimmed = false;
+		this.trimmedIds.clear();
 		this.fullEntryCount = 0;
 		this.residentStore.clear();
 		if (previousBlobsDir) {
@@ -1601,7 +1614,7 @@ export class SessionManager {
 	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			message,
@@ -1628,7 +1641,7 @@ export class SessionManager {
 	appendThinkingLevelChange(thinkingLevel: string, thinkingSelection?: ThinkingSelection): string {
 		const entry: ThinkingLevelChangeEntry = {
 			type: "thinking_level_change",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			thinkingLevel,
@@ -1642,7 +1655,7 @@ export class SessionManager {
 	appendConfigurationUpdate(effort: string): string {
 		const entry: ConfigurationUpdateEntry = {
 			type: "configuration_update",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			reasoning: { effort },
@@ -1660,7 +1673,7 @@ export class SessionManager {
 	): string {
 		const entry: ModelChangeRejectedEntry = {
 			type: "model_change_rejected",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			...details,
@@ -1679,7 +1692,7 @@ export class SessionManager {
 	): string {
 		const entry: ModelChangeEntry = {
 			type: "model_change",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			provider,
@@ -1696,7 +1709,7 @@ export class SessionManager {
 	appendUsage(kind: string, provider: string, model: string, usage: Usage, note?: string): UsageEntry {
 		const entry: UsageEntry = {
 			type: "usage",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			kind,
@@ -1720,7 +1733,7 @@ export class SessionManager {
 	): string {
 		const timestamp = new Date().toISOString();
 		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
-		const id = generateId(this.byId);
+		const id = generateId(this.idsInUse);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id,
@@ -1784,6 +1797,10 @@ export class SessionManager {
 			if (entry.type !== "session") entry.parentId = parentId;
 			parentId = entry.type === "session" ? null : entry.id;
 		}
+		const retainedIds = new Set(retained.map((entry) => entry.id));
+		for (const entry of this.fileEntries) {
+			if (entry.type !== "session" && !retainedIds.has(entry.id)) this.trimmedIds.add(entry.id);
+		}
 		this.residentStore.spillResident();
 		this.mirrorTrimmed = true;
 		this.fileEntries = [header, ...retained]
@@ -1799,7 +1816,7 @@ export class SessionManager {
 			type: "custom",
 			customType,
 			data,
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
@@ -1812,7 +1829,7 @@ export class SessionManager {
 		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		const entry: SessionInfoEntry = {
 			type: "session_info",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			name: sanitizedName,
@@ -1850,7 +1867,7 @@ export class SessionManager {
 			content,
 			display,
 			details,
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
@@ -1889,7 +1906,7 @@ export class SessionManager {
 				: replacement;
 		const entry: ContextEditEntry = {
 			type: "context_edit",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			targetId,
@@ -1953,7 +1970,7 @@ export class SessionManager {
 		}
 		const entry: LabelEntry = {
 			type: "label",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			targetId,
@@ -2001,10 +2018,13 @@ export class SessionManager {
 			);
 		}
 		let current = startId ? entriesById.get(startId) : undefined;
-		while (current) {
-			path.unshift(current);
+		const visited = new Set<SessionEntry>();
+		while (current && !visited.has(current)) {
+			visited.add(current);
+			path.push(current);
 			current = current.parentId ? entriesById.get(current.parentId) : undefined;
 		}
+		path.reverse();
 		const materializedPath = this._materializeEntries(path);
 		if (fromId === undefined) {
 			this.branchCache = {
@@ -2128,8 +2148,10 @@ export class SessionManager {
 
 	private hasBranchEntry(predicate: (entry: SessionEntry) => boolean): boolean {
 		let current = this.leafId ? this.byId.get(this.leafId) : undefined;
-		while (current) {
+		const visited = new Set<SessionEntry>();
+		while (current && !visited.has(current)) {
 			if (predicate(current)) return true;
+			visited.add(current);
 			current = current.parentId ? this.byId.get(current.parentId) : undefined;
 		}
 		return false;
@@ -2296,9 +2318,13 @@ export class SessionManager {
 			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
-		// Build tree
+		// Build tree. A file with duplicated entry ids (#1247) lists the same node more than once;
+		// attaching it again would multiply every subtree below it on each later walk.
+		const attached = new Set<SessionTreeNode>();
 		for (const entry of entries) {
 			const node = nodeMap.get(entry.id)!;
+			if (attached.has(node)) continue;
+			attached.add(node);
 			if (entry.parentId === null || entry.parentId === entry.id) {
 				roots.push(node);
 			} else {
@@ -2373,7 +2399,7 @@ export class SessionManager {
 		const fromId = this.leafId ?? "root";
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: branchFromId,
 			timestamp: new Date().toISOString(),
 			fromId,
@@ -2482,6 +2508,7 @@ export class SessionManager {
 				this._removeBlobsDir(previousBlobsDir);
 			}
 			this.mirrorTrimmed = false;
+			this.trimmedIds.clear();
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
 			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];

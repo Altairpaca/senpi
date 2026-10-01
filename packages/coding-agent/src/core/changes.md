@@ -35,6 +35,24 @@
 - `packages/coding-agent/src/core/resource-loader.ts`: the bundled package resolver and its imports.
 
 ## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+## 2026-10-01 - Entry ids stay unique after a compaction trim; duplicated ids no longer hang open or /tree (senpi#2508, senpi#1247)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the ids of entries a compaction trims from the resident mirror stay reserved (`trimmedIds`), and every `generateId` call checks them along with the mirror's index. The leaf-path walks (`buildSessionPath`, `getBranch`, `hasBranchEntry`) stop at the first revisited entry, and `getTree()` attaches each node once.
+
+### Why
+
+`generateId` only checked the trimmed mirror, so a later entry could reuse the id of an entry that was trimmed from memory but is still in the file. On the next resume the reused id closed the parent chain into a cycle and `buildSessionPath` never returned, so the TUI stayed on "opening session" (seen with a 50,000-entry compacted session). Files that already contain duplicated ids (#1247) also froze `/tree` because `getTree()` attached the same node repeatedly.
+
+### Why an extension could not handle it
+
+Id generation and the path/tree walks are the session store itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `generateId` call sites, `_trimMirrorAfterCompaction`, `buildSessionPath`, `getBranch`, `hasBranchEntry`, `getTree`, and the fields beside `mirrorTrimmed`.
+
 ## 2026-10-01 - Per-turn session reads extend instead of re-copying the session (senpi#2508)
 
 ### What changed
