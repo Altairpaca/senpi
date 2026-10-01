@@ -116,8 +116,6 @@
 - Fixed inherited new sessions being lost when the process exits before the first assistant response. The session file is now created when the first user message is sent ([#10000](https://github.com/earendil-works/pi/issues/10000)).
 - When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
 
-### Removed
-
 - Fixed inherited split-turn compaction summaries being refused by Claude Fable 5.1, mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)), and cancellation races that could start automatic compaction, leave stale retry state or miss cancellation during summarization auth ([#9340](https://github.com/earendil-works/pi/issues/9340), [#9777](https://github.com/earendil-works/pi/issues/9777)) ([#9908](https://github.com/earendil-works/pi/pull/9908) by [@davidbrai](https://github.com/davidbrai)).
 
 - Fixed inherited model-context edits: string replacements now produce text blocks, context-invisible boundary metadata no longer gets new input summarized before its first request, edited-context usage accounting stays correct across compaction, and abandoned retry and recovery attempts stay out of future provider context.
