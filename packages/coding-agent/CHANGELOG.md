@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.286: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.285 to 0.3.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
 - The GPT-6 Astra high-reasoning warning now shows at `xhigh` as well as `max`, the same rule as GPT-5.6 Sol and GPT-6 Sol: any effort above `high` warns, and `high` or below stays quiet ([#2496](https://github.com/code-yeongyu/senpi/issues/2496)).
 
 ### Fixed
