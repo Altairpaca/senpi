@@ -32,7 +32,7 @@ describe("Review claim gate on review events", () => {
 		assert.ok(gate, "missing gate job");
 		assert.match(gate.body, /^\s+needs: release-claim$/m);
 		assert.match(gate.body, /!cancelled\(\)/);
-		assert.match(gate.body, /github\.rest\.issues\.listLabelsOnIssue/);
+		assert.match(gate.body, /github\.paginate\(github\.rest\.issues\.listLabelsOnIssue/);
 		assert.doesNotMatch(gate.body, /context\.payload\.pull_request\.labels/);
 	});
 });

@@ -42,8 +42,8 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const { data: live } = await github.rest.issues.listLabelsOnIssue({
-              owner, repo, issue_number: context.payload.pull_request.number,
+            const live = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              owner, repo, issue_number: context.payload.pull_request.number, per_page: 100,
             });
             const labels = live.map((l) => l.name);
             const claims = labels.filter((l) => l === 'will-review' || l === 'in-review');
