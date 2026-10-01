@@ -8,7 +8,11 @@ import {
 	emitActivationMarker,
 } from "../../../src/core/extensions/builtin/tool-search/engine/marker.ts";
 import toolSearchExtension from "../../../src/core/extensions/builtin/tool-search/index.ts";
-import { getToolSearchService } from "../../../src/core/extensions/builtin/tool-search/service.ts";
+import {
+	getToolSearchService,
+	getToolSearchServiceForExtension,
+	type ToolSearchService,
+} from "../../../src/core/extensions/builtin/tool-search/service.ts";
 import type { ResourceLoader } from "../../../src/core/resource-loader.ts";
 import type { ExtensionAPI, ExtensionError, LoadExtensionsResult, ToolDefinition } from "../../../src/index.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../../utilities.ts";
@@ -179,5 +183,36 @@ describe("senpi#2509: every session owns its tool-search service", () => {
 		expect(() => oldService.activateTool("next_lookup")).toThrow(disposed);
 		expect(() => oldService.maybeRehydrateFromHistory(activationHistory(next, "next_lookup"))).toThrow(disposed);
 		expect(next.session.getActiveToolNames()).not.toContain("next_lookup");
+	});
+
+	it("releases the adopted service when session construction fails after adopting it", async () => {
+		// Given: an untyped extension whose tool metadata breaks the tool registry build after adoption.
+		let abandoned: ToolSearchService | undefined;
+		const broken = await createTestExtensionsResult([
+			{ path: "<builtin:tool-search>", factory: toolSearchExtension },
+			{
+				path: "/extensions/broken.ts",
+				factory: (pi) => {
+					abandoned = getToolSearchServiceForExtension(pi);
+					pi.registerTool({ ...deferredTool("broken_lookup"), promptGuidelines: [42 as unknown as string] });
+				},
+			},
+		]);
+
+		// When: the session constructor throws, and a healthy session opens afterwards.
+		await expect(
+			createHarness({ resourceLoader: createTestResourceLoader({ extensionsResult: broken }) }),
+		).rejects.toThrow();
+		const live = await openSession("/extensions/live.ts", [["live_lookup"]]);
+
+		// Then: the failed session's service is retired and no longer counts as a live session.
+		expect(abandoned).toBeDefined();
+		expect(() => abandoned?.getCatalog()).toThrow(/is disposed \(session construction failed\)/);
+		expect(
+			getToolSearchService()
+				.getCatalog()
+				.map(({ name }) => name),
+		).toContain("live_lookup");
+		expect(live.session.getAllTools().map(({ name }) => name)).toContain("live_lookup");
 	});
 });

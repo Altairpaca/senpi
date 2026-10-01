@@ -1341,12 +1341,18 @@ export class AgentSession {
 		this._installAgentRequestProjection();
 		this._installAgentBoundaryHooks();
 
-		this._buildRuntime({
-			activeToolNames: this._initialActiveToolNames,
-			includeAllExtensionTools: true,
-		});
-		// Last, so a construction that throws never leaves a hold only dispose() could release.
-		this._fallbackCircuitsLease = acquireFallbackCircuits(this._agentDir);
+		try {
+			this._buildRuntime({
+				activeToolNames: this._initialActiveToolNames,
+				includeAllExtensionTools: true,
+			});
+			// Last, so a construction that throws never leaves a hold only dispose() could release.
+			this._fallbackCircuitsLease = acquireFallbackCircuits(this._agentDir);
+		} catch (error) {
+			// dispose() is unreachable for a session whose constructor throws.
+			this._releaseToolSearchService("session construction failed");
+			throw error;
+		}
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -1548,6 +1554,11 @@ export class AgentSession {
 		const next = adoptToolSearchServiceForSession(extensionLoad);
 		if (this._toolSearchService !== next) this._toolSearchService?.dispose(this.sessionId, "replaced by a reload");
 		this._toolSearchService = next;
+	}
+
+	private _releaseToolSearchService(reason: string): void {
+		this._toolSearchService?.dispose(this.sessionId, reason);
+		this._toolSearchService = undefined;
 	}
 
 	/**
@@ -3665,8 +3676,7 @@ export class AgentSession {
 		this._extensionRunner.invalidate(
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
-		this._toolSearchService?.dispose(this.sessionId, "session disposed");
-		this._toolSearchService = undefined;
+		this._releaseToolSearchService("session disposed");
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;

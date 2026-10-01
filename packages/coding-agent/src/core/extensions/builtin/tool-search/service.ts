@@ -289,7 +289,7 @@ function isValidDocument(doc: ToolSearchDocument, source: ToolSearchSource): boo
 }
 
 const scopedService = new AsyncLocalStorage<ToolSearchService>();
-const servicesByExtensionLoad = new WeakMap<object, ToolSearchService>();
+let servicesByExtensionLoad = new WeakMap<object, ToolSearchService>();
 const sessionServices = new Set<ToolSearchService>();
 let sessionlessService: ToolSearchService | null = null;
 
@@ -345,4 +345,6 @@ export function getToolSearchService(runtime?: ToolSearchRuntime): ToolSearchSer
 
 export function resetToolSearchServiceForTests(): void {
 	sessionlessService = null;
+	sessionServices.clear();
+	servicesByExtensionLoad = new WeakMap();
 }
