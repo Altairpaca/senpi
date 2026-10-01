@@ -415,6 +415,39 @@ jobs:
           '
         working-directory: packages/senpi-codemode
 
+  python-kernel-windows:
+    name: Python kernel cold startup (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12.10"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Slow and hung bootstrap regressions
+        working-directory: packages/senpi-codemode
+        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+      - name: Build isolated packaged Python host
+        shell: pwsh
+        run: |
+          $hostRoot = "$env:RUNNER_TEMP/python-host"
+          New-Item -ItemType Directory -Force $hostRoot | Out-Null
+          bun build --compile --target bun-windows-x64 packages/senpi-codemode/scripts/qa-python-startup.ts --outfile "$hostRoot/python-host.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sidecar = "$hostRoot/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py"
+          New-Item -ItemType Directory -Force $sidecar | Out-Null
+          Copy-Item packages/senpi-codemode/src/kernels/py/prelude.py "$sidecar/prelude.py"
+      - name: Packaged cold and warm Python cells
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP/python-host/python-host.exe"
+          exit $LASTEXITCODE
+
   test-workspaces:
     name: Test (workspaces + scripts)
     runs-on: ubuntu-latest
@@ -509,6 +542,7 @@ jobs:
         compiled-extensions-windows,
         claude-executable-windows,
         webview-kernel,
+        python-kernel-windows,
         test-workspaces,
       ]
     if: always()
