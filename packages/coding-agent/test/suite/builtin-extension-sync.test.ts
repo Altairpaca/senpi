@@ -31,7 +31,7 @@ describe("synced builtin extensions", () => {
 		expect(Object.keys(manifest.extensions ?? {}).sort()).toEqual(expectedIds);
 		for (const [id, entry] of Object.entries(manifest.extensions ?? {})) {
 			expect(entry.packageName, id).toMatch(/^(@code-yeongyu\/)?pi-[a-z-]+$/);
-			expect(entry.version, id).toMatch(/^\d+\.\d+\.\d+/);
+			expect(entry.version, id).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 			expect(entry.source, id).toBe(`../pi-extensions/${entry.packageName?.replace(/^@code-yeongyu\//, "")}`);
 		}
 	});

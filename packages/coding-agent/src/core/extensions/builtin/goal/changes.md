@@ -1,3 +1,5 @@
+# goal Extension Changes
+
 ## 2026-09-30 - Drop test-only goal exports (senpi#2447)
 
 ### What changed
@@ -16,8 +18,6 @@
 ### Expected merge conflict zones
 
 - LOW: the tail of `prompt.ts` and the predicate block above `didAgentEndCleanly` in `continuation.ts`. An upstream pi-goal sync that re-adds them can drop them again.
-
-# goal Extension Changes
 
 ## 2026-09-28 - Terminal provider 401/403 blocks the goal on the first hit (senpi#2293)
 

@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 describe("loop-guard Goal isolation", () => {
-	it("keeps a Tier-2 block continuable unless the Tier-3 wake is pending", () => {
+	it("treats a Tier-2 loop-guard block after a clean stop as a clean agent end", () => {
 		const blockResult: AgentMessage = {
 			role: "toolResult",
 			toolCallId: "todo-loop",
