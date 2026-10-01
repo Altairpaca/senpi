@@ -547,6 +547,7 @@ describe("openai-responses provider defaults", () => {
 		["gpt-6-luna", "priority", "fast", 2],
 		["gpt-6-luna", "fast", "fast", 2],
 		["gpt-6-astra", "fast", "fast", 2],
+		["gpt-6-astra", "ultrafast", "ultrafast", 6],
 	] as const)(
 		"applies %s cost multiplier for requested %s and returned %s service tier",
 		async (modelId, serviceTier, responseServiceTier, multiplier) => {

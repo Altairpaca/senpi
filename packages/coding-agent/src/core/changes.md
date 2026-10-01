@@ -1,3 +1,70 @@
+## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
+
+### What changed
+
+- `packages/coding-agent/src/core/ultrafast-lanes.ts` (fork-only): `serviceTierForProvider` drops an `ultrafast` tier for any provider other than `openai` and `chatgpt-subscription`; `ultrafastSelectionWarning` (moved here from `model-resolver.ts`) also warns for those providers.
+- `packages/coding-agent/src/core/sdk.ts`: the stream function passes every request tier through `serviceTierForProvider`, and always sets `serviceTier` so a dropped tier cannot survive through the spread caller options.
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the resolved tier is checked again at the payload boundary, where disallowed providers have even a pre-populated `service_tier` removed and settings/models.json selections receive the same advisory as decorators.
+- `packages/coding-agent/src/core/model-resolver.ts`: imports the warning instead of defining it.
+
+### Why
+
+- `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/model-resolver.ts`: gateways and other providers that serve an OpenAI model on the Responses API (for example `github-copilot` or `opencode` `gpt-6-astra`) received `service_tier: "ultrafast"`. codex only sends a tier the model's backend catalog lists, and oh-my-pi sends Ultrafast only to first-party OpenAI and Codex models; senpi now matches both.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/sdk.ts`: SDK sessions without builtin extensions compose the request tier here; the service-tier builtin's payload hook applies the same gate for extension sessions.
+- `packages/coding-agent/src/core/model-resolver.ts`: the selection warning is produced during model pattern parsing, before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: the `serviceTier` line in the `streamFn` passed to `new Agent`.
+- `packages/coding-agent/src/core/model-resolver.ts`: the import block and the Ultrafast advisory helpers above `parseModelPattern`.
+
+## 2026-09-29 - Carry model tier decorators into session startup (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-services.ts`, `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/agent-session.ts`: accept and forward an explicit initial service tier from the CLI to AgentSession, ahead of scoped/catalog defaults.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session-services.ts`, `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/agent-session.ts`: the real CLI discarded the parsed tier even though model resolution preserved it, so an Astra Ultrafast command silently ran without that tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session-services.ts`, `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/agent-session.ts`: this host startup boundary discarded the selection before extension contexts were created.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-services.ts`, `packages/coding-agent/src/core/sdk.ts`, `packages/coding-agent/src/core/agent-session.ts`: initial session options and construction/forwarding calls.
+
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`, `packages/coding-agent/src/core/model-resolver.ts`: accept `ultrafast` in models.json and either order of effort/tier decorators.
+- `packages/coding-agent/src/core/model-registry.ts`, `packages/coding-agent/src/core/provider-composer.ts`, `packages/coding-agent/src/core/settings-manager.ts`, `packages/coding-agent/src/core/settings-shapes.ts`: carry and validate the new tier through provider configuration, settings, and auth resolution.
+- `packages/coding-agent/src/core/agent-session.ts`: keep an explicit Ultrafast tier above the session Priority flag in both state and request composition.
+
+### Why
+
+- `packages/coding-agent/src/core/model-config-schema.ts`, `packages/coding-agent/src/core/model-resolver.ts`: users need explicit Ultrafast model selection without losing an Astra effort.
+- `packages/coding-agent/src/core/model-registry.ts`, `packages/coding-agent/src/core/provider-composer.ts`, `packages/coding-agent/src/core/settings-manager.ts`, `packages/coding-agent/src/core/settings-shapes.ts`: the selected request tier must survive the full configuration path.
+- `packages/coding-agent/src/core/agent-session.ts`: remembered or stale Fast mode must not downgrade an Ultrafast selection.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-config-schema.ts`, `packages/coding-agent/src/core/model-resolver.ts`: schema validation and model matching run before extension request hooks.
+- `packages/coding-agent/src/core/model-registry.ts`, `packages/coding-agent/src/core/provider-composer.ts`, `packages/coding-agent/src/core/settings-manager.ts`, `packages/coding-agent/src/core/settings-shapes.ts`: extensions cannot widen these typed and validated host configuration boundaries.
+- `packages/coding-agent/src/core/agent-session.ts`: SDK sessions without builtin extensions also use this effective-tier accessor.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-config-schema.ts`, `packages/coding-agent/src/core/model-resolver.ts`: model serviceTier schema and SERVICE_TIER_VALUES.
+- `packages/coding-agent/src/core/model-registry.ts`, `packages/coding-agent/src/core/provider-composer.ts`, `packages/coding-agent/src/core/settings-manager.ts`, `packages/coding-agent/src/core/settings-shapes.ts`: service-tier unions and MODEL_SERVICE_TIER_VALUES.
+- `packages/coding-agent/src/core/agent-session.ts`: isFastModeActive and effectiveServiceTier.
+
 ## 2026-10-01 - Admitted deliveries emit their own turn trigger (senpi#2424)
 
 ### What changed

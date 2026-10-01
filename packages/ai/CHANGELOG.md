@@ -14,6 +14,8 @@
 
 ### Added
 
+- Added `ultrafast` as an OpenAI Responses and ChatGPT Subscription request tier, with support for all five Astra reasoning efforts (`low` through `max`). The published 6x Standard price applies to GPT-6 Astra only; any other model keeps its base rate. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
+
 - Added inherited transcript-backed mid-conversation system prompt and tool changes, replayed natively on models that accept mid-conversation system messages and collapsed for other providers ([#9548](https://github.com/earendil-works/pi/pull/9548)).
 
 - Added the inherited optional model `type` (`"chat"`, `"image"` or `"classifier"`), `isModelType()` and `getModelType()`, and `getModelsOfType()`, `getModelOfType()`, `getAvailableOfType()`, `getAllModels()` and `getAllAvailable()` on `Models`. Chat models may omit `type`, so existing chat models, providers and stores keep working.
@@ -33,6 +35,8 @@
 - Added an inherited runtime chat-model check to the `Models` stream entry points, so non-chat models fail with a clear `ModelsError`.
 
 ### Changed
+
+- ChatGPT Subscription requests now send the `x-codex-routing-hint` header that codex sends (`model=<id>`, plus `;tier=<tier>` when a service tier is requested), on both SSE requests and the WebSocket handshake. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410))
 
 - ChatGPT Subscription, OpenRouter and Radius browser sign-in share the inherited callback server, which rejects provider authorization-error redirects and falls back to pasting the redirect URL when the callback port is in use. The OAuth page helpers are available as `utils/oauth-page`. The provider id stays `chatgpt-subscription`; the upstream "OpenAI Codex (legacy)" rename and Sign in with ChatGPT on the `openai` provider are not adopted.
 

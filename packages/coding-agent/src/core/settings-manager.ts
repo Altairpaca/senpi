@@ -106,7 +106,11 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
 
-/** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
+/**
+ * Service tier remembered per model for `/fast`. "auto" is an explicit opt-out of an
+ * inherited priority tier. Ultrafast is an explicit selection, not a remembered tier:
+ * a stored "ultrafast" is dropped on read and never sent.
+ */
 export type ModelServiceTier = "auto" | "flex" | "priority";
 
 const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([

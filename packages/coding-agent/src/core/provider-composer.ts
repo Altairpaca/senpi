@@ -79,7 +79,7 @@ interface ProviderModelConfigBase {
 export interface ProviderChatModelConfig extends ProviderModelConfigBase {
 	type?: "chat";
 	api?: Api;
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	promptPreset?: string;
 	recoverTextToolCalls?: boolean;
 	reasoning: boolean;
@@ -716,7 +716,7 @@ export function resolveConfiguredModelHeaders(
 export interface CompatibilityRequestConfig {
 	extraBody?: Record<string, unknown>;
 	upstreamModelId?: string;
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	authHeader: boolean;
 }
 
