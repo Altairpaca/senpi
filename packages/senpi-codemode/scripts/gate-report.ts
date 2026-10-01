@@ -22,6 +22,7 @@ export const reportSchema = Type.Object({
 	invariants: Type.Record(Type.String(), Type.Unknown()),
 	imports: Type.Record(Type.String(), strings),
 	observations: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+	unmeasured: Type.Optional(strings),
 });
 export type GateReport = Static<typeof reportSchema>;
 export const runtimesSchema = Type.Object({

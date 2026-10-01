@@ -51,6 +51,20 @@ describe("eval regression report comparison", () => {
 		expect(result).toEqual({ exitCode: 0, failures: [], additions: [] });
 	});
 
+	it("fails unmeasured sections without fabricating removed contracts", () => {
+		const report: GateReport = {
+			...baseline,
+			helperCensus: {},
+			invariants: {},
+			imports: {},
+			observations: { platform: "darwin" },
+			unmeasured: ["helperCensus/js", "invariants/terminalEvents", "imports", "legacyContracts"],
+		};
+		const result = compareReports({ baseline, report, additions: [] });
+		expect(result.exitCode).toBe(1);
+		expect(result.failures).toEqual(report.unmeasured?.map((section) => `unmeasured section: ${section}`));
+	});
+
 	it("rejects unreviewed additions and never allowlists a removal", () => {
 		// Given
 		const changed = { ...baseline, helperCensus: { js: ["print", "wait"] } };

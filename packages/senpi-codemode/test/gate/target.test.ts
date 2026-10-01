@@ -61,12 +61,17 @@ it("refuses to measure a target whose workspace dist predates its sources", asyn
 		await utimes(join(workspace, "src/index.ts"), 200, 200);
 		// When: the real gate is asked to record this target as the baseline.
 		const result = await runProcess(
-			["bun", "scripts/gate-eval.ts", "--target", root, "--write-baseline"],
+			["bun", "scripts/gate-eval.ts", "--target", root, "--write-baseline", "--report", join(root, "report.json")],
 			packageRoot,
 		);
 		// Then: it rejects the stale package before measurement, rather than certifying its old graph.
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("stale workspace dist: packages/ai");
+		const artifact: unknown = JSON.parse(await readFile(join(root, "report.json"), "utf8"));
+		expect(artifact).toMatchObject({
+			report: { unmeasured: expect.arrayContaining(["imports", "legacyContracts"]) },
+			failures: expect.any(Array),
+		});
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

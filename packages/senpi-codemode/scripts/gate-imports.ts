@@ -49,7 +49,11 @@ try {
 	const { importFrameSchema, moduleKey, scopeImports } = await import("./gate-import-scope.ts");
 	const frames = [];
 	let workerObserved = false;
-	for (const line of (await readFile(path, "utf8")).trim().split("\n")) {
+	const trace = await readFile(path, "utf8").catch((error: unknown) => {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+		throw error;
+	});
+	for (const line of trace.split("\n").filter((entry) => entry.trim().length > 0)) {
 		const entry: unknown = JSON.parse(line);
 		if (!Check(importFrameSchema, entry)) throw new GateInputError("import observer frame");
 		const key = moduleKey(entry.url);
