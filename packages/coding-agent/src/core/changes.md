@@ -16,6 +16,30 @@
 
 - `skills.ts` `formatSkillsForPrompt` lines array.
 
+## 2026-10-01 - A busy credential read never becomes model availability (senpi#2487)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `reload()` returns `"loaded" | "busy" | "failed"`. A `CredentialStoreBusyError` before the store has ever loaded marks the in-memory credentials as a placeholder (`isCredentialStoreBusy()`) and bumps `getBusyReadCount()`; async reads that fall back to the never-loaded placeholder bump the same count. A busy read after a successful load still serves the last loaded credentials. A store constructed on an auth.json the process already loaded starts from the shared read state instead of `{}`, including after a repaired or migrated load that left the revision unset; it skips its own read only when the revision matches, and otherwise still reads, so a busy startup read keeps the shared credentials.
+- `packages/coding-agent/src/core/runtime-credentials.ts` (fork-only): `busyReadCount()` exposes the backing store's count (0 for stores that never report contention).
+- `packages/coding-agent/src/core/model-runtime.ts`: the full and per-provider availability passes compare the count across their reads; a pass that answered from the busy placeholder publishes nothing, leaves `availabilityInitialized` unset and records an availability error, so the next refresh re-reads the store.
+- `packages/coding-agent/src/core/model-registry.ts`: the live-auth fallback of `getAvailable()` and `hasConfiguredAuth()` re-reads the store when its credentials are a busy placeholder.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`, `packages/coding-agent/src/core/model-registry.ts`: the app-server builds its `model/list` registry once per process; when auth.json was locked past the 1 s sync budget at that first read, the registry answered from `{}` and never read again, so `model/list` stayed empty until restart. A second `AuthStorage.create()` on an already-loaded path skipped its read and had the same empty answer without any contention; after a repaired or migrated load (revision unset) it could not skip, and a busy startup read left it with the empty placeholder.
+- `packages/coding-agent/src/core/model-runtime.ts`, `packages/coding-agent/src/core/runtime-credentials.ts`: async reads swallow the busy error and return the placeholder, so an availability pass completed "successfully" with no providers and set `availabilityInitialized`, and snapshot consumers served the empty list.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts`, `packages/coding-agent/src/core/model-runtime.ts`, `packages/coding-agent/src/core/model-registry.ts`: the busy state is decided inside the credential store's lock handling and consumed by the availability snapshot that every surface (app-server, TUI, RPC, startup resolution) reads; no extension hook sits between them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: the `AuthStorage` constructor, `updateReadState()`, `reload()` and the catch blocks of `readLatestData()`.
+- `packages/coding-agent/src/core/model-runtime.ts`: the guard after the sequence checks in `runAvailabilityRefresh()` and `refreshProviderAvailability()`.
+- `packages/coding-agent/src/core/model-registry.ts`: the fallback branch of `getAvailable()` and `hasConfiguredAuth()`.
+
 ## 2026-10-01 - Retire lazy activators on extension reload (omo#9365)
 
 ### What changed
