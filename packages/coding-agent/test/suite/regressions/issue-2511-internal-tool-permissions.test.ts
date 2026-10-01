@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
-import { createPermissionP0Host } from "./permission-p0-host.ts";
+import { createPermissionP0Host, type PermissionTurn } from "./permission-p0-host.ts";
 
 // #2511: the host must deliver bookkeeping results without asking the user to approve them.
 const bookkeeping = [
@@ -50,7 +50,7 @@ describe("internal tools in real host sessions", () => {
 				const host = await createPermissionP0Host([tools]);
 				disposers.push(host.dispose);
 				// When the provider requests a harness operation.
-				const args =
+				const args: PermissionTurn["args"] =
 					name === "tool_search" ? { query: "catalog_probe" } : name === "monitor" ? { action: "rearm" } : {};
 				const result = await host.run(preset, { name, args });
 				// Then the client receives its result without an approval card.

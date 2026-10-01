@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ToolCall } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
@@ -25,7 +26,7 @@ const frameSchema = Type.Object({
 
 export interface PermissionTurn {
 	readonly name: string;
-	readonly args: Record<string, unknown>;
+	readonly args: ToolCall["arguments"];
 }
 
 export async function createPermissionP0Host(extensionFactories: ExtensionFactory[] = [], permissionFlag?: string) {
