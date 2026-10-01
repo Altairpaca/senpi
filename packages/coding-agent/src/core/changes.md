@@ -40,7 +40,7 @@ Builtin definitions and resource loaders own the metadata consumed before extens
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `_overflowRecoveryAttempted` (a boolean latch) is `_overflowRecoveryRungs`, counted against `OVERFLOW_RECOVERY_RUNGS = 2`. `_checkCompaction` runs the first rung with the configured `keepRecentTokens` and the second with `keepRecentTokensOverride: 0` (summary only), through `_runPrePromptCompaction` on the inline path and a new `options.keepRecentTokensOverride` on `_runAutoCompaction` (applied to both `prepareCompaction` and the execution request). The terminal message is `Context overflow recovery failed after two compact-and-retry attempts. ...`. Every reset site that cleared the boolean now zeroes the counter.
+- `packages/coding-agent/src/core/agent-session.ts`: `_overflowRecoveryAttempted` (a boolean latch) is `_overflowRecoveryRungs`, counted against `OVERFLOW_RECOVERY_RUNGS = 2`. `_checkCompaction` runs the first rung with the configured `keepRecentTokens` and the second with `keepRecentTokensOverride: 0` (summary plus the turn being answered), through `_runPrePromptCompaction` on the inline path and a new `options.keepRecentTokensOverride` on `_runAutoCompaction` (applied to both `prepareCompaction` and the execution request). The terminal message is `Context overflow recovery failed after two compact-and-retry attempts. ...`. Every reset site that cleared the boolean now zeroes the counter.
 - `_checkCompaction` zeroes the counter when `inlineReason === "pre_prompt"`, before the exhaustion check: a new turn admission (a user prompt or an extension-triggered turn such as a goal continuation) is a fresh overflow episode.
 - `_runAutoCompaction`'s retry continuation strips every trailing failed assistant from the rebuilt context (`_stripTrailingFailedAssistants`), not only the last one: after the second rung the kept tail still ends with both rejected attempts of the turn, and continuing from an assistant throws `Cannot continue from message role: assistant`.
 - The keep-budget change the second rung depends on is recorded in `compaction/changes.md` (2026-10-01).
@@ -48,7 +48,7 @@ Builtin definitions and resource loaders own the metadata consumed before extens
 ### Why
 
 - One compact-and-retry was not enough on the `anthropic-subscription` lane: a re-send that is still too long after the configured tail was kept needs a smaller re-send, not the same one, and the turn died instead ("Context overflow recovery failed after one compact-and-retry attempt", then "Goal continuation blocked").
-- The latch was reset only by a user `message_start` or a successful assistant, and the pre-prompt gate ran before either, so every later prompt threw the same error with no compaction (`action: "none"`, `tokensBefore == tokensAfter`): "Send any message to resume" was false and a model switch did not clear it (oh-my-openagent#8411). senpi PR #1780 proposed the reset alone; this entry folds it in with the ladder.
+- The latch was reset by a user `message_start` or a successful assistant, but the pre-prompt gate ran before either, so a spent latch could make later prompts throw the same error with no compaction (`action: "none"`, `tokensBefore == tokensAfter`): "Send any message to resume" was false and a model switch did not clear it (oh-my-openagent#8411). senpi PR #1780 proposed the reset alone; this entry folds it in with the ladder.
 
 ### Why an extension could not handle it
 

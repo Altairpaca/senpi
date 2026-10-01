@@ -25,6 +25,7 @@
 ### What changed
 
 - `cold-seed-budget.ts`: `parseReportedOverflowTokens` reads the count a rejection names (Claude Code's `~N tokens (limit M)`, the API's `N tokens > M maximum`, this lane's own `about N tokens, limit M`). `markColdSeedOverflow` now takes the bytes/4 estimate of the rejected re-send and the senpi session id: it persists `{ estimatedTokens, reportedTokens, reportedLimit }` in the marker's details and remembers `reportedTokens / estimatedTokens` (clamped to `[1, 8]`, only ever raised) as that session's calibration. `coldSeedOverflow(model, estimatedTokens, calibration)` refuses when the calibrated estimate exceeds the window; without a calibration it is the bytes/4 floor it always was.
+- `cold-seed-budget.ts`: the lane's own refusal ("The conversation is too long to resend (about N tokens, ...)") never feeds calibration, because it restates the current ratio. The per-session map keeps at most 256 sessions (oldest-touched dropped). `restoreColdSeedCalibration` re-learns a restarted session's ratio from the newest persisted marker carrying both an estimate and a provider count; `session-registry-wiring.ts` calls it on the restart path of `session_start`, next to the binding restore.
 - `session-stream.ts`: `createResidentAttempt` computes the estimate once, passes it through `onDispatchShape(coldSeed, estimatedTokens)`, and gates with `coldSeedCalibration(sessionId)`. `stream.ts` keeps the estimate of the attempt it dispatched and hands it, with `options.sessionId`, to the marker.
 
 ### Why

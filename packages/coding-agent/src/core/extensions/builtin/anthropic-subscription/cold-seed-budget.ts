@@ -34,6 +34,8 @@ const UTF8_BYTES_PER_TOKEN_FLOOR = 4;
  */
 const MAX_CALIBRATION_RATIO = 8;
 
+const OWN_REFUSAL_PREFIX = "The conversation is too long to resend";
+
 export type ColdSeedOverflowDetails = {
 	estimatedTokens?: number;
 	reportedTokens?: number;
@@ -47,7 +49,7 @@ export class ColdSeedOverflowError extends Error {
 	constructor(estimatedTokens: number, contextWindow: number) {
 		// pi-ai's OVERFLOW_PATTERNS matches this wording, so overflow recovery takes it like an API rejection.
 		super(
-			`The conversation is too long to resend (about ${estimatedTokens} tokens, limit ${contextWindow}). Compacting it and retrying.`,
+			`${OWN_REFUSAL_PREFIX} (about ${estimatedTokens} tokens, limit ${contextWindow}). Compacting it and retrying.`,
 		);
 		this.name = "ColdSeedOverflowError";
 		this.estimatedTokens = estimatedTokens;
@@ -65,11 +67,43 @@ export function estimateColdSeedTokens(
 	return Math.ceil((fixedBytes + serializedPayloadBytes(blocks)) / UTF8_BYTES_PER_TOKEN_FLOOR);
 }
 
+/** Sessions whose calibration a long-lived host keeps; the oldest-touched is dropped past it. */
+const MAX_CALIBRATED_SESSIONS = 256;
 const calibrationBySession = new Map<string, number>();
 
 /** Tokens the API counts per token bytes/4 estimated, learned from this session's rejected cold-seeds; 1 until one is seen. */
 export function coldSeedCalibration(sessionId: string | undefined): number {
 	return (sessionId !== undefined && calibrationBySession.get(sessionId)) || 1;
+}
+
+function raiseCalibration(sessionId: string, estimatedTokens: number, reportedTokens: number): void {
+	if (!(estimatedTokens > 0) || !(reportedTokens > 0)) return;
+	const ratio = Math.min(MAX_CALIBRATION_RATIO, reportedTokens / estimatedTokens);
+	if (ratio <= coldSeedCalibration(sessionId)) return;
+	calibrationBySession.delete(sessionId);
+	calibrationBySession.set(sessionId, ratio);
+	const oldest = calibrationBySession.keys().next().value;
+	if (calibrationBySession.size > MAX_CALIBRATED_SESSIONS && oldest !== undefined) calibrationBySession.delete(oldest);
+}
+
+/**
+ * A restarted process has an empty map, but the counts that taught it are persisted
+ * on the session's cold-seed overflow markers: re-learn from the newest marker that
+ * carries both an estimate and a provider-reported count.
+ */
+export function restoreColdSeedCalibration(
+	sessionId: string,
+	branch: readonly { type: string; message?: { role: string; diagnostics?: readonly AssistantMessageDiagnostic[] } }[],
+): void {
+	for (let index = branch.length - 1; index >= 0; index -= 1) {
+		const message = branch[index]?.type === "message" ? branch[index]?.message : undefined;
+		if (message?.role !== "assistant") continue;
+		const marker = message.diagnostics?.find((diagnostic) => diagnostic.type === COLD_SEED_OVERFLOW_DIAGNOSTIC);
+		const details = marker?.details as ColdSeedOverflowDetails | undefined;
+		if (details?.estimatedTokens === undefined || details.reportedTokens === undefined) continue;
+		raiseCalibration(sessionId, details.estimatedTokens, details.reportedTokens);
+		return;
+	}
 }
 
 export function forgetColdSeedCalibration(sessionId?: string): void {
@@ -118,14 +152,16 @@ export function markColdSeedOverflow(
 	sessionId?: string,
 ): void {
 	if (!coldSeedAttempt || output.stopReason !== "error" || !isContextOverflow(output, model.contextWindow)) return;
-	const reported = parseReportedOverflowTokens(output.errorMessage);
+	// The lane's own refusal reports its calibrated estimate, not a provider count:
+	// learning from it would only feed the current ratio (plus rounding) back in.
+	const ownRefusal = output.errorMessage?.startsWith(OWN_REFUSAL_PREFIX) === true;
+	const reported = ownRefusal ? undefined : parseReportedOverflowTokens(output.errorMessage);
 	const details: ColdSeedOverflowDetails = {
 		...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
 		...(reported ?? {}),
 	};
-	if (sessionId !== undefined && reported && estimatedTokens !== undefined && estimatedTokens > 0) {
-		const ratio = Math.min(MAX_CALIBRATION_RATIO, reported.reportedTokens / estimatedTokens);
-		if (ratio > coldSeedCalibration(sessionId)) calibrationBySession.set(sessionId, ratio);
+	if (sessionId !== undefined && reported && estimatedTokens !== undefined) {
+		raiseCalibration(sessionId, estimatedTokens, reported.reportedTokens);
 	}
 	output.diagnostics = [
 		...(output.diagnostics ?? []),

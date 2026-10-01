@@ -8,6 +8,7 @@ import {
 	forgetColdSeedCalibration,
 	markColdSeedOverflow,
 	parseReportedOverflowTokens,
+	restoreColdSeedCalibration,
 } from "../src/core/extensions/builtin/anthropic-subscription/cold-seed-budget.ts";
 import { forgetBinding } from "../src/core/extensions/builtin/anthropic-subscription/session-reattach.ts";
 import { closeSession, getSession } from "../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
@@ -154,6 +155,53 @@ describe("anthropic-subscription cold-seed budget", () => {
 
 		forgetColdSeedCalibration(SESSION_ID);
 		expect(coldSeedCalibration(SESSION_ID)).toBe(1);
+	});
+
+	it("never learns from its own pre-dispatch refusal, which only restates the current calibration", () => {
+		const counted = rejectedColdSeed("prompt is too long: 300000 tokens > 200000 maximum");
+		markColdSeedOverflow(counted, model, true, 150_000, SESSION_ID);
+		expect(coldSeedCalibration(SESSION_ID)).toBe(2);
+
+		const refusal = coldSeedOverflow(model, 100_001, coldSeedCalibration(SESSION_ID));
+		expect(refusal?.message).toBe(
+			"The conversation is too long to resend (about 200002 tokens, limit 200000). Compacting it and retrying.",
+		);
+		const ownRefusal = rejectedColdSeed(refusal?.message ?? "");
+		markColdSeedOverflow(ownRefusal, model, true, 90_000, SESSION_ID);
+		expect(coldSeedCalibration(SESSION_ID)).toBe(2);
+		expect(ownRefusal.diagnostics?.[0]).toMatchObject({ details: { estimatedTokens: 90_000 } });
+		expect(ownRefusal.diagnostics?.[0]?.details).not.toHaveProperty("reportedTokens");
+	});
+
+	it("restores a restarted session's calibration from the newest marker that carries a count", () => {
+		const marked = (details: Record<string, number>) => ({
+			type: "message",
+			message: {
+				role: "assistant",
+				diagnostics: [{ type: COLD_SEED_OVERFLOW_DIAGNOSTIC, timestamp: 1, details }],
+			},
+		});
+		const branch = [
+			marked({ estimatedTokens: 100_000, reportedTokens: 150_000, reportedLimit: 200_000 }),
+			{ type: "compaction" },
+			marked({ estimatedTokens: 100_000, reportedTokens: 300_000, reportedLimit: 200_000 }),
+			marked({ estimatedTokens: 120_000 }),
+		];
+		restoreColdSeedCalibration(SESSION_ID, branch);
+		expect(coldSeedCalibration(SESSION_ID)).toBe(3);
+
+		forgetColdSeedCalibration(SESSION_ID);
+		restoreColdSeedCalibration(SESSION_ID, [marked({ estimatedTokens: 100_000 })]);
+		expect(coldSeedCalibration(SESSION_ID)).toBe(1);
+	});
+
+	it("keeps a bounded number of calibrated sessions, dropping the oldest", () => {
+		const counted = () => rejectedColdSeed("prompt is too long: 300000 tokens > 200000 maximum");
+		for (let index = 0; index <= 256; index += 1)
+			markColdSeedOverflow(counted(), model, true, 150_000, `session-${index}`);
+		expect(coldSeedCalibration("session-0")).toBe(1);
+		expect(coldSeedCalibration("session-1")).toBe(2);
+		expect(coldSeedCalibration("session-256")).toBe(2);
 	});
 
 	it("refuses an oversized cold-seed before dispatch and marks it as a cold-seed overflow", async () => {

@@ -2037,7 +2037,7 @@ describe("AgentSession compaction characterization", () => {
 		const overflowStarts = harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow");
 		const overflowEnds = harness.eventsOfType("compaction_end").filter((event) => event.reason === "overflow");
 		const terminalOverflowFailures = overflowEnds.filter((event) =>
-			event.errorMessage?.startsWith("Context overflow recovery failed after one compact-and-retry attempt"),
+			event.errorMessage?.startsWith("Context overflow recovery failed after two compact-and-retry attempts"),
 		);
 		expect(overflowStarts).toHaveLength(2);
 		expect(overflowEnds).toHaveLength(2);

@@ -120,6 +120,9 @@ type FakeLane = {
 	wording: (count: number) => string;
 };
 
+// Registered the moment a harness exists, so a failure later in setup still cleans it up.
+const harnesses: Harness[] = [];
+
 async function fakeLane(options: { keepRecentTokens: number; wording?: (count: number) => string }): Promise<FakeLane> {
 	await installSingleAccountLane();
 	const api: FakeApi = { fixedTokens: 60_000, tokensPerByte: 1 };
@@ -159,6 +162,7 @@ async function fakeLane(options: { keepRecentTokens: number; wording?: (count: n
 		settings: { compaction: { keepRecentTokens: options.keepRecentTokens } },
 		extensionFactories: [(pi) => registerSessionRegistry(pi), compactionExtension],
 	});
+	harnesses.push(harness);
 	harness.agent.streamFunction = ((model, context, streamOptions) =>
 		wrapStreamWithModelRecovery(
 			streamAnthropicSubscription(model, context, streamOptions),
@@ -206,10 +210,8 @@ function overflowCompactions(harness: Harness) {
 		}));
 }
 
-const lanes: FakeLane[] = [];
-
 afterEach(() => {
-	while (lanes.length > 0) lanes.pop()?.harness.cleanup();
+	while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	resetSessionRegistryBoundary();
 	resetSdkBoundary();
 	resetScriptedSdk();
@@ -227,7 +229,6 @@ describe("senpi#2480 cold-seed overflow after a failed resume on the anthropic-s
 	it("climbs the recovery ladder inside the turn when the first compacted re-send is still too long", async () => {
 		// keepRecentTokens 40k by senpi's estimate keeps ~200 KB of tail: still over the fake API's count.
 		const lane = await fakeLane({ keepRecentTokens: 40_000 });
-		lanes.push(lane);
 		await buildLongHistory(lane);
 
 		lane.breakResume();
@@ -250,7 +251,6 @@ describe("senpi#2480 cold-seed overflow after a failed resume on the anthropic-s
 
 	it("gives the next prompt a fresh recovery budget after the ladder is exhausted (oh-my-openagent#8411)", async () => {
 		const lane = await fakeLane({ keepRecentTokens: 40_000 });
-		lanes.push(lane);
 		await buildLongHistory(lane);
 
 		// Nothing fits while the fixed prefix alone exceeds the window: every rung is rejected.
@@ -280,7 +280,6 @@ describe("senpi#2480 cold-seed overflow after a failed resume on the anthropic-s
 			wording: (count) =>
 				`Prompt is too long · the request is ~${count} tokens (limit ${CONTEXT_WINDOW}) but this conversation is only ~${Math.floor(count / 3)} tokens — the rest is system prompt, tool definitions, and attachment content. A single-exchange conversation cannot be compacted; reduce attached files/tools or start with less context.`,
 		});
-		lanes.push(lane);
 		await buildLongHistory(lane);
 
 		lane.breakResume();

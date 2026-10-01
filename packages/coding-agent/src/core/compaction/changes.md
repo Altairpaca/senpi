@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/compaction/compaction.ts`: `findCutPoint` and `findProjectedCutPoint` sum an entry's keep-budget weight with `keepBudgetTokens`, which counts a failed assistant (`stopReason: "error"`) as zero. Failed assistants stay valid cut points; only their weight changes.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `findCutPoint` and `findProjectedCutPoint` weigh only the messages `keepBudgetWeighted` keeps: `dropFailedAssistantTurns` over the walked range (error/aborted assistants and the tool results only they declared) minus truncated (`length`) assistants, which the overflow retry strips. Those weigh zero; they stay valid cut points.
 
 ### Why
 

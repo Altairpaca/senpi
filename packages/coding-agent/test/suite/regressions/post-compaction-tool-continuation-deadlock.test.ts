@@ -241,8 +241,9 @@ describe("post-compaction tool continuation regression", () => {
 
 		expect(await settleWithin(prompt, 500)).toBe("settled");
 		expect(toolRuns).toEqual([]);
-		// Rung 1 keeps the overflowing turn, rung 2 summarizes it too and retries from
-		// the summary alone; a third rejection ends the turn.
+		// keepRecentTokens 1 means rung 1 already keeps only the overflowing turn, so rung 2
+		// has nothing older to summarize: it folds the turn itself into the summary and
+		// retries from the summary alone; a third rejection ends the turn.
 		expect(harness.faux.state.callCount).toBe(4);
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
 		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(2);

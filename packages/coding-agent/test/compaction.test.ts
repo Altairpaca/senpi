@@ -777,6 +777,35 @@ describe("findCutPoint", () => {
 		expect(customFitsBudget.turnStartIndex).toBe(-1);
 	});
 
+	// senpi#2480: the attempts that follow the overflowing turn are never sent, so they
+	// must not absorb the budget of the overflow ladder's second rung (keepRecentTokens 0).
+	it("lands a zero keep budget on the turn being answered, past failed and truncated attempts", () => {
+		const oldUser = createMessageEntry(createUserMessage("old history"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
+		const currentUser = createMessageEntry(createUserMessage("continue the task"));
+		const failedToolCall = createMessageEntry({
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "failed-call", name: "read", arguments: { path: "big.txt" } }],
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+		});
+		const orphanedResult = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "failed-call",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(8000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const truncated = createMessageEntry({ ...createAssistantMessage("y".repeat(4000)), stopReason: "length" });
+		const entries = [oldUser, oldAssistant, currentUser, failedToolCall, orphanedResult, truncated];
+
+		const result = findCutPoint(entries, 0, entries.length, 0);
+
+		expect(result.firstKeptEntryIndex).toBe(2);
+		expect(result.isSplitTurn).toBe(false);
+	});
+
 	// Regression test for #9740.
 	it("should fall back to the latest valid cut point before oversized trailing tool results", () => {
 		const oldUser = createMessageEntry(createUserMessage("old history"));
