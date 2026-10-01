@@ -2466,17 +2466,16 @@ export class AgentSession {
 		});
 	}
 
-	private async _emitAgentIdleAfterDeferredTurns(
-		settlementEpoch: number,
-		deferredTurnClaims: DeferredTurnClaim[],
-	): Promise<void> {
-		const dispositions = await Promise.all(deferredTurnClaims.map((claim) => claim.disposition));
-		if (dispositions.includes("started")) return;
-		if (dispositions.includes("delegated") || this._sessionWorkBarrier.hasActiveWork) {
-			await this._waitForSettledSessionWork();
-		}
-		if (settlementEpoch !== this._settlementEpoch) return;
+	/**
+	 * Release the memoized session views and tokenize the runtime messages while nothing runs.
+	 * Called when a run settles idle and after a resumed session's first render, which builds the
+	 * views without any run settling afterwards.
+	 */
+	releaseSettledSessionMemory(): void {
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		// A trimmed mirror bounds memory to the kept tail; a full-history view held across idle
+		// would pin every entry of the file again, so it goes at idle like the views below.
+		if (this.sessionManager.holdsMaterializedHistory()) this.sessionManager.dropMaterializedCaches();
 		// Releasing frees memory only for strings the store already spilled to its blob
 		// backing: a resident string is shared with the store, so tokenizing it hands
 		// back nothing while costing every settled-time reader a re-materialization.
@@ -2491,6 +2490,20 @@ export class AgentSession {
 			this.sessionManager.getResidentStore().externalizeInPlace(this.agent.state.messages);
 			this._runtimeMessagesTokenized = true;
 		}
+	}
+
+	private async _emitAgentIdleAfterDeferredTurns(
+		settlementEpoch: number,
+		deferredTurnClaims: DeferredTurnClaim[],
+	): Promise<void> {
+		const dispositions = await Promise.all(deferredTurnClaims.map((claim) => claim.disposition));
+		if (dispositions.includes("started")) return;
+		if (dispositions.includes("delegated") || this._sessionWorkBarrier.hasActiveWork) {
+			await this._waitForSettledSessionWork();
+		}
+		if (settlementEpoch !== this._settlementEpoch) return;
+		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		this.releaseSettledSessionMemory();
 		this._emit({ type: "agent_idle" });
 	}
 

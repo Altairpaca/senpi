@@ -35,6 +35,28 @@
 - `packages/coding-agent/src/core/resource-loader.ts`: the bundled package resolver and its imports.
 
 ## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+## 2026-10-01 - One materialized copy of the session, released at idle (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: `externalize` remembers values that came out without resident tokens, and `materialize` returns those as is instead of deep-copying them.
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch` reuses the compact view's materialized entries (`_fromCompactView`), and `holdsMaterializedHistory()` reports a held full-history view of a trimmed mirror.
+- `packages/coding-agent/src/core/agent-session.ts`: the idle release moves into the public `releaseSettledSessionMemory()`, which also drops the views when a full-history view is held.
+
+### Why
+
+Every view deep-copied each entry, the branch copied the session a second time, and a trimmed mirror's full-history view pinned the whole file's entries across idle. At 50,000 entries that held about 60 MB more than at 10,000 (1.6x); after this the ratio is 1.04x, and context builds no longer copy entries that carry no resident strings.
+
+### Why an extension could not handle it
+
+The resident store, the session views and the idle settlement are core internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: `externalize`, `materialize`.
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch`, `_extendBranchCache`, `dropMaterializedCaches`, the fields beside `historyView`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_emitAgentIdleAfterDeferredTurns`, `releaseSettledSessionMemory`.
+
 ## 2026-10-01 - Entry ids stay unique after a compaction trim; duplicated ids no longer hang open or /tree (senpi#2508, senpi#1247)
 
 ### What changed

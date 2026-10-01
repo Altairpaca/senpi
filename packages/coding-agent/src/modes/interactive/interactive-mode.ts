@@ -1736,6 +1736,7 @@ export class InteractiveMode {
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
+		this.session.releaseSettledSessionMemory();
 		time("renderInitial", "tui");
 
 		// Set up theme file watcher

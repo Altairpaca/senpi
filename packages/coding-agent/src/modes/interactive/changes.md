@@ -16,6 +16,24 @@
 
 - LOW: the TUI import and clipboard dispatch condition in `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`.
 
+## 2026-10-01 - Release session memory after the first render of a resumed session (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` calls `session.releaseSettledSessionMemory()` right after `renderInitialMessages()`.
+
+### Why
+
+Rendering a resumed session builds the session views, and no run settles idle afterwards, so a resumed 50,000-entry session kept about 60 MB of views until the first turn ended.
+
+### Why an extension could not handle it
+
+This is the interactive startup sequence.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` around `renderInitialMessages()`.
+
 ## 2026-10-01 - Settled transcript entries are rendered once (senpi#2508)
 
 ### What changed

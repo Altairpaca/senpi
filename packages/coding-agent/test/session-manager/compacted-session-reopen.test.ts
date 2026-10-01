@@ -1,7 +1,7 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { assistantMsg, userMsg } from "../utilities.ts";

@@ -1081,6 +1081,8 @@ export class SessionManager {
 		readonly result: ReturnType<typeof projectSession>;
 	} | null = null;
 	private historyView: MaterializedView | null = null;
+	/** Id -> entry of the compact view, extended with it, so the branch shares its materialized objects. */
+	private compactLookup: { entries: SessionEntry[]; length: number; map: Map<string, SessionEntry> } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
 	// keyed on it so read hot paths (footer, RPC) never re-materialize unchanged sessions.
 	private mutationCount = 0;
@@ -2025,7 +2027,8 @@ export class SessionManager {
 			current = current.parentId ? entriesById.get(current.parentId) : undefined;
 		}
 		path.reverse();
-		const materializedPath = this._materializeEntries(path);
+		const materializedPath =
+			(entriesById === this.byId ? this._fromCompactView(path) : undefined) ?? this._materializeEntries(path);
 		if (fromId === undefined) {
 			this.branchCache = {
 				leafId: this.leafId,
@@ -2054,7 +2057,7 @@ export class SessionManager {
 		}
 		if (current === undefined) return undefined;
 		added.reverse();
-		const entries = [...cache.entries, ...this._materializeEntries(added)];
+		const entries = [...cache.entries, ...(this._fromCompactView(added) ?? this._materializeEntries(added))];
 		this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries, source: this.fileEntries };
 		return entries;
 	}
@@ -2217,7 +2220,13 @@ export class SessionManager {
 		this.compactEntriesCache = null;
 		this.compactView = null;
 		this.historyView = null;
+		this.compactLookup = null;
 		this.projectionMemo = null;
+	}
+
+	/** Whether a full-history view of a trimmed mirror is held: the whole file's entries, parsed. */
+	holdsMaterializedHistory(): boolean {
+		return this.historyView !== null;
 	}
 
 	/** The view's entries extended by the mirror's new tail, or undefined when it must be rebuilt. */
@@ -2237,6 +2246,35 @@ export class SessionManager {
 		if (missing) return undefined;
 		this._bindMessagePositions(tail);
 		return [...view.entries, ...tail];
+	}
+
+	/**
+	 * The compact view's materialized entry for each path entry, or undefined when one is not in the
+	 * view. The branch is a subset of the compact view whenever the leaf is in the mirror; sharing its
+	 * objects keeps one materialized copy of the session instead of two (about 20 MB at 50k entries).
+	 */
+	private _fromCompactView(path: readonly SessionEntry[]): SessionEntry[] | undefined {
+		const entries = this._getCompactEntries();
+		let lookup = this.compactLookup;
+		if (
+			lookup === null ||
+			lookup.length > entries.length ||
+			(lookup.length > 0 && lookup.entries[lookup.length - 1] !== entries[lookup.length - 1])
+		) {
+			lookup = { entries, length: 0, map: new Map() };
+		}
+		for (let index = lookup.length; index < entries.length; index++) {
+			const entry = entries[index]!;
+			lookup.map.set(entry.id, entry);
+		}
+		this.compactLookup = { entries, length: entries.length, map: lookup.map };
+		const shared: SessionEntry[] = [];
+		for (const entry of path) {
+			const materialized = lookup.map.get(entry.id);
+			if (materialized === undefined || materialized.parentId !== entry.parentId) return undefined;
+			shared.push(materialized);
+		}
+		return shared;
 	}
 
 	private _bindMessagePositions(entries: readonly SessionEntry[]): void {
