@@ -382,13 +382,22 @@ both loader `VIRTUAL_MODULES` tables: their backing packages and dependencies
 reachable only across virtual edges belong to the host and are excluded from
 set equality. Every observed edge and classification remains in the report.
 Workspace imports resolve through built `dist` entries. The gate build records
-the source file set and content hashes after a successful build; preflight rejects
-missing, changed or deleted inputs instead of trusting mtimes alone.
+the source file set, inherited build configs and content hashes after a successful
+build; preflight rejects missing, changed or deleted inputs. Unchanged content
+remains valid after timestamp refreshes. Each ignored `.senpi-gate-inputs.json`
+certificate sits beside its workspace manifest, outside the published `dist` tree.
 
 ```bash
 bun packages/senpi-codemode/scripts/gate-build.ts
 bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
 bun run --cwd packages/senpi-codemode test -- test/gate
+```
+
+The package test script already selects `test/`, so the last command intentionally
+runs the full package suite. For a focused gate-only run, invoke Vitest directly:
+
+```bash
+bun run --cwd packages/senpi-codemode vitest run test/gate
 ```
 
 Install and build both the head checkout and a clean checkout of the PR merge

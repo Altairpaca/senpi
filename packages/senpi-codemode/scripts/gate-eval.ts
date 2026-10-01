@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "typebox";
@@ -42,7 +42,8 @@ async function main(): Promise<void> {
 		},
 	});
 	const requestedTarget = resolve(values.target);
-	const target = requestedTarget.endsWith("senpi-codemode") ? requestedTarget : resolve(requestedTarget, "packages/senpi-codemode");
+	const isPackage = basename(requestedTarget) === "senpi-codemode" && basename(dirname(requestedTarget)) === "packages";
+	const target = isPackage ? requestedTarget : resolve(requestedTarget, "packages/senpi-codemode");
 	await assertFreshTarget(target);
 	const manifest: unknown = JSON.parse(await readFile(resolve(packageRoot, "test/gate/runtimes.json"), "utf8"));
 	const golden: unknown = JSON.parse(await readFile(resolve(packageRoot, "test/gate/helpers.golden.json"), "utf8"));

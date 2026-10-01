@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +32,7 @@ it.each(["dist", "entry", "sidecar"])("does not certify build output through a %
 				break;
 			case "sidecar":
 				await writeFile(join(workspace, "dist/index.js"), "export const value = 1;");
-				await symlink(join(outside, "certificate.json"), join(workspace, "dist/.senpi-gate-inputs.json"));
+				await symlink(join(outside, "certificate.json"), join(workspace, ".senpi-gate-inputs.json"));
 				break;
 			default:
 				throw new TypeError("Unknown link fixture");
@@ -86,6 +86,9 @@ it("allows workspace output rebuilt after its source changed", async () => {
 		await utimes(join(workspace, "src/index.ts"), 200, 200);
 		await utimes(join(workspace, "dist/index.js"), 300, 300);
 		await recordTargetBuild(join(root, "packages/senpi-codemode"));
+		expect(await readdir(join(workspace, "dist"))).toEqual(["index.js"]);
+		const certificate: unknown = JSON.parse(await readFile(join(workspace, ".senpi-gate-inputs.json"), "utf8"));
+		expect(certificate).toHaveProperty("src/index.ts");
 		// When: the gate checks the freshly built target.
 		const measured = assertFreshTarget(join(root, "packages/senpi-codemode"));
 		// Then: it permits measurement instead of rejecting a valid rebuild.
@@ -116,6 +119,78 @@ it("rejects a deleted source even when every remaining input predates the build"
 		await expect(assertFreshTarget(join(root, "packages/senpi-codemode"))).rejects.toThrow(
 			"changed or deleted inputs: src/deleted.ts",
 		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it("requires a rebuild after an inherited config changes even with unchanged mtimes", async () => {
+	const root = await mkdtemp(join(tmpdir(), "senpi-gate-config-"));
+	try {
+		const workspace = join(root, "packages/ai");
+		await mkdir(join(workspace, "src"), { recursive: true });
+		await mkdir(join(workspace, "dist"));
+		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
+		await writeFile(join(workspace, "src/index.ts"), "export const value = 1;");
+		await writeFile(join(workspace, "dist/index.js"), "export const value = 1;");
+		await writeFile(join(workspace, "tsconfig.build.json"), '{"extends":"../../tsconfig.base.json"}');
+		await writeFile(join(root, "tsconfig.base.json"), '{"compilerOptions":{"strict":true}}');
+		for (const path of ["package.json", "src/index.ts", "tsconfig.build.json"])
+			await utimes(join(workspace, path), 100, 100);
+		await utimes(join(root, "tsconfig.base.json"), 100, 100);
+		await utimes(join(workspace, "dist/index.js"), 200, 200);
+		const target = join(root, "packages/senpi-codemode");
+		await recordTargetBuild(target);
+		await expect(assertFreshTarget(target)).resolves.toBeUndefined();
+		await writeFile(join(root, "tsconfig.base.json"), '{"compilerOptions":{"strict":false}}');
+		await utimes(join(root, "tsconfig.base.json"), 100, 100);
+		await expect(assertFreshTarget(target)).rejects.toThrow("tsconfig.base.json");
+		await recordTargetBuild(target);
+		await expect(assertFreshTarget(target)).resolves.toBeUndefined();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it("treats a checkout with a package-like suffix as a checkout", async () => {
+	const root = await mkdtemp(join(tmpdir(), "senpi-gate-checkout-"));
+	try {
+		const checkout = join(root, "fixture-senpi-codemode");
+		const workspace = join(checkout, "packages/ai");
+		await mkdir(join(workspace, "src"), { recursive: true });
+		await mkdir(join(workspace, "dist"));
+		await mkdir(join(checkout, "packages/senpi-codemode"));
+		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
+		await writeFile(join(workspace, "src/index.ts"), "export const value = 1;");
+		await writeFile(join(workspace, "dist/index.js"), "export const value = 0;");
+		await utimes(join(workspace, "dist/index.js"), 100, 100);
+		const result = await runProcess(
+			["bun", "scripts/gate-eval.ts", "--target", checkout, "--report", join(root, "report.json")],
+			packageRoot,
+		);
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain("stale workspace dist: packages/ai");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+}, 180_000);
+
+it("accepts unchanged certified content after an input timestamp refresh", async () => {
+	const root = await mkdtemp(join(tmpdir(), "senpi-gate-touch-"));
+	try {
+		const workspace = join(root, "packages/ai");
+		await mkdir(join(workspace, "src"), { recursive: true });
+		await mkdir(join(workspace, "dist"));
+		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
+		await writeFile(join(workspace, "src/index.ts"), "export const value = 1;");
+		await writeFile(join(workspace, "dist/index.js"), "export const value = 1;");
+		await utimes(join(workspace, "package.json"), 100, 100);
+		await utimes(join(workspace, "src/index.ts"), 100, 100);
+		await utimes(join(workspace, "dist/index.js"), 200, 200);
+		const target = join(root, "packages/senpi-codemode");
+		await recordTargetBuild(target);
+		await utimes(join(workspace, "src/index.ts"), 300, 300);
+		await expect(assertFreshTarget(target)).resolves.toBeUndefined();
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

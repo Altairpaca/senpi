@@ -46,7 +46,7 @@ jobs:
         run: bun packages/senpi-codemode/scripts/gate-build.ts
       - name: Eval regression gate
         run: bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
-      - name: Gate comparator contracts
+      - name: Codemode package tests (including gate regressions)
         run: bun run --cwd packages/senpi-codemode test -- test/gate
       - name: Gate harness types
         run: bunx tsc --noEmit --project packages/senpi-codemode/scripts/tsconfig.gate.json

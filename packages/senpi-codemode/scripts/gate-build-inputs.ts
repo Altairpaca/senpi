@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { glob, lstat, open, readFile, readdir, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { GateInputError } from "./gate-input-error.ts";
 
 const manifestSchema = Type.Object({ main: Type.Optional(Type.String()) });
+const configSchema = Type.Object({
+	extends: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+});
 export const fingerprintSchema = Type.Record(Type.String(), Type.String());
 
 export async function builtWorkspaces(target: string) {
@@ -27,6 +30,19 @@ export async function builtWorkspaces(target: string) {
 
 export async function buildFingerprint(workspace: string): Promise<Record<string, string>> {
 	const names = ["package.json", ...(await readdir(workspace)).filter((name) => /^tsconfig.*\.json$/u.test(name))];
+	const configs = names.filter((name) => /^tsconfig.*\.json$/u.test(name));
+	for (const name of configs) {
+		const path = resolve(workspace, name);
+		const config: unknown = JSON.parse(await readFile(path, "utf8"));
+		if (!Check(configSchema, config)) throw new GateInputError(`build configuration: ${name}`);
+		const parents = typeof config.extends === "string" ? [config.extends] : config.extends ?? [];
+		for (const parent of parents) {
+			const inherited = relative(workspace, resolve(dirname(path), parent)).replaceAll("\\", "/");
+			if (names.includes(inherited)) continue;
+			names.push(inherited);
+			configs.push(inherited);
+		}
+	}
 	for (const entry of await readdir(resolve(workspace, "src"), { recursive: true, withFileTypes: true })) {
 		if (entry.isFile()) names.push(relative(workspace, resolve(entry.parentPath, entry.name)).replaceAll("\\", "/"));
 	}
@@ -43,7 +59,7 @@ export async function recordTargetBuild(target: string): Promise<void> {
 	for (const workspace of await builtWorkspaces(target)) {
 		await assertUnlinkedPath(root, workspace.directory);
 		await assertUnlinkedPath(workspace.directory, workspace.entry);
-		const sidecar = resolve(workspace.directory, "dist/.senpi-gate-inputs.json");
+		const sidecar = resolve(workspace.directory, ".senpi-gate-inputs.json");
 		await assertUnlinkedPath(workspace.directory, sidecar);
 		await readFile(workspace.entry);
 		const certificate = `${JSON.stringify(await buildFingerprint(workspace.directory), null, 2)}\n`;

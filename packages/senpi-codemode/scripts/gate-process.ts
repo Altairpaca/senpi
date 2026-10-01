@@ -11,7 +11,9 @@ export function runProcess(command: readonly string[], cwd: string): Promise<Gat
 			cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			env: {
-				...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PI_"))),
+				...Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+					!key.startsWith("PI_") && (!key.startsWith("SENPI_CODEMODE_") || key === "SENPI_CODEMODE_GATE_MUTATE"),
+				)),
 				SENPI_QA_REQUIRE_ALL_LANGUAGES: "1", CI: "1",
 			},
 		});

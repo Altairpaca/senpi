@@ -7,19 +7,15 @@ import { GateInputError } from "./gate-input-error.ts";
 /** Workspace imports resolve through dist, not the source tree being compared. */
 export async function assertFreshTarget(target: string): Promise<void> {
 	for (const workspace of await builtWorkspaces(target)) {
-		const entry = await stat(workspace.entry).catch((error: unknown) => {
+		await stat(workspace.entry).catch((error: unknown) => {
 			if (error instanceof Error && "code" in error && error.code === "ENOENT")
 				throw new GateInputError(`stale workspace dist: ${workspace.label} (missing build entry; run the gate build)`);
 			throw error;
 		});
 		const inputs = await buildFingerprint(workspace.directory);
-		for (const input of Object.keys(inputs)) {
-			if ((await stat(resolve(workspace.directory, input))).mtimeMs > entry.mtimeMs)
-				throw new GateInputError(`stale workspace dist: ${workspace.label} (${input} is newer than its build; run the gate build)`);
-		}
 		let recorded: unknown;
 		try {
-			recorded = JSON.parse(await readFile(resolve(workspace.directory, "dist/.senpi-gate-inputs.json"), "utf8"));
+			recorded = JSON.parse(await readFile(resolve(workspace.directory, ".senpi-gate-inputs.json"), "utf8"));
 		} catch (error: unknown) {
 			if (error instanceof Error && "code" in error && error.code === "ENOENT")
 				throw new GateInputError(`stale workspace dist: ${workspace.label} (missing input fingerprint; run the gate build)`);
