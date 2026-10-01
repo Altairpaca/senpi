@@ -1,3 +1,21 @@
+## 2026-10-01 - Bound the line normalization memo (senpi#2508)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `normalizeLine` (the windowed repaint path) drops the oldest half of `normalizeMemo` once it holds more than twice the frame's lines (at least 4,096 entries). Full passes still rebuild the memo from the current frame.
+
+### Why
+
+The windowed path only ever added entries, so every distinct line drawn during a long run (spinner frames, streamed text) stayed in the memo. After a 10-minute event stream it held about 3.4 MB of map storage plus the line strings, the largest retainer in a heap-snapshot diff against a cold open of the same session.
+
+### Why an extension could not handle it
+
+This is the renderer's own cache.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: `normalizeLine` and the static fields beside `SEGMENT_RESET`.
+
 # TUI delta rendering fork changes
 
 ## 2026-10-02 - Share the direct Warp-on-WSL session predicate

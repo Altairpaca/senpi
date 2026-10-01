@@ -2208,6 +2208,7 @@ export abstract class TuiBase extends Container {
 	}
 
 	private static readonly SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+	private static readonly NORMALIZE_MEMO_MIN = 4096;
 
 	/**
 	 * Every frame write is bracketed by synchronized output (DECSET 2026) and
@@ -2252,6 +2253,15 @@ export abstract class TuiBase extends Container {
 			return { line: cached, normalized: false };
 		}
 		const normalized = normalizeTerminalOutput(line) + TUI.SEGMENT_RESET;
+		// The windowed path only ever adds: a long run of distinct lines (spinners, streamed text)
+		// grew the memo without bound. Past a bound the oldest half goes; full passes rebuild it.
+		if (this.normalizeMemo.size >= Math.max(TUI.NORMALIZE_MEMO_MIN, this.previousRawLines.length * 2)) {
+			let drop = this.normalizeMemo.size >> 1;
+			for (const key of this.normalizeMemo.keys()) {
+				if (drop-- <= 0) break;
+				this.normalizeMemo.delete(key);
+			}
+		}
 		this.normalizeMemo.set(line, normalized);
 		return { line: normalized, normalized: true };
 	}
