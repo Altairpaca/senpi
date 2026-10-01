@@ -91,7 +91,7 @@ export function createWorkerCore(transport, options) {
 
 	function interruptCell(reason) {
 		if (!activeCell || !runtime) return;
-		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId } });
+		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId, shellWaitActive: runtime.shellWaitActive } });
 		const interruption = cellInterruptedError(reason);
 		activeCell.interruption = interruption;
 		for (const [callId, pending] of pendingTools) {
