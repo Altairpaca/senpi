@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const driver = fileURLToPath(new URL("../scripts/qa-shell-stop.ts", import.meta.url));
+const bunAvailable = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 
 async function runDriver(mode: string): Promise<{ readonly report: unknown; readonly stdout: string }> {
 	const child = spawn("bun", [driver, mode], { stdio: ["ignore", "pipe", "pipe"] });
@@ -27,8 +28,8 @@ async function runDriver(mode: string): Promise<{ readonly report: unknown; read
 	}
 }
 
-describe("Bun shell Stop", () => {
-	it.each(["shell", "text", "lines"])(
+describe.skipIf(!bunAvailable)("Bun shell Stop", () => {
+	it.each(["shell", "text", "lines", "late"])(
 		"reports state loss when Stop interrupts a native %s wait",
 		async (mode) => {
 			// Given a real kernel and a command that announces readiness through a socket.

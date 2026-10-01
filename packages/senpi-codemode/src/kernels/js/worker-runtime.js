@@ -32,12 +32,14 @@ export class JsWorkerRuntime {
 	#children = new Set();
 	#shellWaits = new Set();
 	#onChildEvent;
+	#onShellWaitChange;
 	#tools;
 
 	constructor(options) {
 		this.#cwd = options.cwd;
 		this.#parallelPoolWidth = options.parallelPoolWidth;
 		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
+		this.#onShellWaitChange = options.onShellWaitChange;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
 		this.#tools = createKernelToolRegistry({
@@ -164,7 +166,11 @@ export class JsWorkerRuntime {
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
 			onChild: (child, spawnOptions) => this.#trackChild(child, spawnOptions),
-			onShellWait: (promise, waiting) => waiting ? this.#shellWaits.add(promise) : this.#shellWaits.delete(promise),
+			onShellWait: (promise, waiting) => {
+				if (waiting) this.#shellWaits.add(promise);
+				else this.#shellWaits.delete(promise);
+				this.#onShellWaitChange?.();
+			},
 		});
 		globalThis.__senpi_restore_console__ = () => {
 			console.log = originalLog;
