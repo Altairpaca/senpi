@@ -1,5 +1,23 @@
 # senpi-codemode fork changes
 
+## 2026-10-01 - Animate quiet running eval cells (senpi#2503)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/render.ts`: derive missing host spinner frames from the cell's render-time elapsed clock and repaint live cards every 100 ms. Keep the abandoned-row timeout at 60 seconds.
+
+### Why
+
+- Running eval cells otherwise stay on the first spinner frame while only elapsed time advances.
+
+### Why an extension could not handle it
+
+- The eval extension owns its renderer and live repaint ticker.
+
+### Expected merge conflict zones
+
+- LOW: live ticker constants and `cellHeader` in `src/tool/render.ts`.
+
 ## 2026-09-29 - Eval return values reach the model whole, and every cut says so (senpi#2402)
 
 ### What changed
