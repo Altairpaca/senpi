@@ -1,5 +1,27 @@
 # senpi-codemode fork changes
 
+## 2026-10-01 - Explicit state-loss notice for Stop during a native shell wait (senpi#2453)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js` and `packages/senpi-codemode/src/kernels/js/worker-shell-capture.d.ts` track active native promise waits without starting lazy commands.
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js` and `packages/senpi-codemode/src/kernels/js/worker-core.js` report shell-wait changes through the existing acknowledgement while interruption is in flight, including waits entered during cooperative grace.
+- `packages/senpi-codemode/src/kernels/js/run-queue.ts`, `packages/senpi-codemode/src/kernels/js/context-manager.ts`, and `packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts` retain the cell-fenced shell-wait state and report cleared variables with Bun.spawn/bash guidance only on a forced restart.
+- Cooperative interrupts, successful cells, native shell interpretation, and the default eval prompt are unchanged.
+- Event-ordered real-kernel tests observe command connection and exit, cleared globals, retained non-shell globals, and successful native read paths.
+
+### Why
+
+- Lead decision A keeps native shell behavior while making forced-restart state loss explicit. Thanks to floweredao's investigation in senpi#2475. Native cancellation remains tracked in oven-sh/bun#11868.
+
+### Why an extension could not handle it
+
+- The kernel owns shell capture and the forced-restart outcome.
+
+### Expected merge conflict zones
+
+- JS shell capture, interrupt acknowledgements, and run settlement.
+
 ## 2026-10-01 - Event-driven Python bootstrap with stage-specific hang detection (senpi#2452)
 
 ### What changed

@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Stop now explicitly reports when a running `Bun.$` wait forces the JavaScript kernel to restart and clears its variables, and recommends `Bun.spawn` or the bash tool for stoppable commands. Native shell semantics remain unchanged. Thanks to [@floweredao](https://github.com/floweredao) for the investigation ([#2475](https://github.com/code-yeongyu/senpi/pull/2475)); native cancellation remains tracked in [#2453](https://github.com/code-yeongyu/senpi/issues/2453).
+
 ### Removed
 
 ## [2026.10.1-3] - 2026-10-01

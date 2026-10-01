@@ -319,6 +319,12 @@ restarted, or outcome unknown - never a per-language assumption; oversized
 buffered output is written under the session local root and referenced as
 `local://…`.
 
+When Stop restarts a kernel waiting on `Bun.$`, the result explicitly says that
+the kernel restarted and its variables were cleared. Use `Bun.spawn` or the
+bash tool for long-running commands you may want to stop. Native `Bun.$`
+cancellation is tracked in [Bun #11868](https://github.com/oven-sh/bun/issues/11868);
+the shell's interpretation and object redirects are not replaced.
+
 Commands a cell runs through `Bun.$` never read the host's terminal: the worker
 thread shares the TUI's stdin, so the shell wrapper hands every template an
 empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,

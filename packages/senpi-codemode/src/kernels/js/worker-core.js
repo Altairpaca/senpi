@@ -91,7 +91,7 @@ export function createWorkerCore(transport, options) {
 
 	function interruptCell(reason) {
 		if (!activeCell || !runtime) return;
-		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId } });
+		acknowledgeInterrupt();
 		const interruption = cellInterruptedError(reason);
 		activeCell.interruption = interruption;
 		for (const [callId, pending] of pendingTools) {
@@ -100,6 +100,11 @@ export function createWorkerCore(transport, options) {
 		}
 		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
+	}
+
+	function acknowledgeInterrupt() {
+		if (!activeCell || !runtime) return;
+		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId, shellWaitActive: runtime.shellWaitActive } });
 	}
 
 	function onMessage(message) {
@@ -128,6 +133,9 @@ export function createWorkerCore(transport, options) {
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
+				onShellWaitChange: () => {
+					if (activeCell?.interruption) acknowledgeInterrupt();
+				},
 			});
 			if (message.memory) {
 				memory = createWorkerMemory(message.memory, (report) => emit({ type: "status", event: { op: MEMORY_COLLECTED_OP, ...report } }));
