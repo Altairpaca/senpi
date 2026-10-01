@@ -1,3 +1,21 @@
+## 2026-10-01 - Commands declare required arguments (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: expose `RegisteredCommand.requiresArguments`; false submits on picker Enter, and when omitted a declared `argumentHint` makes Enter wait for input.
+
+### Why
+
+A usage hint cannot tell the picker whether bare invocation opens a menu or needs input, so optional-argument commands opt into first-Enter submission.
+
+### Why an extension could not handle it
+
+The host owns the public registration contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: RegisteredCommand metadata.
+
 ## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
 
 ### What changed

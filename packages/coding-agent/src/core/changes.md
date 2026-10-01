@@ -1,3 +1,41 @@
+## 2026-10-01 - Explicit command argument requirements (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/core/slash-commands.ts`: model, thinking, rename and login arguments are explicitly optional; import requires a path.
+- `packages/coding-agent/src/core/prompt-templates.ts` and `packages/coding-agent/src/core/skills.ts`: load boolean `requires-arguments` frontmatter; when it is unset, a declared `argument-hint` means arguments are required.
+
+### Why
+
+Picker Enter must submit commands that work without arguments; those declare it explicitly, while a hint alone keeps the old wait-for-input behavior.
+
+### Why an extension could not handle it
+
+Builtin definitions and resource loaders own the metadata consumed before extension dispatch.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/slash-commands.ts`: builtin definitions.
+- `packages/coding-agent/src/core/prompt-templates.ts` and `packages/coding-agent/src/core/skills.ts`: resource interfaces and frontmatter loading.
+
+## 2026-09-30 - Preserve ambient request authentication for auxiliary requests (senpi#2441)
+
+### What changed
+
+- `model-registry.ts`: `getApiKeyAndHeaders()` now carries the provider resolver's `ambient` marker in a successful request-auth result.
+
+### Why
+
+- Normal turns accept a resolved provider auth result even when the provider signs or authenticates the request later and therefore supplies neither an API key nor credential headers. Auxiliary callers need that same decision without treating an unresolved keyed provider as authenticated.
+
+### Why an extension could not handle it
+
+- The request-auth compatibility result is produced by the core model registry before builtin extensions dispatch provider requests.
+
+### Expected merge conflict zones
+
+- LOW: the `ResolvedRequestAuth` type and successful resolution branch in `packages/coding-agent/src/core/model-registry.ts`.
+
 ## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
 
 ### What changed
