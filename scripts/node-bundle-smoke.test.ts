@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { on, once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
 const repo = resolve(import.meta.dir, "..");
@@ -52,6 +53,51 @@ beforeAll(() => {
 	});
 	expect(result.status, result.stderr).toBe(0);
 }, 130_000);
+
+test("loads the embedded JavaScript grammar from an isolated Node bundle", () => {
+	const state = mkdtempSync(join(tmpdir(), "senpi-node-bundle-grammar-"));
+	try {
+		const bundle = join(state, "bundle");
+		cpSync(join(repo, "packages/coding-agent/dist/bundle"), bundle, { recursive: true });
+		const engineChunk = readdirSync(join(bundle, "chunks")).find(
+			(path) => path.startsWith("engine-") && path.endsWith(".js"),
+		);
+		expect(engineChunk).toBeDefined();
+		const probe = [
+			`const engine = await import(${JSON.stringify(pathToFileURL(join(bundle, "chunks", engineChunk!)).href)});`,
+			'const folder = await engine.loadTreeSitterFolder("js", { cache: false, fallback: { id: "heuristic", version: "1", fold: () => ({ status: "raw" }) } });',
+			'console.log(folder?.id ?? "undefined");',
+		].join(" ");
+		for (const runtime of runtimes) {
+			const result = spawnSync(runtime, ["--input-type=module", "-e", probe], {
+				cwd: state,
+				encoding: "utf8",
+				env: { PATH: process.env.PATH ?? "" },
+			});
+			expect(result.status, `${runtime}: ${result.stderr}`).toBe(0);
+			expect(result.stdout.trim(), runtime).toBe("tree-sitter-wasm");
+		}
+	} finally {
+		rmSync(state, { recursive: true, force: true });
+	}
+});
+
+// A downstream installer (oh-my-openagent) rewrites these declarations byte-for-byte inside the
+// installed bundle, so emitting must keep one literal `claudeCodeVersion="X.Y.Z"` per emitting file.
+test("keeps the claudeCodeVersion declarations a downstream installer rewrites", () => {
+	// Given
+	const bundle = join(repo, "packages/coding-agent/dist/bundle");
+	// When
+	const declaringFiles = readdirSync(bundle, { recursive: true })
+		.map(String)
+		.filter((path) => path.endsWith(".js"))
+		.flatMap((path) =>
+			Array.from(readFileSync(join(bundle, path), "utf8").matchAll(/claudeCodeVersion="\d+\.\d+\.\d+"/g), () => basename(path)),
+		)
+		.sort();
+	// Then
+	expect(declaringFiles).toEqual([expect.stringMatching(/^anthropic-messages-.+\.js$/), "session-worker.js"]);
+});
 
 describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 	test("reports the package version when the bundle is launched", () => {
@@ -152,6 +198,45 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 			// Physical worker exit is asynchronous after the close response.
 			expect(z.object({ isStreaming: z.boolean() }).parse(snapshot).isStreaming).toBe(false);
 			expect(closed).toEqual({});
+		} finally {
+			child.kill("SIGKILL");
+			await exit;
+			lines.close();
+			rmSync(state, { recursive: true, force: true });
+		}
+	}, 100_000);
+
+	test("contributes the bundled gpt-image-gen skill when launched outside the bundle (#2028)", async () => {
+		// Given: a dummy OpenAI key turns image generation on, and the cwd is unrelated to the bundle,
+		// so an embedded asset path that is resolved against cwd cannot exist.
+		const state = createState();
+		const child = spawn(runtime, [cli, "--mode", "rpc"], {
+			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: { ...hermeticEnv(state), OPENAI_API_KEY: "sk-bundle-smoke-dummy" },
+		});
+		const exit = once(child, "exit", { signal: AbortSignal.timeout(90_000) });
+		let stderr = "";
+		child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-16000); });
+		const lines = createInterface({ input: child.stdout });
+		const commandsSchema = z.object({
+			commands: z.array(z.object({ name: z.string(), sourceInfo: z.object({ path: z.string() }) })),
+		});
+		try {
+			// When
+			const responses = on(lines, "line", { close: ["close"], signal: AbortSignal.timeout(60_000) });
+			child.stdin.write(`${JSON.stringify({ id: "commands", type: "get_commands" })}\n`);
+			let commands: z.infer<typeof commandsSchema>["commands"] | undefined;
+			for await (const args of responses) {
+				const response = responseSchema.parse(JSON.parse(z.string().parse(args[0])));
+				if (response.id !== "commands") continue;
+				expect(response.success, `${JSON.stringify(response)}\n${stderr}`).toBe(true);
+				commands = commandsSchema.parse(response.data).commands;
+				break;
+			}
+			// Then: the skill ships as a real file and the missing-skill notice never fires.
+			const skill = commands?.find((command) => command.name === "skill:gpt-image-gen");
+			expect(skill, `commands: ${JSON.stringify(commands?.map((command) => command.name))}\n${stderr}`).toBeDefined();
+			expect(existsSync(skill?.sourceInfo.path ?? ""), skill?.sourceInfo.path).toBe(true);
+			expect(stderr).not.toContain("bundled skill not found");
 		} finally {
 			child.kill("SIGKILL");
 			await exit;

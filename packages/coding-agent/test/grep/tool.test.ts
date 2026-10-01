@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { GrepEngineError } from "../../src/core/tools/grep/engine.ts";
-import { formatGrepText } from "../../src/core/tools/grep/format.ts";
+import { formatGrepContent } from "../../src/core/tools/grep/format.ts";
 import * as selector from "../../src/core/tools/grep/select-engine.ts";
 import { createGrepToolDefinition, type GrepToolInput } from "../../src/core/tools/grep.ts";
+import { getTextOutput } from "../../src/core/tools/render-utils.ts";
 import { buildCorpus } from "./fixtures/build-corpus.ts";
 
 describe("grep facade", () => {
@@ -25,7 +26,9 @@ describe("grep facade", () => {
 	});
 	afterAll(async () => rm(root, { recursive: true, force: true }));
 	const run = (input: GrepToolInput) =>
-		createGrepToolDefinition(root).execute("test", input, undefined, undefined, { cwd: root } as ExtensionContext);
+		createGrepToolDefinition(root).execute("test", input, undefined, undefined, {
+			cwd: root,
+		} as ExtensionToolContext);
 	it("schema accepts every field", () => {
 		expect(
 			Value.Check(createGrepToolDefinition(root).parameters, {
@@ -74,7 +77,7 @@ describe("grep facade", () => {
 					},
 					undefined,
 					undefined,
-					{ cwd: root } as ExtensionContext,
+					{ cwd: root } as ExtensionToolContext,
 				),
 			).rejects.toThrow("denied");
 			expect(spy).not.toHaveBeenCalled();
@@ -91,6 +94,11 @@ describe("grep facade", () => {
 		const result = await run({ pattern: "needle", path: "0000.txt:L2-L2", skip: 200 });
 		expect(result.details?.matches.map((m) => m.line)).toEqual([2]);
 		expect(result.details?.skip).toBe(0);
+		expect(result.content).toEqual([
+			{ type: "text", text: "0000.txt\n2: needle one\n" },
+			{ type: "text", text: expect.stringMatching(/^\[grep: matches=1 files=1 searched=/), audience: "model" },
+		]);
+		expect(getTextOutput(result, false)).toBe("0000.txt\n2: needle one\n");
 		await expect(run({ pattern: "needle", path: "0000.txt:L3-L2" })).rejects.toThrow("Invalid line selector");
 		await expect(run({ pattern: "needle", path: "missing:L1-L2" })).rejects.toThrow("Path not found:");
 	});
@@ -155,7 +163,8 @@ describe("grep facade", () => {
 	it("text_footer_always_present", async () => {
 		for (const mode of ["content", "count", "files"] as const) {
 			const result = await run({ pattern: "absent", mode, path: "0000.txt" });
-			expect(result.content[0]).toMatchObject({
+			expect(result.content[1]).toMatchObject({
+				audience: "model",
 				text: expect.stringMatching(
 					/\[grep: matches=(0|n\/a) files=0 searched=\d+ elapsedMs=\d+ engine=(rg|native) nextSkip=none\]$/,
 				),
@@ -185,7 +194,7 @@ describe("grep facade", () => {
 				{ pattern: "needle", glob: "src/*.ts" },
 				undefined,
 				undefined,
-				{ cwd: corpus.root } as ExtensionContext,
+				{ cwd: corpus.root } as ExtensionToolContext,
 			);
 			expect(result.details?.fileMatches).toEqual([
 				{ path: "src/a.ts", count: 3 },
@@ -216,7 +225,7 @@ describe("grep facade", () => {
 			const multi = await run({ pattern: "needle", glob: "cap.txt", limit: 300 });
 			expect(multi.details?.matchCount).toBe(20);
 			expect(multi.details?.perFileLimitReached).toBe(true);
-			expect(formatGrepText(single.details!, { now: () => 17 })).toContain("elapsedMs=17");
+			expect(formatGrepContent(single.details!, { now: () => 17 })[1].text).toContain("elapsedMs=17");
 		} finally {
 			await rm(file);
 		}
@@ -240,7 +249,7 @@ describe("grep facade", () => {
 				{ pattern: "needle\\n", path: "0000.txt" },
 				controller.signal,
 				undefined,
-				{ cwd: root } as ExtensionContext,
+				{ cwd: root } as ExtensionToolContext,
 			);
 			expect(spy.mock.calls[0][0]).toMatchObject({ multiline: true });
 			expect(spy.mock.calls[0][1]).toBe(controller.signal);
@@ -251,7 +260,7 @@ describe("grep facade", () => {
 					{ pattern: "needle", path: "0000.txt" },
 					controller.signal,
 					undefined,
-					{ cwd: root } as ExtensionContext,
+					{ cwd: root } as ExtensionToolContext,
 				),
 			).rejects.toMatchObject({ code: "ABORTED" });
 		} finally {

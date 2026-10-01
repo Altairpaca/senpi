@@ -98,15 +98,20 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"turn-end-is-wait": "async-work",
 	"monitor-conditions": "async-work",
 	"verification-once": "verification",
-	"test-first": "test-first",
+	"test-decision": "tests",
 	"unbounded-retry": "failure-recovery",
 	"atomic-commits": "commit-discipline",
 	"no-external-messaging": "external-side-effects",
 	"plain-prose": "writing-style",
 	"slop-ban": "writing-style",
 	"direct-statements": "writing-style",
+	"no-reflexive-apology": "writing-style",
+	"handoff-report": "reporting",
 	"final-message-shape": "reporting",
 };
+
+// test-decision is single-sourced from ./test-decision.ts and rendered by both GPT presets on purpose.
+const SHARED_GPT_RULE_ID = "test-decision";
 
 const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"initiative-bias": "Initiative",
@@ -130,13 +135,15 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"turn-end-is-wait": "Asynchronous Work",
 	"monitor-conditions": "Asynchronous Work",
 	"verification-once": "Verification",
-	"test-first": "Verification",
+	"test-decision": "Verification",
 	"unbounded-retry": "Scope and Recovery",
 	"atomic-commits": "Hard Limits",
 	"no-external-messaging": "Hard Limits",
 	"plain-prose": "Writing",
 	"slop-ban": "Writing",
 	"direct-statements": "Writing",
+	"no-reflexive-apology": "Writing",
+	"handoff-report": "Reporting",
 	"final-message-shape": "Reporting",
 };
 
@@ -386,6 +393,7 @@ describe("GPT-6 Astra behavior contract", () => {
 
 		// then
 		for (const rule of GPT56_EXECUTION_RULES) {
+			if (rule.id === SHARED_GPT_RULE_ID) continue;
 			expect(prompt, `gpt-5.6 rule ${rule.id} leaked into astra`).not.toContain(rule.directive);
 		}
 	});
@@ -396,6 +404,7 @@ describe("GPT-6 Astra behavior contract", () => {
 
 		// then
 		for (const rule of GPT6_ASTRA_RULES) {
+			if (rule.id === SHARED_GPT_RULE_ID && presetName === "gpt-5.6") continue;
 			expect(prompt, `astra rule ${rule.id} leaked into ${presetName}`).not.toContain(rule.directive);
 		}
 	});

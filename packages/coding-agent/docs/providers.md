@@ -21,6 +21,7 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- Meta (Muse subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
 - Kimi Code (kimi.com / kimi.ai subscriptions)
 - Radius
@@ -28,7 +29,7 @@ Use `/login` in interactive mode, then select a provider:
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
 
-### OpenAI Codex
+### ChatGPT Subscription
 
 - Requires ChatGPT Plus or Pro subscription
 - Officially endorsed by OpenAI: [Codex for OSS](https://developers.openai.com/community/codex-for-oss)
@@ -41,7 +42,7 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 - If the browser lands on a page saying the login belongs to a different session or an earlier attempt, that page's address was sent to another login's listener: paste the full address from the address bar into the session whose prompt is still waiting, or run the login again from that session.
 - A login that receives neither the browser callback nor a pasted redirect URL for 10 minutes fails with a timeout and releases its port; run `/login anthropic` again.
 
-### Claude SDK OAuth
+### Anthropic Subscription
 
 The `anthropic-subscription` provider routes LLM calls through the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) - it spawns the real Claude Code engine - while senpi executes every tool itself. Subscription usage flows through Anthropic's official Claude Code surface.
 
@@ -96,12 +97,12 @@ If your Claude Pro/Max subscription usage through `anthropic-subscription` feels
 
 1. **Upgrade to v2026.8.3 or later.** Resume-first session continuity (#634-637) landed on 2026-08-03. On older builds, every turn after a divergence (compaction, abort, model switch, restart, failover) re-sends the entire conversation, which is the dominant token-burn mechanism.
 2. **Check which lane you are on.** The `ambient` lane (default) inherits the environment. `oauth-slots` and `config-dir` are managed lanes set via `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION`. The `config-dir` lane keeps each account's credentials in its own `CLAUDE_CONFIG_DIR`; no official SDK API moves a transcript across roots, so account failover on that lane always flattens (re-sends the full history) — this is a declared residual, not a bug.
-3. **Read the continuity observations.** Tail the session log and filter for `flatten` — each `flatten` line means the lane re-sent the whole conversation and lost prompt-cache hits. A healthy conversation shows one `bootstrap` followed by `delta` lines. Common flatten reasons: `transcript_missing`, `registry_miss`, `resume_initialization_failed`, `cross_root_unsupported` (config-dir only).
+3. **Read the continuity observations.** Tail the session log and filter for `flatten` — each `flatten` line means the lane re-sent the whole conversation and lost prompt-cache hits. A healthy conversation shows one `bootstrap` followed by `delta` lines. Common flatten reasons: `transcript_missing`, `registry_miss`, `resume_initialization_failed`, `cross_root_unsupported` (config-dir only). A `failed` line is a turn whose every attempt failed (quota, auth, query error); it re-sent nothing, and the retry resumes the session. Every line carries `sessionId`, so filter by it when several sessions share the log.
 4. **Prompt-cache retention.** Effective cache TTL depends on which lane you are on:
 
    | Lane | Effective TTL | Who controls it | How to override |
    | --- | --- | --- | --- |
-   | Claude SDK OAuth (subscription, `anthropic-subscription`) | 5 minutes | The Claude SDK owns `cache_control`; senpi cannot add breakpoints. senpi reports 300s for this lane so cache-aware budgets (tool waits, goal timing) size themselves correctly. | Not overridable |
+   | Anthropic Subscription (subscription, `anthropic-subscription`) | 1 hour on a Claude subscription; 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch is set | Claude Code owns `cache_control` and picks the TTL; senpi cannot add breakpoints. senpi reports the same TTL so cache-aware budgets (tool waits, goal timing) size themselves correctly. A subscription past its usage limits drops to 5 minutes, which senpi cannot observe. | `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` or `1h` (also read by Claude Code) |
    | Direct Anthropic API (`api.anthropic.com`, API key or OAuth token) | 5 minutes | senpi follows Anthropic's default cache retention. Opting into 1h retention makes cache writes cost 2x base input vs 1.25x for 5m ([Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)). | Set `PI_CACHE_RETENTION=long` or `cacheRetention: "long"` |
    | Anthropic-compatible providers (kimi-coding, fireworks, gateways) | 5 minutes | The 1h TTL is gated on the native `api.anthropic.com` base URL, so these lanes stay short. | `cacheRetention` |
 
@@ -119,6 +120,11 @@ If your Claude Pro/Max subscription usage through `anthropic-subscription` feels
 
 - Run `/login xai`, then select **Use a subscription**
 - `XAI_API_KEY` remains available through **Use an API key**
+
+### Meta (Muse subscription)
+
+- Run `/login meta`, then select **Sign in with Meta** to use Muse Spark models with your Muse subscription; the Model API key is refreshed automatically
+- `META_API_KEY` remains available through **Use an API key**
 
 ### OpenRouter
 
@@ -282,6 +288,8 @@ senpi
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`) | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
+| Meta | `META_API_KEY` | `meta` |
+| TypeSafe ([classifier models](models.md#classifier-models)) | `TYPESAFE_API_KEY` | `typesafe` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | OpenGateway | `OPENGATEWAY_API_KEY` | `opengateway` |

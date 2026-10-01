@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	closeOpenAICodexWebSocketSessions,
-	resetOpenAICodexWebSocketDebugStats,
+	closeChatGptSubscriptionWebSocketSessions,
+	resetChatGptSubscriptionWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import {
@@ -11,6 +11,8 @@ import {
 } from "../src/api/responses-completion-grace.ts";
 import type { Context, Model } from "../src/types.ts";
 import { isProviderStreamStallError, isRetryableAssistantError } from "../src/utils/retry.ts";
+
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface Event {
 	readonly type: string;
@@ -47,8 +49,8 @@ const completed = { type: "response.completed" };
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	closeOpenAICodexWebSocketSessions();
-	resetOpenAICodexWebSocketDebugStats();
+	closeChatGptSubscriptionWebSocketSessions();
+	resetChatGptSubscriptionWebSocketDebugStats();
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
@@ -162,7 +164,7 @@ describe("completion stall through the Codex SSE stream", () => {
 			vi.fn(async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })),
 		);
 
-		const resultPromise = streamOpenAICodexResponses(model, context, {
+		const resultPromise = streamOpenAICodexResponses(model, normalizeContext(context), {
 			apiKey: mockToken(),
 			transport: "sse",
 			timeoutMs: 300_000,

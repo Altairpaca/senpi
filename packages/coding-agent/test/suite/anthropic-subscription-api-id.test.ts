@@ -1,7 +1,7 @@
 import { type Api, type Model, resolvePromptCacheTtlSeconds } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { CLAUDE_SDK_OAUTH_API_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/api-id.ts";
-import { registerClaudeSdkOauthExtension } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
+import { CLAUDE_SDK_OAUTH_API_ID } from "../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
+import { registerAnthropicSubscriptionExtension } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 
 type ProviderRegistration = {
@@ -20,7 +20,7 @@ function captureRegisterProviderCall(): { args: [string, ProviderRegistration] }
 		getFlag: () => undefined,
 		on: () => {},
 	} as unknown as ExtensionAPI;
-	registerClaudeSdkOauthExtension(pi, {
+	registerAnthropicSubscriptionExtension(pi, {
 		readAmbientAuthStatus: async () => false,
 		readSettings: () => ({}),
 	});
@@ -36,6 +36,9 @@ describe("anthropic-subscription wire api id", () => {
 		expect(call.args[1].api).toBe("claude-sdk-oauth");
 		expect(call.args[1].baseUrl).toBe("claude-sdk-oauth");
 		expect(call.args[1].api).toBe(CLAUDE_SDK_OAUTH_API_ID);
-		expect(resolvePromptCacheTtlSeconds({ api: "claude-sdk-oauth" } as Model<Api>)).toBe(300);
+		// Only the Claude SDK lane reads Claude Code's own TTL override, so the frozen id must still reach that case.
+		const model = { api: "claude-sdk-oauth" } as Model<Api>;
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" })).toBe(3600);
+		expect(resolvePromptCacheTtlSeconds(model, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" })).toBe(300);
 	});
 });

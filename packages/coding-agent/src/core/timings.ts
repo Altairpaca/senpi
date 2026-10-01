@@ -16,7 +16,7 @@ interface TimingNamespace {
 	lastTime: number;
 }
 
-export type TimingLabel = "main" | "extensions" | "reload" | "tui";
+export type TimingLabel = "main" | "extensions" | "reload" | "tui" | "switch";
 
 const timingNamespaces = new Map<TimingLabel, TimingNamespace>();
 

@@ -1,11 +1,14 @@
 import type { AgentMessage, PrepareNextTurnContext } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type Context,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	fauxToolCall,
+	getCurrentSystemPrompt,
+	getCurrentTools,
 	type SimpleStreamOptions,
+	type TranscriptContext,
+	toToolDeclaration,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -150,7 +153,7 @@ function createAssistant(
 function useSummaryStreamFn(
 	harness: Harness,
 	summary: string,
-	onRequest?: (context: Context, options: SimpleStreamOptions | undefined) => void,
+	onRequest?: (context: TranscriptContext, options: SimpleStreamOptions | undefined) => void,
 ): () => number {
 	let callCount = 0;
 	harness.session.agent.streamFunction = (model, context, options) => {
@@ -351,7 +354,57 @@ describe("AgentSession compaction characterization", () => {
 		expect(statsAfter.tokens.cacheRead).toBe(statsBefore.tokens.cacheRead + summaryUsage.cacheRead);
 		expect(statsAfter.tokens.cacheWrite).toBe(statsBefore.tokens.cacheWrite + summaryUsage.cacheWrite);
 		expect(statsAfter.cost).toBe(statsBefore.cost + summaryUsage.cost.total);
+		// C-AG-4: the fork keeps the prompt in agent state, so the compacted transcript leads with the summary.
 		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+		expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
+	});
+
+	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("declared")]);
+		await harness.session.prompt("declare the prompt");
+		// C-AG-4: the fork declares the prompt and tools from agent state and persists no system head,
+		// so the checkpoint folds only the system patches recorded in the transcript.
+		expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
+
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "summarized instruction",
+			sections: { early: "<early>1</early>" },
+			toolsRemoved: [{ name: "bash" }],
+			timestamp: Date.now(),
+		});
+		const firstKeptEntryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept before patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "retained instruction",
+			sections: { extra: "<extra>late</extra>" },
+			toolsRemoved: [{ name: "read" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept after patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendCompaction("compacted", firstKeptEntryId, 100);
+
+		const messages = harness.sessionManager.buildSessionContext().messages;
+		expect(messages.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
+		const checkpoint = messages[0];
+		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
+		expect(checkpoint.content).toBe("summarized instruction\n\nretained instruction");
+		expect(checkpoint.sections).toEqual({
+			early: "<early>1</early>",
+			extra: "<extra>late</extra>",
+		});
+		// No transcript-declared tool set exists for the removals to apply to; the session tools are agent state.
+		expect(checkpoint.toolsAdded).toBeUndefined();
 	});
 
 	it("allows a queued prompt to start when manual compaction ends", async () => {
@@ -470,15 +523,12 @@ describe("AgentSession compaction characterization", () => {
 			streamSimple: () => createAssistantMessageEventStream(),
 		});
 		seedCompactableSession(harness);
-		harness.setResponses([
-			(_context, options) => {
-				expect(options?.apiKey).toBeUndefined();
-				expect(options?.headers).toEqual({
-					Authorization: "Bearer ambient-token",
-				});
-				return fauxAssistantMessage("summary with bearer auth");
-			},
-		]);
+		const summaryResponse = (_context: TranscriptContext, options: SimpleStreamOptions | undefined) => {
+			expect(options?.apiKey).toBeUndefined();
+			expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
+			return fauxAssistantMessage("summary with bearer auth");
+		};
+		harness.setResponses([summaryResponse]);
 
 		const result = await harness.session.compact();
 
@@ -498,7 +548,7 @@ describe("AgentSession compaction characterization", () => {
 		harness.session.agent.sessionId = "active-routing-session";
 		harness.session.agent.transport = "websocket";
 
-		let requestContext: Context | undefined;
+		let requestContext: TranscriptContext | undefined;
 		let requestOptions: SimpleStreamOptions | undefined;
 		useSummaryStreamFn(harness, "standalone summary", (context, options) => {
 			requestContext = context;
@@ -508,8 +558,8 @@ describe("AgentSession compaction characterization", () => {
 		await harness.session.compact();
 
 		expect(transformContext).toHaveBeenCalledTimes(1);
-		expect(requestContext?.systemPrompt).not.toBe(harness.session.agent.state.systemPrompt);
-		expect(requestContext?.tools).toBeUndefined();
+		expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).not.toBe(harness.session.agent.state.systemPrompt);
+		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual([]);
 		expect(JSON.stringify(requestContext?.messages)).toContain("<conversation>");
 		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
 		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
@@ -529,7 +579,7 @@ describe("AgentSession compaction characterization", () => {
 			harness.session.agent.sessionId = "active-routing-session";
 			harness.session.agent.transport = "websocket";
 
-			let requestContext: Context | undefined;
+			let requestContext: TranscriptContext | undefined;
 			let requestOptions: SimpleStreamOptions | undefined;
 			useSummaryStreamFn(harness, "cache-friendly summary", (context, options) => {
 				requestContext = context;
@@ -538,8 +588,11 @@ describe("AgentSession compaction characterization", () => {
 
 			await harness.session.compact();
 
-			expect(requestContext?.systemPrompt).toBe(harness.session.agent.state.systemPrompt);
-			expect(requestContext?.tools).toEqual(harness.session.agent.state.tools);
+			expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).toBe(harness.session.agent.state.systemPrompt);
+			// C-AG-3: the transcript carries tool declarations, not the executable agent tools.
+			expect(getCurrentTools(requestContext?.messages ?? [])).toEqual(
+				harness.session.agent.state.tools.map(toToolDeclaration),
+			);
 			expect(JSON.stringify(requestContext?.messages)).not.toContain("<conversation>");
 			expect(requestOptions).toMatchObject({
 				cacheRetention: "short",
@@ -772,9 +825,13 @@ describe("AgentSession compaction characterization", () => {
 		});
 		harnesses.push(harness);
 		const seedTimestamp = Date.now() - 2_000;
+		// The faux provider bills call 1 against the REAL dynamic system prompt plus the tool
+		// schema (~3.3k tokens at the time of writing), so the seed only tops the context up: it
+		// must leave call 1 under the threshold while the 300-repeat tool result alone carries the
+		// assembled context over it. Keep the seed well clear of the boundary; the prompt grows.
 		harness.sessionManager.appendMessage({
 			role: "user",
-			content: [{ type: "text", text: "prior context ".repeat(220) }],
+			content: [{ type: "text", text: "prior context ".repeat(100) }],
 			timestamp: seedTimestamp,
 		});
 		harness.sessionManager.appendMessage(

@@ -1,5 +1,94 @@
 # TUI delta rendering fork changes
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tui package
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: What changed: adopted upstream CJK-punctuation separators, prose wrappers (`(`, `[`, `{`, `<`, backtick) before `@`/path tokens, quoted-path suffix handling, trigger/debounce patterns and CJK letter auto-trigger, directory-first sort by label. Kept fork: `$` trigger character, `dollar-invocation-autocomplete.ts`, `slash-command-autocomplete.ts` (`getSlashCommandSuggestions` with contextual skill discovery); upstream's bare-name/full-name skill split in the slash branch is not adopted. Why: CJK and wrapped-path completion fixes; fork skill discovery contract pinned by `test/autocomplete-slash.test.ts`. Why an extension could not handle it: editor/autocomplete core. Expected merge conflict zones: autocomplete imports, slash branch of `getSuggestions`, `DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS` block.
+- `packages/tui/src/components/box.ts`: What changed: adopted upstream unpadded child-line cache (identity comparison per frame). Upstream's direct `bgFn(padded)` is NOT adopted: Box keeps `applyBackgroundToLine` so the fork's nested-background restore (d0bf401858) still applies inside boxes. Why: the auto-merge silently dropped the fork background fix for every Box. Why an extension could not handle it: component rendering. Expected merge conflict zones: `applyBg`.
+- `packages/tui/src/components/editor.ts`: What changed: adopted upstream CJK-punctuation separators, prose wrappers (`(`, `[`, `{`, `<`, backtick) before `@`/path tokens, quoted-path suffix handling, trigger/debounce patterns and CJK letter auto-trigger, directory-first sort by label. Kept fork: `$` trigger character, `dollar-invocation-autocomplete.ts`, `slash-command-autocomplete.ts` (`getSlashCommandSuggestions` with contextual skill discovery); upstream's bare-name/full-name skill split in the slash branch is not adopted. Why: CJK and wrapped-path completion fixes; fork skill discovery contract pinned by `test/autocomplete-slash.test.ts`. Why an extension could not handle it: editor/autocomplete core. Expected merge conflict zones: autocomplete imports, slash branch of `getSuggestions`, `DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS` block.
+- `packages/tui/src/components/markdown.ts`: What changed: kept the fork module-level `parseCache` (keyed by content hash, survives theme and width invalidation, cleared only by `clearRenderCache`); upstream's per-instance `cachedTokens` is not added because the fork cache already covers it. Why: same intent, fork cache is a superset. Why an extension could not handle it: component internals. Expected merge conflict zones: token parse block in `render`.
+- `packages/tui/src/fuzzy.ts`: What changed: fork `scoreMatch` now finds each query character with native `indexOf` (upstream "native substring" search); fork swap variants, `fuzzyMatchLower` and `isWordBoundaryPrefix` kept. Why: upstream fuzzy performance fix. Why an extension could not handle it: core helper. Expected merge conflict zones: `scoreMatch` loop.
+- `packages/tui/src/index.ts`: What changed: adopted upstream DA1 accounting (`pendingKeyboardProtocolDeviceAttributes`; unowed DA1 replies are forwarded) and reassembled negotiation sequences; `TERM=*-direct` counts as truecolor in both the legacy and the fork `detectTerminalCapabilities` paths; Kitty cell-aspect optimization; `getTerminalColorMode`; `oklabToOkhslLightness` export. Kept fork: cursor-position negotiation + `issueCursorQuery`, private-response discard, all EIO/dead-terminal guards, terminal-capabilities module split, `expandPasteMarkers` export. Why: upstream terminal fixes on the fork terminal module layout. Why an extension could not handle it: terminal protocol core. Expected merge conflict zones: stdin data handler, `handleKeyboardProtocolNegotiationSequence`, terminal-image imports, index native-platform/paste exports.
+- `packages/tui/src/latex.ts` (deleted): deleted in this sync (see the lane decision record).
+- `packages/tui/src/terminal-image.ts`: What changed: adopted upstream DA1 accounting (`pendingKeyboardProtocolDeviceAttributes`; unowed DA1 replies are forwarded) and reassembled negotiation sequences; `TERM=*-direct` counts as truecolor in both the legacy and the fork `detectTerminalCapabilities` paths; Kitty cell-aspect optimization; `getTerminalColorMode`; `oklabToOkhslLightness` export. Kept fork: cursor-position negotiation + `issueCursorQuery`, private-response discard, all EIO/dead-terminal guards, terminal-capabilities module split, `expandPasteMarkers` export. Why: upstream terminal fixes on the fork terminal module layout. Why an extension could not handle it: terminal protocol core. Expected merge conflict zones: stdin data handler, `handleKeyboardProtocolNegotiationSequence`, terminal-image imports, index native-platform/paste exports.
+- `packages/tui/src/terminal.ts`: What changed: adopted upstream DA1 accounting (`pendingKeyboardProtocolDeviceAttributes`; unowed DA1 replies are forwarded) and reassembled negotiation sequences; `TERM=*-direct` counts as truecolor in both the legacy and the fork `detectTerminalCapabilities` paths; Kitty cell-aspect optimization; `getTerminalColorMode`; `oklabToOkhslLightness` export. Kept fork: cursor-position negotiation + `issueCursorQuery`, private-response discard, all EIO/dead-terminal guards, terminal-capabilities module split, `expandPasteMarkers` export. Why: upstream terminal fixes on the fork terminal module layout. Why an extension could not handle it: terminal protocol core. Expected merge conflict zones: stdin data handler, `handleKeyboardProtocolNegotiationSequence`, terminal-image imports, index native-platform/paste exports.
+- `packages/tui/src/tui.ts`: What changed: adopted upstream v0.99.1 terminal color query (`queryTerminalColors`: OSC 10/11 + OSC 4 palette 0-15 + trailing DA1, `onLateReply`, `consumeTerminalColorResponse`), mouse forwarding that keeps keyboard focus on the forwarding host (`dispatchMouseEvent` focusTarget), and "never hide the cursor after stop()". Upstream's `hideTerminalCursor` guard is ported into the fork's `#setCursorVisibility` (hide calls are ignored while `stopped`) instead of a second cursor path. Kept fork: concrete legacy `TUI` class + `TuiBase` (no upstream `interface TUI`), viewport insert/scroll plans, render stats, bounded normalization, cached cursor visibility, tmux focus-event capability refresh for main-screen mode, and the fork's removal of the eager hide in `setShowHardwareCursor`. Removed with upstream: `queryTerminalBackgroundColor`, `queryTerminalColorScheme` (DSR 996), `consumeOsc11BackgroundResponse`. Why: upstream system theme (D-14) and theme-controller read terminal colors through `queryTerminalColors`; the fork renderer contract stays the owner of cursor state. Why an extension could not handle it: renderer lifecycle, terminal input demux and cursor ownership live in `TuiBase`. Expected merge conflict zones: top-level interface/const block after `PendingTerminalColorQuery`, the `TUI` contract docblock, `setShowHardwareCursor`, overlay show/hide cursor lines, `handleTerminalInput` prologue.
+- `packages/tui/src/utils.ts`: What changed: adopted upstream allocation-free `ansiCodeLength`/`asciiVisibleWidth` fast path (styled lines skip grapheme segmentation after theme changes), single-pass escape stripping, `updateTrackerFromText`/`splitIntoTokensWithAnsi` indexOf scanning, CJK autocomplete separator regexes. Kept fork: rotating two-generation width cache + `__widthCacheStats`, `coalesceAdjacentSgr`, background restore in `applyBackgroundToLine`; the fork DCS (tmux passthrough, doubled-ESC aware) branch is ported into `ansiCodeLength` so DCS stays stripped on every path. Why: upstream render-cost work plus fork tmux passthrough correctness. Why an extension could not handle it: width/ANSI primitives are core. Expected merge conflict zones: `ansiCodeLength` OSC/DCS/APC branches, width cache block.
+- `packages/tui/src/tui-alt-screen.ts`: What changed: upstream fullscreen wheel scrolling (`WheelScrollAccelerator`, `WheelScrollLines` incl. `"auto"`, `setWheelScrollLines`, Alt x5 delta computed once and passed to `routeWheel`), string copy-failure messages with a 5 s flash, centered scroll-to-end indicator, WezTerm row clearing before Kitty image frames. Fork mouse-input.ts parsers, `deleteAltScreenKittyImages` rename and click-focus ownership are unchanged. Why: adopted upstream fullscreen wheel acceleration (#9758) on top of the fork's alt-screen. Why an extension could not handle it: wheel routing is inside the alt-screen input loop. Expected merge conflict zones: `TuiAltScreenOptions`, constructor field init, wheel branch of the input handler, `routeWheel` signature.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the tui package ports upstream theme/terminal/autocomplete fixes onto the fork renderer (plan D-14, D-15).
+
+### Why an extension could not handle it
+
+The terminal renderer is a separate package below the coding-agent extension layer.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-28 - Picker rows that take arguments wait for them (omo #9042)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `AutocompleteItem` gains the optional `awaitsArguments` flag.
+- `packages/tui/src/slash-command-autocomplete.ts` (fork-only): `getSlashCommandSuggestions` sets `awaitsArguments` on every row whose command declares an `argumentHint`; the hint still leads the description.
+- `packages/tui/src/components/editor.ts`: the editor keeps the provider items behind the open list (`autocompleteItems`). Confirming a `/` row whose item has `awaitsArguments` applies the completion (`/name `), closes the picker, and returns without submitting; other `/` rows still fall through to submit. `submitValue()` passes `{ rawText }` (the text before trimming) as the second `onSubmit` argument.
+- `packages/tui/src/editor-component.ts`: new `EditorSubmitDetails` and the optional second `onSubmit` parameter. `packages/tui/src/index.ts` exports the type.
+
+### Why
+
+- Enter on `/skill:ulw-execute` or `/model` in the picker submitted the bare command before the user could type its arguments. The leading-space escape for the coding-agent unknown-command check needs the untrimmed submission, which `onSubmit` never saw.
+
+### Why an extension could not handle it
+
+- The confirm key and the submission trimming live inside `Editor.handleInput`/`submitValue`; an extension editor would have to fork the whole component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the `tui.select.confirm` branch, `applyAutocompleteSuggestions`, `clearAutocompleteUi`, and `submitValue`.
+- `packages/tui/src/autocomplete.ts`: the `AutocompleteItem` interface. `packages/tui/src/editor-component.ts`: the `onSubmit` declaration. `packages/tui/src/index.ts`: the `./editor-component.ts` export line.
+
+## 2026-09-24 - Fuzzy matching over pre-lowered text (senpi#2087)
+
+### What changed
+
+- `packages/tui/src/fuzzy.ts`: new exported `fuzzyMatchLower(queryLower, textLower)` holds the direct and letter/digit-swap scoring. `fuzzyMatch` lower-cases its inputs and delegates to it, so scoring has one source. `packages/tui/src/index.ts` exports `fuzzyMatchLower` next to `fuzzyMatch`.
+- `packages/tui/test/fuzzy.test.ts`: `fuzzyMatchLower` on lower-cased inputs returns exactly what `fuzzyMatch` returns for mixed-case pairs, swap variants included.
+
+### Why
+
+- `fuzzyMatch` lower-cases the whole text on every call. The coding-agent `/resume` search calls it once per token per session over tens of MB of transcript text, so the same text was lower-cased again on every keystroke.
+
+### Why an extension could not handle it
+
+- The scoring lives in the TUI package. A caller outside it can only reach `fuzzyMatch`, which always lower-cases.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/fuzzy.ts`: the `fuzzyMatch` body, now a delegating wrapper above `fuzzyMatchLower`.
+- `packages/tui/src/index.ts`: the `./fuzzy.ts` export line.
+
+## 2026-09-23 — Let hosts observe the real stderr destination (senpi#1879)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` accepts a host-owned stderr subscription and releases it on stop. `packages/tui/src/stderr-observer.ts` retains direct-stream observation for ordinary terminals without replacing a later writer during cleanup.
+
+### Why
+
+- A host can redirect stderr to a diagnostic log. Observing calls above that redirect falsely reports visible output and duplicates the working frame.
+
+### Why an extension could not handle it
+
+- Mouse geometry is invalidated inside the terminal, below extension components.
+
+### Expected merge conflict zones
+
+- Terminal construction, external-write observation and stop cleanup. Visible stdout/stderr must continue invalidating stale hit targets.
+
 ## 2026-09-22 - Render-error diagnostics follow the host log directory (senpi#2000)
 
 ### What changed
@@ -1293,3 +1382,25 @@ Component-level caching is added in coding-agent components because high-frequen
 - HIGH: `packages/tui/src/components/editor.ts` marker handling and input dispatch; `packages/tui/src/terminal.ts` `ProcessTerminal` start/stop.
 - MEDIUM: `packages/tui/src/index.ts` export list; `packages/tui/src/utils.ts` width cache and ANSI helpers; `select-list.ts` render path.
 - LOW: `box.ts` lifecycle methods; `tui-alt-screen.ts` teardown call sites.
+
+## 2026-09-28 - The skill: namespace row drills down instead of submitting (senpi#2249)
+
+### What changed
+
+- `packages/tui/src/slash-command-autocomplete.ts`: `isSlashNamespaceItem(value)` names the namespace rule (a slash item whose value ends in `:`, today only `skill:`).
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider.applyCompletion` completes a namespace item as `/skill:` with no trailing space, so the namespace's own list can follow; every other command keeps `/name `.
+- `packages/tui/src/components/editor.ts`: Enter and Tab on a namespace row apply that completion and re-request suggestions instead of submitting; public `openAutocomplete()` requests suggestions at the cursor.
+- `packages/tui/src/editor-component.ts`: optional `openAutocomplete?()` on `EditorComponent`.
+
+### Why
+
+- The `skill:` row is an autocomplete-only drill-down with no command behind it. Enter submitted `/skill: ` to the model, and the trailing space kept the skill list from opening even on Tab.
+
+### Why an extension could not handle it
+
+- Picker confirm handling and completion text live in the editor and the combined provider; an extension cannot intercept the editor's Enter before it submits.
+
+### Expected merge conflict zones
+
+- MEDIUM: the autocomplete `tui.select.confirm` and `tui.input.tab` branches in `packages/tui/src/components/editor.ts`; the slash-command branch of `CombinedAutocompleteProvider.applyCompletion` in `packages/tui/src/autocomplete.ts`.
+- LOW: the added optional member in `packages/tui/src/editor-component.ts`.

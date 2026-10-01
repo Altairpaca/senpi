@@ -31,7 +31,7 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -316,6 +316,7 @@ async function multiTurn<TApi extends Api>(model: Model<TApi>, options?: StreamO
 				expect(block.arguments).toBeTruthy();
 
 				const { a, b, operation } = block.arguments;
+				if (typeof a !== "number" || typeof b !== "number") throw new Error("Invalid math arguments");
 				let result: number;
 				switch (operation) {
 					case "add":
@@ -766,8 +767,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider (Kimi-K2.6 via OpenAI Completions)", () => {
-		const llm = getModel("together", "moonshotai/Kimi-K2.6");
+	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider (Kimi-K3 via OpenAI Completions)", () => {
+		const llm = getModel("together", "moonshotai/Kimi-K3");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -1076,6 +1077,30 @@ describe("Generate E2E Tests", () => {
 			});
 		},
 	);
+
+	describe.skipIf(!process.env.META_API_KEY)("Meta Provider (muse-spark-1.3 via OpenAI Responses)", () => {
+		const llm = getModel("meta", "muse-spark-1.3");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			await handleThinking(llm, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
+		});
+	});
 
 	describe.skipIf(!process.env.XIAOMI_API_KEY)(
 		"Xiaomi MiMo (API billing) Provider (Xiaomi MiMo-V2.5-Pro via Anthropic Messages)",
@@ -1495,56 +1520,72 @@ describe("Generate E2E Tests", () => {
 	describe("OpenAI Codex Provider (gpt-5.5)", () => {
 		const llm = getModel("chatgpt-subscription", "gpt-5.5");
 
-		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
-			await basicTextGeneration(llm, { apiKey: openaiCodexToken });
+		it.skipIf(!chatgptSubscriptionToken)("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm, { apiKey: chatgptSubscriptionToken });
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle tool calling", { retry: 3 }, async () => {
-			await handleToolCall(llm, { apiKey: openaiCodexToken });
+		it.skipIf(!chatgptSubscriptionToken)("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm, { apiKey: chatgptSubscriptionToken });
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle streaming", { retry: 3 }, async () => {
-			await handleStreaming(llm, { apiKey: openaiCodexToken });
+		it.skipIf(!chatgptSubscriptionToken)("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm, { apiKey: chatgptSubscriptionToken });
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle thinking with reasoningEffort xhigh", { retry: 3 }, async () => {
-			await handleThinking(llm, { apiKey: openaiCodexToken, reasoningEffort: "xhigh" });
-		});
+		it.skipIf(!chatgptSubscriptionToken)(
+			"should handle thinking with reasoningEffort xhigh",
+			{ retry: 3 },
+			async () => {
+				await handleThinking(llm, { apiKey: chatgptSubscriptionToken, reasoningEffort: "xhigh" });
+			},
+		);
 
-		it.skipIf(!openaiCodexToken)("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-			await multiTurn(llm, { apiKey: openaiCodexToken, reasoningEffort: "xhigh" });
-		});
+		it.skipIf(!chatgptSubscriptionToken)(
+			"should handle multi-turn with thinking and tools",
+			{ retry: 3 },
+			async () => {
+				await multiTurn(llm, { apiKey: chatgptSubscriptionToken, reasoningEffort: "xhigh" });
+			},
+		);
 
-		it.skipIf(!openaiCodexToken)("should handle image input", { retry: 3 }, async () => {
-			await handleImage(llm, { apiKey: openaiCodexToken });
+		it.skipIf(!chatgptSubscriptionToken)("should handle image input", { retry: 3 }, async () => {
+			await handleImage(llm, { apiKey: chatgptSubscriptionToken });
 		});
 	});
 
 	describe("OpenAI Codex Provider (gpt-5.5 via WebSocket)", () => {
 		const llm = getModel("chatgpt-subscription", "gpt-5.5");
-		const wsOptions = { apiKey: openaiCodexToken, transport: "websocket" as const };
+		const wsOptions = { apiKey: chatgptSubscriptionToken, transport: "websocket" as const };
 
-		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
+		it.skipIf(!chatgptSubscriptionToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm, wsOptions);
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle tool calling", { retry: 3 }, async () => {
+		it.skipIf(!chatgptSubscriptionToken)("should handle tool calling", { retry: 3 }, async () => {
 			await handleToolCall(llm, wsOptions);
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle streaming", { retry: 3 }, async () => {
+		it.skipIf(!chatgptSubscriptionToken)("should handle streaming", { retry: 3 }, async () => {
 			await handleStreaming(llm, wsOptions);
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle thinking with reasoningEffort xhigh", { retry: 3 }, async () => {
-			await handleThinking(llm, { ...wsOptions, reasoningEffort: "xhigh" });
-		});
+		it.skipIf(!chatgptSubscriptionToken)(
+			"should handle thinking with reasoningEffort xhigh",
+			{ retry: 3 },
+			async () => {
+				await handleThinking(llm, { ...wsOptions, reasoningEffort: "xhigh" });
+			},
+		);
 
-		it.skipIf(!openaiCodexToken)("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-			await multiTurn(llm, { ...wsOptions, reasoningEffort: "xhigh" });
-		});
+		it.skipIf(!chatgptSubscriptionToken)(
+			"should handle multi-turn with thinking and tools",
+			{ retry: 3 },
+			async () => {
+				await multiTurn(llm, { ...wsOptions, reasoningEffort: "xhigh" });
+			},
+		);
 
-		it.skipIf(!openaiCodexToken)("should handle image input", { retry: 3 }, async () => {
+		it.skipIf(!chatgptSubscriptionToken)("should handle image input", { retry: 3 }, async () => {
 			await handleImage(llm, wsOptions);
 		});
 	});

@@ -1,15 +1,15 @@
-import { createModels, createProvider, type OAuthAuth } from "@earendil-works/pi-ai";
+import { createModels, createProvider, type OAuthAuth, type ProviderStreams } from "@earendil-works/pi-ai";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import accountExtension from "../../../src/core/extensions/builtin/account/index.ts";
-import { registerClaudeAccountCommand } from "../../../src/core/extensions/builtin/claude-sdk-oauth/account-command.ts";
-import type { ClaudeSdkOauthCredential } from "../../../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
-import { createOAuthConfig } from "../../../src/core/extensions/builtin/claude-sdk-oauth/oauth-login.ts";
+import { registerClaudeAccountCommand } from "../../../src/core/extensions/builtin/anthropic-subscription/account-command.ts";
+import type { AnthropicSubscriptionCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { createOAuthConfig } from "../../../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
 import gptAccountExtension from "../../../src/core/extensions/builtin/gpt-account.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { accountFooterSuffix } from "../../../src/modes/interactive/components/footer.ts";
-import { composedProvider } from "../../support/claude-sdk-oauth-provider.ts";
+import { composedProvider } from "../../support/anthropic-subscription-provider.ts";
 import { type Command, createAccountCommandContext } from "../account-command-harness.ts";
 
 const fresh = { type: "oauth" as const, access: "fake-access", refresh: "fake-refresh", expires: 4102444800000 };
@@ -18,6 +18,16 @@ const flow: OAuthAuth = {
 	login: async () => fresh,
 	refresh: async (current) => current,
 	toAuth: async (current) => ({ apiKey: current.access }),
+};
+// createProvider requires a concrete api/images/classifiers implementation (upstream v6 provider
+// shape; empty maps are rejected). These auth-only fixtures carry no models, so nothing ever streams.
+const authOnlyStreams: ProviderStreams = {
+	stream: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
+	streamSimple: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
 };
 function command(name: string): Command {
 	const commands = new Map<string, Command>();
@@ -100,7 +110,7 @@ describe("chatgpt-subscription optional post-login naming", () => {
 					baseUrl: "https://example.invalid",
 					auth: { oauth: flow },
 					models: [],
-					api: {},
+					api: authOnlyStreams,
 				}),
 			);
 			let persistedAtPrompt = false;
@@ -136,7 +146,8 @@ describe("claude-sdk-oauth post-login naming", () => {
 		models.setProvider(
 			composedProvider(async () => false, {
 				oauth: createOAuthConfig({
-					readCurrent: async () => storage.get("anthropic-subscription") as ClaudeSdkOauthCredential | undefined,
+					readCurrent: async () =>
+						storage.get("anthropic-subscription") as AnthropicSubscriptionCredential | undefined,
 					loginFlow: flow,
 				}),
 			}),

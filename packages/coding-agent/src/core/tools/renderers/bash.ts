@@ -13,20 +13,17 @@ import { highlightCode, theme } from "../../../modes/interactive/theme/theme.ts"
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
 import { getTextOutput, invalidArgText, normalizeDisplayText, replaceTabs, str } from "../render-utils.ts";
-import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 const BASH_PREVIEW_LINES = 5;
 export const BASH_UPDATE_THROTTLE_MS = 100;
 type BashResultRenderState = {
 	cachedWidth: number | undefined;
 	cachedLines: string[] | undefined;
-	cachedSkipped: number | undefined;
 };
 class BashResultRenderComponent extends Container {
 	state: BashResultRenderState = {
 		cachedWidth: undefined,
 		cachedLines: undefined,
-		cachedSkipped: undefined,
 	};
 }
 /** Whole-second elapsed/took display (fork): sub-second runs read `<1s`, longer ones roll up to m/h. */
@@ -80,15 +77,7 @@ function rebuildBashResultRenderComponent(
 	const state = component.state;
 	component.detachAll();
 
-	let output = getTextOutput(result, showImages).trim();
-	const truncation = result.details?.truncation;
-	const fullOutputPath = result.details?.fullOutputPath;
-	if (!options.isPartial && truncation?.truncated && fullOutputPath && output.endsWith("]")) {
-		const footerStart = output.lastIndexOf("\n\n[");
-		if (footerStart !== -1 && output.slice(footerStart).includes(fullOutputPath)) {
-			output = output.slice(0, footerStart).trimEnd();
-		}
-	}
+	const output = getTextOutput(result, showImages).trim();
 
 	if (output) {
 		const styledOutput = output
@@ -101,44 +90,27 @@ function rebuildBashResultRenderComponent(
 		} else {
 			component.addChild({
 				render: (width: number) => {
+					// Cache the complete output: this renders on every frame for every bash result in the transcript.
 					if (state.cachedLines === undefined || state.cachedWidth !== width) {
 						const preview = truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width);
-						state.cachedLines = preview.visualLines;
-						state.cachedSkipped = preview.skippedCount;
+						const hintLines: string[] = [];
+						if (preview.skippedCount > 0) {
+							const hint =
+								theme.fg("muted", `... (${preview.skippedCount} earlier lines,`) +
+								` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+							hintLines.push(truncateToWidth(hint, width, "..."));
+						}
+						state.cachedLines = ["", ...hintLines, ...preview.visualLines];
 						state.cachedWidth = width;
 					}
-					if (state.cachedSkipped && state.cachedSkipped > 0) {
-						const hint =
-							theme.fg("muted", `... (${state.cachedSkipped} earlier lines,`) +
-							` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-						return ["", truncateToWidth(hint, width, "..."), ...(state.cachedLines ?? [])];
-					}
-					return ["", ...(state.cachedLines ?? [])];
+					return state.cachedLines;
 				},
 				invalidate: () => {
 					state.cachedWidth = undefined;
 					state.cachedLines = undefined;
-					state.cachedSkipped = undefined;
 				},
 			});
 		}
-	}
-
-	if (truncation?.truncated || fullOutputPath) {
-		const warnings: string[] = [];
-		if (fullOutputPath) {
-			warnings.push(`Full output: ${fullOutputPath}`);
-		}
-		if (truncation?.truncated) {
-			if (truncation.truncatedBy === "lines") {
-				warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
-			} else {
-				warnings.push(
-					`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
-				);
-			}
-		}
-		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
 	}
 
 	if (startedAt !== undefined) {

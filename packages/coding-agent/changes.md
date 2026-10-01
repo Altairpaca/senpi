@@ -1,4 +1,174 @@
+## 2026-09-30 - claude-agent-sdk 0.3.285 (senpi#752)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.284 -> 0.3.285 (Claude Code 2.1.284 -> 2.1.285). `bun.lock`, `package-lock.json` and `install-lock/package-lock.json` regenerated with `bun run refresh-lock`; the platform packages relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- The engine's Claude Code fingerprint floor moves with it (`packages/ai/src/changes.md`), which regression #2033 requires.
+- `test/steering-tool-context.test.ts` and `test/suite/regressions/7084-stored-credential-revision.test.ts`: no bracket string-literal member access (`lint/complexity/useLiteralKeys`). The private `AgentSession` members the steering test drives go through a typed `SteeringInternals` view, as other suite tests reach private members; `state.default` replaces `state["default"]`.
+
+### Why
+
+- The nightly Releasability gate's `Claude Agent SDK currency` job fails while the pin trails npm latest (0.3.285, published 2026-09-29). None of the 0.3.285 changes reaches a surface the subscription lane relies on: senpi passes `tools: []` (the Bash timeout, Artifact and fork-subagent changes are for built-in tools), and it does not call `toggleMcpServer`, `rewind_conversation` or `getSubagentMessages`. `getSessionMessages()` now also returns a user message sent before a process stopped with no reply, which is the orphan tail `verifyRestoredTranscript` already fails closed on (senpi#1973).
+
+### Why an extension could not handle it
+
+- Dependency pin; test-only lint.
+
+### Expected merge conflict zones
+
+- LOW: the pin line and the lock files.
+
+## 2026-09-30 - Keep test/manual-qa out of the default vitest run (senpi#2447)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: `exclude` adds `test/manual-qa/**` unless `SENPI_MANUAL_QA` is set. The vitest defaults are kept via `configDefaults.exclude`.
+- The two `*.test.ts` drivers in `test/manual-qa/` and `test/AGENTS.md` give the opt-in run command: `SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>`.
+
+### Why
+
+- `test/AGENTS.md` says manual-qa is "not part of default suite", but vitest collected `goal-blocked-resume-restart.test.ts` and `persistent-monitor-restart.test.ts` in every `npm test` and CI run. Both are real-surface QA drivers, and the second spawns real PTYs and file watchers.
+
+### Why an extension could not handle it
+
+- Test runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/coding-agent/vitest.config.ts`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): retired Kimi deferred-tools example
+
+### What changed
+
+- `packages/coding-agent/examples/extensions/kimi-deferred-tools.ts` stays deleted by upstream transcript tool-change commit `9e05370b29`. The fork's retained `addedToolNames` behavior is covered in `packages/ai/test/chatgpt-subscription-deferred-tools.test.ts` and `packages/ai/test/anthropic-deferred-tools.test.ts` instead of shipping the obsolete example.
+
+### Why
+
+Upstream replaced the example's starting-condition rewrite with transcript-carried tool changes. Restoring the old example would teach the pre-transcript API even though the fork preserves only the provider compatibility behavior.
+
+### Why an extension could not handle it
+
+This records removal of a repository example; no runtime hook can reconcile obsolete sample code.
+
+### Expected merge conflict zones
+
+- LOW: the retired example path if upstream reintroduces it; keep current transcript examples and focused provider tests.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `packages/coding-agent/package.json`: Root `package.json`: fork scripts kept (`build-all.mjs` build, the fork `check` chain with conflict-marker/bun-lock/install-lock/claude-sdk-platform-lock gates, `run-workspaces.mjs` launchers, `refresh-lock`, `preinstall`); devDependencies kept (biome 2.5.14, @types/node 26.6.2, typescript 7.0.2, @typescript/typescript6, tsx 4.23.13, vitest + @vitest/coverage-v8 5.0.1). Adopted from upstream: `generate:models` runs generate-models only (the `generate-image-models` chain dropped for the D-3 image-model unification), and `test:scripts` also runs the adopted upstream `scripts/model-catalog-protocol.test.ts`. Not adopted: codemode/mcp/durable build phases, the tsx removal. `packages/coding-agent/package.json`: `@earendil-works/chord` exact 0.99.1 (D-12); no `@earendil-works/pi-codemode` / `pi-mcp` and no `quickjs-wasi` (upstream codemode runtime, D-2); fork build/binary/copy-assets scripts kept (no codemode worker entry).
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-29 - Drop unused declarations and published sourcemaps (senpi#2362)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `glob`, `@opentelemetry/api` and `proxy-from-env` are no longer declared (no import anywhere in senpi or its shipped `.js`/`.d.ts`, and no peer requirement); `files` excludes `dist/**/*.map`. Locks regenerated with `bun run refresh-lock`.
+
+### Why
+
+- Smaller install and tarball with no behavior change; see `scripts/changes.md`.
+
+### Why an extension could not handle it
+
+- Package manifest and publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` block and `files` list in `packages/coding-agent/package.json`.
+
+## 2026-09-29 - Publish the real dependency manifest (senpi#2360)
+
+### What changed
+
+- `packages/coding-agent/package.json`: no `bundleDependencies`/`bundledDependencies`; the `shrinkwrap` script is removed and `prepublishOnly` no longer runs it. Dropped the declarations that only mirrored `senpi-ai`/`senpi-agent-core`/`senpi-tui` dependencies while those were bundled and have no import in senpi's own shipped code: `openai`, `@aws-sdk/client-bedrock-runtime`, `@bufbuild/protobuf`, `@smithy/node-http-handler`, `@smithy/types`, `http-proxy-agent`, `https-proxy-agent`, `partial-json`, `get-east-asian-width`, `web-tree-sitter` (`@anthropic-ai/sdk` stays: shipped `.d.ts` files use its types). `publish-deps.lock.json` is deleted; `bun.lock`, `package-lock.json` and `install-lock/` regenerated with `bun run refresh-lock`.
+
+### Why
+
+- The published package now installs its dependencies from the registry like any other package; see `scripts/changes.md`.
+
+### Why an extension could not handle it
+
+- Package manifest and publish metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` block and `scripts` of `packages/coding-agent/package.json`.
+
+## 2026-09-29 - claude-agent-sdk 0.3.284 (senpi#2321)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.280 -> 0.3.284 (Claude Code 2.1.280 -> 2.1.284). `bun.lock`, `package-lock.json`, `install-lock/package-lock.json` and `publish-deps.lock.json` regenerated with `bun run refresh-lock`; the platform packages relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs`.
+- `packages/coding-agent/docs/environment-variables.md`: `PI_CLAUDE_CODE_VERSION`. `docs/settings.md`: `promptPreset` lists `claude-sonnet-5-5`.
+- `test/suite/regressions/2033-claude-code-version-currency.test.ts`: the currency invariant keeps reading the `claudeCodeVersion` declaration in `packages/ai/src/api/anthropic-messages.ts` (now the floor of the advertised version) and requires it to equal the installed SDK's `claudeCodeVersion`.
+
+### Why
+
+- Claude Code 2.1.284 is the first release whose binary knows `claude-sonnet-5-5`; the subscription lane runs the bundled binary.
+
+### Why an extension could not handle it
+
+- Dependency pin.
+
+### Expected merge conflict zones
+
+- LOW: the pin line and the lock files.
+
+## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: the test env adds `PI_SKIP_RUNTIME_NOTICE: "1"` next to `PI_OFFLINE`.
+
+### Why
+
+- Vitest runs on Node.js, so every in-process interactive test would otherwise render the new one-time runtime notice and write its state file; notice tests unstub it explicitly.
+
+### Why an extension could not handle it
+
+- Test-runner configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `env` object in `vitest.config.ts`.
+
 # Local fork changes
+
+## 2026-09-23 - claude-agent-sdk 0.3.280 (senpi#2033)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.278 -> 0.3.280 (Claude Code 2.1.278 -> 2.1.280). `bun.lock`, `package-lock.json`, `install-lock/package-lock.json` and `publish-deps.lock.json` are regenerated with `bun run refresh-lock`, and the eight platform packages are relocked with `scripts/generate-claude-agent-sdk-platform-lock.mjs` (npm's lock-only pass dropped them).
+
+### Why
+
+- Claude Opus 5.5 needs Claude Code 2.1.280 or newer, and the bundled binary is what `claude-sdk-oauth` spawns unless a newer `claude` is on PATH.
+
+### Why an extension could not handle it
+
+- The published tarball's dependency closure is resolved by the package manager and the publish pipeline, never by the runtime extension system.
+
+### Expected merge conflict zones
+
+- The `@anthropic-ai/claude-agent-sdk` pin in `packages/coding-agent/package.json` and the lockfiles.
 
 ## 2026-09-22 - Grok 4.7 preset + xAI default (#1990)
 
@@ -542,7 +712,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `packages/coding-agent/install-lock/package.json` and `packages/coding-agent/install-lock/package-lock.json`: regenerated from the refreshed root lock.
 - `packages/coding-agent/publish-deps.lock.json`: regenerated shrinkwrap for the same tree.
 - `packages/coding-agent/test/mermaid.test.ts`: the two tests covering the partial-render warning path now use input that still warns under grok-mermaid 0.2.3, which learned to render the `:::className` node syntax the old fixtures relied on failing.
-- `packages/coding-agent/test/suite/claude-sdk-oauth-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
+- `packages/coding-agent/test/suite/anthropic-subscription-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
 
 ### Why
 
@@ -915,7 +1085,7 @@ amplification or dropping classic per-event backpressure.
 
 ## 2026-07-29 — OpenAI Codex usage extension example
 
-- Changed: added a standalone `examples/extensions/openai-codex-usage/` example that resolves Senpi-managed Codex OAuth, fetches the remaining five-hour and weekly limits, and publishes them through `ctx.ui.setStatus()`. Missing windows render as unavailable; sanitized HTTP/network/parse failures replace stale values with an unavailable status. The poller is single-flight, abortable, and cleared on model changes, shutdown, or `/usage`.
+- Changed: added a standalone `examples/extensions/chatgpt-subscription-usage/` example that resolves Senpi-managed Codex OAuth, fetches the remaining five-hour and weekly limits, and publishes them through `ctx.ui.setStatus()`. Missing windows render as unavailable; sanitized HTTP/network/parse failures replace stale values with an unavailable status. The poller is single-flight, abortable, and cleared on model changes, shutdown, or `/usage`.
 - Why: users can see provider limits with the built-in footer or any custom footer that consumes extension statuses, without coupling usage retrieval to one footer implementation or presenting unknown/stale percentages as current.
 - Extension boundary: the example uses public model-registry, lifecycle, command, and status APIs; no core footer or authentication source changes are required. Deterministic fake-API and fake-timer tests cover toggle, model-change, abort, scheduled polling, and shutdown cleanup.
 - Merge-conflict risk: low. The change adds an isolated example directory, one test, one catalog row, documentation, and this record.

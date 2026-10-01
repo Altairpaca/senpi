@@ -1,22 +1,25 @@
 import type {
 	AnthropicMessagesCompat,
 	Api,
+	BaseModel,
 	BedrockCompat,
 	CacheRetention,
-	ModelCost,
+	MistralConversationsCompat,
+	ModelPromptCache,
+	ModelThinkingLevel,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
-	ProviderId,
 	ThinkingLevelMap,
 } from "./types.ts";
 
-/** Model interface for the unified model system. */
-export interface Model<TApi extends Api> {
-	id: string;
-	name: string;
-	api: TApi;
-	provider: ProviderId;
-	baseUrl: string;
+/** Chat model: usable with `stream()` and friends. */
+export interface Model<TApi extends Api> extends BaseModel<TApi> {
+	/**
+	 * Optional: chat is the default model type, so models without `type` are chat
+	 * models. Narrow mixed model lists with `isModelType()` instead of comparing
+	 * `type` directly.
+	 */
+	type?: "chat";
 	reasoning: boolean;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
@@ -24,13 +27,17 @@ export interface Model<TApi extends Api> {
 	 * use provider defaults. null marks any level as unsupported.
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
-	input: ("text" | "image" | "video")[];
-	cost: ModelCost;
+	/**
+	 * Level to start at when the user has not chosen one for this model, for example the default an
+	 * OpenAI-compatible endpoint advertises. Clamped to the supported levels like any other request.
+	 */
+	defaultThinkingLevel?: ModelThinkingLevel;
+	/** Prompt cache lifetimes per retention tier. Unset when the provider's cache behavior is unknown. */
+	promptCache?: ModelPromptCache;
 	contextWindow: number;
 	maxTokens: number;
 	/** Default sampling parameters; per-request values override these by key. */
 	samplingParams?: Record<string, unknown>;
-	headers?: Record<string, string>;
 	/** Default prompt-cache retention preference when the request omits one. */
 	cacheRetention?: CacheRetention;
 	/**
@@ -51,11 +58,13 @@ export interface Model<TApi extends Api> {
 				? AnthropicMessagesCompat
 				: TApi extends "bedrock-converse-stream"
 					? BedrockCompat
-					: TApi extends "cursor-agent"
-						? CursorAgentCompat
-						: TApi extends "devin-agent"
-							? DevinAgentCompat
-							: never;
+					: TApi extends "mistral-conversations"
+						? MistralConversationsCompat
+						: TApi extends "cursor-agent"
+							? CursorAgentCompat
+							: TApi extends "devin-agent"
+								? DevinAgentCompat
+								: never;
 }
 
 /** Devin (Cascade) model metadata the transport branches on. */
@@ -85,5 +94,13 @@ export interface CursorAgentCompat {
 		thinkingMode?: boolean;
 		/** Exact catalog variant sent when no explicit selection exists. */
 		representativeVariantId: string;
+		/**
+		 * Derived-group variant ids: normalized thinking level -> the exact
+		 * server-listed variant id observed in the live catalog. Present only on
+		 * identities derived at runtime from ids the static alias table does not
+		 * list; explicit selections resolve through it before any capability
+		 * lookup (senpi#2038).
+		 */
+		variantIds?: Readonly<Partial<Record<ModelThinkingLevel, string>>>;
 	};
 }

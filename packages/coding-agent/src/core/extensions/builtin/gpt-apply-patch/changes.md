@@ -1,5 +1,9 @@
 # changes
 
+## 2026-09-24 - Pin pi-apply-patch 0.1.3, no port needed (senpi#2079)
+
+Every `src/index.ts` change between 0.1.2 and 0.1.3 is already in senpi's multi-file port: custom Responses API gating (`extension.ts`, broader than upstream's provider list), paths outside cwd (`workspace.ts`), final diff preview in result details (`tool.ts`), per-file mutation queues (`apply.ts`), and failure codes with `failedFiles` / reread classification (`recovery.ts`, `types.ts`). The sync report's single hunk is the whole upstream monolith against senpi's barrel `index.ts`. Only `external-versions.json` changes.
+
 ## 2026-09-21 - Recognize provider-prefixed GPT model ids (#1891)
 
 ### What changed

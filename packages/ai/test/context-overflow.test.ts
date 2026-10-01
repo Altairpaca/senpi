@@ -30,7 +30,7 @@ import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
 const oauthTokens = await Promise.all([resolveApiKey("github-copilot"), resolveApiKey("chatgpt-subscription")]);
-const [githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
 const anthropicApiKey = getLiveEnvApiKey("ANTHROPIC_API_KEY", "PI_ENABLE_ANTHROPIC_LIVE");
 const anthropicOAuthToken = getLiveEnvApiKey("ANTHROPIC_OAUTH_TOKEN", "PI_ENABLE_ANTHROPIC_OAUTH_LIVE");
@@ -241,11 +241,11 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe("OpenAI Codex (OAuth)", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should detect overflow via isContextOverflow",
 			async () => {
 				const model = getModel("chatgpt-subscription", "gpt-5.5");
-				const result = await testContextOverflow(model, openaiCodexToken!);
+				const result = await testContextOverflow(model, chatgptSubscriptionToken!);
 				logResult(result);
 
 				expect(result.stopReason).toBe("error");
@@ -352,8 +352,8 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI", () => {
-		it("Kimi-K2.6 - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("together", "moonshotai/Kimi-K2.6");
+		it("Kimi-K3 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("together", "moonshotai/Kimi-K3");
 			const result = await testContextOverflow(model, process.env.TOGETHER_API_KEY!);
 			logResult(result);
 

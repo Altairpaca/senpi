@@ -5,7 +5,7 @@ import {
 	type ReadFolder,
 	selectedReadFolder,
 } from "@earendil-works/pi-agent-core";
-import type { Api, ImageContent, Model, TextContent } from "@earendil-works/pi-ai";
+import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } from "@earendil-works/pi-ai";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
@@ -13,6 +13,7 @@ import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { modelOnlyText } from "./model-only-text.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { type ReadRenderState, readRenderers } from "./renderers/read.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -61,8 +62,10 @@ const defaultReadOperations: ReadOperations = {
 export interface ReadToolOptions {
 	/** Structural folder. Default options select the measured folder; omit here for verbatim reads. */
 	folder?: ReadFolder;
-	/** Whether to auto-resize images to 2000x2000 max. Default: true */
+	/** Whether to auto-resize images. Default: true */
 	autoResizeImages?: boolean;
+	/** Fallback resize profile when the execution context has no model metadata. */
+	resizeOptions?: ModelImageResizeOptions;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
 	/** Extension-registered filesystem policy checker. */
@@ -81,6 +84,7 @@ export function createReadToolDefinition(
 	options: ReadToolOptions = { folder: selectedReadFolder },
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined, ReadRenderState> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
+	const fallbackResizeOptions = options?.resizeOptions;
 	const ops = options?.operations ?? defaultReadOperations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
@@ -137,7 +141,10 @@ export function createReadToolDefinition(
 							if (mimeType) {
 								// Read image as binary.
 								const buffer = await ops.readFile(absolutePath);
-								const processed = await processImage(buffer, mimeType, { autoResizeImages });
+								const processed = await processImage(buffer, mimeType, {
+									autoResizeImages,
+									resizeOptions: ctx?.model?.inputLimits?.images?.resize ?? fallbackResizeOptions,
+								});
 								if (!processed.ok) {
 									let textNote = `Read image file [${mimeType}]\n${processed.message}`;
 									if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
@@ -189,12 +196,14 @@ export function createReadToolDefinition(
 									truncated: truncation.truncated,
 								});
 								let outputText: string;
+								let notice: string | undefined;
 								if (summary) {
 									outputText = summary.text;
 								} else if (truncation.firstLineExceedsLimit) {
 									// First line alone exceeds the byte limit. Point the model at a bash fallback.
 									const firstLineSize = formatSize(Buffer.byteLength(allLines[startLine], "utf-8"));
-									outputText = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;
+									outputText = "";
+									notice = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;
 									details = { truncation };
 								} else if (truncation.truncated) {
 									// Truncation occurred. Build an actionable continuation notice.
@@ -202,21 +211,27 @@ export function createReadToolDefinition(
 									const nextOffset = endLineDisplay + 1;
 									outputText = truncation.content;
 									if (truncation.truncatedBy === "lines") {
-										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
+										notice = `[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
 									} else {
-										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Use offset=${nextOffset} to continue.]`;
+										notice = `[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Use offset=${nextOffset} to continue.]`;
 									}
 									details = { truncation };
 								} else if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
 									// User-specified limit stopped early, but the file still has more content.
 									const remaining = allLines.length - (startLine + userLimitedLines);
 									const nextOffset = startLine + userLimitedLines + 1;
-									outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
+									outputText = truncation.content;
+									notice = `[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
 								} else {
 									// No truncation and no remaining user-limited content.
 									outputText = truncation.content;
 								}
-								content = [{ type: "text", text: outputText }];
+								// Text adapters join parts with a newline; retain the original blank line.
+								content =
+									outputText || notice === undefined
+										? [{ type: "text", text: notice === undefined ? outputText : `${outputText}\n` }]
+										: [];
+								if (notice !== undefined) content.push(modelOnlyText(notice));
 							}
 
 							if (aborted) return;

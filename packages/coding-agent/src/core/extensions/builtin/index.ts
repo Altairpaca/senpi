@@ -1,12 +1,13 @@
 import type { ExtensionFactory } from "../types.ts";
 import accountExtension from "./account/index.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
+import anthropicSubscriptionExtension from "./anthropic-subscription/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import askUserExtension from "./ask-user/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
-import claudeSdkOauthExtension from "./claude-sdk-oauth/index.ts";
+import chatReplyScrubExtension from "./chat-reply-scrub/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
@@ -35,7 +36,9 @@ import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import reasoningExtension from "./reasoning/index.ts";
 import recommendedModelsExtension from "./recommended-models/index.ts";
 import redrawsExtension from "./redraws.ts";
+import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
+import scheduleExtension from "./schedule/index.ts";
 import serviceTierExtension from "./service-tier.ts";
 import terminalExtension from "./terminal/index.ts";
 import todowriteExtension from "./todotools/index.ts";
@@ -73,6 +76,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },
 	{ id: "prompt-preset", factory: promptPresetExtension },
+	// Follows prompt-preset (both key on the prompt surface) so later message_end handlers see the scrubbed reply.
+	{ id: "chat-reply-scrub", factory: chatReplyScrubExtension },
 	{ id: "todowrite", factory: todowriteExtension },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "anthropic-web-search", factory: anthropicWebSearchExtension },
@@ -93,6 +98,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "history-search", factory: historySearchExtension },
 	{ id: "help", factory: helpExtension },
 	{ id: "import-repro", factory: importReproExtension },
+	{ id: "repository-identity", factory: repositoryIdentityExtension },
 	{ id: "websearch", factory: websearchExtension },
 	{ id: "webfetch", factory: webfetchExtension },
 	{ id: "video-in", factory: videoInExtension },
@@ -101,6 +107,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
 	{ id: "loop", factory: loopExtension },
+	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
+	{ id: "schedule", factory: scheduleExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
@@ -108,7 +116,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },
 	{ id: "gpt-account", factory: gptAccountExtension },
-	{ id: "claude-sdk-oauth", factory: claudeSdkOauthExtension },
+	{ id: "claude-sdk-oauth", factory: anthropicSubscriptionExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.

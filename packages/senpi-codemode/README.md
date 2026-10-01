@@ -29,7 +29,9 @@ task-tool names are known.
   session-adjacent spill files for large streams.
 - TUI and HTML-export rendering for syntax-highlighted cells, status rows,
   task progress, structured display values, truncation warnings, and image
-  fallbacks.
+  fallbacks. A JavaScript cell sent as dense one-line code is previewed broken
+  at statement, block, and long-array boundaries; the cell itself runs exactly
+  as sent.
 - Runtime identity badges in eval headers — `eval py (3.14.7, ~/.venv/bin/python3)`,
   `eval js (node 26.7.0, /opt/…/bin/node)` — with the same `runtime` info on
   `EvalToolDetails` and its `cells` for RPC consumers; interpreter detection
@@ -103,7 +105,14 @@ Configuration is loaded in this order:
     "headBytes": 20480,
     "maxColumns": 768
   },
-  "statusEvents": true
+  "statusEvents": true,
+  "memory": {
+    "gcWatermarkMb": 256,
+    "noticeMb": 1024,
+    "ceilingMb": 8192,
+    "retainedResultsMb": 32,
+    "retainedImagesMb": 256
+  }
 }
 ```
 
@@ -119,8 +128,13 @@ Configuration is loaded in this order:
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
-| `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
+| `outputSink.maxColumns` | `768` | Maximum columns per printed output line; `0` disables column clamping. A cell's return value is never column-clamped (the byte and line budgets still apply). |
 | `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
+| `memory.gcWatermarkMb` | `256` | JavaScript kernel: a finished cell whose heap reached this size and grew runs a full collection before its result; whenever at least this much stays live, an idle full collection runs about a second after the cell, so dropped globals return their memory without a reset. Python kernel: a finished cell whose process footprint reached this size and grew runs `gc.collect()` (plus glibc `malloc_trim(0)` on Linux) before its result, and while at least this much stays live the next cells collect too (at most 1/20 of the time), so `del rows` returns its memory. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_GC_WATERMARK_MB`. |
+| `memory.noticeMb` | `1024` | JavaScript and Python kernels: when live memory after a collection (JS heap, Python process footprint) reaches this size (first time, or 25% more than at the last notice), the result gets one bracketed notice naming the largest globals and how to drop them (`rows = undefined`, `del rows`), plus `details.memory`. Ruby and Julia get no notice. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_NOTICE_MB`. |
+| `memory.ceilingMb` | a quarter of physical memory, 2048-8192 | Every kernel (JS heap and Python footprint after a collection; Ruby and Julia interpreter footprint read by the host after each result, without a globals list): when live memory reaches this size, the result says so and the kernel restarts once no cell is running or queued on it; the next result says it was restarted (`details.memory.recycled`). `0` disables. Env override: `SENPI_CODEMODE_MEMORY_CEILING_MB`. Non-zero memory thresholds must satisfy watermark <= notice <= ceiling, otherwise all three use their defaults. |
+| `memory.retainedResultsMb` | `32` | In-memory byte budget (MiB) for the settled cells kept for `peek`/`list`, on top of the 32-cell count cap; the oldest go first and the newest is always kept. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_RESULTS_MB` (a non-negative integer). |
+| `memory.retainedImagesMb` | `256` | Disk budget (MiB) for settled-cell images. Images of settled cells (foreground and detached) are written as base64 files under `<session artifacts>/settled-images/` instead of staying in memory, and `peek` reads them back, so it returns the full result. Beyond the budget the oldest files are deleted first; an evicted cell's files are deleted with it; the directory is removed when the session ends. A `peek` whose image file is gone returns the text plus a one-line note. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_IMAGES_MB` (a non-negative integer). |
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
@@ -159,6 +173,13 @@ When a `tool.<name>()` call fails argument validation, the error delivered back
 into the cell carries the tool's expected parameters, so the cell can correct the
 arguments and retry instead of falling back to one-at-a-time tool calls.
 `tool_schema()` exposes the same catalog up front.
+
+A tool may also contribute globals of its own through `ToolDefinition.kernelPrelude`
+(JavaScript and Python snippets that call the ordinary `tool.<name>()`, one
+documentation line, and the exported names). While the tool is active, each
+JavaScript and Python cell installs any missing export first and the eval prompt
+lists the documentation line; once the tool is deactivated, the next cell deletes
+those names. Exports that shadow a built-in helper are rejected by the host.
 
 `agent()` is available only when the configured task tool is active in the
 session. `output()` similarly requires the configured task-output tool and
@@ -205,15 +226,19 @@ that implements it. Reset only removes kernel variables: save `pool_id` and use
 arguments in other languages). An open pool's adapter can be recreated with the
 same name/spec/mode; no worker state is reconstructed in the prelude.
 
-## Required summary
+## Required run fields
 
-Every `eval` run call MUST include a `summary` — one line in the user's
-conversational language stating what the cell does and for what purpose (e.g.
-a Korean conversation produces a Korean summary such as "src 전체에서
-legacyClient 사용처 집계"). The summary is shown in the TUI while the cell
-runs and in the finished result, so you can always tell what is running and
-why. Values longer than 80 characters are force-truncated. A run request
-without a `summary` fails with a teaching error.
+Every `eval` run call MUST include a `language` (the kernel that runs the
+cell, one of the enabled languages), the `code` cell body, and a `summary` —
+one line in the language the
+user writes in: a progress update saying what the agent is doing and why, not
+a label for the code. The
+summary is shown in the TUI while the cell runs and in the finished result, so
+you can always tell what is running and why. It has no length limit; a
+collapsed block shows its first three lines. The schema marks all three
+optional only because the control actions (`peek`, `stop`, `list`) share it; a
+run request missing any of them fails with a teaching error that names what to
+add.
 
 ## Detached cells
 
@@ -295,7 +320,8 @@ Cell output is streamed while the cell runs. Large streams spill to an absolute
 file after the default 50 KiB threshold or when the output column cap drops
 bytes. With a session file such as `/path/session.jsonl`, artifacts live in
 `/path/session-artifacts/`; sessions without a file use a unique temporary
-directory. Truncated results include a plain-path notice such as
+directory. A truncated result tells the model so in its text: the kept and
+original sizes, then a plain-path notice such as
 `[Full output: /absolute/path/eval-….log]`.
 
 ## Deliberate differences from oh-my-pi

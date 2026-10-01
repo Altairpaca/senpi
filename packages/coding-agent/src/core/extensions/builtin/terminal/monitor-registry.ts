@@ -163,7 +163,8 @@ interface FileMonitorRecord {
 	dirtyPasses: number;
 	dirtyWindowStartedAt: number;
 	checking: Promise<void> | undefined;
-	readonly deadline: ReturnType<typeof setTimeout>;
+	/** Unset for a persistent watch: it has no live deadline, only its durability expiry. */
+	readonly deadline: ReturnType<typeof setTimeout> | undefined;
 }
 
 interface MonitorRecord {
@@ -385,6 +386,7 @@ export class MonitorRegistry {
 			cleanupRegistration();
 			throw new Error("Cannot create file monitor: monitor registry is disposed.");
 		}
+		const persistent = options.persistent ?? options.expiresAt !== undefined;
 		const record: FileMonitorRecord = {
 			id,
 			monitorId: options.monitorId ?? allocateMonitorId(),
@@ -393,11 +395,8 @@ export class MonitorRegistry {
 			startedAtMs: Date.now(),
 			command: null,
 			filter: null,
-			persistent: options.persistent ?? options.expiresAt !== undefined,
-			deadlineMs:
-				(options.persistent ?? options.expiresAt !== undefined)
-					? null
-					: (options.deadlineMs ?? Date.now() + options.timeoutMs),
+			persistent,
+			deadlineMs: persistent ? null : (options.deadlineMs ?? Date.now() + options.timeoutMs),
 			fireCount: 0,
 			lastFiredAtMs: null,
 			expiresAt: options.expiresAt,
@@ -421,10 +420,12 @@ export class MonitorRegistry {
 			dirtyPasses: 0,
 			dirtyWindowStartedAt: 0,
 			checking: undefined,
-			deadline: setTimeout(() => {
-				const current = this.#files.get(id);
-				if (current) this.#settleFile(current, "watcher timed_out");
-			}, options.timeoutMs),
+			deadline: persistent
+				? undefined
+				: setTimeout(() => {
+						const current = this.#files.get(id);
+						if (current) this.#settleFile(current, "watcher timed_out");
+					}, options.timeoutMs),
 		};
 		this.#files.set(id, record);
 		if (this.#parked) record.watch.pause();
@@ -448,7 +449,12 @@ export class MonitorRegistry {
 
 	/** Emit one restored-watch line through the SAME sink a live watch uses (coalescing, wake budget). */
 	emitFileLine(id: string, line: string): boolean {
-		const record = this.#files.get(id);
+		return this.#files.has(id) && this.emitLine(id, line);
+	}
+
+	/** Inject one line into a live command or file watch's event stream (e.g. a restore notice). */
+	emitLine(id: string, line: string): boolean {
+		const record = this.#records.get(id) ?? this.#files.get(id);
 		if (!record || record.settled) return false;
 		this.#emitForRecord(record, { type: "line", id: record.id, description: record.description, line });
 		return true;

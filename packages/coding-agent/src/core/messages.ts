@@ -13,6 +13,8 @@ import {
 	type Message,
 	type TextContent,
 } from "@earendil-works/pi-ai";
+import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
+import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -189,6 +191,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		copyContextProvenance(source, target);
 	// Continuations are append-only here too: the transport array must extend the
 	// previous request verbatim to keep the provider's cache prefix valid.
+	const environmentMessages = new Set<Message>();
 	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
@@ -208,11 +211,13 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					}
 
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return withContextProvenance(m, {
-						role: "user",
+					const converted = withContextProvenance(m, {
+						role: "user" as const,
 						content,
 						timestamp: m.timestamp,
 					});
+					if (m.customType === ENVIRONMENT_CONTEXT_MESSAGE_TYPE) environmentMessages.add(converted);
+					return converted;
 				}
 				case "branchSummary":
 					return withContextProvenance(m, {
@@ -230,6 +235,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					});
 				case "configurationUpdate":
 					return m;
+				case "system":
 				case "user":
 				case "assistant":
 				case "toolResult":
@@ -246,7 +252,14 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 	// prompt bridge, cursor turns) would otherwise replay their partial text and
 	// unexecuted tool calls, and token estimation would count them. Dropping is
 	// deterministic per session state, so the cache-prefix guarantee above holds.
-	return dropFailedAssistantTurns(converted);
+	// senpi#2118: the environment context then becomes the leading block of the
+	// user message it precedes, so strict-alternation chat templates never see
+	// two consecutive user messages. senpi#2170: images a failed turn proves the
+	// provider rejected are replaced first, while the failed turn is still visible.
+	return foldEnvironmentContextIntoNextUserMessage(
+		dropFailedAssistantTurns(omitProviderRejectedImages(converted)),
+		environmentMessages,
+	);
 }
 
 // ============================================================================

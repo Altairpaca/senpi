@@ -1,5 +1,7 @@
 import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import {
 	type LiveWorkerPaths,
@@ -51,19 +53,34 @@ export class WorkerSessionRegistry {
 		return this.entries.size;
 	}
 
-	/**
-	 * Memory admission is the in-process registry's concern: a worker-runtime session runs in
-	 * its own isolate and this registry already bounds occupancy with `too_many_sessions`.
-	 */
-	setWorkerAdmission(): void {}
-
 	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		if (!isAbsolute(profile.cwd) || (profile.sessionPath !== undefined && !isAbsolute(profile.sessionPath)))
 			throw new RpcSessionRegistryError("invalid_path");
+		// Same contract as RpcSessionRegistry.openSession (#1951), on the registry the multi-session
+		// host actually instantiates (#2010). Both checks run SYNCHRONOUSLY before the first await:
+		// the format check so a bad id is refused with its own code instead of surfacing as the
+		// worker's death (`session_closing`), and the collision scan so a concurrent open naming the
+		// same durable id finds this one already recorded. Re-opening the SAME path is an attach,
+		// not a collision: the id is the file's own.
+		const requestedDurableId = profile.durableSessionId;
+		if (requestedDurableId !== undefined) {
+			try {
+				assertValidSessionId(requestedDurableId);
+			} catch (cause) {
+				throw new RpcSessionRegistryError("invalid_session_id", String(cause));
+			}
+			const requestedKey = profile.sessionPath ? this.knownReservationKey(profile.sessionPath) : undefined;
+			for (const entry of this.entries.values()) {
+				if (entry.state === "closed") continue;
+				if (entry.durableSessionId !== requestedDurableId) continue;
+				if (requestedKey !== undefined && entry.reservationKey === requestedKey) continue;
+				throw new RpcSessionRegistryError("session_id_in_use");
+			}
+		}
 		if (profile.sessionPath) {
 			const key = this.knownReservationKey(profile.sessionPath);
 			const owner = key ? this.reservations.owner(key) : undefined;
-			if (key && owner) return this.attach(owner, key, options);
+			if (key && owner) return this.attach(owner, key, options, profile.promptSurface);
 		}
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
@@ -78,6 +95,10 @@ export class WorkerSessionRegistry {
 			retainOnDisconnect: options?.retainOnDisconnect === true,
 			lastCommandAt: this.now(),
 			lifecycleMutex: Promise.resolve(),
+			// Recorded before the first await so the collision scan above sees an open still being
+			// built; `snapshot.state.sessionId` overwrites it with the authoritative value after
+			// commit, which on a resume is the header's id rather than the requested one.
+			...(requestedDurableId !== undefined ? { durableSessionId: requestedDurableId } : {}),
 		};
 		let workerFailure: string | undefined;
 		const worker = this.createWorker({
@@ -105,7 +126,7 @@ export class WorkerSessionRegistry {
 			const path = await worker.prepare(this.options.configuration, profile);
 			const owner = this.reservations.owner(path);
 			if (owner) {
-				const attached = this.attach(owner, path, options);
+				const attached = await this.attach(owner, path, options, profile.promptSurface);
 				entry.state = "quarantined";
 				worker.quarantine();
 				return attached;
@@ -233,10 +254,20 @@ export class WorkerSessionRegistry {
 		return undefined;
 	}
 
-	private attach(owner: string, path: string, options?: RpcSessionOpenOptions): OpenRpcSession {
+	private async attach(
+		owner: string,
+		path: string,
+		options?: RpcSessionOpenOptions,
+		promptSurface?: PromptSurface,
+	): Promise<OpenRpcSession> {
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
+		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
+		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
+			entry.profile = frozenProfile({ ...entry.profile, promptSurface });
+			await entry.worker.setPromptSurface(promptSurface);
+		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
 		// Retention is a property of the live session: any attach may ask for it, and

@@ -5,7 +5,7 @@ import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
 import { handleNoUI } from "./non-interactive.ts";
-import { createBuiltinParserRegistry, type ParserRegistry } from "./parsers.ts";
+import { createBuiltinParserRegistry, type ParserRegistry, toolOwnedPermissionRequests } from "./parsers.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
@@ -68,7 +68,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 	pi.registerFlag("permission-preset", {
-		description: "Set permission preset (full-access, workspace, read-only, or ask)",
+		description: "Set permission preset (full-access, workspace, accept-edits, read-only, or ask)",
 		type: "string",
 	});
 
@@ -82,7 +82,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 		if (typeof permissionPresetFlag === "string" && !cliPreset) {
 			throw new Error(
-				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: full-access, workspace, read-only, ask.`,
+				`Invalid --permission-preset "${permissionPresetFlag}". Expected one of: full-access, workspace, accept-edits, read-only, ask.`,
 			);
 		}
 
@@ -104,7 +104,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		const permissionRequests = parserRegistry.parse(event.toolName, event.input, ctx.cwd);
+		const permissionRequests = parserRegistry.has(event.toolName)
+			? parserRegistry.parse(event.toolName, event.input, ctx.cwd)
+			: (toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd) ??
+				parserRegistry.parse(event.toolName, event.input, ctx.cwd));
 		const sessionID = ctx.sessionManager.getSessionId();
 
 		for (const permissionRequest of permissionRequests) {

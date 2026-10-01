@@ -4,17 +4,18 @@ import {
 	createProvider,
 	type OAuthAuth,
 	type OAuthCredential,
+	type ProviderStreams,
 } from "@earendil-works/pi-ai";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { renameCredentialAccount } from "../../../src/core/credential-accounts.ts";
 import {
-	type ClaudeSdkOauthCredential,
+	type AnthropicSubscriptionCredential,
 	SENTINEL_OAUTH_FIELDS,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
-import { createOAuthConfig } from "../../../src/core/extensions/builtin/claude-sdk-oauth/oauth-login.ts";
-import { composedProvider } from "../../support/claude-sdk-oauth-provider.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { createOAuthConfig } from "../../../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
+import { composedProvider } from "../../support/anthropic-subscription-provider.ts";
 
 const fresh = { type: "oauth" as const, access: "fake-access", refresh: "fake-refresh", expires: 4102444800000 };
 const flow: OAuthAuth = {
@@ -22,6 +23,16 @@ const flow: OAuthAuth = {
 	login: async () => fresh,
 	refresh: async (current) => current,
 	toAuth: async (current) => ({ apiKey: current.access }),
+};
+// createProvider requires a concrete api/images/classifiers implementation (upstream v6 provider
+// shape; empty maps are rejected). These auth-only fixtures carry no models, so nothing ever streams.
+const authOnlyStreams: ProviderStreams = {
+	stream: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
+	streamSimple: () => {
+		throw new Error("auth-only fixture provider has no models to stream");
+	},
 };
 function interaction(receipts: unknown[], answer = "second"): AuthInteraction {
 	return { prompt: async () => answer, notify: () => {}, onAccountCommitted: (receipt) => receipts.push(receipt) };
@@ -39,7 +50,7 @@ describe("committed account receipts", () => {
 				baseUrl: "https://example.invalid",
 				auth: { oauth: flow },
 				models: [],
-				api: {},
+				api: authOnlyStreams,
 			}),
 		);
 		const receipts: unknown[] = [];
@@ -64,7 +75,8 @@ describe("committed account receipts", () => {
 			const storage = AuthStorage.inMemory();
 			const models = createModels({ credentials: storage });
 			const config = createOAuthConfig({
-				readCurrent: async () => storage.get("anthropic-subscription") as ClaudeSdkOauthCredential | undefined,
+				readCurrent: async () =>
+					storage.get("anthropic-subscription") as AnthropicSubscriptionCredential | undefined,
 				readAnthropicCredential: async () => (importFirst ? fresh : undefined),
 				loginFlow: flow,
 			});
@@ -80,7 +92,7 @@ describe("committed account receipts", () => {
 				{ providerId: "anthropic-subscription", name: first, origin: "provider" },
 				{ providerId: "anthropic-subscription", name: "second", origin: "provider" },
 			]);
-			const saved = storage.get("anthropic-subscription") as ClaudeSdkOauthCredential;
+			const saved = storage.get("anthropic-subscription") as AnthropicSubscriptionCredential;
 			expect(saved).toMatchObject(SENTINEL_OAUTH_FIELDS);
 			expect(saved.accounts?.map(({ name, displayName }) => ({ name, displayName }))).toEqual([
 				{ name: first, displayName: "Personal" },
@@ -111,7 +123,7 @@ describe("committed account receipts", () => {
 				baseUrl: "https://example.invalid",
 				auth: { oauth: flow },
 				models: [],
-				api: {},
+				api: authOnlyStreams,
 			}),
 		);
 		await expect(models.login("chatgpt-subscription", "oauth", interaction(receipts))).rejects.toThrow();
@@ -131,7 +143,7 @@ describe("committed account receipts", () => {
 				baseUrl: "https://example.invalid",
 				auth: { oauth: { ...flow, login: async () => result } },
 				models: [],
-				api: {},
+				api: authOnlyStreams,
 			}),
 		);
 		const receipts: unknown[] = [];

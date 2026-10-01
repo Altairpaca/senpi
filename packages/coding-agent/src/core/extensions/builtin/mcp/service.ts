@@ -7,30 +7,23 @@ import {
 	type ToolSearchService,
 } from "../tool-search/service.ts";
 import { resolveAuthMode } from "./auth/context.ts";
-import { collectToolCatalog } from "./catalog.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
-import { loadMcpConfig, mergeExtensionMcpServers, resolveSkillMcpServer, visitSpawnableMcpServers } from "./config.ts";
+import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
-import { mapMcpCatalogNames } from "./expose/register.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
 import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
-import {
-	buildMcpTombstoneDefinition,
-	createMcpListChangeCoalescer,
-	diffMcpToolNames,
-	formatMcpListChangedDelta,
-} from "./notifications.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
 import { getMcpServiceExposureStatus } from "./service-exposure.ts";
 import { registerMcpServiceDirectTools } from "./service-register.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
+import { refreshMcpToolsOnListChanged, subscribeMcpToolsChanged } from "./service-tools-changed.ts";
 import type {
 	McpConnectionEntry,
 	McpDisposeReason,
@@ -47,7 +40,8 @@ import type {
 	McpWireStatusSnapshot,
 	McpWireTool,
 } from "./service-types.ts";
-import { SharedMcpLease } from "./shared-lease.ts";
+import { resolveSkillMcpServer } from "./skill-server.ts";
+import type { SkillServerRegistration } from "./skills.ts";
 import {
 	MCP_ATTACH_SETTLE_TIMEOUT_MS,
 	McpDeferredAttach,
@@ -87,6 +81,7 @@ export class McpService {
 	#tierBRegistration: McpSessionRegistration | undefined;
 	#toolSearchService: ToolSearchService | undefined;
 	#sessionOptions: McpSessionOptions = {};
+	readonly #skillServerWarnings = new Set<string>();
 	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
 	#attachQueue: Promise<void> = Promise.resolve();
 	readonly #deferredAttach = new McpDeferredAttach();
@@ -112,6 +107,7 @@ export class McpService {
 	): Promise<void> {
 		const attach = this.#attachQueue.then(async () => {
 			this.#sessionContext = ctx;
+			this.#skillServerWarnings.clear();
 			this.#sessionStartCount += 1;
 			this.#lastSessionStartReason = event.reason;
 			// Bind the agent dir at attach time: the startup race can background
@@ -168,15 +164,15 @@ export class McpService {
 	 * into search mode with no directTools, so their catalogs register with
 	 * ZERO active tools until activateSkillMcpTools reveals them. A name
 	 * collision with a system-configured server keeps the system config and
-	 * returns a warning (system wins).
+	 * returns a warning (system wins). `${VAR}` expansion follows the declaring
+	 * skill's trust (skill-server.ts); each trust warning is returned once per session.
 	 */
-	async attachSkillMcpServers(
-		declared: ReadonlyMap<string, { raw: Parameters<typeof resolveSkillMcpServer>[1]; sourcePath: string }>,
-	): Promise<string[]> {
+	async attachSkillMcpServers(declared: ReadonlyMap<string, SkillServerRegistration>): Promise<string[]> {
 		const config = this.#config;
 		const pi = this.#pi;
 		if (config === null || pi === undefined) return [];
 		const warnings: string[] = [];
+		const projectTrusted = this.#sessionOptions.projectTrusted ?? this.#sessionContext?.isProjectTrusted() ?? false;
 		let added = 0;
 		for (const [name, decl] of declared) {
 			const existing = config.servers[name];
@@ -186,7 +182,16 @@ export class McpService {
 				);
 				continue;
 			}
-			const resolved = resolveSkillMcpServer(name, decl.raw, decl.sourcePath);
+			const { server: resolved, warning } = resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
+				env: this.#sessionOptions.env,
+				skillName: decl.skillName,
+				trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
+			});
+			if (warning !== undefined && !this.#skillServerWarnings.has(warning)) {
+				this.#skillServerWarnings.add(warning);
+				warnings.push(warning);
+			}
+			if (resolved === undefined) continue;
 			if (existing !== undefined && existing.configHash === resolved.configHash) continue;
 			config.servers[name] = resolved;
 			added += 1;
@@ -446,12 +451,11 @@ export class McpService {
 
 	#wireListChanged(entry: McpConnectionEntry): void {
 		const sink = { logger: { error: (message: string, data?: unknown) => entry.logger.error(message, data) } };
-		const coalescer = createMcpListChangeCoalescer({
-			onRefresh: () => this.#handleServerToolsChanged(entry),
-			scope: `mcp.list_changed.${entry.name}`,
+		entry.disposeListChanged = subscribeMcpToolsChanged(
+			entry,
+			(connectOnly) => this.#handleServerToolsChanged(entry, connectOnly),
 			sink,
-		});
-		const unsubscribe = entry.connection.onToolsChanged(() => coalescer.notify());
+		);
 		const unsubscribeState = entry.connection.onStateChange(() => {
 			const ctx = this.#sessionContext;
 			if (ctx?.mode !== "rpc") return;
@@ -459,37 +463,14 @@ export class McpService {
 				entry.logger.error("Failed to refresh MCP control inventory", error);
 			});
 		});
-		entry.disposeListChanged = () => {
-			unsubscribe();
-			coalescer.dispose();
-		};
 		entry.disposeWireStatus = unsubscribeState;
 	}
 
-	// Re-list a server on a coalesced list_changed and re-register: added tools
-	// enter INACTIVE (registerToolsPreservingActiveSet keeps the active set), and
-	// removed tools are tombstoned so a stale call fails cleanly.
-	async #handleServerToolsChanged(entry: McpConnectionEntry): Promise<void> {
+	async #handleServerToolsChanged(entry: McpConnectionEntry, connectOnly: boolean): Promise<void> {
 		const pi = this.#pi;
 		const config = this.#config;
 		if (pi === undefined || config === null) return;
-		const server = config.servers[entry.name];
-		if (server?.config === undefined || entry.connection.state !== "connected") return;
-		if (entry.connection instanceof SharedMcpLease) {
-			entry.cachedCatalog = await entry.connection.catalog();
-		}
-		const catalog = await collectToolCatalog(entry.name, entry.connection, server.config, {
-			agentDir: entry.agentDir,
-			outputGuard: config.settings.outputGuard,
-		});
-		const newNames = mapMcpCatalogNames(catalog).map(({ name }) => name);
-		const diff = diffMcpToolNames(entry.knownToolNames ?? newNames, newNames);
-		// Tombstone removed tools BEFORE re-registration so the subsequent
-		// setActiveTools (which excludes them) leaves the tombstones inactive.
-		for (const removed of diff.removed) pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
-		await this.#registerDirectTools(pi);
-		entry.knownToolNames = newNames;
-		entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
+		await refreshMcpToolsOnListChanged(entry, pi, config, (target) => this.#registerDirectTools(target), connectOnly);
 	}
 
 	async #registerDirectTools(

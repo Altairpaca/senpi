@@ -4,6 +4,390 @@
 
 ### Breaking Changes
 
+- Removed the inherited `AgentOptions.shouldStopAfterTurn` and `AgentLoopConfig.shouldStopAfterTurn`. Use `finishTurn` and return `{ action: "end" }` to stop after the completed turn. `finishTurn` runs after the assistant message and every tool result are finalized and before `turn_end`, and its decision applies after `turn_end`. It also runs for error and aborted responses, which stay hard exits, so guard them to keep the old normal-response-only behavior:
+
+  ```ts
+  finishTurn: async (turn, signal) => {
+    if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
+    return (await shouldStop(turn, signal)) ? { action: "end" } : undefined;
+  },
+  ```
+
+- The inherited `StreamFn` now receives the branded `TranscriptContext` instead of `Context`, so custom stream functions find the system prompt as the leading system message of `context.messages` (read it with `getCurrentSystemPrompt()`) because there is no `systemPrompt` field.
+
+### Added
+
+- Added the inherited `prepareRequest` hook, which runs before every provider request, including the first. Return `{ context: { ...context, messages: persistedMessages } }` to install canonical context after already-selected input is emitted, without another queue poll.
+
+- Added the inherited `finishTurn` hook. Return `{ action: "end" }` to end a normal run after `turn_end`, `undefined` to keep normal scheduling, or `{ action: "continue" }` to make sure one more provider request happens.
+
+- Added the inherited `Agent.peekQueuedMessages()`, which previews the next queue-selected batch without consuming it.
+
+- Added the inherited `onProviderStreamEvent` agent option, passed to provider streams so callers can observe parsed provider events before normalization ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+
+- The agent loop records the requested thinking level as `thinkingLevel` on each assistant message (inherited).
+
+### Changed
+
+### Fixed
+
+- Fixed inherited harness reads misclassifying text files that begin with `GIF` as images ([#9755](https://github.com/earendil-works/pi/issues/9755)).
+
+### Removed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Published Node bundles now load their embedded JavaScript tree-sitter grammar for structural reads instead of silently falling back to the heuristic folder. ([#2032](https://github.com/code-yeongyu/senpi/issues/2032))
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- `AgentState.providerDiagnostic` mirrors the structured provider failure family of the turn that set `errorMessage`, and terminal failure messages synthesized from a thrown provider error keep the diagnostic its adapter attached. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.26] - 2026-09-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.25] - 2026-09-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-3] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-2] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+- `AgentState.declaredTools` / `AgentContext.declaredTools`: a superset of the active tools to declare to models that accept an allowed-tools restriction. The provider receives the declared tools plus `activeToolNames`; calls still resolve against the active tools only. ([#2095](https://github.com/code-yeongyu/senpi/issues/2095))
+
+### Changed
+
+### Fixed
+
+- Tool-call name correction is more lenient about case and namespaces. A call resolves to the single matching registered tool when it differs only by a recased full name (`MCP__srv__tool` for `mcp__srv__Tool`), a namespace whose id contains underscores (`mcp__my_server__Memory` for `memory`), or a missing namespace the registered tool carries (`create_issue` for `mcp_github_create_issue`). Names that match more than one tool still fail. ([#2111](https://github.com/code-yeongyu/senpi/issues/2111))
+- A tool call whose `mcp__<id>__` gateway namespace prefix is capitalized, such as `Mcp__686f__Eval` or `MCP__686f__Eval`, now resolves to the unique registered tool the same way `mcp__686f__Eval` does, instead of failing with `Tool <name> not found`. Replayed native tool-search references with a capitalized prefix fold onto the request's tools the same way. ([#2104](https://github.com/code-yeongyu/senpi/issues/2104))
+
+### Removed
+
+## [2026.9.24] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `tool_execution_start` names the tool a call resolves to, matching `tool_execution_end` and the tool result, and the `[auto-corrected]` tool-name notice is a model-only text part. ([#2064](https://github.com/code-yeongyu/senpi/issues/2064))
+
+### Removed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-2] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool call whose name differs from a registered tool only by a `mcp__<id>__` gateway namespace, letter case, or `-`/`_` separators now runs that tool when exactly one tool matches, instead of failing with `Tool <name> not found`. Hooks, events and the tool result carry the registered name, and the result starts with an `[auto-corrected]` note. Ambiguous names still fail. ([#2025](https://github.com/code-yeongyu/senpi/issues/2025))
+
+### Removed
+
+## [2026.9.23] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-4] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-3] - 2026-09-22
+
+### Breaking Changes
+
 ### Added
 
 ### Changed

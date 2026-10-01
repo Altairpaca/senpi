@@ -109,6 +109,11 @@ export class TerminalManager {
 	 * runtime id through unchanged; undefined when neither resolves. Bindings intentionally
 	 * outlive PTY exit for a final output read, then drop when the session is pruned or torn down.
 	 */
+	monitorIdOf(runtimeId: string): string | undefined {
+		for (const [monitorId, sessionId] of this.monitorIds) if (sessionId === runtimeId) return monitorId;
+		return undefined;
+	}
+
 	resolveId(idOrMonitorId: string): string | undefined {
 		if (idOrMonitorId.startsWith("mon_")) return this.monitorIds.get(idOrMonitorId);
 		const registry = this.registry;

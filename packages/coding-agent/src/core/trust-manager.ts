@@ -29,6 +29,7 @@ type TrustFile = Record<string, boolean | null | undefined>;
 
 const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 	"settings.json",
+	"mcp.json",
 	"extensions",
 	"skills",
 	"prompts",
@@ -36,6 +37,8 @@ const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 	"SYSTEM.md",
 	"APPEND_SYSTEM.md",
 ] as const;
+
+const LEGACY_PROJECT_CONFIG_DIR_NAME = ".pi";
 
 function normalizeCwd(cwd: string): string {
 	const resolved = resolvePath(cwd);
@@ -187,7 +190,8 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 
 /**
  * Returns true when cwd has project-local resources that must be gated by
- * project trust: trust-requiring entries under cwd/.pi, or .agents/skills in
+ * project trust: trust-requiring entries under the project config dir or the
+ * legacy cwd/.pi dir (whose resources are also discovered), or .agents/skills in
  * cwd or one of its ancestors. Returns false when no such project resources
  * exist. The user/global ~/.agents/skills directory is always treated as a
  * trusted user resource and is ignored here, even when cwd is $HOME.
@@ -197,8 +201,12 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
 	let currentDir = canonicalizePath(resolvePath(cwd));
 
-	const configDir = join(currentDir, CONFIG_DIR_NAME);
-	if (TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)))) {
+	const configDirs = [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)];
+	if (
+		configDirs.some((configDir) =>
+			TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry))),
+		)
+	) {
 		return true;
 	}
 

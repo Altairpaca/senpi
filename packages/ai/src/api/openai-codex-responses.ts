@@ -27,17 +27,17 @@ import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	Api,
 	AssistantMessage,
-	Context,
 	Model,
 	ProviderEnv,
 	ProviderHeaders,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
+import { extractChatGptSubscriptionAccountId } from "../utils/chatgpt-subscription-auth.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -47,22 +47,29 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { extractOpenAiCodexAccountId } from "../utils/openai-codex-auth.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
+import { getSystemMessageText } from "../utils/text.ts";
+import { getDeclaredTools, getInitialSystemMessage, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
+	type ChatGptSubscriptionWebSocketDebugStats,
 	clearWebSocketFallbackState,
 	getOrCreateWebSocketDebugStats,
 	getWebSocketDebugStats,
 	isWebSocketSseFallbackActive,
-	type OpenAICodexWebSocketDebugStats,
 	recordWebSocketFailure,
 	recordWebSocketSseFallback,
 } from "./openai-codex-responses/fallback-state.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
-import { applyOpenAICodexCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveResponsesDeferredToolsMode,
+	resolveResponsesToolPlacement,
+} from "./openai-responses-shared.ts";
 import {
 	applyExtraBody,
 	buildBaseOptions,
@@ -241,10 +248,11 @@ function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 export const stream: StreamFunction<"openai-codex-responses", OpenAICodexResponsesOptions> = (
 	model: Model<"openai-codex-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options?: OpenAICodexResponsesOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -273,12 +281,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 			const accountId = extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
-				context.tools,
+				getDeclaredTools(normalizedContext.messages),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, context, options, codexSessionId, grammarToolInputProperties);
+			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -361,7 +369,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							output,
 							createAssistantMessageDiagnostic("provider_transport_failure", error, {
 								configuredTransport: transport,
-								fallbackTransport: websocketStarted ? undefined : "sse",
+								...(websocketStarted ? {} : { fallbackTransport: "sse" }),
 								eventsEmitted: websocketStarted,
 								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
 								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
@@ -521,7 +529,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStreamOptions> = (
 	model: Model<"openai-codex-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
@@ -554,11 +562,11 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 
 function buildRequestBody(
 	model: Model<"openai-codex-responses">,
-	context: Context,
+	context: TranscriptContext,
 	options: OpenAICodexResponsesOptions | undefined,
 	cacheSessionId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
-		context.tools,
+		getDeclaredTools(context.messages),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ): RequestBody {
@@ -574,31 +582,30 @@ function buildRequestBody(
 		requestedReasoningEffort !== undefined && requestedReasoningEffort !== "none" && reasoningEffort !== null;
 	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
-	const deferredToolsMode = model.compat?.supportsAdditionalTools
-		? "additional-tools"
-		: model.compat?.supportsToolSearch
-			? "tool-search"
-			: undefined;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
+	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
+	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
+	const toolPlacement = resolveResponsesToolPlacement(
+		context.messages,
+		resolveResponsesDeferredToolsMode(model.compat) !== undefined,
+	);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		preserveThinking: reasoningRequested,
 		preserveTextSignatures: true,
 		grammarToolInputProperties,
-		deferredTools: toolPlacement.deferred,
-		deferredToolsMode,
-		toolOptions: {
-			strict: null,
-			supportsStrictMode,
-			supportsOpenAIGrammarTools,
-		},
+		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+		supportsAdditionalTools,
+		supportsToolSearch,
+		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
 	});
 
+	const initialSystemMessage = getInitialSystemMessage(context.messages);
+	const instructions = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const body: RequestBody = {
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: context.systemPrompt || "You are a helpful assistant.",
+		instructions: instructions || "You are a helpful assistant.",
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
@@ -615,8 +622,8 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier as ResponseCreateParamsStreaming["service_tier"];
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		body.tools = convertResponsesTools(toolPlacement.immediate, {
+	if (toolPlacement.requestTools.length > 0) {
+		body.tools = convertResponsesTools(toolPlacement.requestTools, {
 			strict: null,
 			supportsStrictMode,
 			supportsOpenAIGrammarTools,
@@ -706,12 +713,18 @@ async function processStream(
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
-		serviceTier: options?.serviceTier,
-		grammarToolInputProperties,
-		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-	});
+	await processResponsesStream(
+		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
+		output,
+		stream,
+		model,
+		{
+			serviceTier: options?.serviceTier,
+			grammarToolInputProperties,
+			resolveServiceTier: resolveCodexServiceTier,
+			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+		},
+	);
 }
 
 class CodexApiError extends Error {
@@ -740,8 +753,20 @@ class CodexProtocolError extends Error {
 	}
 }
 
+class ProviderStreamEventCallbackError extends Error {
+	constructor(cause: unknown) {
+		super(formatThrownValue(cause));
+		this.name = "ProviderStreamEventCallbackError";
+		this.cause = cause;
+	}
+}
+
 function isCodexNonTransportError(error: unknown): boolean {
-	return error instanceof CodexApiError || error instanceof CodexProtocolError;
+	return (
+		error instanceof CodexApiError ||
+		error instanceof CodexProtocolError ||
+		error instanceof ProviderStreamEventCallbackError
+	);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -787,8 +812,16 @@ function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
 async function* mapCodexEvents(
 	events: AsyncIterable<Record<string, unknown>>,
 	output: AssistantMessage,
+	model: Model<"openai-codex-responses">,
+	onProviderStreamEvent: StreamOptions["onProviderStreamEvent"] | undefined,
 ): AsyncGenerator<ResponseStreamEvent> {
 	for await (const event of events) {
+		try {
+			await onProviderStreamEvent?.(event, model);
+		} catch (error) {
+			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
+			throw new ProviderStreamEventCallbackError(error);
+		}
 		const type = typeof event.type === "string" ? event.type : undefined;
 		if (!type) continue;
 
@@ -940,19 +973,21 @@ interface CachedWebSocketConnection {
 	continuation?: CachedWebSocketContinuationState;
 }
 
-export type { OpenAICodexWebSocketDebugStats } from "./openai-codex-responses/fallback-state.ts";
+export type { ChatGptSubscriptionWebSocketDebugStats } from "./openai-codex-responses/fallback-state.ts";
 
 const websocketSessionCache = new Map<string, Map<string, CachedWebSocketConnection>>();
 
-export function getOpenAICodexWebSocketDebugStats(sessionId: string): OpenAICodexWebSocketDebugStats | undefined {
+export function getChatGptSubscriptionWebSocketDebugStats(
+	sessionId: string,
+): ChatGptSubscriptionWebSocketDebugStats | undefined {
 	return getWebSocketDebugStats(sessionId);
 }
 
-export function resetOpenAICodexWebSocketDebugStats(sessionId?: string): void {
+export function resetChatGptSubscriptionWebSocketDebugStats(sessionId?: string): void {
 	clearWebSocketFallbackState(sessionId);
 }
 
-export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
+export function closeChatGptSubscriptionWebSocketSessions(sessionId?: string): void {
 	const closeEntry = (entry: CachedWebSocketConnection) => {
 		unparkSessionWebSocket(entry);
 		closeWebSocketSilently(entry.socket, 1000, "debug_close");
@@ -970,7 +1005,7 @@ export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
 	clearWebSocketFallbackState();
 }
 
-registerSessionResourceCleanup(closeOpenAICodexWebSocketSessions);
+registerSessionResourceCleanup(closeChatGptSubscriptionWebSocketSessions);
 
 type WebSocketConstructor = new (
 	url: string,
@@ -1484,7 +1519,7 @@ function buildCachedWebSocketRequestBody(entry: CachedWebSocketConnection, body:
 }
 
 function recordWebSocketRequestStats(
-	stats: OpenAICodexWebSocketDebugStats | undefined,
+	stats: ChatGptSubscriptionWebSocketDebugStats | undefined,
 	requestBody: RequestBody,
 	reused: boolean,
 	useCachedContext: boolean,
@@ -1560,7 +1595,12 @@ async function processWebSocketStream(
 				socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
 				await processResponsesStream(
 					startWebSocketOutputOnFirstEvent(
-						mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs), output),
+						mapCodexEvents(
+							parseWebSocket(socket, options?.signal, idleTimeoutMs),
+							output,
+							model,
+							options?.onProviderStreamEvent,
+						),
 						onStart,
 					),
 					output,
@@ -1594,10 +1634,15 @@ async function processWebSocketStream(
 		if (options?.signal?.aborted) {
 			keepConnection = false;
 		} else if (useCachedContext && entry && output.responseId) {
-			const responseItems = convertResponsesMessages(model, { messages: [output] }, CODEX_TOOL_CALL_PROVIDERS, {
-				includeSystemPrompt: false,
-				grammarToolInputProperties,
-			}).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
+			const responseItems = convertResponsesMessages(
+				model,
+				normalizeContext({ messages: [output] }),
+				CODEX_TOOL_CALL_PROVIDERS,
+				{
+					includeSystemPrompt: false,
+					grammarToolInputProperties,
+				},
+			).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
 			entry.continuation = {
 				lastRequestBody: fullBody,
 				lastResponseId: output.responseId,
@@ -1651,7 +1696,7 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 // ============================================================================
 
 function extractAccountId(token: string): string | undefined {
-	return extractOpenAiCodexAccountId(token);
+	return extractChatGptSubscriptionAccountId(token);
 }
 
 function buildBaseCodexHeaders(
@@ -1693,7 +1738,7 @@ function buildSSEHeaders(
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
 
-	applyOpenAICodexCacheAffinityHeaders(headers, sessionId);
+	applyChatGptSubscriptionCacheAffinityHeaders(headers, sessionId);
 
 	return headers;
 }
@@ -1711,6 +1756,6 @@ function buildWebSocketHeaders(
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
-	applyOpenAICodexCacheAffinityHeaders(headers, requestId);
+	applyChatGptSubscriptionCacheAffinityHeaders(headers, requestId);
 	return headers;
 }

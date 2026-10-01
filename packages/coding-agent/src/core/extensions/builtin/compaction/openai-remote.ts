@@ -6,6 +6,7 @@ import {
 	convertResponsesMessages,
 	getContextProvenance,
 	type Model,
+	normalizeContext,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -55,9 +56,8 @@ import {
 	attemptOpenAiResponsesV2Compaction,
 	supportsOpenAiResponsesRemoteCompactionV2,
 	supportsOpenAiResponsesWebSocket,
-	withRemoteCompactionV2Header,
 } from "./openai-remote-responses-v2.ts";
-import { runWithRemoteTimeout } from "./openai-remote-timeout.ts";
+import { openAiRemoteCompactionTimeoutMs, runWithRemoteTimeout } from "./openai-remote-timeout.ts";
 
 export type {
 	OpenAiRemoteCompactionDetails,
@@ -162,7 +162,6 @@ type OpenAiRemoteCompactionEvent =
 
 type EmitCompactionEvent = (event: OpenAiRemoteCompactionEvent) => void;
 
-const OPENAI_REMOTE_COMPACTION_TIMEOUT_MS = 15_000;
 const REMOTE_COMPACTION_TIMEOUT_REASON = "remote-compaction-timeout";
 const INVALID_COMPACT_REQUEST_PAYLOAD_REASON = "invalid-compact-request-payload";
 const MISSING_REMOTE_REPLAY_ORIGIN_REASON = "missing-remote-replay-origin-provenance";
@@ -613,7 +612,7 @@ export async function runOpenAiRemoteCompaction(
 		});
 		return undefined;
 	}
-	const remoteTimeoutMs = dependencies.remoteTimeoutMs ?? OPENAI_REMOTE_COMPACTION_TIMEOUT_MS;
+	const remoteTimeoutMs = dependencies.remoteTimeoutMs ?? openAiRemoteCompactionTimeoutMs(requestModel);
 	// Normal provider requests transform configured headers before the Codex
 	// transport applies its canonical auth/account fields. Mirror that ordering
 	// so extension routing choices are retained but cannot impersonate another
@@ -650,29 +649,29 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
-	if (requestModel.api === "openai-responses") {
-		const responsesModel = requestModel as Model<"openai-responses">;
-		if (supportsOpenAiResponsesRemoteCompactionV2(responsesModel)) {
-			const responseHeaders = withRemoteCompactionV2Header(Object.fromEntries(requestHeaders.entries()));
-			const responseOrigin = openAiRemoteCompactionOrigin(responsesModel, responseHeaders);
-			if (!responseOrigin) return undefined;
-			const result = await attemptOpenAiResponsesV2Compaction({
-				auth: { apiKey: auth.apiKey, extraBody: auth.extraBody },
-				emit,
-				event,
-				headers: responseHeaders,
-				model: responsesModel,
-				origin: responseOrigin,
-				providerRequest,
-				request,
-				requestId: event.requestId,
-				sessionId: ctx.sessionManager.getSessionId(),
-				stream: resolveRemoteStreamRunner(ctx, dependencies),
-				systemPrompt: ctx.getSystemPrompt(),
-				timeoutMs: remoteTimeoutMs,
-			});
-			if (result) return result;
-		}
+	if (supportsOpenAiResponsesRemoteCompactionV2(requestModel)) {
+		// The v2 beta header is request-local, so the checkpoint keeps the origin every later
+		// turn presents; fingerprinting it made replay refuse every v2 checkpoint (senpi#2378).
+		const result = await attemptOpenAiResponsesV2Compaction({
+			auth: { apiKey: auth.apiKey, extraBody: auth.extraBody },
+			emit,
+			event,
+			// The subscription transport derives its canonical auth headers itself, as for a provider turn.
+			headers:
+				requestModel.api === "openai-codex-responses"
+					? { ...transformedHeaders }
+					: Object.fromEntries(requestHeaders.entries()),
+			model: requestModel,
+			origin,
+			providerRequest,
+			request,
+			requestId: event.requestId,
+			sessionId: ctx.sessionManager.getSessionId(),
+			stream: resolveRemoteStreamRunner(ctx, dependencies),
+			systemPrompt: ctx.getSystemPrompt(),
+			timeoutMs: remoteTimeoutMs,
+		});
+		if (result || requestModel.api === "openai-codex-responses") return result;
 	}
 
 	if (supportsOpenAiResponsesWebSocket(requestModel)) {
@@ -939,7 +938,7 @@ export function markOpenAiRemoteReplayBoundary(
 	});
 	const baseline = convertResponsesMessages(
 		options.model,
-		{ messages: convertToLlm(marked) },
+		normalizeContext({ messages: convertToLlm(marked) }),
 		OPENAI_RESPONSES_TOOL_CALL_PROVIDERS,
 		{ ...replayBoundaryConversionOptions(options.model), sealContextProvenance: true },
 	);

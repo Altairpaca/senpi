@@ -1,5 +1,24 @@
 # Permission System Builtin Extension
 
+## 2026-09-27 - Tools classify their own calls with `permissionParser`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: `ParserRegistry.has()`, and `toolOwnedPermissionRequests()`, which reads a tool's `permissionParser` from `pi.getAllTools()`.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `tool_call` uses the built-in parser when one exists, else the tool's own parser, else the single request named after the tool.
+
+### Why
+
+- An extension tool can expose read and exec tiers (for example `my_tool:exec=deny`), resolved per session from the session's own tools. A tool can never replace a built-in parser.
+
+### Why an extension could not handle it
+
+- The permission-system builtin owns parsing.
+
+### Expected merge conflict zones
+
+- LOW: the parse call at the top of the `tool_call` handler.
+
 ## Overview
 Full port of opencode's permission system to senpi-mono as a builtin extension.
 
@@ -127,3 +146,21 @@ Following pi-mono's extension-first philosophy. All permission logic is in the e
   `bash` permission class (shared `parseBashLikePermission` helper). Otherwise read-only/ask
   presets would be bypassable by steering a background session. `kill_bash`/`bash_resize`/
   `bash_output` fall back to their own tool-named (session-control/read) permissions.
+## 2026-09-30 - Edit-only project preset (senpi#2430, DESKTOP-55)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/config.ts`: accept-edits starts with a wildcard ask reset, allows read/list/grep/edit, asks bash and external_directory, and exports its host capability name.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/types.ts`, `cli.ts`, `index.ts`, `settings.ts`: accept-edits is accepted in settings/CLI and documented by flag help and validation guidance. Settings tests assert acceptance/rejection behavior rather than the validation sentence.
+
+### Why
+
+workspace allows bash. A client promising automatic project edits and command confirmation needs a separate preset.
+
+### Why an extension could not handle it
+
+The permission-system builtin owns preset policy and parsing; all policy remains in this extension.
+
+### Expected merge conflict zones
+
+Preset union, CLI switch and rules table. Existing workspace semantics and approval storage remain unchanged.

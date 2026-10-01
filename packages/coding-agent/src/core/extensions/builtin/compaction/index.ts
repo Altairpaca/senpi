@@ -1,7 +1,15 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
-import type { ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent, SessionCompactEvent } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+	SessionBeforeCompactEvent,
+	SessionCompactEvent,
+} from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
 import { buildCompactionContext } from "./context-pipeline.ts";
@@ -24,7 +32,7 @@ import {
 import * as idle from "./idle.ts";
 import * as idleRetry from "./idle-retry.ts";
 import {
-	CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE,
+	ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE,
 	collectCompactBoundaryEntries,
 	createCompactionLanePolicy,
 	SDK_NATIVE_LANE_REJECTION_REASON,
@@ -82,9 +90,9 @@ import {
 	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
-	isRequiredCompactionFallbackReason,
 	linkAbortSignal,
 	recentCheckpoint,
+	requiresDeterministicCompactionFallback,
 	withAdditionalTokens,
 } from "./extension-wiring.ts";
 import { isIneffectiveCompaction } from "./yield.ts";
@@ -684,7 +692,7 @@ export default function compactionExtension(
 				}
 				if (
 					warmFailure !== undefined &&
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					classifyRequiredCompactionFallbackFailure(warmFailure) !== undefined &&
 					!event.signal.aborted &&
 					speculativeGeneration === claimedGeneration &&
@@ -717,7 +725,7 @@ export default function compactionExtension(
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
 				if (
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {
@@ -831,7 +839,12 @@ export default function compactionExtension(
 		}
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
+	const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+		event,
+		ctx,
+	) => {
+		// A preview composes a prompt no turn follows: no compaction, reminder, or restoration.
+		if (event.preview === true) return undefined;
 		sessionIdleSinceAgentEnd = false;
 		cancelIdleWarmupRetry();
 		const message = checkpointState.attachRestorationDirective(
@@ -935,7 +948,8 @@ export default function compactionExtension(
 			...(deliveredMessage ? { message: deliveredMessage } : {}),
 			...(reminderSystemPrompt ? { systemPrompt: reminderSystemPrompt } : {}),
 		};
-	});
+	};
+	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
 	pi.on("context", (event, ctx) => {
 		const usage = ctx.getContextUsage();
@@ -1063,7 +1077,7 @@ export default function compactionExtension(
 
 	pi.on("message_end", async (event, ctx) => {
 		for (const entry of collectCompactBoundaryEntries(event.message)) {
-			pi.appendEntry(CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE, entry);
+			pi.appendEntry(ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE, entry);
 		}
 		if (isAbortedAssistantMessage(event)) {
 			invalidateSpeculativeCompaction(ctx);

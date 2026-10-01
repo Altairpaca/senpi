@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeCursorCatalog } from "@earendil-works/pi-ai";
 import { resolveCursorContextWindow } from "@earendil-works/pi-ai/utils/cursor-context-limit";
-import type { ProviderModelConfig } from "../../types.ts";
+import type { ProviderChatModelConfig } from "../../types.ts";
 import { defaultCursorAgentExecutableDeps, resolveCursorAgentExecutable } from "./executable.ts";
 
 const MODEL_PROBE_TIMEOUT_MS = 15_000;
@@ -41,8 +41,18 @@ export type ResolveCursorCliModelCatalogOptions = {
 
 type CachedModelCatalog = {
 	readonly cachedAt: number;
-	readonly models: readonly ProviderModelConfig[];
+	readonly listing: string;
+	readonly models: readonly ProviderChatModelConfig[];
 };
+
+/**
+ * A cache record read back from disk. `legacy` records predate the stored listing: they
+ * cannot reconstruct derived variant ids, so they never short-circuit the probe, but they
+ * remain the offline fallback when that probe fails, exactly as they were served before.
+ */
+type CachedModelRecord =
+	| { readonly kind: "listing"; readonly cachedAt: number; readonly models: readonly ProviderChatModelConfig[] }
+	| { readonly kind: "legacy"; readonly cachedAt: number; readonly models: readonly ProviderChatModelConfig[] };
 
 type StaticModelDefinition = {
 	readonly id: string;
@@ -71,7 +81,7 @@ function stripAnsi(value: string): string {
 	return value.replace(ANSI_ESCAPE_SEQUENCE, "");
 }
 
-function normalizeEntries(raw: readonly { id: string; label: string }[]): ProviderModelConfig[] {
+function normalizeEntries(raw: readonly { id: string; label: string }[]): ProviderChatModelConfig[] {
 	return normalizeCursorCatalog(
 		raw.map(({ id, label }) => ({ id, name: label, input: ["text"] as const, cursorMaxMode: false })),
 	).map((entry) => ({
@@ -93,6 +103,7 @@ function normalizeEntries(raw: readonly { id: string; label: string }[]): Provid
 							capabilityId: entry.capabilityId,
 							...(entry.thinkingMode !== undefined ? { thinkingMode: entry.thinkingMode } : {}),
 							representativeVariantId: entry.representativeVariantId,
+							...(entry.variantIds !== undefined ? { variantIds: entry.variantIds } : {}),
 						},
 					}
 				: {}),
@@ -100,10 +111,10 @@ function normalizeEntries(raw: readonly { id: string; label: string }[]): Provid
 	}));
 }
 
-export const STATIC_CURSOR_CLI_MODELS: readonly ProviderModelConfig[] = normalizeEntries(STATIC_MODEL_DEFINITIONS);
+export const STATIC_CURSOR_CLI_MODELS: readonly ProviderChatModelConfig[] = normalizeEntries(STATIC_MODEL_DEFINITIONS);
 
 /** Parse the complete `cursor-agent models` listing into extension provider entries. */
-export function parseCursorAgentModelsListing(listing: string): ProviderModelConfig[] {
+export function parseCursorAgentModelsListing(listing: string): ProviderChatModelConfig[] {
 	const plainListing = stripAnsi(listing);
 	const lines = plainListing.split(/\r?\n/);
 	if (lines.some((line) => MISLEADING_ERROR_LINE.test(line))) return [];
@@ -156,30 +167,14 @@ function catalogTtlMs(settings: CursorCliModelCatalogSettings): number {
 	return validHours * 60 * 60 * 1_000;
 }
 
-function parseCachedCatalog(contents: string): CachedModelCatalog | undefined {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(contents);
-	} catch {
-		return undefined;
-	}
-	if (typeof parsed !== "object" || parsed === null || !("cachedAt" in parsed) || !("models" in parsed)) {
-		return undefined;
-	}
-	const cachedAt = parsed.cachedAt;
-	const models = parsed.models;
-	if (typeof cachedAt !== "number" || !Number.isFinite(cachedAt) || !Array.isArray(models) || models.length === 0) {
-		return undefined;
-	}
-
+function parseLegacyCachedModels(models: readonly unknown[]): ProviderChatModelConfig[] | undefined {
 	const rawCached: { id: string; label: string }[] = [];
 	const seen = new Set<string>();
 	for (const candidate of models) {
 		if (typeof candidate !== "object" || candidate === null || !("id" in candidate) || !("name" in candidate)) {
 			return undefined;
 		}
-		const id = candidate.id;
-		const name = candidate.name;
+		const { id, name } = candidate;
 		if (
 			typeof id !== "string" ||
 			!MODEL_ID.test(id) ||
@@ -192,7 +187,36 @@ function parseCachedCatalog(contents: string): CachedModelCatalog | undefined {
 		seen.add(id);
 		rawCached.push({ id, label: name });
 	}
-	return { cachedAt, models: normalizeEntries(rawCached) };
+	return normalizeEntries(rawCached);
+}
+
+function parseCachedCatalog(contents: string): CachedModelRecord | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(contents);
+	} catch {
+		return undefined;
+	}
+	if (typeof parsed !== "object" || parsed === null || !("cachedAt" in parsed) || !("models" in parsed)) {
+		return undefined;
+	}
+	const cachedAt = parsed.cachedAt;
+	const listing = "listing" in parsed ? parsed.listing : undefined;
+	const models = parsed.models;
+	if (typeof cachedAt !== "number" || !Number.isFinite(cachedAt) || !Array.isArray(models) || models.length === 0)
+		return undefined;
+	if (listing === undefined) {
+		const legacy = parseLegacyCachedModels(models);
+		return legacy === undefined ? undefined : { kind: "legacy", cachedAt, models: legacy };
+	}
+	if (typeof listing !== "string") return undefined;
+
+	// The listing is the source of truth: a grouped id alone cannot reconstruct its observed
+	// variants, and the stored `models` projection carries mutable state (observed context
+	// windows) that must not invalidate an otherwise fresh cache. Rebuild from the listing.
+	const rebuilt = parseCursorAgentModelsListing(listing);
+	if (rebuilt.length === 0) return undefined;
+	return { kind: "listing", cachedAt, models: rebuilt };
 }
 
 async function readFreshCache(
@@ -200,11 +224,11 @@ async function readFreshCache(
 	now: number,
 	ttlMs: number,
 	deps: CursorCliModelCatalogDeps,
-): Promise<readonly ProviderModelConfig[] | undefined> {
+): Promise<CachedModelRecord | undefined> {
 	try {
 		const cached = parseCachedCatalog(await deps.readTextFile(cachePath));
 		if (!cached || now < cached.cachedAt || now - cached.cachedAt >= ttlMs) return undefined;
-		return cached.models;
+		return cached;
 	} catch {
 		return undefined;
 	}
@@ -225,14 +249,15 @@ async function writeCache(
 /** Resolve a cached or probed catalog, always degrading to the exact offline fallback. */
 export async function resolveCursorCliModelCatalog(
 	options: ResolveCursorCliModelCatalogOptions,
-): Promise<readonly ProviderModelConfig[]> {
+): Promise<readonly ProviderChatModelConfig[]> {
 	const settings = options.settings ?? {};
 	const deps: CursorCliModelCatalogDeps = { ...defaultDeps(settings), ...options.deps };
 	const cacheDirectory = join(options.agentDir, "cursor-cli-oauth");
 	const cachePath = join(cacheDirectory, "models.json");
 	const now = deps.now();
 	const cached = await readFreshCache(cachePath, now, catalogTtlMs(settings), deps);
-	if (cached) return cached;
+	if (cached?.kind === "listing") return cached.models;
+	const offlineFallback = cached?.models ?? STATIC_CURSOR_CLI_MODELS;
 
 	let temporaryDirectory: string | undefined;
 	try {
@@ -240,16 +265,17 @@ export async function resolveCursorCliModelCatalog(
 		temporaryDirectory = await deps.makeTemporaryDirectory(join(tmpdir(), "senpi-cursor-models-"));
 		const stdoutPath = join(temporaryDirectory, "stdout.txt");
 		await deps.runProbe(executable, stdoutPath, MODEL_PROBE_TIMEOUT_MS);
-		const models = parseCursorAgentModelsListing(await deps.readTextFile(stdoutPath));
-		if (models.length === 0) return STATIC_CURSOR_CLI_MODELS;
+		const listing = await deps.readTextFile(stdoutPath);
+		const models = parseCursorAgentModelsListing(listing);
+		if (models.length === 0) return offlineFallback;
 		try {
-			await writeCache(cacheDirectory, cachePath, { cachedAt: now, models }, deps);
+			await writeCache(cacheDirectory, cachePath, { cachedAt: now, listing, models }, deps);
 		} catch {
 			// A read-only cache directory must not prevent provider registration.
 		}
 		return models;
 	} catch {
-		return STATIC_CURSOR_CLI_MODELS;
+		return offlineFallback;
 	} finally {
 		if (temporaryDirectory !== undefined) {
 			try {

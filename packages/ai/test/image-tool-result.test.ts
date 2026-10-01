@@ -24,7 +24,7 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -308,8 +308,8 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider (Kimi-K2.6)", () => {
-		const llm = getModel("together", "moonshotai/Kimi-K2.6");
+	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider (Kimi-K3)", () => {
+		const llm = getModel("together", "moonshotai/Kimi-K3");
 		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
@@ -322,7 +322,7 @@ describe("Tool Results with Images", () => {
 	});
 
 	describe.skipIf(!basetenApiKey)("Baseten Provider (Kimi-K2.6)", () => {
-		const llm = getModel("baseten", "moonshotai/Kimi-K2.6");
+		const llm = getModel("baseten", "moonshotai/Kimi-K3");
 		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
@@ -563,21 +563,21 @@ describe("Tool Results with Images", () => {
 	});
 
 	describe("OpenAI Codex Provider", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle tool result with only image",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await handleToolWithImageResult(llm, { apiKey: openaiCodexToken });
+				await handleToolWithImageResult(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle tool result with text and image",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await handleToolWithTextAndImageResult(llm, { apiKey: openaiCodexToken });
+				await handleToolWithTextAndImageResult(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 	});
