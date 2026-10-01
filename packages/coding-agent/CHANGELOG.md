@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Deferred extension tools, including computer use, keep working after hot-reload. The session now retires old lazy-tool activation callbacks before binding the replacement extension generation ([omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
+
 - Manual and automatic compaction now accept Amazon Bedrock sessions authenticated through the ambient AWS credential chain, and other providers such as Google Vertex that explicitly resolve ambient request-time credentials, while providers that require a missing key are still rejected before a summary request. Thanks @jerilkuriakose for the report. ([#2441](https://github.com/code-yeongyu/senpi/issues/2441))
 
 - Fixed `/model`, `/thinking`, `/login`, `/rename` and optional builtin extension commands requiring a second Enter from the command picker. Commands, skills and prompt templates with an argument hint still complete and wait for input unless they opt out: extensions declare `requiresArguments: false`, skills and prompt templates `requires-arguments: false` ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
