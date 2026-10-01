@@ -134,7 +134,11 @@ async function ensureOutcome(
 		});
 	} catch (error: unknown) {
 		if (!(error instanceof HostEnsureRefusedError)) throw error;
-		return refusal("refuse", before, { reason: error.reason, socket: target.socket });
+		return refusal("refuse", before, {
+			reason: error.reason,
+			socket: target.socket,
+			...(error.detail !== undefined && { detail: error.detail }),
+		});
 	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS).finally(ensured.release);
 	// Only a spawn grants an environment; a reuse inherited whatever the client that started it did.

@@ -1,3 +1,24 @@
+## 2026-09-30 - Drop the dead deletions input and a test-only pack-check seam (senpi#2447)
+
+### What changed
+
+- `scripts/changes-md-git.mjs` `parseNameStatus` no longer returns `deletions`, and `check-pr-changelog.mjs` and `audit-changes-md.mjs` stop passing it. Deleted paths stay in `changedFiles`.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertPublishedWorkspacePackFiles` drops its `options.nativePrebuildTargets` argument, and `publishedWorkspacePackageChecks` its `nativeTargets` parameter. Neither is exported any more, and nor is `SUPPORTED_NATIVE_PREBUILD_TARGETS`.
+
+### Why
+
+- `normalizeTrackerPolicy` never read `deletions`, so it was dead data.
+- The only production caller (`scripts/publish.mjs`) passes two arguments, so the all-OS target seam and both exports existed only for tests.
+- Gate verdicts are unchanged.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: `parseNameStatus` in `changes-md-git.mjs` and the `publishedWorkspacePackageChecks` signature.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
 
 ### What changed
