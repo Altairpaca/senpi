@@ -4,6 +4,7 @@
 
 - `scripts/copy-codemode-sidecar.mjs` mirrors source package nesting, audits every staged dependency edge, follows present optional dependencies, and tracks staged package paths rather than clearing the entire output install.
 - `scripts/copy-codemode-sidecar.test.mjs` and `scripts/copy-codemode-sidecar-closure.test.mjs` cover nested shadowing, workspace resolution, selected-file links, diagnostics, optional payloads, and owned cleanup.
+- `scripts/build-binaries.sh` copies the archive manifest after guarded sidecar staging. `scripts/build-binaries-staging.test.mjs` executes that staging block against an isolated filesystem fixture.
 
 ### Why
 
