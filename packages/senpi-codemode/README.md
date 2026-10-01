@@ -377,14 +377,19 @@ The eager-import probe starts without third-party validation modules loaded.
 It validates observer records only after measurement, so a target sharing the
 harness dependency tree has the same cold census as a separate checkout.
 Module IDs are package-relative; no platform modules are skipped or allowlisted.
+Workspace imports resolve through built `dist` entries. Before measuring, the
+gate rejects a missing entry or one older than its workspace sources, manifest,
+or TypeScript configuration, naming the package that needs rebuilding.
 
 ```bash
 bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
 bun run --cwd packages/senpi-codemode test -- test/gate
 ```
 
-Record a baseline with the **head harness** against a checkout of the PR merge
-base, not by running an older harness:
+Install and build both the head checkout and a clean checkout of the PR merge
+base with `bun install --ignore-scripts --frozen-lockfile` and `bun run build`.
+Record the baseline with the **head harness** against that freshly built base
+checkout, not by running an older harness:
 
 ```bash
 bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
