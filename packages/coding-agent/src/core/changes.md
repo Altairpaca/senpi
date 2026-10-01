@@ -4,6 +4,7 @@
 
 - `packages/coding-agent/src/core/ultrafast-lanes.ts` (fork-only): `serviceTierForProvider` drops an `ultrafast` tier for any provider other than `openai` and `chatgpt-subscription`; `ultrafastSelectionWarning` (moved here from `model-resolver.ts`) also warns for those providers.
 - `packages/coding-agent/src/core/sdk.ts`: the stream function passes every request tier through `serviceTierForProvider`, and always sets `serviceTier` so a dropped tier cannot survive through the spread caller options.
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the resolved tier is checked again at the payload boundary, where disallowed providers have even a pre-populated `service_tier` removed and settings/models.json selections receive the same advisory as decorators.
 - `packages/coding-agent/src/core/model-resolver.ts`: imports the warning instead of defining it.
 
 ### Why

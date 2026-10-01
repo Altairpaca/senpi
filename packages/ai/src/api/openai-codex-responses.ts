@@ -984,6 +984,7 @@ interface CachedWebSocketConnection {
 	socket: WebSocketLike;
 	busy: boolean;
 	createdAt: number;
+	routingHint: string | null;
 	idleTimer?: ReturnType<typeof setTimeout>;
 	parkedCloseListener?: WebSocketListener;
 	continuation?: CachedWebSocketContinuationState;
@@ -1267,7 +1268,14 @@ async function acquireWebSocket(
 	}
 
 	let accountEntries = websocketSessionCache.get(sessionId);
-	const cached = accountEntries?.get(accountId);
+	let cached = accountEntries?.get(accountId);
+	const routingHint = headers.get("x-codex-routing-hint");
+	if (cached && cached.routingHint !== routingHint) {
+		closeWebSocketSilently(cached.socket, 1000, "routing_hint_changed");
+		accountEntries?.delete(accountId);
+		if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
+		cached = undefined;
+	}
 	if (cached) {
 		unparkSessionWebSocket(cached);
 		if (!cached.busy && isWebSocketSessionExpired(cached)) {
@@ -1310,7 +1318,7 @@ async function acquireWebSocket(
 	}
 
 	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
-	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now() };
+	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now(), routingHint };
 	accountEntries = websocketSessionCache.get(sessionId);
 	if (!accountEntries) {
 		accountEntries = new Map();

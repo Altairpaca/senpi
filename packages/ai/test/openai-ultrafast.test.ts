@@ -180,6 +180,7 @@ describe("ChatGPT Subscription routing hint", () => {
 
 describe("Ultrafast WebSocket continuations", () => {
 	it.each(EFFORTS)("keeps %s effort and resets the chain when entering or leaving Ultrafast", async (effort) => {
+		const handshakes: Array<string | null> = [];
 		const bodies: Array<{
 			input: unknown[];
 			previous_response_id?: string;
@@ -189,8 +190,9 @@ describe("Ultrafast WebSocket continuations", () => {
 		class MockWebSocket extends EventTarget {
 			static OPEN = 1;
 			readyState = MockWebSocket.OPEN;
-			constructor() {
+			constructor(_url: string, options: { headers: Record<string, string> }) {
 				super();
+				handshakes.push(new Headers(options.headers).get("x-codex-routing-hint"));
 				queueMicrotask(() => this.dispatchEvent(new Event("open")));
 			}
 			send(data: string): void {
@@ -236,6 +238,7 @@ describe("Ultrafast WebSocket continuations", () => {
 			).result();
 			expect(result.stopReason).toBe("stop");
 		}
+		expect(handshakes).toEqual(["model=gpt-6-astra", "model=gpt-6-astra;tier=ultrafast", "model=gpt-6-astra"]);
 		expect(bodies.map((body) => body.service_tier)).toEqual([undefined, "ultrafast", "ultrafast", undefined]);
 		expect(bodies.map((body) => body.reasoning?.effort)).toEqual([effort, effort, effort, effort]);
 		expect(bodies.map((body) => body.previous_response_id)).toEqual([undefined, undefined, "resp_2", undefined]);

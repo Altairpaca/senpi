@@ -2,7 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ModelRegistry } from "../../model-registry.ts";
 import { type ModelServiceTier, SettingsManager } from "../../settings-manager.ts";
-import { serviceTierForProvider } from "../../ultrafast-lanes.ts";
+import { serviceTierForProvider, ultrafastSelectionWarning } from "../../ultrafast-lanes.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ServiceTier } from "../types.ts";
 
 export type { ServiceTier };
@@ -41,6 +41,12 @@ export function addServiceTierToPayload(api: Api | undefined, payload: unknown, 
 		...payload,
 		service_tier: serviceTier,
 	};
+}
+
+function removeServiceTierFromPayload(api: Api | undefined, payload: unknown): unknown {
+	if (!supportsServiceTier(api) || !isRecord(payload) || payload.service_tier === undefined) return payload;
+	const { service_tier: _serviceTier, ...rest } = payload;
+	return rest;
 }
 
 function getRequestModelId(modelRegistry: ModelRegistry, model: Model<Api>): string {
@@ -231,6 +237,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 	 */
 	let liveMemoryTier: ServiceTier | undefined;
 	let liveMemoryKey: string | undefined;
+	let lastUltrafastWarningKey: string | undefined;
 
 	pi.on("session_start", async (_event, ctx) => {
 		const settingsManager = SettingsManager.create(ctx.cwd, ctx.agentDir, { projectTrusted: ctx.isProjectTrusted() });
@@ -374,10 +381,18 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 		} else {
 			effectiveServiceTier = ctx.serviceTier ?? settingsServiceTier;
 		}
-		return addServiceTierToPayload(
-			ctx.model?.api,
-			event.payload,
-			serviceTierForProvider(ctx.model?.provider, effectiveServiceTier),
-		);
+		const requestModel = ctx.model
+			? { provider: ctx.model.provider, id: getRequestModelId(ctx.modelRegistry, ctx.model) }
+			: undefined;
+		const warning = requestModel ? ultrafastSelectionWarning(requestModel, effectiveServiceTier) : undefined;
+		const warningKey = warning ? `${requestModel?.provider}/${requestModel?.id}:${warning}` : undefined;
+		if (warning && warningKey !== lastUltrafastWarningKey) ctx.ui.notify(warning, "warning");
+		lastUltrafastWarningKey = warningKey;
+
+		const providerServiceTier = serviceTierForProvider(ctx.model?.provider, effectiveServiceTier);
+		if (effectiveServiceTier === "ultrafast" && providerServiceTier === undefined) {
+			return removeServiceTierFromPayload(ctx.model?.api, event.payload);
+		}
+		return addServiceTierToPayload(ctx.model?.api, event.payload, providerServiceTier);
 	});
 }

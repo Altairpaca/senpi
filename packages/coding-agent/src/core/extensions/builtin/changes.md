@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the `before_provider_request` hook passes the tier it would add through `serviceTierForProvider`, so an Ultrafast pin or `openai.serviceTier: "ultrafast"` is never added for a provider other than `openai` and `chatgpt-subscription`.
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the `before_provider_request` hook passes the resolved tier through `serviceTierForProvider`, removes a pre-populated `service_tier` when Ultrafast is disallowed, and emits the advisory for settings and models.json aliases as well as decorators.
 
 ### Why
 

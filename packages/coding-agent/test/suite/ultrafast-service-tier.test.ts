@@ -124,13 +124,54 @@ describe("Ultrafast service-tier selection", () => {
 				});
 				harnesses.push(harness);
 				await harness.session.bindExtensions({});
-				expect(await harness.getExtensionRunner().emitBeforeProviderRequest({ model: MODEL })).toEqual({
+				const runner = harness.getExtensionRunner();
+				expect(await runner.emitBeforeProviderRequest({ model: MODEL })).toEqual({ model: MODEL, ...tier });
+				expect(await runner.emitBeforeProviderRequest({ model: MODEL, service_tier: "ultrafast" })).toEqual({
 					model: MODEL,
 					...tier,
 				});
 			}
 		},
 	);
+
+	it("warns for resolved settings and models.json alias tiers without repeating the advisory", async () => {
+		const sol = getModel("openai", "gpt-6.1-sol");
+		const aliasId = "gpt-6.1-sol-ultrafast";
+		const cases = [
+			await createHarness({
+				api: "openai-responses",
+				provider: "openai",
+				models: [{ id: sol.id }],
+				fileSettings: true,
+				settings: { openai: { serviceTier: "ultrafast" } },
+				extensionFactories: [serviceTierExtension],
+			}),
+			await createHarness({
+				api: "openai-responses",
+				provider: "openai",
+				models: [{ id: aliasId }],
+				modelsJson: {
+					providers: {
+						openai: {
+							models: [{ ...sol, id: aliasId, upstreamModelId: sol.id, serviceTier: "ultrafast" }],
+						},
+					},
+				},
+				extensionFactories: [serviceTierExtension],
+			}),
+		];
+		for (const harness of cases) {
+			harnesses.push(harness);
+			await harness.session.bindExtensions({});
+			const runner = harness.getExtensionRunner();
+			const notify = vi.spyOn(runner.getUIContext(), "notify");
+			await runner.emitBeforeProviderRequest({ model: sol.id });
+			expect(notify).toHaveBeenCalledWith(
+				"Ultrafast is documented for GPT-6 Astra only; openai/gpt-6.1-sol may reject or ignore it",
+				"warning",
+			);
+		}
+	});
 
 	it("preserves an Ultrafast pin in an extension-less session with fast mode already on", async () => {
 		const harness = await createHarness({ serviceTier: "ultrafast" });
