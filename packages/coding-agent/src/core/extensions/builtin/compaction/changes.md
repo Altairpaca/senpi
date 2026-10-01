@@ -1,3 +1,26 @@
+## 2026-10-01 - Remote compaction budget scales with the context size, and timeouts are reported (senpi#2434)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-timeout.ts`: `openAiRemoteCompactionTimeoutMs(model, compactionTokens)` replaces the flat per-lane budget with `min(15 min total compaction bound, max(lane floor, 2 ms x tokens))`. The floors stay 90 s for the subscription lane and 15 s for `openai-responses` lanes, so small compactions keep their short budget. `formatRemoteCompactionTimeoutNotice` words a timeout: the wait, the token count, and the next step.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: the budget is sized from the request's `tokensBefore`, and each `remote-compaction-timeout` fallback event carries a `timeout` record (`timeoutMs`, `tokens`, `next`: `websocket`, `compact-endpoint` or `local-summary`).
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-responses-v2.ts`: the v2 attempt takes the step that follows its timeout and reports it in the same record.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/extension-wiring.ts` + `index.ts`: `reportRemoteCompactionTimeout` turns that record into a TUI warning and a `compaction_progress` text update on both the core route and the blocking route. Which fallback runs is unchanged.
+- Thanks @rhyme227 for the measurements in the report.
+
+### Why
+
+- The subscription lane's flat 90 s covered about 85k tokens at the measured ~1.06 ms/token, while compaction fires near 280k on a 400k window: a real 383k-token compaction took 257 s, so the remote path timed out exactly when it was needed and every large session paid 90 s before the local summary even started.
+- A timeout was visible only in a debug event; the user saw a slow compaction and a local summary with no reason.
+
+### Why an extension could not handle it
+
+- The remote compaction budget and its user feedback are this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `openAiRemoteCompactionTimeoutMs` and the notice formatter in `openai-remote-timeout.ts`; the timeout fallback events in `openai-remote.ts` and `openai-remote-responses-v2.ts`; the two remote emit callbacks in `index.ts`.
+
 ## 2026-09-30 - Compaction accepts ambient request-time authentication (senpi#2441)
 
 ### What changed

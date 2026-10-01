@@ -92,6 +92,7 @@ import {
 	isMonitorableMessageEvent,
 	linkAbortSignal,
 	recentCheckpoint,
+	reportRemoteCompactionTimeout,
 	requiresDeterministicCompactionFallback,
 	withAdditionalTokens,
 } from "./extension-wiring.ts";
@@ -441,6 +442,7 @@ export default function compactionExtension(
 							if (data?.action === "remote_fallback" && typeof data.reason === "string") {
 								remoteFallbackReason = data.reason;
 							}
+							reportRemoteCompactionTimeout(ctx, "extension", feedbackSignal, data);
 							pi.events.emit(SENPI_COMPACTION_EVENT, data);
 						},
 						remoteCompactionDependencies,
@@ -658,7 +660,10 @@ export default function compactionExtension(
 				remoteCompaction = await runOpenAiRemoteCompaction(
 					ctx,
 					event,
-					(data) => pi.events.emit(SENPI_COMPACTION_EVENT, data),
+					(data) => {
+						reportRemoteCompactionTimeout(ctx, event.reason, event.signal, data);
+						pi.events.emit(SENPI_COMPACTION_EVENT, data);
+					},
 					remoteCompactionDependencies,
 				);
 			} catch (error) {
