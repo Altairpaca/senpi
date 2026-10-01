@@ -5,6 +5,15 @@ import { collectChild } from "../eval/child-probe.ts";
 
 afterEach(() => vi.useRealTimers());
 
+it("rejects with the spawn failure instead of throwing before error subscription", async () => {
+	// Given: a missing executable and an independent observer of the OS failure.
+	const child = spawn("senpi-deliberately-missing-probe-command", [], { stdio: ["ignore", "pipe", "pipe"] });
+	const failed = once(child, "error");
+	// When / Then: the collector returns a rejected promise carrying ENOENT.
+	await expect(Promise.resolve().then(() => collectChild(child))).rejects.toMatchObject({ code: "ENOENT" });
+	await failed;
+});
+
 it.each([1, 2, 3])(
 	"waits for a deliberately held child rather than its startup deadline (%s)",
 	async () => {

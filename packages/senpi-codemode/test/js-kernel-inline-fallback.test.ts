@@ -12,11 +12,21 @@ describe("JavaScriptKernel isolated inline fallback", () => {
 			const scriptPath = join(root, "fallback-runner.mjs");
 			const kernelUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "context-manager.ts")).href;
 			const missingWorkerUrl = pathToFileURL(join(root, "missing-worker-entry.js")).href;
+			const driverUrl = pathToFileURL(join(process.cwd(), "test", "eval", "inline-timeout-probe.ts")).href;
 			await writeFile(
 				scriptPath,
 				`import { JavaScriptKernel } from ${JSON.stringify(kernelUrl)};
 import { mock } from "node:test";
+import { Worker } from "node:worker_threads";
+import { driveInlineTimeout, INLINE_PROBE_BOUNDS } from ${JSON.stringify(driverUrl)};
 
+const terminations = [];
+const originalTerminate = Worker.prototype.terminate;
+Worker.prototype.terminate = function () {
+  const terminated = originalTerminate.call(this);
+  terminations.push(terminated);
+  return terminated;
+};
 let loopStarted;
 const started = new Promise((resolve) => { loopStarted = resolve; });
 const kernel = new JavaScriptKernel({
@@ -25,21 +35,20 @@ const kernel = new JavaScriptKernel({
   parallelPoolWidth: 2,
   workerEntryUrl: new URL(${JSON.stringify(missingWorkerUrl)}),
   onMessage: (message) => { if (message.type === "text" && message.data.includes("loop-started")) loopStarted(); },
-  interruptBounds: { ackMs: 500, graceMs: 2000, terminateDeadlineMs: 180000 },
+  interruptBounds: INLINE_PROBE_BOUNDS,
 });
 const baselineWorkerIds = process.report.getReport().workers.map((worker) => worker.header.threadId);
 try {
   await kernel.run({ cellId: "warm", code: "1 + 1" });
   mock.timers.enable({ apis: ["setTimeout"] });
   const running = kernel.run({ cellId: "infinite-loop", code: 'print("loop-started"); return (() => { while (true) {} })()', timeoutMs: 150 });
-  await started;
-  mock.timers.tick(150);
-  await new Promise((resolve) => setImmediate(resolve));
-  mock.timers.tick(500);
-  const result = await running;
+  const result = await driveInlineTimeout(started, running, async (milliseconds) => {
+    mock.timers.tick(milliseconds);
+    await new Promise((resolve) => setImmediate(resolve));
+  });
   mock.timers.reset();
   await kernel.close();
-  await new Promise((resolve) => setImmediate(resolve));
+  await Promise.all(terminations);
   const liveWorkerIds = process.report.getReport().workers
     .map((worker) => worker.header.threadId)
     .filter((threadId) => !baselineWorkerIds.includes(threadId));
@@ -47,6 +56,8 @@ try {
 } finally {
   mock.timers.reset();
   await kernel.close();
+  await Promise.all(terminations);
+  Worker.prototype.terminate = originalTerminate;
 }
 `,
 			);

@@ -10,8 +10,6 @@ export type ChildResult = {
 
 /** Close drains both pipes; the watchdog guards a hang, never child startup speed. */
 export function collectChild(child: ChildProcess): Promise<ChildResult> {
-	const pid = child.pid;
-	if (pid === undefined) throw new TypeError("Child probe did not spawn");
 	let stdout = "";
 	let stderr = "";
 	child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
@@ -31,6 +29,11 @@ export function collectChild(child: ChildProcess): Promise<ChildResult> {
 		});
 		child.once("close", (code, signal) => {
 			clearTimeout(watchdog);
+			const pid = child.pid;
+			if (pid === undefined) {
+				reject(new TypeError("Child probe closed without spawning"));
+				return;
+			}
 			resolve({ code, signal, stdout, stderr, pid });
 		});
 	});
