@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, normalizeContext } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { convertMessages as convertGoogleMessages } from "../../../ai/src/api/google-shared.ts";
 import { transformMessages } from "../../../ai/src/api/transform-messages.ts";
@@ -1110,7 +1110,7 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 			(message): message is Message =>
 				message.role === "user" || message.role === "assistant" || message.role === "toolResult",
 		);
-		const contents = convertGoogleMessages(googleModel, { messages: replayMessages });
+		const contents = convertGoogleMessages(googleModel, normalizeContext({ messages: replayMessages }));
 		expect(contents.some((content) => content.parts?.some((part) => "functionCall" in part))).toBe(true);
 		const assistantMsg = messages.find((m) => m.role === "assistant") as AssistantMessage | undefined;
 		expect(assistantMsg).toBeDefined();

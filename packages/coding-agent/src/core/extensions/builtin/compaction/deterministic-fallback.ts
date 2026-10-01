@@ -110,7 +110,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasMeaningfulUserText(entry: SessionEntry): boolean {
-	if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "user") return false;
+	if (entry.type !== "message" || typeof entry.message !== "object" || entry.message === null) return false;
+	if (entry.message.role !== "user") return false;
 	const content = entry.message.content;
 	const hasVisibleText = (text: unknown): boolean =>
 		typeof text === "string" && text.normalize("NFKC").replace(NON_VISIBLE_USER_TEXT, "").length > 0;
@@ -367,7 +368,7 @@ export function createRequiredCompactionFallback(
 		}
 		unsafeSuffix[index] = unsafeSuffix[index + 1] || messageUnsafe;
 		if (messageUnsafe) unsafeIndexSuffix[index] = index;
-		if (!isRecord(message)) continue;
+		if (typeof message !== "object" || message === null) continue;
 		if (message.role === "toolResult" && typeof message.toolCallId === "string") {
 			const indexes = toolResults.get(message.toolCallId) ?? [];
 			indexes.push(index);
