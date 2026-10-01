@@ -15,7 +15,7 @@
 
 ### Fixed
 
-- The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
+- The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. Thanks to @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
 
 - Deferred extension tools, including computer use, keep working after hot-reload. The session now retires old lazy-tool activation callbacks before binding the replacement extension generation ([omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
 
