@@ -1,5 +1,25 @@
 # Permission System Builtin Extension
 
+## 2026-10-01 - Internal harness operations do not require approval
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/internal-tools.ts` defines the engine-owned bookkeeping and observation tool set.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` preserves these tools during startup filtering and exempts only no-parser fallback requests and monitor rearming. Command and file monitors keep their normal checks. Every explicit tool-owned parser request remains enforced, including a scoped request named after the tool.
+
+### Why
+
+- Internal bookkeeping stopped desktop turns on approval cards in command-asking modes. Preset entries alone could be overridden by user rules and disable the tools again.
+
+### Why an extension could not handle it
+
+- The permission builtin owns active-tool filtering and the approval decision before tool execution.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: session-start filtering and the tool-call request parsing boundary.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/internal-tools.ts`: fixed internal-tool classification.
+
 ## 2026-09-27 - Tools classify their own calls with `permissionParser`
 
 ### What changed
@@ -32,6 +52,7 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 - `service.ts` - Permission service core (ask/reply/list)
 - `events.ts` - Event system (permission_asked/replied)
 - `parsers.ts` - Tool input parser registry
+- `internal-tools.ts` - Engine-owned bookkeeping tool classification
 - `prompt.ts` - TUI permission prompt
 - `non-interactive.ts` - No-UI fallback handler
 - `settings.ts` - settings.json integration
