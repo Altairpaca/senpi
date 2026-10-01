@@ -141,10 +141,11 @@ async function fakeLane(options: { keepRecentTokens: number; wording?: (count: n
 		});
 		handle = scripted;
 		const sdkHandle: SdkQueryHandle = scripted;
-		if (queryOptions.resume !== undefined && resumeBroken) {
+		const resumeTarget = queryOptions?.resume;
+		if (resumeTarget !== undefined && resumeBroken) {
 			resumeBroken = false;
 			sdkHandle.initializationResult = () =>
-				Promise.reject(new Error(`No conversation found with session ID: ${queryOptions.resume}`));
+				Promise.reject(new Error(`No conversation found with session ID: ${resumeTarget}`));
 		}
 		return sdkHandle;
 	};

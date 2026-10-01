@@ -67,7 +67,13 @@ async function runAutoCompaction(
 }
 
 function stubRunAutoCompaction(session: Harness["session"]) {
-	const stub = vi.fn(async (_reason: "overflow" | "threshold", _willRetry: boolean): Promise<void> => {});
+	const stub = vi.fn(
+		async (
+			_reason: "overflow" | "threshold",
+			_willRetry: boolean,
+			_options?: { keepRecentTokensOverride?: number },
+		): Promise<void> => {},
+	);
 	Reflect.set(session, "_runAutoCompaction", stub);
 	return stub;
 }
@@ -1955,10 +1961,8 @@ describe("AgentSession compaction characterization", () => {
 			timestamp: Date.now() + 2,
 		});
 
-		expect(
-			runAutoCompactionSpy.mock.calls.map(([reason, willRetry, options]) => [reason, willRetry, options]),
-		).toEqual([
-			["overflow", true, { keepRecentTokensOverride: undefined }],
+		expect(runAutoCompactionSpy.mock.calls).toEqual([
+			["overflow", true],
 			["overflow", true, { keepRecentTokensOverride: 0 }],
 		]);
 		expect(compactionErrors).toContain(
@@ -2091,7 +2095,7 @@ describe("AgentSession compaction characterization", () => {
 
 		await checkCompaction(harness.session, overflowMessage);
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true, { keepRecentTokensOverride: undefined });
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true);
 	});
 
 	it("compacts successful overflow responses without retrying", async () => {
