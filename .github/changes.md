@@ -1,3 +1,21 @@
+## 2026-10-01 - Windows Python bootstrap is a required CI gate (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml` adds the `python-kernel-windows` job with slow/hung startup regressions and a compiled Python host exercising cold and warm cells on `windows-latest`. The `Check and test` fan-in requires that job.
+
+### Why
+
+- A healthy cold packaged interpreter can exceed the previous five-second readiness deadline. Linux-only runtime coverage cannot detect Windows bootstrap and sidecar failures.
+
+### Why an extension could not handle it
+
+- Required Windows runner coverage and the repository's CI fan-in belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the Python bootstrap job near `webview-kernel` and the `Check and test` needs list.
+
 ## 2026-10-01 - CI fails when the build rewrites a committed dist file (senpi#2484)
 
 ### What changed
