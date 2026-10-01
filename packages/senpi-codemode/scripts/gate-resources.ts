@@ -27,13 +27,17 @@ export function observeResources() {
 	const originals = {
 		Worker: workerThreads.Worker, spawn: childProcess.spawn,
 		createServer: http.createServer, connect: net.connect, createConnection: net.createConnection,
+		gateObserver: globalThis.__senpiCodemodeGateObserveResource,
 	};
 	function track(kind: ResourceKind, emitter: EventEmitter, closeEvent: string): void {
 		if (owned.some((item) => item.emitter === emitter)) return;
 		const entry = { kind, emitter, closed: false };
 		owned.push(entry);
 		emitter.once(closeEvent, () => { entry.closed = true; });
+		if (emitter instanceof http.Server)
+			emitter.on("connection", (socket: net.Socket) => track("sockets", socket, "close"));
 	}
+	globalThis.__senpiCodemodeGateObserveResource = track;
 	workerThreads.Worker = new Proxy(originals.Worker, {
 		construct(target, args) {
 			const worker: unknown = Reflect.construct(target, args);
@@ -55,7 +59,6 @@ export function observeResources() {
 			const server: unknown = Reflect.apply(target, receiver, args);
 			if (!(server instanceof http.Server)) throw new GateInputError("server observation");
 			track("handles", server, "close");
-			server.on("connection", (socket: net.Socket) => track("sockets", socket, "close"));
 			return server;
 		},
 	});
@@ -91,6 +94,7 @@ export function observeResources() {
 			};
 		},
 		restore() {
+			globalThis.__senpiCodemodeGateObserveResource = originals.gateObserver;
 			Object.assign(workerThreads, { Worker: originals.Worker });
 			Object.assign(childProcess, { spawn: originals.spawn });
 			Object.assign(http, { createServer: originals.createServer });

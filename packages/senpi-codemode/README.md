@@ -411,6 +411,11 @@ alive at the teardown witness, then closes it in `finally`; nonzero process,
 worker, socket, handle, subscription and active-resource listener counts fail
 by name. Constructors are observed because Bun's active-handle/report APIs
 return empty arrays even for live workers.
+The only production-source additions are an inert gate observer at the existing
+worker, interpreter-process and bridge-server constructors. It is undefined in
+normal execution. This hook is necessary because Bun does not refresh named
+builtin exports when `syncBuiltinESMExports()` runs; patching their default
+exports alone otherwise reports zero resources even for a leaked real kernel.
 
 Legacy scenario identities are compared exactly, so deleting or renaming a
 test cannot make the gate green. Platform-dependent skip outcomes remain
