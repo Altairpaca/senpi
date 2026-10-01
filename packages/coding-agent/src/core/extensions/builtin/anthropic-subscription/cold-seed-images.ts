@@ -43,11 +43,13 @@ type ImageOccurrence = {
 	readonly decodedSha256: string | undefined;
 };
 
-const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+// Standard or URL-safe alphabet, padding optional; line wrapping is stripped first.
+const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
 
 function hashImageData(data: string): string | undefined {
-	if (data.length === 0 || data.length % 4 !== 0 || !BASE64.test(data)) return undefined;
-	return createHash("sha256").update(Buffer.from(data, "base64")).digest("hex");
+	const compact = data.replace(/\s+/g, "");
+	if (compact.length === 0 || compact.replace(/=+$/, "").length % 4 === 1 || !BASE64.test(compact)) return undefined;
+	return createHash("sha256").update(Buffer.from(compact, "base64")).digest("hex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

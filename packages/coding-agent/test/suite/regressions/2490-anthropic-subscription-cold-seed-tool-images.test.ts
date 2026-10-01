@@ -1,5 +1,7 @@
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { coldSeedImageText } from "../../../src/core/extensions/builtin/anthropic-subscription/cold-seed-images.ts";
+import { mapPiToolNameToSdk } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
 import type { SDKUserMessage } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import { forgetBinding } from "../../../src/core/extensions/builtin/anthropic-subscription/session-reattach.ts";
 import { closeSession } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
@@ -12,6 +14,7 @@ import {
 } from "../../helpers/anthropic-subscription-scripted-sdk.ts";
 
 const SCREENSHOT = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8ioAAAAASUVORK5CYII=";
+const READ = mapPiToolNameToSdk("read");
 const sessionIds: string[] = [];
 
 const model: Model<Api> = {
@@ -72,9 +75,21 @@ function sessionWithRereads(rereads: number): Context {
 	return { systemPrompt: "SYSTEM", messages };
 }
 
-function submittedImageCount(submitted: SDKUserMessage | undefined): number {
+function frameBlocks(submitted: SDKUserMessage | undefined): readonly { type: string; text?: string }[] {
 	const content = submitted?.message.content;
-	return Array.isArray(content) ? content.filter((block) => block.type === "image").length : 0;
+	return Array.isArray(content) ? content : [];
+}
+
+function submittedImageCount(submitted: SDKUserMessage | undefined): number {
+	return frameBlocks(submitted).filter((block) => block.type === "image").length;
+}
+
+function readReferences(submitted: SDKUserMessage | undefined): number {
+	const reference = coldSeedImageText.duplicate(
+		{ kind: "tool", toolName: READ, toolCallId: "read-0" },
+		{ kind: "user" },
+	);
+	return frameBlocks(submitted).filter((block) => block.type === "text" && block.text === reference).length;
 }
 
 afterEach(() => {
@@ -111,5 +126,6 @@ describe("senpi#2490: cold seeds through the Claude subscription stream", () => 
 		const frames = queries.map((query) => query.submitted[0]);
 		expect(frames).toHaveLength(4);
 		expect(frames.map(submittedImageCount)).toEqual([1, 1, 1, 1]);
+		expect(frames.map(readReferences)).toEqual([0, 1, 3, 5]);
 	});
 });

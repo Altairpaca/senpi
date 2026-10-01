@@ -181,6 +181,23 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		expect(blocks.at(-1)).toEqual({ type: "text", text: "Which ones loaded?" });
 	});
 
+	it("dedupes line-wrapped or unpadded encodings of the same bytes instead of dropping them", () => {
+		const wrapped = SCREENSHOT.replace(/(.{20})/g, "$1\n");
+		const unpadded = SCREENSHOT.replace(/=+$/, "");
+		const blocks = rebuild([
+			upload(image(SCREENSHOT)),
+			...readOf("wrapped", image(wrapped), 1),
+			...readOf("unpadded", image(unpadded), 2),
+			say("Same one?", 3),
+		]);
+
+		expect(images(blocks)).toEqual([SCREENSHOT]);
+		for (const id of ["wrapped", "unpadded"]) {
+			const origin: ReplayedImageOrigin = { kind: "tool", toolName: READ, toolCallId: id };
+			expect(texts(blocks)).toContain(coldSeedImageText.duplicate(origin, USER));
+		}
+	});
+
 	it("still sends a fresh re-attachment in the new user message, and leaves resume deltas untouched", () => {
 		const history = [upload(image(SCREENSHOT)), ...readOf("read-0", image(SCREENSHOT), 1)];
 		const fresh = upload(image(SCREENSHOT), 5);
