@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { parseArgs } from "../../../src/cli/args.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
+import { createRpcSessionBinding, type RpcSessionBinding } from "../../../src/modes/rpc/session-binding.ts";
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
@@ -78,7 +79,12 @@ export async function createEvalApprovalHost() {
 		writeRaw: (line) => observe(line, client),
 		waitForBackpressure: async () => {},
 	});
-	const router = new SessionCommandRouter(registry, writer, { cwd });
+	let liveBinding: RpcSessionBinding | undefined;
+	const router = new SessionCommandRouter(registry, writer, { cwd }, async (...args) => {
+		const binding = await createRpcSessionBinding(...args);
+		liveBinding = binding;
+		return binding;
+	});
 	let serial = 0;
 	const send = async (command: RpcCommand) => {
 		const id = `frame-${++serial}`;
@@ -100,7 +106,6 @@ export async function createEvalApprovalHost() {
 			};
 			listeners.add(listener);
 		});
-	let sessionId: string | undefined;
 	return {
 		client,
 		stdout,
@@ -112,12 +117,12 @@ export async function createEvalApprovalHost() {
 			return await session.executeTool("eval", {
 				language: "js",
 				summary: "headless bash approval",
-				code: 'try { await tool.bash({command: "which bun"}); } catch (error) { print("DENIED", error.message); }',
+				code: 'try { await tool.bash({command: "echo APPROVED-2512"}); } catch (error) { print("DENIED", error.message); }',
 				on_timeout: "error",
 			});
 		},
 		async run(choice: "Allow once" | "Deny", mode: "foreground" | "detached" = "foreground") {
-			await send({ type: "set_client_info", capabilities: ["extension_events"] });
+			await send({ type: "set_client_info", width: 120, capabilities: ["extension_events"] });
 			faux.setResponses([
 				fauxAssistantMessage(
 					[
@@ -126,7 +131,7 @@ export async function createEvalApprovalHost() {
 							{
 								language: "js",
 								summary: "run which bun with the bash tool",
-								code: `${mode === "detached" ? "await tool.approval_gate({}); " : ""}try { display(await tool.bash({command: "which bun"})); } catch (error) { print("DENIED", error.message); }`,
+								code: `${mode === "detached" ? "await tool.approval_gate({}); " : ""}try { display(await tool.bash({command: "echo APPROVED-2512"})); } catch (error) { print("DENIED", error.message); }`,
 								on_timeout: mode === "detached" ? "detach" : "error",
 							},
 							{ id: "approval-call" },
@@ -141,9 +146,11 @@ export async function createEvalApprovalHost() {
 			const data = opened && "data" in opened ? opened.data : undefined;
 			if (typeof data !== "object" || data === null || !("sessionId" in data) || typeof data.sessionId !== "string")
 				throw new Error(`Session did not open: ${JSON.stringify(opened)}`);
-			sessionId = data.sessionId;
+			const sessionId = data.sessionId;
 			const session = registry.peek(sessionId)?.runtime?.session;
 			if (!session) throw new Error("Opened session has no runtime");
+			const binding = liveBinding;
+			if (!binding) throw new Error("Opened session has no RPC binding");
 			// Warm outside any client command, as a retained kernel can outlive its creating connection.
 			await session.executeTool("eval", { language: "js", code: "1", summary: "warm kernel" });
 			const decision = waitFor(
@@ -178,7 +185,7 @@ export async function createEvalApprovalHost() {
 			if (!client.includes(approval)) {
 				// Teardown the otherwise orphaned dialog; it was never presented to the client.
 				await writer.withConnection("client", () =>
-					router.handle({ type: "extension_ui_response", id: String(approval.id), sessionId, value: "Deny" }),
+					binding.handle({ type: "extension_ui_response", id: String(approval.id), sessionId, value: "Deny" }),
 				);
 				if (mode !== "detached") await idle;
 				await turn;
@@ -188,16 +195,17 @@ export async function createEvalApprovalHost() {
 			const id = approval.id;
 			if (typeof id !== "string") throw new Error("Approval has no request id");
 			await writer.withConnection("client", () =>
-				router.handle({ type: "extension_ui_response", id, sessionId, value: choice }),
+				binding.handle({ type: "extension_ui_response", id, sessionId, value: choice }),
 			);
 			if (mode !== "detached") await idle;
 			await turn;
 			const settledFrame = settled ? await settled : undefined;
 			if (notificationIdle) await notificationIdle;
 			await registry.peek(sessionId)?.runtime?.session.waitForSettledSessionWork();
-			let result: unknown = client.find(
+			const end = client.find(
 				(frame) => frame.type === "tool_execution_end" && frame.toolCallId === "approval-call",
 			);
+			let result: unknown = end?.result;
 			if (mode === "detached") {
 				const payload = settledFrame?.data;
 				if (

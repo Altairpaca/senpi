@@ -18,8 +18,8 @@ describe("eval bash approval delivery (#2512)", () => {
 		// When the model calls bash from the persistent JS worker and the client approves.
 		const { approval, result } = await host.run("Allow once");
 		// Then the client receives the command's approval and the cell receives stdout.
-		expect(approval.title).toContain("which bun");
-		expect(JSON.stringify(result)).toContain("/bun");
+		expect(approval.title).toContain("echo APPROVED-2512");
+		expect(getMessageText(result)).toContain("APPROVED-2512");
 	});
 
 	it("returns denial to the cell and continues the turn when the host client denies", async () => {
@@ -29,8 +29,8 @@ describe("eval bash approval delivery (#2512)", () => {
 		// When the attached client denies the kernel-originated approval.
 		const { result } = await host.run("Deny");
 		// Then the cell observes denial and the provider continues to its final response.
-		expect(JSON.stringify(result)).toContain("DENIED");
-		expect(JSON.stringify(result)).toMatch(/rejected|denied/i);
+		expect(getMessageText(result)).toContain("DENIED");
+		expect(getMessageText(result)).toMatch(/rejected|denied/i);
 		expect(JSON.stringify(host.client)).toContain("continued");
 	});
 
@@ -43,7 +43,7 @@ describe("eval bash approval delivery (#2512)", () => {
 			// When the detached cell asks for bash after the gate is released.
 			const { result } = await host.run(choice, "detached");
 			// Then the attached client can settle the cell through the ordinary approval channel.
-			expect(JSON.stringify(result)).toContain(choice === "Allow once" ? "/bun" : "DENIED");
+			expect(getMessageText(result)).toContain(choice === "Allow once" ? "APPROVED-2512" : "DENIED");
 		},
 	);
 
@@ -76,15 +76,15 @@ describe("eval bash approval delivery (#2512)", () => {
 				}),
 			});
 			harness.setResponses([
-				fauxAssistantMessage(fauxToolCall("bash", { command: "which bun" }), { stopReason: "toolUse" }),
+				fauxAssistantMessage(fauxToolCall("bash", { command: "echo APPROVED-2512" }), { stopReason: "toolUse" }),
 				fauxAssistantMessage("continued"),
 			]);
 			// When the model makes a direct bash call and the UI approves.
 			await harness.session.prompt("run which bun");
 			// Then the ordinary approval still returns the real shell output.
 			expect(prompts).toHaveLength(1);
-			expect(prompts[0]).toContain("which bun");
-			expect(getMessageText(getToolResult(harness, "bash"))).toContain("/bun");
+			expect(prompts[0]).toContain("echo APPROVED-2512");
+			expect(getMessageText(getToolResult(harness, "bash"))).toContain("APPROVED-2512");
 		} finally {
 			harness.cleanup();
 		}
