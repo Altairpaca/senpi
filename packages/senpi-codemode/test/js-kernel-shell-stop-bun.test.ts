@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 const driver = fileURLToPath(new URL("../scripts/qa-shell-stop.ts", import.meta.url));
 const bunAvailable = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 
-async function runDriver(mode: string): Promise<{ readonly report: unknown; readonly stdout: string }> {
+async function runDriver(
+	mode: string,
+	expectedExitCode = 0,
+): Promise<{ readonly report: unknown; readonly stdout: string; readonly stderr: string }> {
 	const child = spawn("bun", [driver, mode], { stdio: ["ignore", "pipe", "pipe"] });
 	let stdout = "";
 	let stderr = "";
@@ -20,9 +23,9 @@ async function runDriver(mode: string): Promise<{ readonly report: unknown; read
 		child.once("close", resolve);
 	});
 	try {
-		expect(await exited, stderr).toBe(0);
-		const report: unknown = JSON.parse(stdout.split("\n")[0] ?? "");
-		return { report, stdout };
+		expect(await exited, stderr).toBe(expectedExitCode);
+		const report: unknown = expectedExitCode === 0 ? JSON.parse(stdout.split("\n")[0] ?? "") : undefined;
+		return { report, stdout, stderr };
 	} finally {
 		child.kill();
 	}
@@ -67,5 +70,14 @@ describe.skipIf(!bunAvailable)("Bun shell Stop", () => {
 			completed: { ok: true, valueRepr: '"normal\\n"' },
 			next: { ok: true, valueRepr: "41" },
 		});
+	}, 90_000);
+
+	it("cleans up when the shell exits before connecting", async () => {
+		// Given a command that fails before announcing socket readiness.
+		// When the real driver waits for its readiness event.
+		const { stdout, stderr } = await runDriver("failed", 1);
+		// Then failure exits through cleanup rather than leaving the listener alive.
+		expect(JSON.parse(stderr.trim())).toMatchObject({ code: "qa_shell_ready_failed" });
+		expect(stdout).toContain("CLEANUP_COMPLETE");
 	}, 90_000);
 });

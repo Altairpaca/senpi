@@ -8,7 +8,8 @@
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native lines wait",
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals without a shell restart notice when Stop interrupts a normal await",
-				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes"
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
 		}

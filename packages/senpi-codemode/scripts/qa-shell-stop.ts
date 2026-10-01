@@ -1,7 +1,12 @@
 import { createServer, type Socket } from "node:net";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
+import { withTimeout } from "../src/kernels/py/process.ts";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { executeEvalControl } from "../src/tool/detached-eval-result.ts";
+
+class QaShellReadinessError extends Error {
+	readonly code = "qa_shell_ready_failed";
+}
 
 const connected = Promise.withResolvers<void>();
 const disconnected = Promise.withResolvers<void>();
@@ -36,7 +41,7 @@ try {
 		} else {
 			const called = kernel.nextToolCall();
 			const run = kernel.run({ cellId: "normal-wait", code: "await tool.ready({});", timeoutMs: 60_000 });
-			await called;
+			await withTimeout(called, 30_000, "Host-tool readiness event did not arrive");
 			const handle = await kernel.interrupt("stop", "normal-wait");
 			const result = await run;
 			const next = await kernel.run({ cellId: "after", code: "return globalThis.saved", timeoutMs: 60_000 });
@@ -44,7 +49,8 @@ try {
 		}
 	} else {
 	const shell = `Bun.$\`\${${JSON.stringify(process.execPath)}} -e \${${JSON.stringify(childCode)}}\``;
-	const expression = mode === "lines" ? `for await (const line of ${shell}.lines()) { print(line); }`
+	const expression = mode === "failed" ? "await Bun.$`exit 7`;"
+		: mode === "lines" ? `for await (const line of ${shell}.lines()) { print(line); }`
 		: mode === "text" ? `await ${shell}.text();`
 		: `await ${shell};`;
 	const prefix = mode === "late" ? "try { await tool.ready({}); } catch {} " : "";
@@ -54,6 +60,7 @@ try {
 		content: [],
 		details: { language: "js", durationMs: 0, toolCalls: [], truncated: false },
 	}));
+	if (!manager.detach(managed)) throw new Error("Shell cell did not detach");
 	const called = mode === "late" ? kernel.nextToolCall() : undefined;
 	const run = kernel.run({
 		cellId: "shell-stop",
@@ -61,28 +68,28 @@ try {
 		onStarted: () => manager.markRunning(managed),
 		timeoutMs: 60_000,
 	});
-	if (called) await called;
-	else await connected.promise;
-	if (!manager.detach(managed)) throw new Error("Shell cell did not detach");
+	const prematureExit = run.then(() => {
+		throw new QaShellReadinessError("Shell command ended before connection");
+	});
+	await withTimeout(Promise.race([called ?? connected.promise, prematureExit]), 30_000, "Command readiness event did not arrive");
 	const stopping = executeEvalControl(manager, { action: "stop", cell_id: "shell-stop" });
-	await connected.promise;
+	await withTimeout(Promise.race([connected.promise, prematureExit]), 30_000, "Command readiness event did not arrive");
 	const control = await stopping;
 	const snapshot = manager.peek("shell-stop");
 	const result = await run;
 	const next = await kernel.run({ cellId: "after", code: "return globalThis.saved", timeoutMs: 60_000 });
 	console.log(JSON.stringify({ result, retained: snapshot.stateRetained, note: snapshot.interruptNote, control, next }));
-	await Promise.race([
-		disconnected.promise,
-		new Promise<never>((_, reject) => {
-			const timer = setTimeout(() => reject(new Error("Shell command survived Stop")), 10_000);
-			timer.unref();
-		}),
-	]);
+	await withTimeout(disconnected.promise, 10_000, "Shell command survived Stop");
 	console.log("COMMAND_EXITED");
 	}
+} catch (error) {
+	if (!(error instanceof QaShellReadinessError)) throw error;
+	console.error(JSON.stringify({ code: error.code }));
+	process.exitCode = 1;
 } finally {
 	await manager.dispose();
 	await kernel.close();
 	for (const socket of sockets) socket.destroy();
-	server.close();
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+	console.log("CLEANUP_COMPLETE");
 }
