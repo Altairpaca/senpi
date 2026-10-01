@@ -1,5 +1,24 @@
 # goal Extension Changes
 
+## 2026-10-01 - Goal mutations are atomic across processes (senpi#2499)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/goal-file-lock.ts` (new): `withGoalFileLock(ref, fn)` runs `fn` inside the existing in-process `serializeByKey` tail and, inside that, holds a proper-lockfile lock acquired with `FILE_STORAGE_LOCK_OPTIONS` and the same bounded retry loop as `credential-pool/state-store.ts` (100ms..1s backoff, 5.5s budget). The lock directory is `.goal-lock-<sha256(basename)[:40]>` beside the goal file (`goalLockFilePath`), because the default `<file>.lock` overflows NAME_MAX for a goal basename already at 255 bytes. An exhausted budget throws `GoalStoreBusyError`; a lock reclaimed as stale while held throws `GoalStoreLockCompromisedError` instead of writing. Only the parent directory is created before locking, never a placeholder goal file, so `migrateLegacyGoalFile` still imports a pending legacy goal.
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `writeGoal`, `createGoal`, `updateGoal`, `clearGoal`, `accountGoalUsage`, `recordContinuationDelivered`, and `resetContinuationStreak` call `withGoalFileLock(ref, ...)` instead of `serializeByKey(goalFilePath(ref), ...)`. The mutation bodies are unchanged.
+
+### Why
+
+- `serializeByKey` is an in-process `Map` of promise tails, so two processes holding the same session (shared session holders, a TUI plus a desktop or daemon host, a `PI_GOAL_STORE_FILE` child) interleaved read-modify-write cycles: two processes x 300 usage updates kept 303 of 600, and a completion in one process was reverted to `active` by the other.
+
+### Why an extension could not handle it
+
+- Goal is a manually ported builtin (`MANUAL_PACKAGES` in `scripts/sync-builtin-extensions.mjs`); its store is maintained here.
+
+### Expected merge conflict zones
+
+- LOW: the import block and each mutation's opening `return withGoalFileLock(ref, ...)` line in `store.ts`. An upstream pi-goal sync that restores `serializeByKey(goalFilePath(ref), ...)` must keep the cross-process lock.
+
 ## 2026-09-30 - Drop test-only goal exports (senpi#2447)
 
 ### What changed
