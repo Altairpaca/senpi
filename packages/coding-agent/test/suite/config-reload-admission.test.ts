@@ -31,6 +31,7 @@ describe("config reload during first-message admission", () => {
 			await notify(root.path, "settings.json");
 			// Then: the host is not asked to retire the extension handling that request.
 			expect([...reloads]).toEqual([]);
+			expect(await harness.session.reload()).toMatchObject({ cancelled: true });
 			release.resolve();
 			await prompt;
 			expect(reloads).toEqual([true]);
@@ -42,48 +43,59 @@ describe("config reload during first-message admission", () => {
 		}
 	});
 
-	it("rechecks idleness when a prompt starts during an asynchronous reload veto", async () => {
-		// Given: a pending configuration reload is still consulting an extension.
-		await using root = await mkdtempDisposable(join(tmpdir(), "config-veto-admission-"));
-		await writeFile(join(root.path, "settings.json"), '{"theme":"dark"}');
-		const vetoEntered = Promise.withResolvers<void>();
-		const releaseVeto = Promise.withResolvers<void>();
-		const providerEntered = Promise.withResolvers<void>();
-		const releaseProvider = Promise.withResolvers<void>();
-		const { harness, reloads, notify } = await createConfigReloadHarness(root.path, (pi) => {
-			pi.on("session_before_reload", async () => {
-				vetoEntered.resolve();
-				await releaseVeto.promise;
+	it.each(["admission", "provider"] as const)(
+		"rechecks reload safety when %s starts during an asynchronous veto",
+		async (phase) => {
+			// Given: a pending configuration reload is still consulting an extension.
+			await using root = await mkdtempDisposable(join(tmpdir(), "config-veto-admission-"));
+			await writeFile(join(root.path, "settings.json"), '{"theme":"dark"}');
+			const vetoEntered = Promise.withResolvers<void>();
+			const releaseVeto = Promise.withResolvers<void>();
+			const requestEntered = Promise.withResolvers<void>();
+			const releaseRequest = Promise.withResolvers<void>();
+			const { harness, reloads, notify } = await createConfigReloadHarness(root.path, (pi) => {
+				pi.on("session_before_reload", async () => {
+					vetoEntered.resolve();
+					await releaseVeto.promise;
+				});
+				pi.on("before_agent_start", async () => {
+					if (phase === "admission") {
+						requestEntered.resolve();
+						await releaseRequest.promise;
+					}
+				});
 			});
-		});
-		harness.setResponses([
-			async () => {
-				providerEntered.resolve();
-				await releaseProvider.promise;
-				return fauxAssistantMessage("First request completed.");
-			},
-		]);
-		vi.useFakeTimers();
-		await writeFile(join(root.path, "settings.json"), '{"theme":"light"}');
-		await notify(root.path, "settings.json");
-		await vetoEntered.promise;
-		const prompt = harness.session.prompt("Handle the first request");
-		try {
-			await providerEntered.promise;
-			// When: the old idle check finishes after the provider request has started.
-			releaseVeto.resolve();
-			await vi.advanceTimersByTimeAsync(0);
-			// Then: reload stays pending until that request has settled.
-			expect([...reloads]).toEqual([]);
-			releaseProvider.resolve();
-			await prompt;
-			expect(reloads).toEqual([true]);
-		} finally {
-			releaseVeto.resolve();
-			releaseProvider.resolve();
-			await prompt;
-			await harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" });
-			harness.cleanup();
-		}
-	});
+			harness.setResponses([
+				async () => {
+					if (phase === "provider") {
+						requestEntered.resolve();
+						await releaseRequest.promise;
+					}
+					return fauxAssistantMessage("First request completed.");
+				},
+			]);
+			vi.useFakeTimers();
+			await writeFile(join(root.path, "settings.json"), '{"theme":"light"}');
+			await notify(root.path, "settings.json");
+			await vetoEntered.promise;
+			const prompt = harness.session.prompt("Handle the first request");
+			try {
+				await requestEntered.promise;
+				// When: the old idle check finishes after the first request has started.
+				releaseVeto.resolve();
+				await vi.advanceTimersByTimeAsync(0);
+				// Then: reload stays pending until that request has settled.
+				expect([...reloads]).toEqual([]);
+				releaseRequest.resolve();
+				await prompt;
+				expect(reloads).toEqual([true]);
+			} finally {
+				releaseVeto.resolve();
+				releaseRequest.resolve();
+				await prompt;
+				await harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" });
+				harness.cleanup();
+			}
+		},
+	);
 });

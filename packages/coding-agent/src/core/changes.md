@@ -34,11 +34,12 @@
 
 - `agent-session.ts`: the tool-search service field and lookups, `dispose()`, and the line after `new ExtensionRunner` in `_buildRuntime`.
 
-## 2026-10-01 - Treat admitted prompts as busy during configuration reload
+## 2026-10-01 - Veto configuration reload during prompt admission
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `isIdle` includes the existing prompt-admission hold instead of reporting idle while asynchronous first-turn hooks are running.
+- `packages/coding-agent/src/core/agent-session.ts`: the existing reload veto checks the prompt-admission hold before and after asynchronous extension gates, and reload rechecks admission immediately before teardown. The shared `isIdle` behavior remains unchanged.
+- `packages/coding-agent/src/core/reload-veto.ts`: owns the extracted reload decision and preserves extension cancellation reasons.
 
 ### Why
 
@@ -46,11 +47,12 @@
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/core/agent-session.ts` owns the synchronous admission hold and the shared idleness getter consumed by extension contexts.
+- `packages/coding-agent/src/core/agent-session.ts` owns the synchronous admission hold. Changing shared idleness also changes hook submission and queued continuation behavior, so admission is checked only at the reload boundary.
 
 ### Expected merge conflict zones
 
-- LOW: `packages/coding-agent/src/core/agent-session.ts`, `isIdle`.
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `reload` and `checkReloadVeto`.
+
 ## 2026-10-01 - Skill catalog: read a skill when it would change the work, not on a loose match (senpi#2505)
 
 ### What changed
