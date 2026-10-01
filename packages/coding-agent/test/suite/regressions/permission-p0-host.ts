@@ -20,6 +20,7 @@ const frameSchema = Type.Object({
 	title: Type.Optional(Type.String()),
 	method: Type.Optional(Type.String()),
 	toolCallId: Type.Optional(Type.String()),
+	isError: Type.Optional(Type.Boolean()),
 	result: Type.Optional(Type.Unknown()),
 	data: Type.Optional(Type.Object({ sessionId: Type.Optional(Type.String()) })),
 });
@@ -29,7 +30,11 @@ export interface PermissionTurn {
 	readonly args: ToolCall["arguments"];
 }
 
-export async function createPermissionP0Host(extensionFactories: ExtensionFactory[] = [], permissionFlag?: string) {
+export async function createPermissionP0Host(
+	extensionFactories: ExtensionFactory[] = [],
+	permissionFlag?: string,
+	additionalBuiltins: readonly string[] = [],
+) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-perm-p0-"));
 	const cwd = join(scratch, "project");
 	const agentDir = join(scratch, "agent");
@@ -38,7 +43,7 @@ export async function createPermissionP0Host(extensionFactories: ExtensionFactor
 	await writeFile(
 		join(agentDir, "settings.json"),
 		JSON.stringify({
-			enabledBuiltinExtensions: ["permission-system", "tool-search"],
+			enabledBuiltinExtensions: ["permission-system", "tool-search", ...additionalBuiltins],
 		}),
 	);
 	const outsidePath = join(scratch, "outside.txt");
@@ -136,10 +141,15 @@ export async function createPermissionP0Host(extensionFactories: ExtensionFactor
 				const approvals = frames.filter(
 					(frame) => frame.type === "extension_ui_request" && frame.title?.startsWith("Permission required:"),
 				);
-				const result = frames.find(
+				const ended = frames.find(
 					(frame) => frame.type === "tool_execution_end" && frame.toolCallId === "permission-call",
-				)?.result;
-				return { approvals, result, activeTools: runtime.session.getActiveToolNames() };
+				);
+				return {
+					approvals,
+					result: ended?.result,
+					isError: ended?.isError,
+					activeTools: runtime.session.getActiveToolNames(),
+				};
 			} finally {
 				clearTimeout(watchdog);
 				listeners.delete(onFrame);

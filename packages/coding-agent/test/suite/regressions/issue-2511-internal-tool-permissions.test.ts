@@ -88,15 +88,18 @@ describe("internal tools in real host sessions", () => {
 	}
 
 	for (const preset of ["accept-edits", "ask"]) {
-		it(`watches a path without approval when the preset is ${preset}`, async () => {
-			// Given a path subscription that observes metadata, not file contents.
-			const host = await createPermissionP0Host([tools]);
+		it(`asks before an outside path monitor when the preset is ${preset}`, async () => {
+			// Given the native monitor, which reads file bytes to detect content changes.
+			const host = await createPermissionP0Host([], undefined, ["terminal"]);
 			disposers.push(host.dispose);
-			// When the provider subscribes to an existing outside path.
-			const result = await host.run(preset, { name: "monitor", args: { path: host.outsidePath, event: "modify" } });
-			// Then bookkeeping completes without a command approval.
-			expect(result.approvals).toEqual([]);
-			expect(JSON.stringify(result.result)).toContain("completed monitor");
+			// When the provider requests an outside file and the client denies it.
+			const result = await host.run(preset, {
+				name: "monitor",
+				args: { description: "Outside file", path: host.outsidePath, event: "modify" },
+			});
+			// Then no outside-file monitor is registered.
+			expect(result.approvals).toHaveLength(1);
+			expect(result.isError).toBe(true);
 		});
 
 		it(`asks before a monitor command when the preset is ${preset}`, async () => {

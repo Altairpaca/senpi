@@ -5,7 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/permission-system/internal-tools.ts` defines the engine-owned bookkeeping and observation tool set.
-- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` preserves these tools during startup filtering and bypasses tool-name permission prompts after input parsing. Monitor commands and explicit action permissions from tool-owned parsers keep their normal checks.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` preserves these tools during startup filtering and exempts only no-parser fallback requests and monitor rearming. Command and file monitors keep their normal checks. Every explicit tool-owned parser request remains enforced, including a scoped request named after the tool.
 
 ### Why
 
@@ -52,6 +52,7 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 - `service.ts` - Permission service core (ask/reply/list)
 - `events.ts` - Event system (permission_asked/replied)
 - `parsers.ts` - Tool input parser registry
+- `internal-tools.ts` - Engine-owned bookkeeping tool classification
 - `prompt.ts` - TUI permission prompt
 - `non-interactive.ts` - No-UI fallback handler
 - `settings.ts` - settings.json integration

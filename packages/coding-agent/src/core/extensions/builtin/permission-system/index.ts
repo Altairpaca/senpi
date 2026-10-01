@@ -107,17 +107,15 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		const permissionRequests = parserRegistry.has(event.toolName)
-			? parserRegistry.parse(event.toolName, event.input, ctx.cwd)
-			: (toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd) ??
-				parserRegistry.parse(event.toolName, event.input, ctx.cwd));
-		// Parsing still records a path monitor's approved parent. Command monitors and
-		// explicit action permissions declared by a tool retain their normal policy.
+		const toolOwnedRequests = parserRegistry.has(event.toolName)
+			? undefined
+			: toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd);
+		const permissionRequests = toolOwnedRequests ?? parserRegistry.parse(event.toolName, event.input, ctx.cwd);
+		// Parsing preserves a path monitor's approved parent. Only rearming is
+		// bookkeeping; path watches read file bytes and retain filesystem checks.
 		if (
 			INTERNAL_PERMISSION_TOOLS.has(event.toolName) &&
-			(event.toolName === "monitor"
-				? typeof event.input.command !== "string"
-				: permissionRequests.every((request) => request.permission === event.toolName))
+			(event.toolName === "monitor" ? event.input.action === "rearm" : toolOwnedRequests === undefined)
 		) {
 			return undefined;
 		}
