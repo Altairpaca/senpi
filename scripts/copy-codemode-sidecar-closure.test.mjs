@@ -88,10 +88,11 @@ it("resolves dependencies from the real workspace root rather than its symlink p
 	writeFileSync(join(workspace, "index.js"), "module.exports = require('x');");
 	// When copying the workspace closure.
 	const result = run();
-	// Then the runtime uses the same version as the real source.
+	// Then the runtime uses the same version as the real source, from the staged copy alone.
 	assert.equal(result.status, 0, result.stderr);
 	rmSync(source, { recursive: true });
 	rmSync(workspace, { recursive: true });
+	rmSync(join(root, "node_modules"), { recursive: true });
 	assert.equal(createRequire(join(out, "entry.js"))("a"), "workspace-x");
 });
 

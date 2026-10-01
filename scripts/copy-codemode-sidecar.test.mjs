@@ -171,7 +171,8 @@ describe("copy-codemode-sidecar", () => {
 		declareDependencies({ "@babel/parser": "1.0.0", "removed-dep": "1.0.0" });
 		addPackage(join(sourceRoot, "node_modules", "@babel", "parser"), { name: "@babel/parser", version: "1.0.0" });
 		addPackage(join(sourceRoot, "node_modules", "removed-dep"), { name: "removed-dep", version: "1.0.0" });
-		assert.equal(runCopier().status, 0);
+		const first = runCopier();
+		assert.equal(first.status, 0, first.stderr);
 		declareDependencies({ "@babel/parser": "1.0.0" });
 		writeFileSync(join(outputRoot, "node_modules", "@babel", "parser", "STALE.txt"), "stale");
 		// When staging again.

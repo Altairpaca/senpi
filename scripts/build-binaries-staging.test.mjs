@@ -38,14 +38,20 @@ it("stages a usable release closure before adding the archive package manifest",
 		file("packages/coding-agent/src/core/extensions/loader.ts",
 			readFileSync(resolve("packages/coding-agent/src/core/extensions/loader.ts"), "utf8"));
 		const driver = readFileSync(resolve("scripts/build-binaries.sh"), "utf8");
-		const staging = driver.slice(driver.indexOf("# Copy shared files"), driver.indexOf("# Create archives"));
-		assert.ok(staging.length > 0);
+		const start = driver.indexOf("# Copy shared files");
+		const end = driver.indexOf("# Create archives");
+		assert.ok(start !== -1 && end > start, "build-binaries.sh staging markers moved");
+		const staging = driver.slice(start, end);
+		const copier = staging.indexOf("node \"../../scripts/copy-codemode-sidecar.mjs\" \"$OUTPUT_DIR/$platform\"");
+		assert.ok(copier !== -1, "staging block no longer runs the codemode sidecar copier");
+		assert.ok(copier < staging.indexOf("cp package.json \"$OUTPUT_DIR/$platform/\""), "package.json is copied before the sidecar");
 		mkdirSync(join(root, "release/darwin-arm64"), { recursive: true });
 		// When the exact release staging commands run without compiling a binary.
 		const result = spawnSync("bash", ["-c", `set -euo pipefail\nOUTPUT_DIR="$1"\nPLATFORMS=(darwin-arm64)\n${staging}`, "staging", join(root, "release").replaceAll("\\", "/")], {
 			cwd: agent, encoding: "utf8", env: { ...process.env, SENPI_SIDECAR_EXCLUDE: "" },
 		});
 		// Then the archive manifest exists and the closure runs without its source install.
+		assert.equal(result.error, undefined, `bash is required to run the release staging block: ${result.error?.message}`);
 		assert.equal(result.status, 0, result.stderr);
 		const output = join(root, "release/darwin-arm64");
 		assert.equal(JSON.parse(readFileSync(join(output, "package.json"))).name, "release-fixture");

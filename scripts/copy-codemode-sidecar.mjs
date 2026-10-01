@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -44,15 +44,46 @@ const outputRoot = resolve(outputRootArgument);
 if (existsSync(join(outputRoot, "package.json"))) {
 	throw new Error(`Refusing codemode sidecar output in a package root: ${outputRoot}`);
 }
+// Every path the copier removes or writes stays inside the output root: a symlinked
+// segment (node_modules, a scope, or the package itself) would redirect it elsewhere.
+function assertUnlinkedOutputPath(path) {
+	let current = outputRoot;
+	for (const segment of relative(outputRoot, path).split(sep)) {
+		current = join(current, segment);
+		const entry = lstatSync(current, { throwIfNoEntry: false });
+		if (!entry) {
+			return;
+		}
+		if (entry.isSymbolicLink()) {
+			throw new Error(`Refusing to follow a symlinked codemode sidecar output path: ${current}`);
+		}
+	}
+}
 const ownershipPath = join(outputRoot, ".codemode-sidecar.json");
-const ownedPaths = existsSync(ownershipPath) ? JSON.parse(readFileSync(ownershipPath, "utf8")) : [];
+const journalExists = existsSync(ownershipPath);
+const ownedPaths = journalExists ? JSON.parse(readFileSync(ownershipPath, "utf8")) : [];
 for (const path of ownedPaths) {
 	if (typeof path !== "string" || !path.startsWith(`node_modules${sep}`) || path.split(sep).includes("..")) {
 		throw new Error("Invalid codemode sidecar ownership path");
 	}
+	assertUnlinkedOutputPath(join(outputRoot, path));
+}
+assertUnlinkedOutputPath(targetRoot);
+// Before ownership journals existed, the copier staged only the extension with its parser nested inside.
+function isJournalLessCopierLayout() {
+	const stagedManifestPath = join(targetRoot, "package.json");
+	return !journalExists
+		&& existsSync(stagedManifestPath)
+		&& JSON.parse(readFileSync(stagedManifestPath, "utf8")).name === "@code-yeongyu/senpi-codemode"
+		&& existsSync(join(targetRoot, "node_modules", "@babel", "parser", "package.json"));
+}
+const targetRootOwned = ownedPaths.includes(relative(outputRoot, targetRoot)) || isJournalLessCopierLayout();
+if (existsSync(targetRoot) && !targetRootOwned) {
+	throw new Error(`Refusing to overwrite unowned codemode sidecar package at ${targetRoot}`);
+}
+for (const path of ownedPaths) {
 	rmSync(join(outputRoot, path), { recursive: true, force: true });
 }
-// The extension itself was also owned by the original copier before manifests existed.
 rmSync(targetRoot, { recursive: true, force: true });
 mkdirSync(targetRoot, { recursive: true });
 const stagedPaths = [relative(outputRoot, targetRoot)];
@@ -135,6 +166,7 @@ while (pendingPackages.length > 0) {
 	if (copiedPackages.has(packageTarget)) {
 		throw new Error(`Conflicting codemode sidecar dependency ${packageName} at ${packageTarget}`);
 	}
+	assertUnlinkedOutputPath(packageTarget);
 	if (existsSync(packageTarget)) {
 		throw new Error(`Refusing to overwrite unowned codemode sidecar dependency ${packageName}`);
 	}
