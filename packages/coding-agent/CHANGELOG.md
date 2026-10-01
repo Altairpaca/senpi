@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
+
 ### Removed
 
 ## [2026.10.1-3] - 2026-10-01
