@@ -13,6 +13,7 @@ export interface PythonKernelStartOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** Python bootstrap inactivity guard per advancing stage, not a total readiness deadline. */
 	readonly startupTimeoutMs?: number;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
