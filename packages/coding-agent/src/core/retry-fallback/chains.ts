@@ -43,10 +43,25 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 			typeof registry.hasConfiguredAuth === "function"
 				? (model) => registry.hasConfiguredAuth?.(model) === true
 				: undefined,
-		isFallbackEligible:
-			typeof registry.isFallbackEligible === "function"
-				? (model) => registry.isFallbackEligible?.(model) !== false
-				: undefined,
+		isFallbackEligible: typeof registry.isFallbackEligible === "function" ? memoizedEligibility(registry) : undefined,
+	};
+}
+
+/**
+ * Eligibility reads provider settings from disk; one canonicalization pass asks for the same model
+ * once per chain entry it expands, which took ~450 ms on the first fallback check of a session.
+ * Settings cannot change within one synchronous pass, so each model is asked once per pass.
+ */
+function memoizedEligibility(registry: {
+	isFallbackEligible?(model: Model<Api>): boolean;
+}): (model: Model<Api>) => boolean {
+	const known = new Map<Model<Api>, boolean>();
+	return (model) => {
+		const cached = known.get(model);
+		if (cached !== undefined) return cached;
+		const eligible = registry.isFallbackEligible?.(model) !== false;
+		known.set(model, eligible);
+		return eligible;
 	};
 }
 

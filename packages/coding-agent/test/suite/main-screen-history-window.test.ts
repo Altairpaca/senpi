@@ -32,7 +32,11 @@ class RecordingTerminal implements Terminal {
 }
 
 function transcriptOf(count: number): ExplorationTranscriptContainer {
-	const transcript = new ExplorationTranscriptContainer({ tailBudget: 60, warmChunkSize: 500, requestRender: () => {} });
+	const transcript = new ExplorationTranscriptContainer({
+		tailBudget: 60,
+		warmChunkSize: 500,
+		requestRender: () => {},
+	});
 	for (let index = 0; index < count; index++) transcript.addChild(new Text(`message ${index}`, 0, 0));
 	return transcript;
 }
@@ -72,7 +76,11 @@ describe("the main screen keeps a bounded history of a huge session", () => {
 		const output = terminal.output;
 		expect(output).toContain(`message ${MESSAGES - 1}`);
 		expect(output).not.toContain("message 0\r");
-		const hidden = Number(/(\d[\d,]*) earlier messages · \/tree to browse, or switch to fullscreen/.exec(output)?.[1]?.replaceAll(",", ""));
+		const hidden = Number(
+			/(\d[\d,]*) earlier messages · \/tree to browse, or switch to fullscreen/
+				.exec(output)?.[1]
+				?.replaceAll(",", ""),
+		);
 		const firstKept = Number(/message (\d+)/.exec(output.slice(output.indexOf("earlier messages")))?.[1]);
 		expect(hidden).toBe(firstKept);
 		expect(MESSAGES - firstKept).toBeGreaterThanOrEqual(HISTORY_LINES);

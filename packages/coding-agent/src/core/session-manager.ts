@@ -312,6 +312,8 @@ export type SessionEntry =
 /** Raw file entry (includes header) */
 export type FileEntry = SessionHeader | SessionEntry;
 
+type MaterializedView = { readonly source: FileEntry[]; readonly length: number; readonly entries: SessionEntry[] };
+
 /** Tree node for getTree() - defensive copy of session structure */
 export interface SessionTreeNode {
 	entry: SessionEntry;
@@ -683,7 +685,10 @@ export function buildContextEntries(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionEntry[] {
-	const path = buildSessionPath(entries, leafId, byId);
+	return contextEntriesOfPath(buildSessionPath(entries, leafId, byId));
+}
+
+function contextEntriesOfPath(path: SessionEntry[]): SessionEntry[] {
 	let compaction: CompactionEntry | null = null;
 
 	for (const entry of path) {
@@ -749,10 +754,11 @@ function projectSession(
 	entries: SessionEntry[],
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
+	knownPath?: SessionEntry[],
 ): { projection: SessionProjection; settings: ReturnType<typeof getSessionContextSettings> } {
-	const path = buildSessionPath(entries, leafId, byId);
+	const path = knownPath ?? buildSessionPath(entries, leafId, byId);
 	const settings = getSessionContextSettings(path);
-	const contextEntries = buildContextEntries(entries, leafId, byId);
+	const contextEntries = contextEntriesOfPath(path);
 	const edits = new Map<string, ContextEditEntry>();
 	for (const entry of contextEntries) {
 		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
@@ -1049,11 +1055,31 @@ export class SessionManager {
 	// Counts loaded/appended entries, including those removed from the resident mirror.
 	private fullEntryCount = 0;
 	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
+	/**
+	 * Materialized views of `fileEntries` (`compact`) and, once the mirror is trimmed, of the full
+	 * persisted history (`history`). Keyed by the mirror array and its length: appends push onto the
+	 * same array, so a view extends by materializing only the new tail, while anything that rebuilds
+	 * the mirror assigns a new array and invalidates both. Context builds run several times per turn;
+	 * without this each one re-copied every entry of the session.
+	 */
+	private compactView: MaterializedView | null = null;
+	private projectionMemo: {
+		readonly source: SessionEntry[];
+		readonly leafId: string | null;
+		readonly path: SessionEntry[];
+		readonly result: ReturnType<typeof projectSession>;
+	} | null = null;
+	private historyView: MaterializedView | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
 	// keyed on it so read hot paths (footer, RPC) never re-materialize unchanged sessions.
 	private mutationCount = 0;
 	private entriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
-	private branchCache: { leafId: string | null; mutation: number; entries: SessionEntry[] } | null = null;
+	private branchCache: {
+		leafId: string | null;
+		mutation: number;
+		entries: SessionEntry[];
+		source: FileEntry[];
+	} | null = null;
 	private sessionNameCache: string | undefined = undefined;
 	// Running usage totals over ALL entries (not branch-scoped), maintained
 	// incrementally on assistant-message append and rebuilt from scratch in
@@ -1960,6 +1986,10 @@ export class SessionManager {
 		) {
 			return this.branchCache.entries;
 		}
+		if (fromId === undefined) {
+			const extended = this._extendBranchCache();
+			if (extended !== undefined) return extended;
+		}
 		const path: SessionEntry[] = [];
 		const startId = fromId ?? this.leafId;
 		let entriesById = this.byId;
@@ -1977,9 +2007,36 @@ export class SessionManager {
 		}
 		const materializedPath = this._materializeEntries(path);
 		if (fromId === undefined) {
-			this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries: materializedPath };
+			this.branchCache = {
+				leafId: this.leafId,
+				mutation: this.mutationCount,
+				entries: materializedPath,
+				source: this.fileEntries,
+			};
 		}
 		return materializedPath;
+	}
+
+	/**
+	 * The cached branch extended by entries appended under its leaf since, when that is all that
+	 * changed (same mirror array, the new leaf descends from the cached one within a short walk).
+	 * Appending a message used to re-materialize the whole branch on the next read.
+	 */
+	private _extendBranchCache(): SessionEntry[] | undefined {
+		const cache = this.branchCache;
+		if (cache === null || cache.source !== this.fileEntries || cache.leafId === null) return undefined;
+		const added: SessionEntry[] = [];
+		let current = this.leafId ? this.byId.get(this.leafId) : undefined;
+		while (current && current.id !== cache.leafId) {
+			if (added.length >= 256) return undefined;
+			added.push(current);
+			current = current.parentId ? this.byId.get(current.parentId) : undefined;
+		}
+		if (current === undefined) return undefined;
+		added.reverse();
+		const entries = [...cache.entries, ...this._materializeEntries(added)];
+		this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries, source: this.fileEntries };
+		return entries;
 	}
 
 	/**
@@ -1996,7 +2053,45 @@ export class SessionManager {
 	 * the full history.
 	 */
 	buildSessionProjection(): SessionProjection {
-		return buildSessionProjection(this._getCompactEntries(), this.leafId);
+		const { projection } = this._projectCurrent();
+		return { ...projection, messages: [...projection.messages], entries: [...projection.entries] };
+	}
+
+	/**
+	 * Projection of the current leaf over the compact view, memoized until the view or the leaf
+	 * changes: several context builds run per turn over the same, unchanged session. Callers get
+	 * copies of the arrays because the agent appends to the message array it receives.
+	 */
+	private _projectCurrent(): ReturnType<typeof projectSession> {
+		const entries = this._getCompactEntries();
+		const memo = this.projectionMemo;
+		if (memo?.source === entries && memo.leafId === this.leafId) return memo.result;
+		const path = this._extendPath(memo, entries) ?? buildSessionPath(entries, this.leafId);
+		const result = projectSession(entries, this.leafId, undefined, path);
+		this.projectionMemo = { source: entries, leafId: this.leafId, path, result };
+		return result;
+	}
+
+	/**
+	 * The memoized leaf path extended by entries appended under its leaf, when the compact view only
+	 * grew by such a chain (the normal case while a session runs); undefined when it must be rebuilt.
+	 */
+	private _extendPath(memo: SessionManager["projectionMemo"], entries: SessionEntry[]): SessionEntry[] | undefined {
+		if (!memo || memo.leafId === null || this.leafId === null) return undefined;
+		const previous = memo.source;
+		if (entries.length <= previous.length || entries[previous.length - 1] !== previous[previous.length - 1]) {
+			return undefined;
+		}
+		let parentId: string | null = memo.leafId;
+		const appended: SessionEntry[] = [];
+		for (let index = previous.length; index < entries.length; index++) {
+			const entry = entries[index]!;
+			if (entry.parentId !== parentId) return undefined;
+			appended.push(entry);
+			parentId = entry.id;
+		}
+		if (parentId !== this.leafId) return undefined;
+		return [...memo.path, ...appended];
 	}
 
 	/**
@@ -2004,7 +2099,9 @@ export class SessionManager {
 	 * Uses tree traversal from current leaf.
 	 */
 	buildSessionContext(): SessionContext {
-		return buildSessionContext(this._getCompactEntries(), this.leafId);
+		const { projection, settings } = this._projectCurrent();
+		const { thinkingLevel, thinkingSelection, model, configurationUpdate } = settings;
+		return { messages: [...projection.messages], thinkingLevel, thinkingSelection, model, configurationUpdate };
 	}
 
 	hasContextMessages(): boolean {
@@ -2058,15 +2155,25 @@ export class SessionManager {
 	 */
 	getEntries(): SessionEntry[] {
 		if (this.mirrorTrimmed && this.sessionFile) {
-			return this._loadFullHistoryEntries()
+			// Every append reaches both the file and the mirror, so the full history is the history
+			// read at trim time plus the mirror's tail; per-turn readers no longer re-parse the file.
+			const extended = this._extendView(this.historyView);
+			if (extended !== undefined) {
+				this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: extended };
+				return extended;
+			}
+			const history = this._loadFullHistoryEntries()
 				.filter((e): e is SessionEntry => e.type !== "session")
 				.map((entry) => this.residentStore.materialize(entry));
+			this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: history };
+			return history;
 		}
 		if (this.entriesCache !== null && this.entriesCache.mutation === this.mutationCount) {
 			return this.entriesCache.entries;
 		}
-		const entries = this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
-		const materializedEntries = this._materializeEntries(entries);
+		// Not trimmed: every entry is in the mirror, so the compact view is exactly the full list
+		// and extends by the appended tail instead of re-copying the session on each mutation.
+		const materializedEntries = this._getCompactEntries();
 		this.entriesCache = { mutation: this.mutationCount, entries: materializedEntries };
 		return materializedEntries;
 	}
@@ -2086,6 +2193,36 @@ export class SessionManager {
 		this.entriesCache = null;
 		this.branchCache = null;
 		this.compactEntriesCache = null;
+		this.compactView = null;
+		this.historyView = null;
+		this.projectionMemo = null;
+	}
+
+	/** The view's entries extended by the mirror's new tail, or undefined when it must be rebuilt. */
+	private _extendView(view: MaterializedView | null): SessionEntry[] | undefined {
+		if (view === null || view.source !== this.fileEntries || view.length > this.fileEntries.length) return undefined;
+		if (view.length === this.fileEntries.length) return view.entries;
+		let missing = false;
+		const tail: SessionEntry[] = [];
+		for (const entry of this.fileEntries.slice(view.length)) {
+			if (entry.type === "session") continue;
+			const materialized = this.residentStore.materialize(entry, () => {
+				missing = true;
+				return undefined;
+			}) as SessionEntry;
+			tail.push(materialized);
+		}
+		if (missing) return undefined;
+		this._bindMessagePositions(tail);
+		return [...view.entries, ...tail];
+	}
+
+	private _bindMessagePositions(entries: readonly SessionEntry[]): void {
+		for (const entry of entries) {
+			if (entry.type !== "message") continue;
+			const order = this.entryOrdersById.get(entry.id);
+			if (order !== undefined) this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
+		}
 	}
 
 	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
@@ -2103,6 +2240,11 @@ export class SessionManager {
 	}
 
 	private _getCompactEntries(): SessionEntry[] {
+		const extended = this._extendView(this.compactView);
+		if (extended !== undefined) {
+			this.compactView = { source: this.fileEntries, length: this.fileEntries.length, entries: extended };
+			return extended;
+		}
 		if (this.compactEntriesCache?.mutation !== this.mutationCount) {
 			this.compactEntriesCache = {
 				mutation: this.mutationCount,
@@ -2128,11 +2270,8 @@ export class SessionManager {
 			}
 		}
 		const materialized = entries.map((entry) => this.residentStore.materialize(entry) as SessionEntry);
-		for (const entry of materialized) {
-			if (entry.type !== "message") continue;
-			const order = this.entryOrdersById.get(entry.id);
-			if (order !== undefined) this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
-		}
+		this._bindMessagePositions(materialized);
+		this.compactView = { source: this.fileEntries, length: this.fileEntries.length, entries: materialized };
 		return materialized;
 	}
 

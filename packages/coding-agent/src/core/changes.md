@@ -35,6 +35,29 @@
 - `packages/coding-agent/src/core/resource-loader.ts`: the bundled package resolver and its imports.
 
 ## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+## 2026-10-01 - Per-turn session reads extend instead of re-copying the session (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the compact mirror view, the full-history view of a trimmed mirror, the leaf branch and the current projection are materialized once and then extended by the entries appended since (keyed by the mirror array identity and length; anything that rebuilds the mirror assigns a new array and invalidates them). A trimmed mirror no longer re-reads and re-parses the session file for `getEntries()`; `projectSession` builds the leaf path once.
+- `packages/coding-agent/src/core/agent-session.ts`: a turn-end boundary with no drafts projects the session itself instead of cloning the branch into an in-memory manager.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: one canonicalization pass asks each model's fallback eligibility once.
+
+### Why
+
+Every background-triggered turn copied the whole session several times (context checks, hook previews, stop-hook history scans, footer usage) and re-read every skill file, and the first fallback check re-read provider settings per model; each copy blocked input for tens to hundreds of milliseconds in a 10k-entry session.
+
+### Why an extension could not handle it
+
+These are the session store and the turn-preparation paths in the core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch`, `getEntries`, `_getCompactEntries`, `buildSessionProjection`, `buildSessionContext`, `projectSession`, `buildContextEntries`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_buildBoundaryContext`.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: `authTiers`.
+
+## 2026-10-01 - Context usage is computed once per message change (senpi#2508)
 
 ### What changed
 

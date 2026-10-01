@@ -2065,7 +2065,12 @@ export class AgentSession {
 		drafts: SessionBoundaryDraft[],
 		boundary: "turn_end" | "agent_before_settle",
 	): BoundaryContextPreview {
-		const projection = this._createBoundaryPreviewManager(drafts).buildSessionProjection();
+		// With no drafts the preview is the session itself; cloning the branch into a new manager
+		// re-indexed and re-copied every entry twice per turn.
+		const projection =
+			drafts.length === 0
+				? this.sessionManager.buildSessionProjection()
+				: this._createBoundaryPreviewManager(drafts).buildSessionProjection();
 		const pendingMessages = this._getPendingBoundaryMessages();
 		const llmMessages = convertToLlm(projection.messages);
 		const finalRole = llmMessages[llmMessages.length - 1]?.role;

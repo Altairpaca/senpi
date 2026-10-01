@@ -14,7 +14,10 @@ class CountedEntry implements Component {
 	private readonly box: Box;
 	private readonly body: Markdown;
 
-	constructor(readonly index: number) {
+	readonly index: number;
+
+	constructor(index: number) {
+		this.index = index;
 		this.box = new Box(1, 0);
 		this.body = new Markdown(
 			`**Entry ${index}**: some *markdown* text for entry ${index}.`,
