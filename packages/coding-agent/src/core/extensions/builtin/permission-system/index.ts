@@ -4,6 +4,7 @@ import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { createEventEmitter } from "./events.ts";
+import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
 import { handleNoUI } from "./non-interactive.ts";
 import { createBuiltinParserRegistry, type ParserRegistry, toolOwnedPermissionRequests } from "./parsers.ts";
 import { showPermissionPrompt } from "./prompt.ts";
@@ -95,7 +96,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
-		const activeTools = pi.getActiveTools().filter((toolName) => !disabledTools.has(toolName));
+		const activeTools = pi
+			.getActiveTools()
+			.filter((toolName) => INTERNAL_PERMISSION_TOOLS.has(toolName) || !disabledTools.has(toolName));
 		pi.setActiveTools(activeTools);
 	});
 
@@ -108,6 +111,16 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			? parserRegistry.parse(event.toolName, event.input, ctx.cwd)
 			: (toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd) ??
 				parserRegistry.parse(event.toolName, event.input, ctx.cwd));
+		// Parsing still records a path monitor's approved parent. Command monitors and
+		// explicit action permissions declared by a tool retain their normal policy.
+		if (
+			INTERNAL_PERMISSION_TOOLS.has(event.toolName) &&
+			(event.toolName === "monitor"
+				? typeof event.input.command !== "string"
+				: permissionRequests.every((request) => request.permission === event.toolName))
+		) {
+			return undefined;
+		}
 		const sessionID = ctx.sessionManager.getSessionId();
 
 		for (const permissionRequest of permissionRequests) {
