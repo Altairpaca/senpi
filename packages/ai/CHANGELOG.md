@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Toggle-only reasoning models now expose only their supported thinking states: GLM, Kimi, DeepSeek and Qwen catalog rows whose API accepts thinking on or off (not an effort level) offer `off` and enabled thinking instead of a fabricated `minimal`/`low`/`medium`/`xhigh`/`max` ladder, while models with explicit effort metadata keep their declared ladders. Contributed by @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
+
 ### Removed
 
 ## [2026.10.1-2] - 2026-10-01
