@@ -10,6 +10,8 @@
 
 - Settled user questions identify their answering surface (`resolvedBy`) in tool results, `ask-user:settled` notifications, and RPC `question_resolved` frames. Extensions can also observe the new `ask-user:closed` event once for every terminal outcome, including silent cancellations; `ask-user:settled` keeps firing for the same outcomes as before ([#2533](https://github.com/code-yeongyu/senpi/issues/2533)).
 
+- RPC clients can retry prompts, steering, and follow-ups with durable client message and turn IDs without duplicating an accepted input. Admissions and prepared queues survive transcript reopen, conflicting payloads are rejected, and queue records and turn events echo the IDs. Hosts advertise `durable_client_message_id` ([desktop#1325](https://github.com/code-yeongyu/omo-desktop-app/issues/1325), [#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
+
 ### Changed
 
 ### Fixed
