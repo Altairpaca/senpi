@@ -1,3 +1,21 @@
+## 2026-10-01 - CI fails when the build rewrites a committed dist file (senpi#2484)
+
+### What changed
+
+- `.github/workflows/ci.yml` (Static checks): after `npm run build`, `git diff --exit-code` over every tracked `packages/*/dist/*` file.
+
+### Why
+
+- `packages/ai/dist/cli.js` and `packages/coding-agent/dist/cli.js` are committed bin stubs that the build overwrites. The upstream sync changed `packages/ai/src/cli.ts` without refreshing its stub, and the publish workflow's release step then aborted on the dirty tree. The new step reports that drift on the PR instead.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the Static checks job steps after `Build workspace package entries`.
+
 ## 2026-09-30 - Drop the duplicate Rust manual PTY QA step (senpi#2447)
 
 ### What changed
