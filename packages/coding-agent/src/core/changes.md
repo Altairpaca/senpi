@@ -25,7 +25,7 @@
 
 ### Why
 
-- `packages/coding-agent/src/core/agent-session.ts` retained retired tool-search callbacks after reload. A computer tool deactivated during shutdown then consulted the old generation on its next capabilities call.
+- `packages/coding-agent/src/core/agent-session.ts` retained retired tool-search callbacks after reload. A deferred computer tool then consulted the old generation on its next capabilities call.
 
 ### Why an extension could not handle it
 
