@@ -82,7 +82,11 @@
 
 - A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))
 
+- With two or more logins for one provider, a usage limit reported only in words now switches the request to the next account instead of failing it: Codex `The usage limit has been reached` (also the bare `usage_limit_reached` / `usage_not_included` codes), ChatGPT `You have hit your ChatGPT usage limit`, Claude `You've hit your session limit` / weekly / 5-hour limits and `blocking_limit`, OpenCode monthly and Go/free-tier limits, and `quota exceeded`. The spent account cools down until the reset time the provider gives (a reset header, a `resets_at` / `reset_after_seconds` field, or text such as `resets 12am (Asia/Seoul)` or `resets in 3 hours`), capped at 48 hours, or for 60 seconds when none is given. Only when every account is spent does the request move on to the model fallback chain, which is unchanged. A warning such as `You are approaching your usage limit` and context-overflow text still never switch accounts. Reported by @orientpine; fix by @orientpine with @tmdgusya. ([#1768](https://github.com/code-yeongyu/senpi/issues/1768))
+
 - A session opened on a multi-session host now runs with the permission preset its client asked for. `open_session.permissionPreset` was recorded and then ignored, so every host session ran as `full-access`: in the desktop app, "Ask first" and "Work in this project" asked for nothing, and a shell command or a read outside the project ran without approval. ([#2461](https://github.com/code-yeongyu/senpi/issues/2461))
+
+- With a ChatGPT subscription, image requests now use the subscription's own image generation instead of falling back to an unrelated OpenAI-compatible gateway that could answer 404. The native image tool used to be enabled only for the plain OpenAI Responses API, so subscription models on the Codex route never qualified; it now also qualifies on the subscription's own host. Thanks [@DevNewbie1826](https://github.com/DevNewbie1826). ([#2432](https://github.com/code-yeongyu/senpi/issues/2432))
 
 - A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
 
@@ -133,11 +137,15 @@
 
 ### Changed
 
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
 - A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
 
 - The recommended OpenAI model is now GPT-6.1 Sol at `medium`, one slot below GPT-6 Astra where GPT-6 Sol was; `gpt-6.1-sol-fast` counts as recommended like the other `-fast` ids. Your explicitly configured `recommendedModels` are untouched. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
 
 ### Fixed
+
+- An updated client can retire a shared host left running by an older release. While such a host was alive, every `host ensure` in the agent directory (including each desktop thread's own endpoint) was refused with `legacy_host`, and `host stop --drain` answered `unknown_owner`, so nothing short of killing the process by hand freed the machine. Now `host stop --drain` drains it when its old record still proves the process, and an ensure drains and replaces it on its own once it holds no session. With a session open the refusal says which process it is, which socket it serves, and the `host stop --drain --socket <socket>` that retires it. ([#2423](https://github.com/code-yeongyu/senpi/issues/2423))
 
 - Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 

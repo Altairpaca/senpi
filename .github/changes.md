@@ -1,4 +1,33 @@
+## 2026-09-30 - Drop the duplicate Rust manual PTY QA step (senpi#2447)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the "Rust manual PTY QA" step is removed.
+
+### Why
+
+- The preceding `cargo test -p senpi-pty --locked` step already runs `crates/senpi-pty/tests/manual_qa.rs`, because it is an integration test of the crate, so CI ran it twice.
+- The file stays as the manual QA harness `crates/senpi-pty/AGENTS.md` names.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: the senpi-pty steps of `native-prebuilds.yml`.
+
 # changes
+
+## 2026-09-30 - Nightly Check job installs Bun for check:bun-lock (senpi#752)
+
+### What changed
+
+- `.github/workflows/releasability.yml`: the `Check (main, no autofix)` job gains the `Setup Bun` step (bun 1.4.2, the SHA-pinned `oven-sh/setup-bun` ci.yml uses) between `Install dependencies` and `Check`.
+
+### Why
+
+- `npm run check` runs `check:bun-lock` since senpi#2352, which needs bun to regenerate `bun.lock`; ci.yml's `Static checks` installs Bun, the nightly job did not, so it failed with `bun is required to regenerate bun.lock: spawnSync bun ENOENT` on every run from 2026-09-30.
 
 ## 2026-09-30 - Node bundle CI step runs the Bun provider-coverage and compiled provider-probe files (senpi#2447)
 
@@ -15,6 +44,8 @@
 - CI workflow.
 
 ### Expected merge conflict zones
+
+- LOW: the steps between `Install dependencies` and `Check` in `releasability.yml`.
 
 - LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
 

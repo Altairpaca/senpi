@@ -241,6 +241,7 @@ export function streamWithCredentialRotation(
 		classify: (error, context) =>
 			classifyCredentialFailure(error, {
 				...context,
+				nowMs: now(),
 				cooldownBaseMs: sources.policy?.cooldownBaseMs,
 				cooldownCapMs: sources.policy?.cooldownCapMs,
 			}),
