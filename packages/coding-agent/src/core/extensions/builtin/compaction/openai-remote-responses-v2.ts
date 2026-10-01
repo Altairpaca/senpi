@@ -15,11 +15,7 @@ import {
 	openAiRemoteCompactionIdentity,
 } from "./openai-remote-model.ts";
 import type { OpenAiCompactionItem } from "./openai-remote-schema.ts";
-import {
-	type RemoteCompactionTimeout,
-	type RemoteCompactionTimeoutNextStep,
-	runWithRemoteTimeout,
-} from "./openai-remote-timeout.ts";
+import { type RemoteCompactionTimeout, runWithRemoteTimeout } from "./openai-remote-timeout.ts";
 
 type ProviderRequestPreparation = {
 	transformPayload(payload: unknown): Promise<unknown>;
@@ -196,7 +192,7 @@ export async function attemptOpenAiResponsesV2Compaction(
 		emit?: (event: V2CompactionEvent) => void;
 		requestId: string;
 		timeoutMs: number;
-		timeoutNext: RemoteCompactionTimeoutNextStep;
+		describeTimeout: (waitedMs: number) => RemoteCompactionTimeout;
 	},
 ): Promise<ResponsesV2CompactionResult | undefined> {
 	args.emit?.({
@@ -212,7 +208,7 @@ export async function attemptOpenAiResponsesV2Compaction(
 		const result = await runWithRemoteTimeout({
 			signal: args.event.signal,
 			timeoutMs: args.timeoutMs,
-			onTimeout: () =>
+			onTimeout: (waitedMs) =>
 				args.emit?.({
 					version: 1,
 					action: "remote_fallback",
@@ -221,11 +217,7 @@ export async function attemptOpenAiResponsesV2Compaction(
 					modelId: args.model.id,
 					reason: "remote-compaction-timeout",
 					transport: "responses-v2",
-					timeout: {
-						timeoutMs: args.timeoutMs,
-						tokens: args.request.tokensBefore,
-						next: args.timeoutNext,
-					},
+					timeout: args.describeTimeout(waitedMs),
 				}),
 			run: (signal) => runOpenAiResponsesV2Compaction({ ...args, event: { ...args.event, signal } }),
 		});

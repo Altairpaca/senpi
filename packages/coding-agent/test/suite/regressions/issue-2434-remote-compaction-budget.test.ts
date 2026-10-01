@@ -1,6 +1,7 @@
 import type { Api, AssistantMessage, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../../src/core/compaction/index.ts";
+import { SUMMARIZATION_TOTAL_BUDGET_MS } from "../../../src/core/compaction/stream-watchdog.ts";
 import { runOpenAiRemoteCompaction } from "../../../src/core/extensions/builtin/compaction/openai-remote.ts";
 import type { SessionBeforeCompactEvent } from "../../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
@@ -134,7 +135,13 @@ async function compactRemotely(model: Model<Api>, tokensBefore: number, latencyM
 	await vi.runAllTimersAsync();
 	const result = await pending;
 	const timedOutAt = emitted.find((event) => event.reason === "remote-compaction-timeout") ? Date.now() : undefined;
-	return { result, emitted, calls: endpoint.calls, elapsedMs: (timedOutAt ?? Date.now()) - startedAt };
+	return {
+		result,
+		emitted,
+		calls: endpoint.calls,
+		elapsedMs: (timedOutAt ?? Date.now()) - startedAt,
+		totalMs: Date.now() - startedAt,
+	};
 }
 
 afterEach(() => {
@@ -195,5 +202,18 @@ describe("issue #2434: remote compaction budget scales with the context being co
 		expect(smallHang.result).toBeUndefined();
 		expect(smallHang.emitted).toContainEqual(expect.objectContaining({ reason: "remote-compaction-timeout" }));
 		expect(smallHang.elapsedMs).toBeLessThan(subscriptionSmallHang.elapsedMs);
+	});
+
+	it("bounds the whole remote phase when every OpenAI route hangs, then hands over to the local summary", async () => {
+		vi.useFakeTimers();
+
+		const { result, emitted, calls, totalMs } = await compactRemotely(OPENAI_MODEL, 600_000, undefined);
+
+		expect(result).toBeUndefined();
+		expect(totalMs).toBeLessThanOrEqual(SUMMARIZATION_TOTAL_BUDGET_MS);
+		expect(calls).toHaveLength(1);
+		const timeouts = emitted.filter((event) => event.reason === "remote-compaction-timeout");
+		expect(timeouts).toHaveLength(1);
+		expect(timeouts[0]).toMatchObject({ timeout: { next: "local-summary", tokens: 600_000 } });
 	});
 });
