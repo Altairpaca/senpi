@@ -1,10 +1,69 @@
+import { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
+import { setImmediate } from "node:timers/promises";
 import workerThreads from "node:worker_threads";
 import { describe, expect, it } from "vitest";
 import { cleanupFailures, observeResources } from "../../scripts/gate-resources.ts";
 
 describe("owned runtime teardown observation", () => {
+	it("counts another registration of a baseline callback on the same event", async () => {
+		const listener = () => undefined;
+		process.on("beforeExit", listener);
+		const resources = observeResources();
+		try {
+			process.on("beforeExit", listener);
+			expect((await resources.counts()).listeners).toBe(1);
+		} finally {
+			process.off("beforeExit", listener);
+			process.off("beforeExit", listener);
+			resources.restore();
+		}
+	});
+
+	it("preserves subclass behavior for an observed worker", async () => {
+		const resources = observeResources();
+		class CustomWorker extends workerThreads.Worker {
+			value() {
+				return 42;
+			}
+		}
+		const worker = new CustomWorker("", { eval: true });
+		try {
+			expect(worker).toBeInstanceOf(CustomWorker);
+			expect(worker.value()).toBe(42);
+		} finally {
+			await worker.terminate();
+			resources.restore();
+		}
+	});
+
+	it("waits for close after child exit instead of guessing event-loop turns", async () => {
+		// Given: a child whose pipes have not closed when exit is delivered.
+		const resources = observeResources();
+		const child = new ChildProcess();
+		globalThis.__senpiCodemodeGateObserveResource?.("processes", child, "close");
+		child.emit("exit", 0, null);
+		let settled = false;
+		try {
+			// When: inspect teardown while close is held behind an event barrier.
+			const counts = resources.counts().then((value) => {
+				settled = true;
+				return value;
+			});
+			await setImmediate();
+			await setImmediate();
+			await setImmediate();
+			// Then: exit alone cannot certify closed pipes or a resource leak.
+			expect(settled).toBe(false);
+			child.emit("close", 0, null);
+			expect(cleanupFailures(await counts, "fixture")).toEqual([]);
+		} finally {
+			child.emit("close", 0, null);
+			resources.restore();
+		}
+	});
+
 	it("names a leaked host listener even when no worker or socket is open", async () => {
 		// Given: the host process outlives every runtime resource.
 		const resources = observeResources();

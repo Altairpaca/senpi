@@ -3,7 +3,6 @@ import type { EventEmitter } from "node:events";
 import http from "node:http";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
-import { setImmediate } from "node:timers/promises";
 import workerThreads from "node:worker_threads";
 import { Type } from "typebox";
 import { GateInputError } from "./gate-input-error.ts";
@@ -13,7 +12,14 @@ export const cleanupSchema = Type.Object({
 	handles: Type.Number(), subscriptions: Type.Number(), listeners: Type.Number(),
 });
 type ResourceKind = "processes" | "workers" | "sockets" | "handles";
-type OwnedResource = { readonly kind: ResourceKind; readonly emitter: EventEmitter; closed: boolean };
+type OwnedResource = {
+	readonly kind: ResourceKind;
+	readonly emitter: EventEmitter;
+	readonly close: Promise<void>;
+	readonly restore: () => void;
+	closing: boolean;
+	closed: boolean;
+};
 
 /**
  * Instrument the real constructors, not close() return values. Bun's process
@@ -23,7 +29,7 @@ type OwnedResource = { readonly kind: ResourceKind; readonly emitter: EventEmitt
 export function observeResources() {
 	const owned: OwnedResource[] = [];
 	const subscriptions = new Set<Promise<unknown>>();
-	const processListeners = new Map(process.eventNames().map((event) => [event, new Set(process.listeners(event))]));
+	const processListeners = new Map(process.eventNames().map((event) => [event, process.listeners(event)]));
 	const originals = {
 		Worker: workerThreads.Worker, spawn: childProcess.spawn,
 		createServer: http.createServer, connect: net.connect, createConnection: net.createConnection,
@@ -31,16 +37,39 @@ export function observeResources() {
 	};
 	function track(kind: ResourceKind, emitter: EventEmitter, closeEvent: string): void {
 		if (owned.some((item) => item.emitter === emitter)) return;
-		const entry = { kind, emitter, closed: false };
+		const completion = Promise.withResolvers<void>();
+		const method = { workers: "terminate", processes: "kill", sockets: "destroy", handles: "close" }[kind];
+		const descriptor = Object.getOwnPropertyDescriptor(emitter, method);
+		const original: unknown = Reflect.get(emitter, method);
+		const onExit = () => { entry.closing = true; };
+		const entry: OwnedResource = {
+			kind, emitter, close: completion.promise, closing: false, closed: false,
+			restore: () => {
+				emitter.off("exit", onExit);
+				if (descriptor) Object.defineProperty(emitter, method, descriptor);
+				else Reflect.deleteProperty(emitter, method);
+			},
+		};
 		owned.push(entry);
-		emitter.once(closeEvent, () => { entry.closed = true; });
+		emitter.once(closeEvent, () => { entry.closed = true; completion.resolve(); });
+		if (kind === "processes") emitter.once("exit", onExit);
+		if (typeof original === "function") Object.defineProperty(emitter, method, {
+			configurable: true, writable: true,
+			value: new Proxy(original, {
+				apply(target, receiver, args) {
+					const result: unknown = Reflect.apply(target, receiver, args);
+					if (result !== false) entry.closing = true;
+					return result;
+				},
+			}),
+		});
 		if (emitter instanceof http.Server)
 			emitter.on("connection", (socket: net.Socket) => track("sockets", socket, "close"));
 	}
 	globalThis.__senpiCodemodeGateObserveResource = track;
 	workerThreads.Worker = new Proxy(originals.Worker, {
-		construct(target, args) {
-			const worker: unknown = Reflect.construct(target, args);
+		construct(target, args, newTarget) {
+			const worker: unknown = Reflect.construct(target, args, newTarget);
 			if (!(worker instanceof originals.Worker)) throw new GateInputError("worker observation");
 			track("workers", worker, "exit");
 			return worker;
@@ -79,21 +108,32 @@ export function observeResources() {
 			return promise.finally(() => subscriptions.delete(promise));
 		},
 		async counts() {
-			// Close callbacks and async-resource destruction run at the next check phase.
-			await setImmediate();
-			await setImmediate();
+			// Await only requested teardown, so genuinely live resources remain visible.
+			let closing = owned.filter((entry) => entry.closing && !entry.closed);
+			while (closing.length > 0) {
+				await Promise.all(closing.map((entry) => entry.close));
+				closing = owned.filter((entry) => entry.closing && !entry.closed);
+			}
 			const active = owned.filter((entry) => !entry.closed);
 			const count = (kind: ResourceKind) => active.filter((entry) => entry.kind === kind).length;
 			return {
 				processes: count("processes"), workers: count("workers"), sockets: count("sockets"),
 				handles: count("handles"), subscriptions: subscriptions.size,
-				listeners: process.eventNames().reduce((total, event) => total + process.listeners(event)
-					.filter((listener) => !processListeners.get(event)?.has(listener)).length, 0)
+				listeners: process.eventNames().reduce((total, event) => {
+					const baseline = [...(processListeners.get(event) ?? [])];
+					return total + process.listeners(event).reduce((extra, listener) => {
+						const index = baseline.indexOf(listener);
+						if (index < 0) return extra + 1;
+						baseline.splice(index, 1);
+						return extra;
+					}, 0);
+				}, 0)
 					+ active.reduce((total, entry) => total + entry.emitter.eventNames()
 						.reduce((sum, event) => sum + entry.emitter.listenerCount(event), 0), 0),
 			};
 		},
 		restore() {
+			for (const entry of owned) entry.restore();
 			globalThis.__senpiCodemodeGateObserveResource = originals.gateObserver;
 			Object.assign(workerThreads, { Worker: originals.Worker });
 			Object.assign(childProcess, { spawn: originals.spawn });
