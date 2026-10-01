@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Kernel-originated tool approvals now reach the RPC client that submitted the cell, including approvals requested after a cell detaches and its original turn ends. Reusing a kernel no longer sends permission dialogs to its creation context. ([#2512](https://github.com/code-yeongyu/senpi/issues/2512))
+
 - Fixed the running eval spinner freezing between output updates. ([#2503](https://github.com/code-yeongyu/senpi/issues/2503))
 
 ### Removed
