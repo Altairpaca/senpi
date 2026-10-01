@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Removed the inherited `AgentOptions.shouldStopAfterTurn` and `AgentLoopConfig.shouldStopAfterTurn`. Use `finishTurn` and return `{ action: "end" }` to stop after the completed turn. `finishTurn` runs after the assistant message and every tool result are finalized and before `turn_end`, and its decision applies after `turn_end`. It also runs for error and aborted responses, which stay hard exits, so guard them to keep the old normal-response-only behavior:
 
   ```ts

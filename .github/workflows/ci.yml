@@ -47,6 +47,11 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
+      # The publish workflow's release step refuses a dirty tree after `npm run build`, so a committed
+      # dist file that the build rewrites (the bin stubs kept by .gitignore) must match the build output.
+      - name: Committed dist files match the build
+        run: git diff --exit-code -- ':(glob)packages/*/dist/**'
+
       - name: Workflow summary
         if: always()
         shell: bash

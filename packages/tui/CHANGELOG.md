@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Replaced the inherited `TUI.queryTerminalColorScheme()` and `TUI.queryTerminalBackgroundColor()` with `TUI.queryTerminalColors()`, which reads the default foreground, background and 16 ANSI colors (OSC 10, 11 and 4) in one round trip and returns `TerminalColors`. `parseOsc11BackgroundColor()` is removed.
 
 ### Added

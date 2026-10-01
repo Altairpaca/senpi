@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Changed the inherited provider-facing `ProviderStreams` and `StreamFunction` inputs from `Context` to normalized `TranscriptContext` values. System prompts and tool declarations now live in transcript system messages; custom providers read them with `getCurrentSystemPrompt()` and `getCurrentTools()`. The fork's `activeToolNames` rides on `TranscriptContext` and survives `normalizeContext()` ([#9548](https://github.com/earendil-works/pi/pull/9548)).
 
 - Restricted inherited `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly. `ToolResultMessage<unknown>` resolves to `never`; use `ToolResultMessage` or `ToolResultMessage<JsonValue>`.
