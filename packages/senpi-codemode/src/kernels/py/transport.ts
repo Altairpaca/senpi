@@ -24,7 +24,7 @@ import {
 	sweepProcessGroup,
 	waitForExit,
 } from "./process.ts";
-import { PythonStartup } from "./startup.ts";
+import { PythonStartup, type PythonStartupStage } from "./startup.ts";
 
 export type PythonTransportResult = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -44,6 +44,7 @@ export interface PythonTransportOptions {
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
+	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly memory?: KernelMemoryThresholds;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
@@ -224,7 +225,11 @@ export class PythonKernelTransport {
 		}
 		if (!isKernelToHostMessage(decoded.message)) return;
 		const message = decoded.message;
-		this.#startup?.progress(message);
+		if (message.type === "status" && message.event.op === "kernel-startup") {
+			const stage = this.#startup?.progress(message);
+			if (stage !== undefined) this.#options.onStartupProgress?.(stage);
+			return;
+		}
 		if (message.type === "ready") this.#settleStartup();
 		else if (message.type === "init-failed") this.#settleStartup(new Error(message.error.message));
 		else if (message.type === "result") this.#options.onResult(this, message);

@@ -6,7 +6,7 @@ import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 export const pythonStartupHangGuardMs = 11_000;
 
 const stages = ["interpreter-launch", "stdlib-imports", "runtime-init", "host-init"] as const;
-type PythonStartupStage = (typeof stages)[number];
+export type PythonStartupStage = (typeof stages)[number];
 
 export class PythonKernelStartupError extends Error {
 	readonly stage: PythonStartupStage;
@@ -34,7 +34,7 @@ export class PythonStartup {
 		this.#arm();
 	}
 
-	progress(message: KernelToHostMessage): void {
+	progress(message: KernelToHostMessage): PythonStartupStage | undefined {
 		if (this.#settled || message.type !== "status" || message.event.op !== "kernel-startup") return;
 		const stage = stages.find((candidate) => candidate === message.event.stage);
 		if (stage === undefined) return;
@@ -42,6 +42,7 @@ export class PythonStartup {
 		if (next <= this.#stageIndex) return;
 		this.#stageIndex = next;
 		this.#arm();
+		return stage;
 	}
 
 	settle(error?: Error): boolean {

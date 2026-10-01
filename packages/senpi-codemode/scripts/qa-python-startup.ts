@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PythonKernel } from "../src/kernels/py/kernel.ts";
+import type { PythonStartupStage } from "../src/kernels/py/startup.ts";
 
 // The compiled executable uses the same sidecar resolver and Python transport
 // as the shipped engine. A new bytecode-cache root exercises cold imports.
@@ -9,7 +10,7 @@ const root = await mkdtemp(join(tmpdir(), "senpi-python-bootstrap-"));
 try {
 	for (const label of ["cold", "warm"]) {
 		const begin = performance.now();
-		const stages: { readonly stage: unknown; readonly elapsedMs: number }[] = [];
+		const stages: { readonly stage: PythonStartupStage; readonly elapsedMs: number }[] = [];
 		try {
 			const kernel = await PythonKernel.start({
 				interpreterPath: process.platform === "win32" ? "python" : "python3",
@@ -17,10 +18,10 @@ try {
 				cwd: root,
 				connection: { port: 1, token: "fixture" },
 				env: { PYTHONPYCACHEPREFIX: join(root, "pycache") },
+				onStartupProgress(stage) {
+					stages.push({ stage, elapsedMs: performance.now() - begin });
+				},
 				onMessage(message) {
-					if (message.type === "status" && message.event.op === "kernel-startup") {
-						stages.push({ stage: message.event.stage, elapsedMs: performance.now() - begin });
-					}
 					if (message.type === "text" && message.stream === "stderr") process.stderr.write(message.data);
 				},
 			});

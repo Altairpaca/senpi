@@ -3,6 +3,7 @@ import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/p
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
 import type { KernelSpawnProcess } from "./process.ts";
+import type { PythonStartupStage } from "./startup.ts";
 import type { PythonTransportResult } from "./transport.ts";
 
 export interface PythonKernelStartOptions {
@@ -15,6 +16,8 @@ export interface PythonKernelStartOptions {
 	readonly sessionEnv?: SessionEnvironment;
 	/** Python bootstrap inactivity guard per advancing stage, not a total readiness deadline. */
 	readonly startupTimeoutMs?: number;
+	/** Observes bootstrap control events without mixing them into cell output callbacks. */
+	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
 	/** Post-cell collection, notice, and ceiling thresholds sent on `init`; absent leaves memory unmanaged. */
