@@ -447,15 +447,14 @@ export class AuthStorage implements CredentialStore {
 		if (authPath && !sharedAuthFileReadState) {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}
-		if (authPath) {
+		if (authPath && this.readState.loaded) {
+			// Another instance already loaded this store: start from its credentials, not an
+			// empty snapshot, so a busy read below keeps them. A repaired or migrated load
+			// leaves the revision unset, so only an exact revision match skips the re-read.
+			this.data = this.readState.data;
+			this.dataLoaded = true;
 			const revision = getFileContentRevision(authPath);
-			if (revision !== undefined && revision === this.readState.revision) {
-				// Another instance already loaded this exact revision: adopt it instead of
-				// starting from an empty snapshot.
-				this.data = this.readState.data;
-				this.dataLoaded = true;
-				return;
-			}
+			if (revision !== undefined && revision === this.readState.revision) return;
 		}
 		this.reload();
 	}

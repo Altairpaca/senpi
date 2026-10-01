@@ -19,7 +19,7 @@ const PROVIDER = "openai";
 const STORED = { [PROVIDER]: { type: "api_key", key: "sk-test-2487" } } as const;
 const CONTEXT = { initialized: true, capabilities: { experimentalApi: true } };
 
-type ModelListResult = { result?: { data: { id: string }[] } };
+type ModelListResult = { result?: { data: { id: string }[] }; error?: unknown };
 
 let agentDir: string;
 let authPath: string;
@@ -36,7 +36,11 @@ async function listModelIds(registry: ReturnType<typeof createRegistry>, id: num
 		method: "model/list",
 		params: { includeHidden: true },
 	})) as ModelListResult;
-	return (response.result?.data ?? []).map((model) => model.id);
+	// A JSON-RPC error is a failed request, never an empty model list.
+	if (response.result === undefined) {
+		throw new Error(`model/list request ${id} returned no result: ${JSON.stringify(response)}`);
+	}
+	return response.result.data.map((model) => model.id);
 }
 
 function lockableStore(initial: object, options: { heldFromStart?: boolean } = {}) {
