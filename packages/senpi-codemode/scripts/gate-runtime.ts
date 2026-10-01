@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { readProcessFootprint } from "@code-yeongyu/senpi";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import type { BridgeServerHandle } from "../src/bridge/http-server.ts";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import type { EvalKernel, EvalLanguage } from "../src/tool/types.ts";
 import { censusCell, legacyCells, workpoolCell } from "./gate-cells.ts";
@@ -37,46 +38,49 @@ async function main(): Promise<void> {
 	const calls: { name: string; args: unknown }[] = [];
 	let gcCollections = 0;
 	const thresholds = { gcWatermarkBytes: 256 * 1024 ** 2, noticeBytes: 1024 * 1024 ** 2, ceilingBytes: 2048 * 1024 ** 2 };
-	const resources = observeResources();
-	const { startBridgeServer }: typeof import("../src/bridge/http-server.ts") = await import(
-		pathToFileURL(`${target}/src/bridge/http-server.ts`).href
-	);
-	const { runEvalSchema }: typeof import("../src/bridges/schema-bridge.ts") = await import(
-		pathToFileURL(`${target}/src/bridges/schema-bridge.ts`).href
-	);
-	const reply = async (name: string, args: unknown): Promise<unknown> => {
-		calls.push({ name, args });
-		if (name === "failure") throw new GateInputError("fixture failure");
-		if (name === "__agent__") {
-			if (!Check(agentArgsSchema, args)) throw new GateInputError("agent fixture arguments");
-			if (args.handle === true && args.prompt !== "fixture-null-handle")
-				return { text: "fixture-agent", id: "st_fixture", handle: "agent://st_fixture", run_epoch: 1, agent: "task" };
-			return args.schema === undefined ? { text: "fixture-agent" } : { text: '{"answer":42}', data: { answer: 42 } };
-		}
-		if (name === "completion") {
-			if (!Check(promptArgsSchema, args)) throw new GateInputError(`${name} fixture arguments`);
-			const opts = args.opts ?? {};
-			return "schema" in opts ? { answer: 42 } : "fixture-completion";
-		}
-		if (name === "__output__") return "fixture-output";
-		if (name === "__schema__")
-			return runEvalSchema(args, { listTools: () => [{ name: "fixture", parameters: { type: "object" } }] });
-		if (name === "workpool") {
-			const record = { pool_id: "wp_0123456789abcdef0123456789abcdef", status: "open", mode: "fresh", workers: [], items: [] };
-			const value = typeof args === "object" && args !== null && "op" in args && args.op === "push"
-				? { pool_id: record.pool_id, item_ids: [{ key: "a", item_id: "wi_fedcba9876543210fedcba9876543210" }] }
-				: record;
-			return { text: JSON.stringify(value), details: value };
-		}
-		return { text: "fixture-value", details: { answer: 42 } };
-	};
-	const server = await startBridgeServer({
-		onCall: (request) => resources.subscribe(reply(request.toolName, request.args)),
-		onEmit: async () => undefined,
-		onCompletion: (request) => resources.subscribe(reply("completion", { prompt: request.prompt, opts: request.opts })),
-	});
+	let observation: ReturnType<typeof observeResources> | undefined;
+	let server: BridgeServerHandle | undefined;
 	let kernel: EvalKernel | undefined;
 	try {
+		const resources = observeResources();
+		observation = resources;
+		const { startBridgeServer }: typeof import("../src/bridge/http-server.ts") = await import(
+			pathToFileURL(`${target}/src/bridge/http-server.ts`).href
+		);
+		const { runEvalSchema }: typeof import("../src/bridges/schema-bridge.ts") = await import(
+			pathToFileURL(`${target}/src/bridges/schema-bridge.ts`).href
+		);
+		const reply = async (name: string, args: unknown): Promise<unknown> => {
+			calls.push({ name, args });
+			if (name === "failure") throw new GateInputError("fixture failure");
+			if (name === "__agent__") {
+				if (!Check(agentArgsSchema, args)) throw new GateInputError("agent fixture arguments");
+				if (args.handle === true && args.prompt !== "fixture-null-handle")
+					return { text: "fixture-agent", id: "st_fixture", handle: "agent://st_fixture", run_epoch: 1, agent: "task" };
+				return args.schema === undefined ? { text: "fixture-agent" } : { text: '{"answer":42}', data: { answer: 42 } };
+			}
+			if (name === "completion") {
+				if (!Check(promptArgsSchema, args)) throw new GateInputError(`${name} fixture arguments`);
+				const opts = args.opts ?? {};
+				return "schema" in opts ? { answer: 42 } : "fixture-completion";
+			}
+			if (name === "__output__") return "fixture-output";
+			if (name === "__schema__")
+				return runEvalSchema(args, { listTools: () => [{ name: "fixture", parameters: { type: "object" } }] });
+			if (name === "workpool") {
+				const record = { pool_id: "wp_0123456789abcdef0123456789abcdef", status: "open", mode: "fresh", workers: [], items: [] };
+				const value = typeof args === "object" && args !== null && "op" in args && args.op === "push"
+					? { pool_id: record.pool_id, item_ids: [{ key: "a", item_id: "wi_fedcba9876543210fedcba9876543210" }] }
+					: record;
+				return { text: JSON.stringify(value), details: value };
+			}
+			return { text: "fixture-value", details: { answer: 42 } };
+		};
+		server = await startBridgeServer({
+			onCall: (request) => resources.subscribe(reply(request.toolName, request.args)),
+			onEmit: async () => undefined,
+			onCompletion: (request) => resources.subscribe(reply("completion", { prompt: request.prompt, opts: request.opts })),
+		});
 		const common = {
 			sessionId: "gate-runtime",
 			cwd: root,
@@ -196,8 +200,8 @@ async function main(): Promise<void> {
 	} finally {
 		await cleanupRuntime({
 			retireKernel: async () => { await kernel?.close(); },
-			closeBridge: () => server.close(),
-			restoreObservers: () => resources.restore(),
+			closeBridge: async () => { await server?.close(); },
+			restoreObservers: () => observation?.restore(),
 			removeRoot: () => rm(root, { recursive: true, force: true }),
 		});
 	}

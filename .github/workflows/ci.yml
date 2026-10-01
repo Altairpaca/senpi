@@ -27,15 +27,15 @@ jobs:
         with:
           node-version: "24"
       - name: Setup Python
-        uses: actions/setup-python@06da6279cdbca41027908073e81a4544dc79c06b
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
       - name: Setup Ruby
-        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
         with:
           ruby-version: "4.0"
       - name: Setup Julia
-        uses: julia-actions/setup-julia@e89cce584bf1958661244c90fdf08fea80dadbd1
+        uses: julia-actions/setup-julia@e89cce584bf1958661244c90fdf08fea80dadbd1 # v3.0.2 + 16 commits (includes upstream #416)
         with:
           version: "1.12"
       - name: Install Ruby prelude dependency
@@ -52,7 +52,7 @@ jobs:
         run: bunx tsc --noEmit --project packages/senpi-codemode/scripts/tsconfig.gate.json
       - name: Upload gate report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: codemode-gate-report
           path: packages/senpi-codemode/gate-report.json

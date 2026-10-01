@@ -195,3 +195,19 @@ it("accepts unchanged certified content after an input timestamp refresh", async
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+it("labels a missing built entry with its workspace instead of a raw filesystem error", async () => {
+	const root = await mkdtemp(join(tmpdir(), "senpi-gate-missing-entry-"));
+	try {
+		const workspace = join(root, "packages/ai");
+		await mkdir(join(workspace, "src"), { recursive: true });
+		await mkdir(join(workspace, "dist"));
+		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
+		await expect(recordTargetBuild(join(root, "packages/senpi-codemode"))).rejects.toMatchObject({
+			name: "GateInputError",
+			input: expect.stringContaining("packages/ai"),
+		});
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

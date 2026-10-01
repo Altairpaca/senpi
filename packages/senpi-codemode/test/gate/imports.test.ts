@@ -1,11 +1,11 @@
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
-import { scopeImports } from "../../scripts/gate-import-scope.ts";
+import { moduleKey, scopeImports } from "../../scripts/gate-import-scope.ts";
 import { runProcess } from "../../scripts/gate-process.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -195,7 +195,8 @@ export async function createCodemodeSessionManager() {
 			const sharedReport = await census(shared);
 			const isolatedReport = await census(isolated);
 			// Then: checkout ownership cannot hide the actual transitive module graph.
-			expect(sharedReport.extension).not.toContain("node_modules/typebox/build/type/types/index.mjs");
+			const virtualRoot = `${moduleKey(pathToFileURL(await realpath(join(dependencies, "typebox"))).href)}/`;
+			expect(sharedReport.extension.some((entry) => entry.startsWith(virtualRoot))).toBe(false);
 			expect(sharedReport.extension).toEqual(isolatedReport.extension);
 			expect(sharedReport.firstKernel).toEqual(isolatedReport.firstKernel);
 			expect(sharedReport.extension).toEqual(

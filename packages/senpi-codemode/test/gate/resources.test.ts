@@ -33,8 +33,11 @@ describe("owned runtime teardown observation", () => {
 			expect(worker).toBeInstanceOf(CustomWorker);
 			expect(worker.value()).toBe(42);
 		} finally {
-			await worker.terminate();
-			resources.restore();
+			try {
+				await worker.terminate();
+			} finally {
+				resources.restore();
+			}
 		}
 	});
 
@@ -89,9 +92,12 @@ describe("owned runtime teardown observation", () => {
 			// Then: a close() boolean cannot hide this live worker.
 			expect(cleanupFailures(live, "fixture")).toContain("cleanup fixture: workers=1");
 		} finally {
-			await worker.terminate();
-			expect(cleanupFailures(await resources.counts(), "fixture")).toEqual([]);
-			resources.restore();
+			try {
+				await worker.terminate();
+				expect(cleanupFailures(await resources.counts(), "fixture")).toEqual([]);
+			} finally {
+				resources.restore();
+			}
 		}
 	});
 
@@ -112,13 +118,16 @@ describe("owned runtime teardown observation", () => {
 				expect.arrayContaining(["cleanup fixture: handles=1", "cleanup fixture: subscriptions=1"]),
 			);
 		} finally {
-			const closed = once(server, "close");
-			server.close();
-			await closed;
-			pending.resolve();
-			await subscription;
-			expect(cleanupFailures(await resources.counts(), "fixture")).toEqual([]);
-			resources.restore();
+			try {
+				const closed = once(server, "close");
+				server.close();
+				await closed;
+				pending.resolve();
+				await subscription;
+				expect(cleanupFailures(await resources.counts(), "fixture")).toEqual([]);
+			} finally {
+				resources.restore();
+			}
 		}
 	});
 });

@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 
 export type ChildResult = {
 	readonly code: number | null;
@@ -7,6 +8,15 @@ export type ChildResult = {
 	readonly stderr: string;
 	readonly pid: number;
 };
+
+export async function waitForChildReady(child: ChildProcess): Promise<void> {
+	await Promise.race([
+		once(child, "message"),
+		once(child, "close").then(() => {
+			throw new TypeError("Child probe closed before its ready marker");
+		}),
+	]);
+}
 
 /** Close drains both pipes; the watchdog guards a hang, never child startup speed. */
 export function collectChild(child: ChildProcess): Promise<ChildResult> {
@@ -21,8 +31,8 @@ export function collectChild(child: ChildProcess): Promise<ChildResult> {
 	return new Promise((resolve, reject) => {
 		const watchdog = setTimeout(() => {
 			child.kill("SIGKILL");
-			reject(new TypeError("Child probe hung without closing"));
-		}, 180_000);
+			reject(new TypeError(`Child probe hung without closing\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+		}, 240_000);
 		child.once("error", (error) => {
 			clearTimeout(watchdog);
 			reject(error);

@@ -61,7 +61,11 @@ export async function recordTargetBuild(target: string): Promise<void> {
 		await assertUnlinkedPath(workspace.directory, workspace.entry);
 		const sidecar = resolve(workspace.directory, ".senpi-gate-inputs.json");
 		await assertUnlinkedPath(workspace.directory, sidecar);
-		await readFile(workspace.entry);
+		await readFile(workspace.entry).catch((error: unknown) => {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT")
+				throw new GateInputError(`stale workspace dist: ${workspace.label} (missing build entry; run the gate build)`);
+			throw error;
+		});
 		const certificate = `${JSON.stringify(await buildFingerprint(workspace.directory), null, 2)}\n`;
 		const output = await open(sidecar, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW);
 		try {
