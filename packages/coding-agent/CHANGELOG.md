@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- `before_agent_start` extensions can now receive `event.trigger: "delivery"` when a turn starts from an admitted session-control delivery. Extensions with exhaustive trigger handling must add the new case; `"prompt"` and `"extension"` keep their existing meanings. ([#2424](https://github.com/code-yeongyu/senpi/issues/2424))
+
 - Removed the inherited `shouldStopAfterTurn` agent option. Use `finishTurn` and return `{ action: "end" }` instead; it runs before `turn_end`, applies its decision afterward, and also receives error and aborted responses, so return `undefined` for those hard exits. The `packages/agent` changelog has a before-and-after example.
 
 - Added the inherited `ContextEditEntry` to the exported `SessionEntry` union. Exhaustive entry switches must handle `context_edit`; `replacement: null` omits a message and a content replacement replaces it.
