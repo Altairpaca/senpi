@@ -84,6 +84,8 @@
 
 - The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
 
+- A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))
+
 - Resuming a long session no longer makes the transcript jump while older history loads in the background. The part already on screen now stays put, and the full history appears once it has finished loading, in a single repaint (#1076; thanks @effortprogrammer).
 
 - A session whose context has reached the hard limit no longer stays stuck when the summary for its pre-prompt compaction fails (for example the summary stream stalls past its time budget). senpi now applies the same deterministic fallback compaction that manual, threshold and overflow compaction already use, and when every earlier boundary would keep an unsafe tool result it keeps the earliest later suffix that passes the existing replay-safety, tool-chain and token-budget checks. A pre-prompt compaction that fails below the hard limit still keeps the full context. ([#1735](https://github.com/code-yeongyu/senpi/pull/1735) by [@GunP4ng](https://github.com/GunP4ng))
@@ -93,6 +95,7 @@
 - A session opened on a multi-session host now runs with the permission preset its client asked for. `open_session.permissionPreset` was recorded and then ignored, so every host session ran as `full-access`: in the desktop app, "Ask first" and "Work in this project" asked for nothing, and a shell command or a read outside the project ran without approval. ([#2461](https://github.com/code-yeongyu/senpi/issues/2461))
 
 - With a ChatGPT subscription, image requests now use the subscription's own image generation instead of falling back to an unrelated OpenAI-compatible gateway that could answer 404. The native image tool used to be enabled only for the plain OpenAI Responses API, so subscription models on the Codex route never qualified; it now also qualifies on the subscription's own host. Thanks [@DevNewbie1826](https://github.com/DevNewbie1826). ([#2432](https://github.com/code-yeongyu/senpi/issues/2432))
+- Package operations no longer flash a visible console window on Windows when the package manager starts install, update or discovery subprocesses. Thanks @willowite. ([#2450](https://github.com/code-yeongyu/senpi/issues/2450))
 
 - A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
 

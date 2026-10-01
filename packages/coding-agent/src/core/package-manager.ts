@@ -2667,6 +2667,7 @@ export class DefaultPackageManager implements PackageManager {
 			cwd: options?.cwd,
 			stdio: isStdoutTakenOver() ? ["ignore", 2, 2] : "inherit",
 			env,
+			windowsHide: true,
 		});
 	}
 
@@ -2681,6 +2682,7 @@ export class DefaultPackageManager implements PackageManager {
 			cwd: options?.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			env,
+			windowsHide: true,
 		});
 	}
 
@@ -2748,6 +2750,7 @@ export class DefaultPackageManager implements PackageManager {
 			stdio: ["ignore", "pipe", "pipe"],
 			encoding: "utf-8",
 			env,
+			windowsHide: true,
 		});
 		if (result.error || result.status !== 0) {
 			throw new Error(
