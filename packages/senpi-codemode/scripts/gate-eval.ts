@@ -13,6 +13,7 @@ import {
 import { measureSuite } from "./gate-suite.ts";
 import { measureSurfaces } from "./gate-surfaces.ts";
 import { assertFreshTarget } from "./gate-target.ts";
+import { cleanupFailures, cleanupSchema } from "./gate-resources.ts";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(scriptRoot, "..");
@@ -21,12 +22,14 @@ const runtimeReportSchema = Type.Object({
 	witnesses: Type.Record(Type.String(), Type.Unknown()),
 	hostRuntime: Type.Union([Type.Literal("bun"), Type.Literal("node")]),
 	memory: Type.Optional(Type.Unknown()),
-	cleanup: Type.Object({ kernelClosed: Type.Boolean(), bridgeClosed: Type.Boolean() }),
+	cleanup: cleanupSchema,
 });
 const importsSchema = Type.Object({
 	extension: Type.Array(Type.String()),
 	firstKernel: Type.Array(Type.String()),
 	sizes: Type.Record(Type.String(), Type.Number()),
+	classification: Type.Array(Type.Object({ url: Type.String(), scope: Type.String() })),
+	virtualSpecifiers: Type.Array(Type.String()),
 });
 
 async function main(): Promise<void> {
@@ -56,6 +59,7 @@ async function main(): Promise<void> {
 	const revision = await runProcess(["git", "rev-parse", "HEAD"], target);
 	if (revision.exitCode !== 0) throw new GateInputError("target checkout revision");
 	observations.targetRevision = revision.stdout.trim();
+	observations.platform = process.platform;
 	for (const runtime of manifest.required) {
 		const command = runtime.jsRuntime ?? { js: "bun", py: "python3", rb: "ruby", jl: "julia" }[runtime.language];
 		const version = await runProcess([command, "--version"], target).catch((error: unknown) => {
@@ -95,6 +99,7 @@ async function main(): Promise<void> {
 		for (const [scenario, witness] of Object.entries(measured.witnesses))
 			report.invariants[`${runtime.id}/${scenario}`] = witness;
 		report.invariants[`${runtime.id}/cleanup`] = measured.cleanup;
+		failures.push(...cleanupFailures(measured.cleanup, runtime.id));
 	}
 	if (process.env.SENPI_CODEMODE_GATE_MUTATE === "drop-phase") {
 		report.helperCensus.js = (report.helperCensus.js ?? []).filter((name) => name !== "phase");
@@ -111,6 +116,9 @@ async function main(): Promise<void> {
 			if (!Check(importsSchema, measured)) throw new GateInputError("import census report");
 			report.imports = { extension: measured.extension, firstKernel: measured.firstKernel };
 			observations.importBytes = measured.sizes;
+			observations.importClassification = measured.classification;
+			observations.virtualSpecifiers = measured.virtualSpecifiers;
+			console.log(`Scoped import census: extension=${measured.extension.length}, firstKernel=${measured.firstKernel.length}, host=${new Set(measured.classification.filter((frame) => frame.scope === "host").map((frame) => frame.url)).size}`);
 		}
 		// OS-specific contracts may legitimately skip on another OS. Their real outcomes
 		// remain visible; the suite's exit status gates every active contract independently.
@@ -129,8 +137,13 @@ async function main(): Promise<void> {
 			});
 	failures.push(...result.failures);
 	await writeFile(resolve(values.report), `${JSON.stringify({ report, failures, additions: result.additions }, null, 2)}\n`);
-	if (values["write-baseline"] && failures.length === 0)
-		await writeFile(resolve(values.baseline), `${JSON.stringify(report, null, 2)}\n`);
+	if (values["write-baseline"] && failures.length === 0) {
+		// The artifact retains every measured parent edge. The frozen baseline
+		// needs only comparison inputs, not the unrelated host's trace or sizes.
+		const baselineObservations = Object.fromEntries(Object.entries(observations)
+			.filter(([key]) => key !== "importClassification" && key !== "importBytes"));
+		await writeFile(resolve(values.baseline), `${JSON.stringify({ ...report, observations: baselineObservations }, null, 2)}\n`);
+	}
 	console.log(`Gate report: ${resolve(values.report)}`);
 	for (const failure of new Set(failures)) console.error(failure);
 	console.log(`gate: ${failures.length ? "FAIL" : "PASS"} (${Object.keys(report.prompts).length} prompt cells, ${report.runtimes.length} runtimes)`);

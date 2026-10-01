@@ -366,7 +366,7 @@ namespace to prevent recursive execution.
 
 ## Validation
 
-The regression gate compares full prompt content (120 dialect/capability/runtime
+The regression gate compares full prompt content (240 dialect/capability/runtime/host
 combinations), schemas, helper census, live helper witnesses and eager imports,
 and runs the legacy contracts. It requires Bun, Node, Python, Ruby and Julia; a missing
 interpreter fails rather than skipping a runtime. It does not gate wall-clock
@@ -376,18 +376,24 @@ Ruby 3.4 and later also require the `base64` gem (`gem install base64 --version 
 The eager-import probe starts without third-party validation modules loaded.
 It validates observer records only after measurement, so a target sharing the
 harness dependency tree has the same cold census as a separate checkout.
-Module IDs are package-relative; no platform modules are skipped or allowlisted.
-Workspace imports resolve through built `dist` entries. Before measuring, the
-gate rejects a missing entry or one older than its workspace sources, manifest,
-or TypeScript configuration, naming the package that needs rebuilding.
+Module IDs are package-relative. The exact census covers codemode, its non-virtual
+dependency closure and Node builtins. The observer records parent edges and reads
+both loader `VIRTUAL_MODULES` tables: their backing packages and dependencies
+reachable only across virtual edges belong to the host and are excluded from
+set equality. Every observed edge and classification remains in the report.
+Workspace imports resolve through built `dist` entries. The gate build records
+the source file set and content hashes after a successful build; preflight rejects
+missing, changed or deleted inputs instead of trusting mtimes alone.
 
 ```bash
+bun packages/senpi-codemode/scripts/gate-build.ts
 bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
 bun run --cwd packages/senpi-codemode test -- test/gate
 ```
 
 Install and build both the head checkout and a clean checkout of the PR merge
-base with `bun install --ignore-scripts --frozen-lockfile` and `bun run build`.
+base with `bun install --ignore-scripts --frozen-lockfile`. Build each target with
+the head harness, `bun packages/senpi-codemode/scripts/gate-build.ts <checkout>`.
 Record the baseline with the **head harness** against that freshly built base
 checkout, not by running an older harness:
 
@@ -396,11 +402,23 @@ bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
   --baseline test/gate/baseline.json --write-baseline
 ```
 
-The report is `gate-report.json` by default (`--report <path>` overrides it).
+The report is gitignored `gate-report.json` by default (`--report <path>` overrides it).
 `test/gate/allowlist.json` contains reviewed additive changes keyed by plan node;
 it cannot authorize removal or modification of a legacy entry. The test-only
 `SENPI_CODEMODE_GATE_MUTATE=drop-phase` report mutation proves that helper removal
-is rejected. It is read only by the gate, not by production kernels.
+is rejected. `SENPI_CODEMODE_GATE_MUTATE=leak-kernel` leaves the real kernel
+alive at the teardown witness, then closes it in `finally`; nonzero process,
+worker, socket, handle, subscription and active-resource listener counts fail
+by name. Constructors are observed because Bun's active-handle/report APIs
+return empty arrays even for live workers.
+
+Legacy scenario identities are compared exactly, so deleting or renaming a
+test cannot make the gate green. Platform-dependent skip outcomes remain
+visible in the report. Driver tests await child close events, with a generous
+hang watchdog; the infinite-loop timeout uses an injected clock after the
+worker announces execution. No deadline tests are excluded from the gate.
+The held-child probe advances the parent clock past all former startup
+deadlines three times before releasing the child's IPC barrier.
 
 ```bash
 cd packages/senpi-codemode

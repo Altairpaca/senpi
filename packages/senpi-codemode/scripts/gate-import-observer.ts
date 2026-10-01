@@ -9,7 +9,9 @@ registerHooks({
 		const path = process.env.SENPI_GATE_IMPORT_FILE;
 		const phase = process.env.SENPI_GATE_IMPORT_PHASE;
 		if (path !== undefined && phase !== undefined && !result.url.includes("/scripts/gate-"))
-			appendFileSync(path, `${JSON.stringify({ phase, url: result.url, thread: threadId })}\n`);
+			appendFileSync(path, `${JSON.stringify({
+				phase, url: result.url, thread: threadId, parent: context.parentURL, specifier,
+			})}\n`);
 		return result;
 	},
 });

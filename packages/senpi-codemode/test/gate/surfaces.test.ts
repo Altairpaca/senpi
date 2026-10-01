@@ -10,10 +10,11 @@ describe("regression surface matrix", () => {
 		// When
 		const surfaces = await measureSurfaces(target);
 		// Then: the coverage keys, not prose wording, are the contract.
-		expect(Object.keys(surfaces.prompts)).toHaveLength(120);
+		expect(Object.keys(surfaces.prompts)).toHaveLength(240);
 		expect(Object.keys(surfaces.schemas)).toEqual(expect.arrayContaining(["js", "js+py", "all"]));
 		expect(surfaces.prompts["gpt/true/true/all/bun"]).toBeDefined();
 		expect(surfaces.prompts["default/false/false/js/node"]).toBeDefined();
+		expect(surfaces.prompts["gpt/true/true/all/bun/host"]).toBeDefined();
 	});
 
 	it("preserves character content while ignoring JSON object insertion order", () => {

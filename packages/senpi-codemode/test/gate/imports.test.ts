@@ -21,6 +21,15 @@ async function createTarget(root: string): Promise<string> {
 	await mkdir(join(target, "src/config"), { recursive: true });
 	await mkdir(join(target, "src/interpreters"), { recursive: true });
 	await writeFile(join(root, "package.json"), '{"type":"module"}');
+	await mkdir(join(root, "packages/coding-agent/src/core/extensions"), { recursive: true });
+	await writeFile(
+		join(root, "packages/coding-agent/src/core/extensions/loader.ts"),
+		'import * as box from "typebox"; const VIRTUAL_MODULES = { typebox: box };',
+	);
+	await writeFile(
+		join(root, "packages/coding-agent/src/core/extensions/virtual-modules.ts"),
+		'import * as box from "typebox"; export const VIRTUAL_MODULES = { typebox: box };',
+	);
 	await writeFile(
 		join(target, "src/index.ts"),
 		'import { Type } from "typebox"; export const schema = Type.String();',
@@ -92,9 +101,66 @@ describe("cold eager import census", () => {
 			const sharedReport = await census(shared);
 			const isolatedReport = await census(isolated);
 			// Then: checkout ownership cannot hide the actual transitive module graph.
-			expect(sharedReport.extension).toContain("node_modules/typebox/build/type/types/index.mjs");
+			expect(sharedReport.extension).not.toContain("node_modules/typebox/build/type/types/index.mjs");
 			expect(sharedReport.extension).toEqual(isolatedReport.extension);
 			expect(sharedReport.firstKernel).toEqual(isolatedReport.firstKernel);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	}, 180_000);
+
+	it("ignores a new host-only dependency but names a new codemode eager import", async () => {
+		// Given: an extension importing a real virtual root whose external closure is host-owned.
+		const root = await mkdtemp(join(tmpdir(), "senpi-census-scope-"));
+		try {
+			const target = await createTarget(root);
+			await mkdir(join(root, "node_modules"));
+			await symlink(
+				resolve(packageRoot, "../../node_modules/typebox"),
+				join(root, "node_modules/typebox"),
+				"junction",
+			);
+			await mkdir(join(root, "node_modules/fixture-host"));
+			await writeFile(
+				join(root, "node_modules/fixture-host/package.json"),
+				'{"type":"module","exports":{"import":"./index.js"}}',
+			);
+			await writeFile(join(root, "node_modules/fixture-host/index.js"), "export const value = 1;");
+			for (const file of ["loader.ts", "virtual-modules.ts"]) {
+				await writeFile(
+					join(root, "packages/coding-agent/src/core/extensions", file),
+					'import * as box from "typebox"; import * as host from "fixture-host"; export const VIRTUAL_MODULES = { typebox: box, "fixture-host": host };',
+				);
+			}
+			await writeFile(
+				join(target, "src/index.ts"),
+				'import { value } from "fixture-host"; export const schema = value;',
+			);
+			const initial = await census(target);
+			await mkdir(join(root, "node_modules/fixture-host-dependency"));
+			await writeFile(
+				join(root, "node_modules/fixture-host-dependency/package.json"),
+				'{"type":"module","main":"index.js"}',
+			);
+			await writeFile(join(root, "node_modules/fixture-host-dependency/index.js"), "export const dependency = 2;");
+			await writeFile(
+				join(root, "node_modules/fixture-host/index.js"),
+				'import { dependency } from "fixture-host-dependency"; export const value = dependency;',
+			);
+			const unrelated = await census(target);
+			expect(unrelated.extension).toEqual(initial.extension);
+			expect(unrelated.firstKernel).toEqual(initial.firstKernel);
+			await writeFile(join(target, "src/zz-gate-probe.ts"), "export const probe = 1;");
+			await writeFile(
+				join(target, "src/index.ts"),
+				'import { value } from "fixture-host"; import "./zz-gate-probe.ts"; export const schema = value;',
+			);
+			// When: the cold probe observes a new eager module owned by codemode.
+			const changed = await census(target);
+			// Then: the exact scoped set exposes the added file.
+			expect(changed.extension.filter((entry) => !initial.extension.includes(entry))).toEqual([
+				"packages/senpi-codemode/src/zz-gate-probe.ts",
+			]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

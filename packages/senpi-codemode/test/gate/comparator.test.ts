@@ -15,6 +15,10 @@ const baseline: GateReport = {
 	],
 	invariants: { terminalEvents: 1 },
 	imports: { extension: ["node:fs"] },
+	observations: {
+		platform: "darwin",
+		legacyContracts: { "fixture/keeps output": "passed", "fixture/windows case": "pending" },
+	},
 };
 
 describe("eval regression report comparison", () => {
@@ -64,5 +68,50 @@ describe("eval regression report comparison", () => {
 		const result = compareReports({ baseline, report: changed, additions: ["schemas/js"] });
 		// Then
 		expect(result.failures).toContain("schema surface: js removed");
+	});
+
+	it.each(["removed", "renamed"])("rejects a %s legacy scenario even when the remaining suite passes", (change) => {
+		// Given: the suite succeeds but loses a baseline scenario.
+		const legacyContracts =
+			change === "removed"
+				? { "fixture/windows case": "pending" }
+				: { "fixture/renamed output": "passed", "fixture/windows case": "pending" };
+		// When
+		const result = compareReports({
+			baseline,
+			report: { ...baseline, observations: { platform: "linux", legacyContracts } },
+			additions: [],
+		});
+		// Then
+		expect(result.exitCode).toBe(1);
+		expect(result.failures).toContain("legacy contract: fixture/keeps output removed");
+	});
+
+	it("permits platform-dependent skip outcomes without losing a scenario", () => {
+		// Given: the same scenarios run on another platform.
+		const legacyContracts = { "fixture/keeps output": "passed", "fixture/windows case": "passed" };
+		// When
+		const result = compareReports({
+			baseline,
+			report: { ...baseline, observations: { legacyContracts } },
+			additions: [],
+		});
+		// Then
+		expect(result.exitCode).toBe(0);
+	});
+
+	it("rejects silently skipping a legacy scenario on the same platform", () => {
+		// Given: a formerly passing test no longer executes.
+		const report = {
+			...baseline,
+			observations: {
+				platform: "darwin",
+				legacyContracts: { "fixture/keeps output": "pending", "fixture/windows case": "pending" },
+			},
+		};
+		// When
+		const result = compareReports({ baseline, report, additions: [] });
+		// Then
+		expect(result.failures).toContain("legacy contract: fixture/keeps output outcome changed");
 	});
 });

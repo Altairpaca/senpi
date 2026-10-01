@@ -10,6 +10,7 @@ import type { EvalKernel, EvalLanguage } from "../src/tool/types.ts";
 import { censusCell, legacyCells, workpoolCell } from "./gate-cells.ts";
 import { helperCandidates } from "./gate-census.ts";
 import { canonical, GateInputError, goldenSchema } from "./gate-report.ts";
+import { observeResources } from "./gate-resources.ts";
 
 const promptArgsSchema = Type.Object({
 	prompt: Type.String(),
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
 	const calls: { name: string; args: unknown }[] = [];
 	let gcCollections = 0;
 	const thresholds = { gcWatermarkBytes: 256 * 1024 ** 2, noticeBytes: 1024 * 1024 ** 2, ceilingBytes: 2048 * 1024 ** 2 };
+	const resources = observeResources();
 	const { startBridgeServer }: typeof import("../src/bridge/http-server.ts") = await import(
 		pathToFileURL(`${target}/src/bridge/http-server.ts`).href
 	);
@@ -68,9 +70,9 @@ async function main(): Promise<void> {
 		return { text: "fixture-value", details: { answer: 42 } };
 	};
 	const server = await startBridgeServer({
-		onCall: (request) => reply(request.toolName, request.args),
+		onCall: (request) => resources.subscribe(reply(request.toolName, request.args)),
 		onEmit: async () => undefined,
-		onCompletion: async (request) => reply("completion", { prompt: request.prompt, opts: request.opts }),
+		onCompletion: (request) => resources.subscribe(reply("completion", { prompt: request.prompt, opts: request.opts })),
 	});
 	let kernel: EvalKernel | undefined;
 	try {
@@ -82,7 +84,7 @@ async function main(): Promise<void> {
 				events.push(message);
 				if (message.type === "status" && message.event.op === "memory-collected") gcCollections += 1;
 				if (message.type === "tool-call") {
-					void reply(message.toolName, message.args).then(
+					void resources.subscribe(reply(message.toolName, message.args)).then(
 						(value) => kernel?.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value }),
 						(error: unknown) => kernel?.deliverToolReply({
 							type: "tool-reply", callId: message.callId, ok: false,
@@ -180,16 +182,20 @@ async function main(): Promise<void> {
 			memory = result.memory;
 		}
 		witnesses["legacy-small-cell-gc"] = { collections: gcCollections };
-		await kernel.close();
+		// Gate-only mutation: leave the real kernel owned until after the measured
+		// witness. The finally block still retires it, even in the negative probe.
+		if (process.env.SENPI_CODEMODE_GATE_MUTATE !== "leak-kernel") await kernel.close();
 		await server.close();
+		const cleanup = await resources.counts();
 		console.log(`GATE_RUNTIME:${JSON.stringify({
 			helperNames, witnesses, memory,
 			hostRuntime: process.versions.bun === undefined ? "node" : "bun",
-			cleanup: { kernelClosed: true, bridgeClosed: true },
+			cleanup,
 		})}`);
 	} finally {
 		await kernel?.close();
 		await server.close();
+		resources.restore();
 		await rm(root, { recursive: true, force: true });
 	}
 }

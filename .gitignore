@@ -1,4 +1,5 @@
 node_modules/
+packages/senpi-codemode/gate-report.json
 dist/
 .artifacts/
 *.log

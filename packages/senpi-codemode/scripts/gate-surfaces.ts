@@ -26,20 +26,23 @@ export async function measureSurfaces(target: string): Promise<Pick<GateReport, 
 			for (const spawns of [false, true]) {
 				for (const monitor of [false, true]) {
 					for (const runtime of ["bun", "node"]) {
+						for (const hostLine of [undefined, "<host-environment>"]) {
 						const parts = buildEvalPrompt(enabled, {
 							modelId,
 							spawns,
 							monitor,
 							jsRuntime: { name: runtime, version: "<runtime-version>" },
 							bunSkillPath: "<bun-skill-path>",
+							...(hostLine === undefined ? {} : { hostLine }),
 						});
 						const content = [parts.description, parts.promptSnippet, ...parts.promptGuidelines].join("\n");
-						prompts[`${style}/${spawns}/${monitor}/${set}/${runtime}`] = {
+						prompts[`${style}/${spawns}/${monitor}/${set}/${runtime}${hostLine === undefined ? "" : "/host"}`] = {
 							...parts,
 							promptGuidelines: [...parts.promptGuidelines],
 							bytes: Buffer.byteLength(content),
 							tokens: content.length / 4,
 						};
+						}
 					}
 				}
 			}

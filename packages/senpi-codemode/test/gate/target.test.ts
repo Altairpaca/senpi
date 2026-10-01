@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { recordTargetBuild } from "../../scripts/gate-build-inputs.ts";
 import { runProcess } from "../../scripts/gate-process.ts";
 import { assertFreshTarget } from "../../scripts/gate-target.ts";
 
@@ -48,10 +49,37 @@ it("allows workspace output rebuilt after its source changed", async () => {
 		await utimes(join(workspace, "package.json"), 100, 100);
 		await utimes(join(workspace, "src/index.ts"), 200, 200);
 		await utimes(join(workspace, "dist/index.js"), 300, 300);
+		await recordTargetBuild(join(root, "packages/senpi-codemode"));
 		// When: the gate checks the freshly built target.
 		const measured = assertFreshTarget(join(root, "packages/senpi-codemode"));
 		// Then: it permits measurement instead of rejecting a valid rebuild.
 		await expect(measured).resolves.toBeUndefined();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it("rejects a deleted source even when every remaining input predates the build", async () => {
+	// Given: build evidence names a source no longer present in the checkout.
+	const root = await mkdtemp(join(tmpdir(), "senpi-gate-deleted-"));
+	try {
+		const workspace = join(root, "packages/ai");
+		await mkdir(join(workspace, "src"), { recursive: true });
+		await mkdir(join(workspace, "dist"));
+		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
+		await writeFile(join(workspace, "src/index.ts"), "export const model = 1;");
+		await writeFile(join(workspace, "dist/index.js"), "export const model = 1;");
+		await writeFile(join(workspace, "src/deleted.ts"), "export const removed = 2;");
+		await utimes(join(workspace, "package.json"), 100, 100);
+		await utimes(join(workspace, "src/index.ts"), 100, 100);
+		await utimes(join(workspace, "src/deleted.ts"), 100, 100);
+		await utimes(join(workspace, "dist/index.js"), 200, 200);
+		await recordTargetBuild(join(root, "packages/senpi-codemode"));
+		await rm(join(workspace, "src/deleted.ts"));
+		// When / Then: mtime equality cannot certify a deleted module.
+		await expect(assertFreshTarget(join(root, "packages/senpi-codemode"))).rejects.toThrow(
+			"changed or deleted inputs: src/deleted.ts",
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

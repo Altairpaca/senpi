@@ -1,0 +1,106 @@
+import childProcess from "node:child_process";
+import type { EventEmitter } from "node:events";
+import http from "node:http";
+import { syncBuiltinESMExports } from "node:module";
+import net from "node:net";
+import { setImmediate } from "node:timers/promises";
+import workerThreads from "node:worker_threads";
+import { Type } from "typebox";
+import { GateInputError } from "./gate-input-error.ts";
+
+export const cleanupSchema = Type.Object({
+	processes: Type.Number(), workers: Type.Number(), sockets: Type.Number(),
+	handles: Type.Number(), subscriptions: Type.Number(), listeners: Type.Number(),
+});
+type ResourceKind = "processes" | "workers" | "sockets" | "handles";
+type OwnedResource = { readonly kind: ResourceKind; readonly emitter: EventEmitter; closed: boolean };
+
+/**
+ * Instrument the real constructors, not close() return values. Bun's process
+ * report/active-handle APIs report empty arrays even for a live Worker, so they
+ * cannot be the oracle. These wrappers only live in the separate gate process.
+ */
+export function observeResources() {
+	const owned: OwnedResource[] = [];
+	const subscriptions = new Set<Promise<unknown>>();
+	const processListeners = new Map(process.eventNames().map((event) => [event, new Set(process.listeners(event))]));
+	const originals = {
+		Worker: workerThreads.Worker, spawn: childProcess.spawn,
+		createServer: http.createServer, connect: net.connect, createConnection: net.createConnection,
+	};
+	function track(kind: ResourceKind, emitter: EventEmitter, closeEvent: string): void {
+		if (owned.some((item) => item.emitter === emitter)) return;
+		const entry = { kind, emitter, closed: false };
+		owned.push(entry);
+		emitter.once(closeEvent, () => { entry.closed = true; });
+	}
+	workerThreads.Worker = new Proxy(originals.Worker, {
+		construct(target, args) {
+			const worker: unknown = Reflect.construct(target, args);
+			if (!(worker instanceof originals.Worker)) throw new GateInputError("worker observation");
+			track("workers", worker, "exit");
+			return worker;
+		},
+	});
+	childProcess.spawn = new Proxy(originals.spawn, {
+		apply(target, receiver, args) {
+			const child: unknown = Reflect.apply(target, receiver, args);
+			if (!(child instanceof childProcess.ChildProcess)) throw new GateInputError("child observation");
+			track("processes", child, "close");
+			return child;
+		},
+	});
+	http.createServer = new Proxy(originals.createServer, {
+		apply(target, receiver, args) {
+			const server: unknown = Reflect.apply(target, receiver, args);
+			if (!(server instanceof http.Server)) throw new GateInputError("server observation");
+			track("handles", server, "close");
+			server.on("connection", (socket: net.Socket) => track("sockets", socket, "close"));
+			return server;
+		},
+	});
+	const socketHook: ProxyHandler<typeof net.connect> = {
+		apply(target, receiver, args) {
+			const socket: unknown = Reflect.apply(target, receiver, args);
+			if (!(socket instanceof net.Socket)) throw new GateInputError("socket observation");
+			track("sockets", socket, "close");
+			return socket;
+		},
+	};
+	net.connect = new Proxy(originals.connect, socketHook);
+	net.createConnection = new Proxy(originals.createConnection, socketHook);
+	syncBuiltinESMExports();
+	return {
+		subscribe<T>(promise: Promise<T>): Promise<T> {
+			subscriptions.add(promise);
+			return promise.finally(() => subscriptions.delete(promise));
+		},
+		async counts() {
+			// Close callbacks and async-resource destruction run at the next check phase.
+			await setImmediate();
+			await setImmediate();
+			const active = owned.filter((entry) => !entry.closed);
+			const count = (kind: ResourceKind) => active.filter((entry) => entry.kind === kind).length;
+			return {
+				processes: count("processes"), workers: count("workers"), sockets: count("sockets"),
+				handles: count("handles"), subscriptions: subscriptions.size,
+				listeners: process.eventNames().reduce((total, event) => total + process.listeners(event)
+					.filter((listener) => !processListeners.get(event)?.has(listener)).length, 0)
+					+ active.reduce((total, entry) => total + entry.emitter.eventNames()
+						.reduce((sum, event) => sum + entry.emitter.listenerCount(event), 0), 0),
+			};
+		},
+		restore() {
+			Object.assign(workerThreads, { Worker: originals.Worker });
+			Object.assign(childProcess, { spawn: originals.spawn });
+			Object.assign(http, { createServer: originals.createServer });
+			Object.assign(net, { connect: originals.connect, createConnection: originals.createConnection });
+			syncBuiltinESMExports();
+		},
+	};
+}
+
+export function cleanupFailures(counts: Readonly<Record<string, number>>, runtime: string): string[] {
+	return Object.entries(counts).filter(([, count]) => count !== 0)
+		.map(([kind, count]) => `cleanup ${runtime}: ${kind}=${count}`);
+}

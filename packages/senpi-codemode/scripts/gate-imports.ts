@@ -10,8 +10,6 @@ if (!target) throw new TypeError("Import census requires a target checkout");
 const root = await mkdtemp(join(tmpdir(), "senpi-gate-imports-"));
 const path = join(root, "imports.jsonl");
 const observer = fileURLToPath(new URL("./gate-import-observer.ts", import.meta.url));
-const extension = new Set<string>();
-const firstKernel = new Set<string>();
 const sizes: Record<string, number> = {};
 let manager: CodemodeSessionManager | undefined;
 try {
@@ -47,24 +45,22 @@ try {
 	// only when the target shares the harness's module cache.
 	delete process.env.SENPI_GATE_IMPORT_FILE;
 	delete process.env.SENPI_GATE_IMPORT_PHASE;
-	const { Type } = await import("typebox");
 	const { Check } = await import("typebox/value");
-	const entrySchema = Type.Object({ phase: Type.String(), url: Type.String(), thread: Type.Number() });
+	const { importFrameSchema, moduleKey, scopeImports } = await import("./gate-import-scope.ts");
+	const frames = [];
 	let workerObserved = false;
 	for (const line of (await readFile(path, "utf8")).trim().split("\n")) {
 		const entry: unknown = JSON.parse(line);
-		if (!Check(entrySchema, entry)) throw new GateInputError("import observer frame");
-		const file = entry.url.startsWith("file:") ? fileURLToPath(entry.url).replaceAll("\\", "/") : entry.url;
-		const key = file.includes("/node_modules/")
-			? `node_modules/${file.split("/node_modules/").at(-1)}`
-			: file.includes("/packages/") ? `packages/${file.split("/packages/").at(-1)}` : entry.url;
-		if (entry.phase === "extension") extension.add(key);
-		firstKernel.add(key);
+		if (!Check(importFrameSchema, entry)) throw new GateInputError("import observer frame");
+		const key = moduleKey(entry.url);
+		frames.push(entry);
 		if (entry.thread !== 0) workerObserved = true;
 		if (entry.url.startsWith("file:")) sizes[key] = (await stat(fileURLToPath(entry.url))).size;
 	}
 	if (!workerObserved) throw new GateInputError("import observer did not witness the kernel worker");
-	console.log(`GATE_IMPORTS:${JSON.stringify({ extension: [...extension].sort(), firstKernel: [...firstKernel].sort(), sizes })}`);
+	const scoped = await scopeImports(target, frames);
+	console.log(`GATE_SCOPED_IMPORTS:${JSON.stringify({ extension: scoped.extension, firstKernel: scoped.firstKernel })}`);
+	console.log(`GATE_IMPORTS:${JSON.stringify({ ...scoped, sizes })}`);
 } finally {
 	await manager?.dispose();
 	delete process.env.SENPI_GATE_IMPORT_FILE;

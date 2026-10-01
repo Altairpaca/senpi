@@ -43,7 +43,7 @@ jobs:
       - name: Install dependencies
         run: bun install --ignore-scripts --frozen-lockfile
       - name: Build workspace entries
-        run: bun run build
+        run: bun packages/senpi-codemode/scripts/gate-build.ts
       - name: Eval regression gate
         run: bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
       - name: Gate comparator contracts
