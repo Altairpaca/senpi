@@ -59,6 +59,22 @@ describe("eval regression report comparison", () => {
 		// Then
 		expect(result.failures).toEqual(["helper census: js removed [phase]"]);
 		expect(result.additions).toEqual(["helperCensus/js/wait"]);
+		const unreviewed = compareReports({ baseline, report: changed, additions: [] });
+		expect(unreviewed.failures).toContain("unreviewed addition: helperCensus/js/wait");
+	});
+
+	it("permits a reviewed module addition without allowing a removed import", () => {
+		// Given: an intentional module addition with its exact phase-scoped approval.
+		const added = { ...baseline, imports: { extension: ["node:fs", "node:path"] } };
+		// When / Then: approval applies to the module, never to a lost dependency.
+		const reviewed = compareReports({ baseline, report: added, additions: ["imports/extension/node:path"] });
+		expect(reviewed.exitCode).toBe(0);
+		expect(reviewed.additions).toContain("imports/extension/node:path");
+		expect(compareReports({ baseline, report: added, additions: [] }).exitCode).toBe(1);
+		const removed = { ...baseline, imports: { extension: ["node:path"] } };
+		expect(compareReports({ baseline, report: removed, additions: ["imports/extension/node:path"] }).exitCode).toBe(
+			1,
+		);
 	});
 
 	it("rejects a missing report section instead of treating it as an additive change", () => {
@@ -93,7 +109,7 @@ describe("eval regression report comparison", () => {
 		// When
 		const result = compareReports({
 			baseline,
-			report: { ...baseline, observations: { legacyContracts } },
+			report: { ...baseline, observations: { platform: "linux", legacyContracts } },
 			additions: [],
 		});
 		// Then

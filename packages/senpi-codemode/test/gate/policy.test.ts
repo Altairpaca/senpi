@@ -27,13 +27,16 @@ describe("load-invariant policy measurement", () => {
 		// When
 		const invariants = await measurePolicies(target);
 		// Then
+		const collects = language === "js" || language === "py";
 		expect(invariants[`${language}/memoryPolicy`]).toEqual({
-			noticeCount: 3,
-			globalNames: ["rows"],
-			ceilingMarks: 1,
+			noticeCount: collects ? 3 : 1,
+			globalNames: collects ? ["rows"] : [],
+			ceilingMarks: collects ? 1 : 2,
 			pendingAfterBreach: true,
 			recycledResults: 1,
 			pendingAfterRecycle: false,
+			uncollectedOverCeiling: !collects,
+			uncollectedPending: !collects,
 		});
 	});
 });

@@ -62,8 +62,11 @@ try {
 	console.log(`GATE_SCOPED_IMPORTS:${JSON.stringify({ extension: scoped.extension, firstKernel: scoped.firstKernel })}`);
 	console.log(`GATE_IMPORTS:${JSON.stringify({ ...scoped, sizes })}`);
 } finally {
-	await manager?.dispose();
-	delete process.env.SENPI_GATE_IMPORT_FILE;
-	delete process.env.SENPI_GATE_IMPORT_PHASE;
-	await rm(root, { recursive: true, force: true });
+	try {
+		await manager?.dispose();
+	} finally {
+		delete process.env.SENPI_GATE_IMPORT_FILE;
+		delete process.env.SENPI_GATE_IMPORT_PHASE;
+		await rm(root, { recursive: true, force: true });
+	}
 }

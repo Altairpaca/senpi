@@ -32,7 +32,20 @@ export function compareReports(input: Comparison) {
 	compareSection("prompt surface", "prompts");
 	compareSection("schema surface", "schemas");
 	compareSection("invariant", "invariants");
-	compareSection("eager imports", "imports");
+	for (const [phase, modules] of Object.entries(input.baseline.imports)) {
+		const actual = input.report.imports[phase];
+		if (!actual) failures.push(`eager imports: ${phase} removed`);
+		else {
+			const removed = modules.filter((name) => !actual.includes(name));
+			if (removed.length > 0) failures.push(`eager imports: ${phase} removed [${removed.join(", ")}]`);
+		}
+	}
+	for (const [phase, modules] of Object.entries(input.report.imports)) {
+		if (!(phase in input.baseline.imports)) recordAddition(`imports/${phase}`);
+		for (const name of modules) {
+			if (!(input.baseline.imports[phase] ?? []).includes(name)) recordAddition(`imports/${phase}/${name}`);
+		}
+	}
 	const legacySchema = Type.Record(Type.String(), Type.String());
 	const before = input.baseline.observations?.legacyContracts ?? {};
 	const after = input.report.observations?.legacyContracts ?? {};
@@ -56,17 +69,12 @@ export function compareReports(input: Comparison) {
 		if (!input.additions.includes(path)) failures.push(`unreviewed addition: ${path}`);
 	}
 
-	function compareSection(label: string, section: "prompts" | "schemas" | "invariants" | "imports"): void {
+	function compareSection(label: string, section: "prompts" | "schemas" | "invariants"): void {
 		const before = input.baseline[section];
 		const after = input.report[section];
 		for (const [key, value] of Object.entries(before)) {
 			if (!(key in after)) failures.push(`${label}: ${key} removed`);
-			else if (canonical(value) !== canonical(after[key])) {
-				if (section === "imports" && Array.isArray(value) && Array.isArray(after[key])) {
-					const actual = after[key];
-					failures.push(`${label}: ${key} changed (+[${actual.filter((item) => !value.includes(item)).join(", ")}], -[${value.filter((item) => !actual.includes(item)).join(", ")}])`);
-				} else failures.push(`${label}: ${key} changed`);
-			}
+			else if (canonical(value) !== canonical(after[key])) failures.push(`${label}: ${key} changed`);
 		}
 		for (const key of Object.keys(after)) {
 			if (!(key in before)) recordAddition(`${section}/${key}`);

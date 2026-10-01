@@ -9,9 +9,6 @@ export async function measureSurfaces(target: string): Promise<Pick<GateReport, 
 	const { createEvalInputSchema }: typeof import("../src/tool/types.ts") = await import(
 		pathToFileURL(`${target}/src/tool/types.ts`).href
 	);
-	const { runEvalSchema }: typeof import("../src/bridges/schema-bridge.ts") = await import(
-		pathToFileURL(`${target}/src/bridges/schema-bridge.ts`).href
-	);
 	const prompts: GateReport["prompts"] = {};
 	const schemas: GateReport["schemas"] = {};
 	const models = { default: "fixture", claude: "claude-fixture", codex: "codex-fixture", gpt: "gpt-fixture", kimi: "kimi-fixture" };
@@ -46,14 +43,6 @@ export async function measureSurfaces(target: string): Promise<Pick<GateReport, 
 					}
 				}
 			}
-		}
-	}
-	for (const name of ["eval:helpers", "eval:helpers:js", "eval:helpers:py", "eval:helpers:rb", "eval:helpers:jl"]) {
-		try {
-			schemas[name] = canonical(runEvalSchema({ name }, { listTools: () => [] }));
-		} catch (error: unknown) {
-			// Virtual contracts do not exist before their plan node lands.
-			if (!(error instanceof Error) || error.name !== "SchemaUnknownToolError") throw error;
 		}
 	}
 	return { prompts, schemas };

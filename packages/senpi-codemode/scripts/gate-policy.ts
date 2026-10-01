@@ -19,26 +19,35 @@ export async function measurePolicies(target: string): Promise<Record<string, un
 		memoryCeilingPolicy: [4, 8, 16, 64].map((gib) => defaultMemoryCeilingMb(gib * 1024 * mib)),
 	};
 	for (const language of ["js", "py", "rb", "jl"] as const) {
+		const collects = language === "js" || language === "py";
+		const measure = collects ? "heap" : "footprint";
 		const policy = new KernelMemoryPolicy(
-			language, { gcWatermarkBytes: 32 * mib, noticeBytes: 64 * mib, ceilingBytes: 128 * mib },
-			{ collects: language === "js" || language === "py" },
+			language, { gcWatermarkBytes: 32 * mib, noticeBytes: collects ? 64 * mib : 0, ceilingBytes: 128 * mib },
+			{ collects },
 		);
-		const outcomes = [80, 80, 100, 160].map((live) => policy.annotate({
-			liveBytes: live * mib, measure: "heap", gcRan: true,
-			globals: [{ name: "rows", bytes: live * mib }],
-		}));
+		const uncollected = policy.annotate({
+			liveBytes: 160 * mib, measure, gcRan: false,
+			...(collects ? { globals: [{ name: "uncollected_rows", bytes: 160 * mib }] } : {}),
+		});
+		const uncollectedPending = policy.recyclePending;
+		const outcomes = [uncollected, ...[80, 80, 100, 160].map((live) => policy.annotate({
+			liveBytes: live * mib, measure, gcRan: collects,
+			...(collects ? { globals: [{ name: "rows", bytes: live * mib }] } : {}),
+		}))];
 		const pendingAfterBreach = policy.recyclePending;
 		policy.recycleStarted();
 		policy.kernelRetired();
-		const fresh = policy.annotate({ liveBytes: mib, measure: "heap" });
-		const next = policy.annotate({ liveBytes: mib, measure: "heap" });
+		const fresh = policy.annotate({ liveBytes: mib, measure });
+		const next = policy.annotate({ liveBytes: mib, measure });
 		invariants[`${language}/memoryPolicy`] = {
 			noticeCount: outcomes.filter((item) => item.notice !== undefined).length,
-			globalNames: outcomes[0]?.globals?.map((item) => item.name),
+			globalNames: outcomes.find((item) => item.notice !== undefined)?.globals?.map((item) => item.name) ?? [],
 			ceilingMarks: outcomes.filter((item) => item.overCeiling === true).length,
 			pendingAfterBreach,
 			recycledResults: [fresh, next].filter((item) => item.recycled === true).length,
 			pendingAfterRecycle: policy.recyclePending,
+			uncollectedOverCeiling: uncollected.overCeiling === true,
+			uncollectedPending,
 		};
 		const manager = new EvalDetachedCellManager({ now: () => 0 });
 		try {

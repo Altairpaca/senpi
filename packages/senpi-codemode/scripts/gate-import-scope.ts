@@ -13,7 +13,8 @@ type ImportFrame = Static<typeof importFrameSchema>;
 
 export function moduleKey(url: string): string {
 	const path = url.startsWith("file:") ? fileURLToPath(url).replaceAll("\\", "/") : url;
-	if (path.includes("/node_modules/")) return `node_modules/${path.split("/node_modules/").at(-1)}`;
+	const dependencies = path.indexOf("/node_modules/");
+	if (dependencies !== -1) return path.slice(dependencies + 1);
 	if (path.includes("/packages/")) return `packages/${path.split("/packages/").at(-1)}`;
 	return url;
 }
@@ -72,29 +73,35 @@ async function virtualRoots(target: string) {
 export async function scopeImports(target: string, frames: readonly ImportFrame[]) {
 	const { specifiers, roots } = await virtualRoots(target);
 	const hostRoot = (key: string) => [...roots].some((root) => key.startsWith(root));
-	const scoped = new Set(frames.filter((frame) => {
-		const key = moduleKey(frame.url);
-		return key.startsWith("packages/senpi-codemode/") || key.startsWith("node:");
-	}).map((frame) => frame.url));
-	let grew = true;
-	while (grew) {
-		grew = false;
-		for (const frame of frames) {
-			if (scoped.has(frame.url) || frame.parent === undefined || !scoped.has(frame.parent)) continue;
-			if (specifiers.has(frame.specifier) || hostRoot(moduleKey(frame.url))) continue;
-			scoped.add(frame.url);
-			grew = true;
+	function owned(measured: readonly ImportFrame[]): ReadonlySet<string> {
+		const scoped = new Set(measured.filter((frame) =>
+			moduleKey(frame.url).startsWith("packages/senpi-codemode/src/"),
+		).map((frame) => frame.url));
+		let grew = true;
+		while (grew) {
+			grew = false;
+			for (const frame of measured) {
+				if (scoped.has(frame.url) || frame.parent === undefined || !scoped.has(frame.parent)) continue;
+				if (specifiers.has(frame.specifier) || hostRoot(moduleKey(frame.url))) continue;
+				scoped.add(frame.url);
+				grew = true;
+			}
 		}
+		return scoped;
 	}
-	const keys = (phase?: string) => [...new Set(frames
-		.filter((frame) => scoped.has(frame.url) && (phase === undefined || frame.phase === phase))
+	const extensionFrames = frames.filter((frame) => frame.phase === "extension");
+	const measuredFrames = frames.filter((frame) => frame.phase === "extension" || frame.phase === "firstKernel");
+	const extension = owned(extensionFrames);
+	const firstKernel = owned(measuredFrames);
+	const keys = (measured: readonly ImportFrame[], scoped: ReadonlySet<string>) => [...new Set(measured
+		.filter((frame) => scoped.has(frame.url))
 		.map((frame) => moduleKey(frame.url)))].sort();
 	return {
-		extension: keys("extension"), firstKernel: keys(),
+		extension: keys(extensionFrames, extension), firstKernel: keys(measuredFrames, firstKernel),
 		classification: frames.map((frame) => ({
 			...frame, url: moduleKey(frame.url),
 			...(frame.parent === undefined ? {} : { parent: moduleKey(frame.parent) }),
-			scope: scoped.has(frame.url) ? "codemode" : "host",
+			scope: (frame.phase === "extension" ? extension : firstKernel).has(frame.url) ? "codemode" : "host",
 		})),
 		virtualSpecifiers: [...specifiers].sort(),
 	};

@@ -10,8 +10,19 @@ describe("regression surface matrix", () => {
 		// When
 		const surfaces = await measureSurfaces(target);
 		// Then: the coverage keys, not prose wording, are the contract.
-		expect(Object.keys(surfaces.prompts)).toHaveLength(240);
-		expect(Object.keys(surfaces.schemas)).toEqual(expect.arrayContaining(["js", "js+py", "all"]));
+		const expected = ["default", "claude", "codex", "gpt", "kimi"].flatMap((model) =>
+			[false, true].flatMap((spawns) =>
+				[false, true].flatMap((monitor) =>
+					["js", "js+py", "all"].flatMap((set) =>
+						["bun", "node"].flatMap((runtime) =>
+							["", "/host"].map((host) => `${model}/${spawns}/${monitor}/${set}/${runtime}${host}`),
+						),
+					),
+				),
+			),
+		);
+		expect(Object.keys(surfaces.prompts).sort()).toEqual(expected.sort());
+		expect(Object.keys(surfaces.schemas).sort()).toEqual(["all", "js", "js+py"]);
 		expect(surfaces.prompts["gpt/true/true/all/bun"]).toBeDefined();
 		expect(surfaces.prompts["default/false/false/js/node"]).toBeDefined();
 		expect(surfaces.prompts["gpt/true/true/all/bun/host"]).toBeDefined();
@@ -25,5 +36,6 @@ describe("regression surface matrix", () => {
 		// Then
 		expect(value).toBe(canonical({ first: 1, second: ["abc"] }));
 		expect(value).not.toBe(canonical({ first: 1, second: ["abd"] }));
+		expect(canonical({ "\u00e9": 1, "e\u0301": 2 })).toBe(canonical({ "e\u0301": 2, "\u00e9": 1 }));
 	});
 });
