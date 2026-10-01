@@ -146,6 +146,11 @@ async function main(): Promise<void> {
 	}
 	console.log(`Gate report: ${resolve(values.report)}`);
 	for (const failure of new Set(failures)) console.error(failure);
+	if (result.failures.length > 0) {
+		console.error("For reviewed changes on main, rebuild a clean main checkout and re-record with the head harness:");
+		console.error("bun packages/senpi-codemode/scripts/gate-build.ts <clean-main-checkout>");
+		console.error("bun run --cwd packages/senpi-codemode gate --target <clean-main-checkout> --baseline test/gate/baseline.json --write-baseline");
+	}
 	console.log(`gate: ${failures.length ? "FAIL" : "PASS"} (${Object.keys(report.prompts).length} prompt cells, ${report.runtimes.length} runtimes)`);
 	process.exitCode = failures.length ? 1 : 0;
 }
