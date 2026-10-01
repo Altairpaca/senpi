@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- `before_agent_start` extensions can now receive `event.trigger: "delivery"` when a turn starts from an admitted session-control delivery. Extensions with exhaustive trigger handling must add the new case; `"prompt"` and `"extension"` keep their existing meanings. ([#2424](https://github.com/code-yeongyu/senpi/issues/2424))
+
 - Removed the inherited `shouldStopAfterTurn` agent option. Use `finishTurn` and return `{ action: "end" }` instead; it runs before `turn_end`, applies its decision afterward, and also receives error and aborted responses, so return `undefined` for those hard exits. The `packages/agent` changelog has a before-and-after example.
 
 - Added the inherited `ContextEditEntry` to the exported `SessionEntry` union. Exhaustive entry switches must handle `context_edit`; `replacement: null` omits a message and a content replacement replaces it.
@@ -97,6 +99,9 @@
 - A fallback-chain entry whose provider answered one 429 with a very long `Retry-After` (a weekly window, or an API gateway replaying a stale wait of almost a day) is checked again after `fallback.circuitMaxCooldownMs` (30 minutes by default) instead of being skipped by every session until the whole hint elapsed. The circuit breaker now bounds the provider's wait by that ceiling like its own cooldown: once it passes, one half-open probe goes to the entry, a response closes the circuit, and another rate limit re-opens it with the fresh hint. Hints up to the ceiling are honored as before. ([#2446](https://github.com/code-yeongyu/senpi/issues/2446))
 
 - Fixed inherited new sessions being lost when the process exits before the first assistant response. The session file is now created when the first user message is sent ([#10000](https://github.com/earendil-works/pi/issues/10000)).
+- When an extension command starts a deferred turn, `--print` now waits before choosing the final answer and exit status, rather than finishing with empty or stale output. ([#2436](https://github.com/code-yeongyu/senpi/pull/2436))
+
+### Removed
 
 - Fixed inherited split-turn compaction summaries being refused by Claude Fable 5.1, mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)), and cancellation races that could start automatic compaction, leave stale retry state or miss cancellation during summarization auth ([#9340](https://github.com/earendil-works/pi/issues/9340), [#9777](https://github.com/earendil-works/pi/issues/9777)) ([#9908](https://github.com/earendil-works/pi/pull/9908) by [@davidbrai](https://github.com/davidbrai)).
 

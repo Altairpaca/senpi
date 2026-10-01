@@ -671,13 +671,14 @@ The host budgets each handler separately: a handler still running after `session
 
 #### before_agent_start
 
-Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt.
+Fired before an agent turn starts. Can inject a message and/or modify the system prompt.
 
 ```typescript
 pi.on("before_agent_start", async (event, ctx) => {
-  // event.prompt - user's prompt text
-  // event.trigger - "prompt" for a user prompt, "extension" for a turn an extension triggered
-  //   with sendMessage(..., { triggerTurn: true }) (event.prompt is then that message's text)
+  // event.prompt - user text for "prompt"; admitted/custom message text for the other triggers
+  // event.trigger - "prompt" for a user prompt, "delivery" for an admitted session-control
+  //   delivery, or "extension" for any other turn an extension triggered with
+  //   sendMessage(..., { triggerTurn: true }) (event.prompt is then that message's text)
   // event.images - attached images (if any)
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)

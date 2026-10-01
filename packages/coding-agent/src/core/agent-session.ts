@@ -226,7 +226,7 @@ import type {
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
-import { ExternalAdmission } from "./external-admission.ts";
+import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import {
 	isManualContinueSubmission,
@@ -5428,7 +5428,9 @@ export class AgentSession {
 						undefined,
 						this._baseSystemPrompt,
 						this._baseSystemPromptOptions,
-						{ trigger: "extension" },
+						{
+							trigger: deliveryIdOf(appMessage) === undefined ? "extension" : "delivery",
+						},
 					);
 					if (userAbortGeneration !== this._userAbortGeneration) {
 						queueTriggerForLater();
