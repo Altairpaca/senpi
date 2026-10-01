@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,42 @@ import { runProcess } from "../../scripts/gate-process.ts";
 import { assertFreshTarget } from "../../scripts/gate-target.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+it.each(["dist", "entry", "sidecar"])("does not certify build output through a %s symlink", async (linked) => {
+	// Given: a target-controlled link to an external artifact or certification path.
+	const root = await mkdtemp(join(tmpdir(), "senpi-gate-linked-"));
+	try {
+		const workspace = join(root, "packages/ai");
+		const outside = join(root, "outside");
+		await mkdir(join(workspace, "src"), { recursive: true });
+		await mkdir(join(workspace, "dist"));
+		await mkdir(outside);
+		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
+		await writeFile(join(workspace, "src/index.ts"), "export const value = 1;");
+		await writeFile(join(outside, "index.js"), "export const value = 1;");
+		await writeFile(join(outside, "certificate.json"), "external certificate");
+		switch (linked) {
+			case "dist":
+				await rm(join(workspace, "dist"), { recursive: true });
+				await symlink(outside, join(workspace, "dist"), "junction");
+				break;
+			case "entry":
+				await symlink(join(outside, "index.js"), join(workspace, "dist/index.js"));
+				break;
+			case "sidecar":
+				await writeFile(join(workspace, "dist/index.js"), "export const value = 1;");
+				await symlink(join(outside, "certificate.json"), join(workspace, "dist/.senpi-gate-inputs.json"));
+				break;
+			default:
+				throw new TypeError("Unknown link fixture");
+		}
+		// When / Then: certification refuses the link and preserves external bytes.
+		await expect(recordTargetBuild(join(root, "packages/senpi-codemode"))).rejects.toThrow();
+		expect(await readFile(join(outside, "certificate.json"), "utf8")).toBe("external certificate");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
 
 it("refuses to measure a target whose workspace dist predates its sources", async () => {
 	// Given: a target with old AI output and newer source, independent of wall-clock timing.

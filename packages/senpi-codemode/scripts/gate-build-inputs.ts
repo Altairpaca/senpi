@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { glob, readFile, readdir, writeFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { constants } from "node:fs";
+import { glob, lstat, open, readFile, readdir, realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { GateInputError } from "./gate-input-error.ts";
@@ -9,7 +10,7 @@ const manifestSchema = Type.Object({ main: Type.Optional(Type.String()) });
 export const fingerprintSchema = Type.Record(Type.String(), Type.String());
 
 export async function builtWorkspaces(target: string) {
-	const root = resolve(target, "../..");
+	const root = await realpath(resolve(target, "../.."));
 	const workspaces: { readonly directory: string; readonly label: string; readonly entry: string }[] = [];
 	for await (const path of glob("packages/*/package.json", { cwd: root })) {
 		const manifest: unknown = JSON.parse(await readFile(resolve(root, path), "utf8"));
@@ -38,9 +39,35 @@ export async function buildFingerprint(workspace: string): Promise<Record<string
 
 /** Called only by the successful build wrapper, never inferred during preflight. */
 export async function recordTargetBuild(target: string): Promise<void> {
+	const root = await realpath(resolve(target, "../.."));
 	for (const workspace of await builtWorkspaces(target)) {
+		await assertUnlinkedPath(root, workspace.directory);
+		await assertUnlinkedPath(workspace.directory, workspace.entry);
+		const sidecar = resolve(workspace.directory, "dist/.senpi-gate-inputs.json");
+		await assertUnlinkedPath(workspace.directory, sidecar);
 		await readFile(workspace.entry);
-		await writeFile(resolve(workspace.directory, "dist/.senpi-gate-inputs.json"),
-			`${JSON.stringify(await buildFingerprint(workspace.directory), null, 2)}\n`);
+		const certificate = `${JSON.stringify(await buildFingerprint(workspace.directory), null, 2)}\n`;
+		const output = await open(sidecar, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW);
+		try {
+			await output.writeFile(certificate);
+		} finally {
+			await output.close();
+		}
+	}
+}
+
+async function assertUnlinkedPath(root: string, path: string): Promise<void> {
+	const name = relative(root, path);
+	const parts = name.split(sep);
+	if (isAbsolute(name) || parts.includes("..")) throw new GateInputError(`build path outside workspace: ${name}`);
+	let cursor = root;
+	for (const [index, part] of parts.entries()) {
+		cursor = resolve(cursor, part);
+		try {
+			if ((await lstat(cursor)).isSymbolicLink()) throw new GateInputError(`symlinked build path: ${name}`);
+		} catch (error) {
+			if (index === parts.length - 1 && error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+			throw error;
+		}
 	}
 }

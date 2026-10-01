@@ -11,6 +11,7 @@ import { censusCell, legacyCells, workpoolCell } from "./gate-cells.ts";
 import { helperCandidates } from "./gate-census.ts";
 import { canonical, GateInputError, goldenSchema } from "./gate-report.ts";
 import { observeResources } from "./gate-resources.ts";
+import { cleanupRuntime } from "./gate-runtime-cleanup.ts";
 
 const promptArgsSchema = Type.Object({
 	prompt: Type.String(),
@@ -193,10 +194,12 @@ async function main(): Promise<void> {
 			cleanup,
 		})}`);
 	} finally {
-		await kernel?.close();
-		await server.close();
-		resources.restore();
-		await rm(root, { recursive: true, force: true });
+		await cleanupRuntime({
+			retireKernel: async () => { await kernel?.close(); },
+			closeBridge: () => server.close(),
+			restoreObservers: () => resources.restore(),
+			removeRoot: () => rm(root, { recursive: true, force: true }),
+		});
 	}
 }
 

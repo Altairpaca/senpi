@@ -581,6 +581,7 @@ jobs:
     needs:
       [
         check,
+        codemode-gate,
         test-coding-agent,
         grep-native-contract,
         hooks-trust-storage-windows,
@@ -615,6 +616,7 @@ jobs:
           {
             echo "## Check and test (fan-in)"
             echo "- check: ${{ needs.check.result }}"
+            echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
