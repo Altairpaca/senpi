@@ -1,3 +1,21 @@
+## 2026-10-01 - GPT-6 Astra high-reasoning warning shows above high again (senpi#2496)
+
+### What changed
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: GPT-6 Astra warns at `xhigh` and `max` again, like every other sensitive model, and stays quiet at `high` and below. This reverses the 2026-09-10 "Restrict GPT-6 Astra high-reasoning warning to max" entry below. The full record, with tests, is the 2026-10-01 entry in `src/core/changes.md`.
+
+### Why
+
+- The owner wants the Astra warning shown for any effort above high.
+
+### Why an extension could not handle it
+
+- The warning predicate is core session policy evaluated before the warning event is emitted.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/high-reasoning-warning.ts`: fork-only file.
+
 ## 2026-10-01 - Export the bundled-bun PATH helper for eval kernels (omo#9362)
 
 ### What changed
@@ -15,7 +33,6 @@
 ### Expected merge conflict zones
 
 - LOW: the shell-utilities export block in `index.ts`.
-
 ## 2026-09-30 - Legacy tool warnings require a legacy tool entry point (senpi#2451)
 
 ### What changed
