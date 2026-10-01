@@ -1,3 +1,21 @@
+## 2026-10-01 - Skill catalog: read a skill when it would change the work, not on a loose match (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/skills.ts`: the catalog preamble (both the `read` and the `bash` variants) says "load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason." instead of "whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work".
+
+### Why
+
+- GPT-6 Astra obeys the old sentence literally: in three same-day review sessions with an identical opener it read 6-8 SKILL.md files before its first action while Claude Fable read none, and a 2026-09-27 A/B measured the catalog as the largest pre-action cost (removing it cut time and cost by about 40%). OpenAI's guide warns that Astra "can be more sensitive to instructions contained in skills and other files"; codex's own template says "Do not use a skill based solely on keywords, superficial relevance, or the availability of a potentially applicable skill". The new sentence is the codex stance and is token-neutral.
+
+### Why an extension could not handle it
+
+- The preamble is rendered by the core skills loader for every session.
+
+### Expected merge conflict zones
+
+- `skills.ts` `formatSkillsForPrompt` lines array.
+
 ## 2026-10-01 - A busy credential read never becomes model availability (senpi#2487)
 
 ### What changed
@@ -41,6 +59,46 @@ Builtin definitions and resource loaders own the metadata consumed before extens
 
 - `packages/coding-agent/src/core/slash-commands.ts`: builtin definitions.
 - `packages/coding-agent/src/core/prompt-templates.ts` and `packages/coding-agent/src/core/skills.ts`: resource interfaces and frontmatter loading.
+
+## 2026-09-30 - Preserve ambient request authentication for auxiliary requests (senpi#2441)
+
+### What changed
+
+- `model-registry.ts`: `getApiKeyAndHeaders()` now carries the provider resolver's `ambient` marker in a successful request-auth result.
+
+### Why
+
+- Normal turns accept a resolved provider auth result even when the provider signs or authenticates the request later and therefore supplies neither an API key nor credential headers. Auxiliary callers need that same decision without treating an unresolved keyed provider as authenticated.
+
+### Why an extension could not handle it
+
+- The request-auth compatibility result is produced by the core model registry before builtin extensions dispatch provider requests.
+
+### Expected merge conflict zones
+
+- LOW: the `ResolvedRequestAuth` type and successful resolution branch in `packages/coding-agent/src/core/model-registry.ts`.
+
+## 2026-10-01 - Overflow recovery is a two-rung ladder with a fresh budget per turn (senpi#2480, oh-my-openagent#8411)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_overflowRecoveryAttempted` (a boolean latch) is `_overflowRecoveryRungs`, counted against `OVERFLOW_RECOVERY_RUNGS = 2`. `_checkCompaction` runs the first rung with the configured `keepRecentTokens` and the second with `keepRecentTokensOverride: 0` (summary plus the turn being answered), through `_runPrePromptCompaction` on the inline path and a new `options.keepRecentTokensOverride` on `_runAutoCompaction` (applied to both `prepareCompaction` and the execution request). The terminal message is `Context overflow recovery failed after two compact-and-retry attempts. ...`. Every reset site that cleared the boolean now zeroes the counter.
+- `_checkCompaction` zeroes the counter when `inlineReason === "pre_prompt"`, before the exhaustion check: a new turn admission (a user prompt or an extension-triggered turn such as a goal continuation) is a fresh overflow episode.
+- `_runAutoCompaction`'s retry continuation strips every trailing failed assistant from the rebuilt context (`_stripTrailingFailedAssistants`), not only the last one: after the second rung the kept tail still ends with both rejected attempts of the turn, and continuing from an assistant throws `Cannot continue from message role: assistant`.
+- The keep-budget change the second rung depends on is recorded in `compaction/changes.md` (2026-10-01).
+
+### Why
+
+- One compact-and-retry was not enough on the `anthropic-subscription` lane: a re-send that is still too long after the configured tail was kept needs a smaller re-send, not the same one, and the turn died instead ("Context overflow recovery failed after one compact-and-retry attempt", then "Goal continuation blocked").
+- The latch was reset by a user `message_start` or a successful assistant, but the pre-prompt gate ran before either, so a spent latch could make later prompts throw the same error with no compaction (`action: "none"`, `tokensBefore == tokensAfter`): "Send any message to resume" was false and a model switch did not clear it (oh-my-openagent#8411). senpi PR #1780 proposed the reset alone; this entry folds it in with the ladder.
+
+### Why an extension could not handle it
+
+- The overflow budget, the retry continuation and the pre-prompt admission gate are `AgentSession` internals; extensions only see `session_before_compact`, after the budget decision was made.
+
+### Expected merge conflict zones
+
+- MEDIUM: the overflow branch of `_checkCompaction` (the latch block and the compaction call), the `_runAutoCompaction` signature and its `prepareCompaction` call; LOW: the counter resets scattered through `_processAgentEvent`, `_runPrePromptCompaction` and `_runAutoCompaction`.
 
 ## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
 
