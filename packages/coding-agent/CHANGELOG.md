@@ -22,6 +22,8 @@
 
 ### Added
 
+- `web_search` has two new hosted routes. **ChatGPT subscription route:** a ChatGPT subscription session now searches through the subscription's own web search tool with your ChatGPT login, on by default for those sessions, ahead of the free engines; it uses subscription usage, not an API account. **Google Search grounding:** opt-in only; it runs when you list a `google` entry in `websearch.json` (without `apiKey` it uses your senpi Google API-key login) and may be billed by Google beyond its free allowance. A Google model session without that entry is unchanged. Both routes count a result only when the provider actually searched: its sources and citations are returned, never URLs typed into the answer, and Google results link through Google's grounding redirect. See [Web Search](docs/web-search.md). ([#2341](https://github.com/code-yeongyu/senpi/issues/2341))
+
 - Added inherited experimental virtual models: extensions register them with `pi.registerVirtualModel()` and pick a physical model and thinking level for each request. The footer shows the routed model, `/session` lists cost per physical model, and `examples/extensions/jev-router.ts` routes with the Jev classifier. See [Virtual Models](docs/virtual-models.md).
 
 - Added the inherited `system` theme, now the default, which derives colors from the terminal's reported foreground, background and ANSI palette and rebuilds them when the terminal switches between light and dark. The fork's grok themes stay available. See [Themes](docs/themes.md).
@@ -64,6 +66,10 @@
 
 ### Changed
 
+- A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
+
+- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
 - The built-in `dark` and `light` themes use the revised inherited colors written in OKHSL, and light/dark detection reads the reported background color first, then the terminal's light/dark report, then `COLORFGBG`. The `[Themes]` section is removed from the startup banner; custom themes remain in `/settings` and theme conflicts are still reported.
 
 - Built-in extensions and tools are named `builtin:<name>` in errors, diagnostics and RPC source info instead of `<inline:name>` and `<builtin:name>` (inherited).
@@ -81,6 +87,10 @@
 - Terminals with `TERM=*-direct` are treated as truecolor, and fuzzy search on long texts uses native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)) (inherited).
 
 ### Fixed
+
+- Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
+
+- An updated client can retire a shared host left running by an older release. While such a host was alive, every `host ensure` in the agent directory (including each desktop thread's own endpoint) was refused with `legacy_host`, and `host stop --drain` answered `unknown_owner`, so nothing short of killing the process by hand freed the machine. Now `host stop --drain` drains it when its old record still proves the process, and an ensure drains and replaces it on its own once it holds no session. With a session open the refusal says which process it is, which socket it serves, and the `host stop --drain --socket <socket>` that retires it. ([#2423](https://github.com/code-yeongyu/senpi/issues/2423))
 
 - A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))
 
@@ -147,17 +157,9 @@
 
 ### Changed
 
-- Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.285: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.284 to 0.3.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
-
-- A session can hold any number of persistent monitors (`monitor({ persistent: true })`); the cap of 5 is gone by default. Set `terminal.maxDurableMonitors` to a positive integer to bring a cap back (`"unlimited"` is the default, and an invalid value means unlimited); past it, the next persistent monitor is refused before it starts, as before. The 7-day expiry and restart restore are unchanged. ([#2420](https://github.com/code-yeongyu/senpi/issues/2420))
-
 - The recommended OpenAI model is now GPT-6.1 Sol at `medium`, one slot below GPT-6 Astra where GPT-6 Sol was; `gpt-6.1-sol-fast` counts as recommended like the other `-fast` ids. Your explicitly configured `recommendedModels` are untouched. ([#2390](https://github.com/code-yeongyu/senpi/issues/2390))
 
 ### Fixed
-
-- An updated client can retire a shared host left running by an older release. While such a host was alive, every `host ensure` in the agent directory (including each desktop thread's own endpoint) was refused with `legacy_host`, and `host stop --drain` answered `unknown_owner`, so nothing short of killing the process by hand freed the machine. Now `host stop --drain` drains it when its old record still proves the process, and an ensure drains and replaces it on its own once it holds no session. With a session open the refusal says which process it is, which socket it serves, and the `host stop --drain --socket <socket>` that retires it. ([#2423](https://github.com/code-yeongyu/senpi/issues/2423))
-
-- Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 
 - Resuming a session whose pending ask-user question was recorded with arguments that no longer form a valid question set no longer leaves a "0 unanswered" question widget that crashes the TUI (`Cannot read properties of undefined (reading 'question')`) when expanded. The call now settles as `orphaned-after-restart`, the same way a question lost in a restart does, so the model learns it was lost and can ask again. The question overlay also keeps its active question in range for any requested index, and clicking the collapsed widget when every question already has an answer submits those answers instead of opening a question that does not exist. Reported by @copycatcode, thanks. ([omo#9268](https://github.com/code-yeongyu/oh-my-openagent/issues/9268))
 
@@ -286,8 +288,6 @@
 - Skills read an `argument-hint` frontmatter field (`Skill.argumentHint`), and extension commands registered with `argumentHint` now pass it to the slash picker, so choosing `/skill:<name>` or such a command with Enter fills in `/name ` and waits for the arguments.
 
 - `websearch.json` accepts `nativeModel`, the model the session's hosted web search runs on, for example `"nativeModel": "claude-haiku-4-5"`. It must be served by the same provider, endpoint and credential as the session model; any other value is ignored and `/websearch status` warns about it. When the chosen model fails or finds nothing, the same search retries on the session model before moving to the next search provider. See [Web Search](docs/web-search.md). ([#2340](https://github.com/code-yeongyu/senpi/issues/2340))
-
-- `web_search` has two new hosted routes. **ChatGPT subscription route:** a ChatGPT subscription session now searches through the subscription's own web search tool with your ChatGPT login, on by default for those sessions, ahead of the free engines; it uses subscription usage, not an API account. **Google Search grounding:** opt-in only; it runs when you list a `google` entry in `websearch.json` (without `apiKey` it uses your senpi Google API-key login) and may be billed by Google beyond its free allowance. A Google model session without that entry is unchanged. Both routes count a result only when the provider actually searched: its sources and citations are returned, never URLs typed into the answer, and Google results link through Google's grounding redirect. See [Web Search](docs/web-search.md). ([#2341](https://github.com/code-yeongyu/senpi/issues/2341))
 
 - `web_search` can use a self-hosted SearXNG instance: add `{ "provider": "searxng", "baseUrl": "http://localhost:8888" }` to `websearch.json`. A plain `http://` address is accepted for hosts on your own network only. See [Web Search](docs/web-search.md). ([#2339](https://github.com/code-yeongyu/senpi/issues/2339))
 
