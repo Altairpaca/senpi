@@ -185,7 +185,7 @@ async function main(): Promise<void> {
 		// Gate-only mutation: leave the real kernel owned until after the measured
 		// witness. The finally block still retires it, even in the negative probe.
 		if (process.env.SENPI_CODEMODE_GATE_MUTATE !== "leak-kernel") await kernel.close();
-		await server.close();
+		if (process.env.SENPI_CODEMODE_GATE_MUTATE !== "leak-bridge") await server.close();
 		const cleanup = await resources.counts();
 		console.log(`GATE_RUNTIME:${JSON.stringify({
 			helperNames, witnesses, memory,

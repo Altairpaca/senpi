@@ -417,6 +417,17 @@ normal execution. This hook is necessary because Bun does not refresh named
 builtin exports when `syncBuiltinESMExports()` runs; patching their default
 exports alone otherwise reports zero resources even for a leaked real kernel.
 
+| Inert hook site | Measured resource | Verification |
+| --- | --- | --- |
+| `src/kernels/js/worker-host.ts` | Worker exit | Real Bun kernel close/leak tests |
+| `src/kernels/py/process.ts` | Python child close | Five-runtime gate and kernel-leak mutation |
+| `src/kernels/shared/subprocess-process.ts` | Ruby/Julia child close | Five-runtime gate and kernel-leak mutation |
+| `src/bridge/http-server.ts` | Server close and accepted sockets | Real Bun bridge close/leak tests |
+
+The gate-only `leak-bridge` mutation leaves the real bridge server open for the
+witness and closes it in `finally`; the real-runtime test must observe an open
+handle. Neither mutation is read by production code.
+
 Legacy scenario identities are compared exactly, so deleting or renaming a
 test cannot make the gate green. Platform-dependent skip outcomes remain
 visible in the report. Driver tests await child close events, with a generous

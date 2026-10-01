@@ -9,13 +9,28 @@ import { runChild } from "../eval/child-probe.ts";
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const runtimeSchema = Type.Object({ cleanup: cleanupSchema });
 
-it.each([false, true])(
-	"observes the real Bun kernel after close when leaked=%s",
-	async (leaked) => {
+it.each([
+	["closed", undefined],
+	["leak-kernel", "workers"],
+	["leak-bridge", "handles"],
+] as const)(
+	"observes real Bun resources when lifecycle=%s",
+	async (mutation, liveKind) => {
 		// Given: the real runtime's named builtin imports, not a fixture using the patched default export.
 		const env = { ...process.env };
-		if (leaked) env.SENPI_CODEMODE_GATE_MUTATE = "leak-kernel";
-		else delete env.SENPI_CODEMODE_GATE_MUTATE;
+		switch (mutation) {
+			case "closed":
+				delete env.SENPI_CODEMODE_GATE_MUTATE;
+				break;
+			case "leak-kernel":
+			case "leak-bridge":
+				env.SENPI_CODEMODE_GATE_MUTATE = mutation;
+				break;
+			default: {
+				const unreachable: never = mutation;
+				throw new TypeError(String(unreachable));
+			}
+		}
 		// When: the real probe closes its kernel or deliberately leaves it alive until finally.
 		const result = await runChild({
 			command: "bun",
@@ -34,7 +49,7 @@ it.each([false, true])(
 		if (!line) throw new TypeError("Missing runtime resource report");
 		const report: unknown = JSON.parse(line.slice("GATE_RUNTIME:".length));
 		if (!Check(runtimeSchema, report)) throw new TypeError("Invalid runtime resource report");
-		if (leaked) expect(report.cleanup.workers).toBeGreaterThan(0);
+		if (liveKind !== undefined) expect(report.cleanup[liveKind]).toBeGreaterThan(0);
 		else expect(Object.values(report.cleanup).every((count) => count === 0)).toBe(true);
 	},
 	240_000,
