@@ -1,3 +1,45 @@
+## 2026-10-01 - Cold seed replays tool-read images as tool output, deduplicated and capped (senpi#2490)
+
+### What changed
+
+- New `cold-seed-images.ts`: `replayHistoryImages` rewrites the image entries of a cold-seed history. A tool-result image is preceded by `[image returned by the <tool> tool (tool output, not a user attachment)]`; identical decoded bytes (sha256) are sent once and later occurrences become a text reference to the first; at most `MAX_REPLAYED_HISTORY_IMAGES` (8) distinct historical images are replayed, the user's own uploads first and then the most recent tool images, the rest becoming a one-line note; image data that is empty or not base64 at all is dropped with a note. Line-wrapped, URL-safe or unpadded base64 is accepted, hashed by its decoded bytes, and a kept image is replayed re-encoded as canonical standard base64. Entries with no data or an unsupported media type keep the shared mapper's existing placeholder.
+- The rewrite applies to every whole-conversation replay `buildPromptBlocks` builds: the resident lane's cold seed / flatten (`session-stream.ts`) and the non-resident lane, which rebuilds the whole conversation on every turn (`stream.ts`).
+- `prompt-bridge.ts`: `buildPromptBlocks` passes each history message's rewritten content (when it holds an image) to the shared mapper. The final user message is not history and is unchanged, so a fresh re-attachment still goes out.
+- `content-blocks.ts`: exports `isSdkImageMediaType` so the replay selects only images the mapper would send.
+
+### Why
+
+- `buildPromptBlocks` appended every historical tool-result image as a bare image block inside the single cold-seed user frame, with no provenance and no dedup. One upload read five times became six images; the model took the reads for new user uploads, read them again, and each later cold seed replayed the new reads too (observed 2 -> 4 -> 8 -> 10).
+
+### Why an extension could not handle it
+
+- The flatten payload is built privately inside this builtin provider; no extension hook sees the SDK content blocks.
+
+### Expected merge conflict zones
+
+- LOW: the history loop in `prompt-bridge.ts` `buildPromptBlocks` (the `replayedImages` lookup) and the export block of `content-blocks.ts`. `session-sync.ts` (resume deltas) is untouched.
+- All production paths are fork-only.
+
+## 2026-10-01 - A rejected cold-seed calibrates the next one (senpi#2480)
+
+### What changed
+
+- `cold-seed-budget.ts`: `parseReportedOverflowTokens` reads the count a rejection names (Claude Code's `~N tokens (limit M)`, the API's `N tokens > M maximum`, this lane's own `about N tokens, limit M`). `markColdSeedOverflow` now takes the bytes/4 estimate of the rejected re-send and the senpi session id: it persists `{ estimatedTokens, reportedTokens, reportedLimit }` in the marker's details and remembers `reportedTokens / estimatedTokens` (clamped to `[1, 8]`, only ever raised) as that session's calibration. `coldSeedOverflow(model, estimatedTokens, calibration)` refuses when the calibrated estimate exceeds the window; without a calibration it is the bytes/4 floor it always was.
+- `cold-seed-budget.ts`: the lane's own refusal ("The conversation is too long to resend (about N tokens, ...)") never feeds calibration, because it restates the current ratio. The per-session map keeps at most 256 sessions (oldest-touched dropped). `restoreColdSeedCalibration` re-learns a restarted session's ratio from the newest persisted marker carrying both an estimate and a provider count; `session-registry-wiring.ts` calls it on the restart path of `session_start`, next to the binding restore.
+- `session-stream.ts`: `createResidentAttempt` computes the estimate once, passes it through `onDispatchShape(coldSeed, estimatedTokens)`, and gates with `coldSeedCalibration(sessionId)`. `stream.ts` keeps the estimate of the attempt it dispatched and hands it, with `options.sessionId`, to the marker.
+
+### Why
+
+- A resident session lost mid-turn whose resume fails re-sends the whole senpi branch, which this lane never compacts (the SDK compacts its own transcript, which is what the footer measures). bytes/4 is a deliberate lower bound, so code, JSON tool results and CJK text pass the gate at 600-700k estimated and the API counts over 1M. After that rejection the count IS known; sizing the compacted re-send by bytes/4 again sent a second request that was rejected the same way, and the one-attempt latch in `agent-session.ts` then ended the turn (oh-my-openagent#7497, #8411). With the calibration the compacted re-send is refused locally when it still cannot fit, which costs no round trip and climbs the next recovery rung at once.
+
+### Why an extension could not handle it
+
+- The gate runs between the continuity decision and the SDK submission inside this builtin's resident attempt; the count only exists on the rejected assistant message this builtin produces.
+
+### Expected merge conflict zones
+
+- LOW: all production paths are fork-only (`cold-seed-budget.ts`, the `onDispatchShape` call in `session-stream.ts`, the catch block of `stream.ts`).
+
 ## 2026-09-30 - Accepted senpi compaction replaces the resident Claude transcript
 
 ### What changed

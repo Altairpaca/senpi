@@ -42,6 +42,7 @@ async function showAccounts(ctx: ExtensionCommandContext, provider: string): Pro
 export default function accountExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("account", {
 		description: "List and manage credential accounts for any provider.",
+		requiresArguments: true,
 		argumentHint:
 			"<provider> [list | pin <id> | unpin | remove <id> | rename <id> <display name...> | clear-name <id>]",
 		handler: async (rawArgs, ctx) => {

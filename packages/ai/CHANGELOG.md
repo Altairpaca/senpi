@@ -4,6 +4,34 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
+
+### Fixed
+
+- Toggle-only reasoning models now expose only their supported thinking states: GLM, Kimi, DeepSeek and Qwen catalog rows whose API accepts thinking on or off (not an effort level) offer `off` and enabled thinking instead of a fabricated `minimal`/`low`/`medium`/`xhigh`/`max` ladder, while models with explicit effort metadata keep their declared ladders. Contributed by @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Changed the inherited provider-facing `ProviderStreams` and `StreamFunction` inputs from `Context` to normalized `TranscriptContext` values. System prompts and tool declarations now live in transcript system messages; custom providers read them with `getCurrentSystemPrompt()` and `getCurrentTools()`. The fork's `activeToolNames` rides on `TranscriptContext` and survives `normalizeContext()` ([#9548](https://github.com/earendil-works/pi/pull/9548)).
 
 - Restricted inherited `ToolCall.arguments` and `ToolResultMessage.details` to JSON-compatible values, changed `ToolResultMessage` into a conditional type, and made `JsonValue` arrays readonly. `ToolResultMessage<unknown>` resolves to `never`; use `ToolResultMessage` or `ToolResultMessage<JsonValue>`.
@@ -36,6 +64,8 @@
 
 ### Changed
 
+- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
+
 - ChatGPT Subscription requests now send the `x-codex-routing-hint` header that codex sends (`model=<id>`, plus `;tier=<tier>` when a service tier is requested), on both SSE requests and the WebSocket handshake. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410))
 
 - ChatGPT Subscription, OpenRouter and Radius browser sign-in share the inherited callback server, which rejects provider authorization-error redirects and falls back to pasting the redirect URL when the callback port is in use. The OAuth page helpers are available as `utils/oauth-page`. The provider id stays `chatgpt-subscription`; the upstream "OpenAI Codex (legacy)" rename and Sign in with ChatGPT on the `openai` provider are not adopted.
@@ -43,8 +73,6 @@
 - Radius browser sign-in exchanges the authorization code before showing the browser page, so token exchange failures appear in the browser (inherited).
 
 ### Fixed
-
-- Toggle-only reasoning models now expose only their supported thinking states: GLM, Kimi, DeepSeek and Qwen catalog rows whose API accepts thinking on or off (not an effort level) offer `off` and enabled thinking instead of a fabricated `minimal`/`low`/`medium`/`xhigh`/`max` ladder, while models with explicit effort metadata keep their declared ladders. Contributed by @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
 
 - Fixed inherited 1-hour Anthropic cache writes reported by Vercel AI Gateway in streaming deltas being priced at the 5-minute rate ([#9210](https://github.com/earendil-works/pi/issues/9210)), and Amazon Bedrock one-hour cache writes priced at the five-minute rate ([#9457](https://github.com/earendil-works/pi/issues/9457)).
 
@@ -82,8 +110,6 @@
 ### Added
 
 ### Changed
-
-- The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.285. ([#752](https://github.com/code-yeongyu/senpi/issues/752))
 
 - The `anthropic-subscription` (Claude SDK) lane now reports the prompt-cache TTL Claude Code actually uses: 1 hour on a Claude subscription, 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch puts Claude Code on API, gateway or cloud billing. `CLAUDE_CODE_PROMPT_CACHE_TTL`, `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` are honored the way Claude Code honors them. Cache-aware waits sized from the TTL (the prompt-cache safe-wait budget) grow accordingly on a subscription. ([code-yeongyu/oh-my-openagent#8759](https://github.com/code-yeongyu/oh-my-openagent/issues/8759))
 

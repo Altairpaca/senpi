@@ -2051,6 +2051,11 @@ Labels persist in the session and survive restarts. Use them to mark important p
 
 Register a command.
 
+`argumentHint` is shown next to the command in the picker. A command with an `argumentHint`
+expects input: picker Enter completes `/command ` and waits for arguments. Set
+`requiresArguments: false` when the arguments are optional so Enter submits immediately,
+or `requiresArguments: true` to wait without a hint. Without either, Enter submits.
+
 If multiple extensions register the same command name, senpi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
 
 ```typescript

@@ -228,6 +228,12 @@ Senpi validates skills against the Agent Skills standard. Most issues produce wa
 
 Unknown frontmatter fields are ignored.
 
+Senpi also accepts `argument-hint`, hint text shown next to the skill in the slash picker,
+and the boolean `requires-arguments`. A skill with an `argument-hint` expects input: picker
+Enter completes `/skill:<name> ` and waits for arguments. Set `requires-arguments: false`
+when the arguments are optional so Enter submits immediately. Without a hint, Enter submits
+unless `requires-arguments: true` is set.
+
 Declared skills with missing descriptions are not loaded. Malformed `SKILL.md` files and `SKILL.md` files without a description produce warnings and are not loaded. Other Markdown files without valid skill frontmatter are ignored.
 
 Name collisions (same name from different locations) warn and keep the first skill found.
