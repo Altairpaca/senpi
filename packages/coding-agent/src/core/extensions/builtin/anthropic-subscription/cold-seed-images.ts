@@ -39,17 +39,20 @@ type ImageOccurrence = {
 	readonly messageIndex: number;
 	readonly entryIndex: number;
 	readonly origin: ReplayedImageOrigin;
-	readonly entry: unknown;
-	readonly decodedSha256: string | undefined;
+	readonly entry: Record<string, unknown>;
+	readonly decoded: DecodedImage | undefined;
 };
+
+type DecodedImage = { readonly sha256: string; readonly canonicalBase64: string };
 
 // Standard or URL-safe alphabet, padding optional; line wrapping is stripped first.
 const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
 
-function hashImageData(data: string): string | undefined {
+function decodeImageData(data: string): DecodedImage | undefined {
 	const compact = data.replace(/\s+/g, "");
 	if (compact.length === 0 || compact.replace(/=+$/, "").length % 4 === 1 || !BASE64.test(compact)) return undefined;
-	return createHash("sha256").update(Buffer.from(compact, "base64")).digest("hex");
+	const bytes = Buffer.from(compact, "base64");
+	return { sha256: createHash("sha256").update(bytes).digest("hex"), canonicalBase64: bytes.toString("base64") };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -89,7 +92,7 @@ function collectOccurrences(
 			if (!isRecord(entry) || entry.type !== "image") return;
 			if (typeof entry.data !== "string" || typeof entry.mimeType !== "string") return;
 			if (!isSdkImageMediaType(entry.mimeType)) return;
-			occurrences.push({ messageIndex, entryIndex, origin, entry, decodedSha256: hashImageData(entry.data) });
+			occurrences.push({ messageIndex, entryIndex, origin, entry, decoded: decodeImageData(entry.data) });
 		});
 	}
 	return occurrences;
@@ -98,9 +101,10 @@ function collectOccurrences(
 function selectUserFirstThenMostRecent(occurrences: readonly ImageOccurrence[]): ReadonlySet<string> {
 	const ranked = new Map<string, { fromUser: boolean; lastSeen: number }>();
 	occurrences.forEach((occurrence, order) => {
-		if (occurrence.decodedSha256 === undefined) return;
-		const previous = ranked.get(occurrence.decodedSha256);
-		ranked.set(occurrence.decodedSha256, {
+		const hash = occurrence.decoded?.sha256;
+		if (hash === undefined) return;
+		const previous = ranked.get(hash);
+		ranked.set(hash, {
 			fromUser: (previous?.fromUser ?? false) || occurrence.origin.kind === "user",
 			lastSeen: order,
 		});
@@ -130,9 +134,10 @@ export function replayHistoryImages(
 	const replacements = new Map<number, Map<number, readonly unknown[]>>();
 
 	for (const occurrence of occurrences) {
-		const { origin, entry, decodedSha256: hash } = occurrence;
+		const { origin, entry, decoded } = occurrence;
+		const hash = decoded?.sha256;
 		let replacement: readonly unknown[];
-		if (hash === undefined) {
+		if (decoded === undefined || hash === undefined) {
 			replacement = [{ type: "text", text: coldSeedImageText.unreadable(origin) }];
 		} else if (!replayed.has(hash)) {
 			replacement = [{ type: "text", text: coldSeedImageText.capped(origin) }];
@@ -142,10 +147,11 @@ export function replayHistoryImages(
 				replacement = [{ type: "text", text: coldSeedImageText.duplicate(origin, first) }];
 			} else {
 				firstShown.set(hash, origin);
+				const canonical = { ...entry, data: decoded.canonicalBase64 };
 				replacement =
 					origin.kind === "tool"
-						? [{ type: "text", text: coldSeedImageText.toolOutput(origin.toolName) }, entry]
-						: [entry];
+						? [{ type: "text", text: coldSeedImageText.toolOutput(origin.toolName) }, canonical]
+						: [canonical];
 			}
 		}
 		const perMessage = replacements.get(occurrence.messageIndex) ?? new Map<number, readonly unknown[]>();
