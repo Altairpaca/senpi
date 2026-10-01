@@ -1,5 +1,23 @@
 # goal Extension Changes
 
+## 2026-10-01 - The no-goal todo reminder names when a goal is worth registering (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-gate.ts` `staleGoalTodoReminder`: the fix line is "Register one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round" (the stale-goal variant adds that a new goal archives the completed one), and the closing line is "Otherwise continue without a goal." The old text ("If this todo list tracks a durable objective (multi-step work that should survive across turns), register it now with create_goal so progress is tracked and audited. ... If the todos are trivial short-lived bookkeeping for the current turn, continue without a goal.") asked the model to classify its own list, and GPT-6 Astra registered a goal for a single-turn status question. `test/suite/goal-todo-stale-reminder.test.ts` is unchanged (it asserts the no-goal and stale-goal lines and `undefined` for live goals).
+
+### Why
+
+- The reminder is a decision rule now, the same one the `create_goal` tool description already states, so a single-turn request stops picking up a goal, a completion audit and an `update_goal` call.
+
+### Why an extension could not handle it
+
+- This is the goal builtin's own reminder text.
+
+### Expected merge conflict zones
+
+- `todo-gate.ts` `staleGoalTodoReminder`.
+
 ## 2026-10-01 - Goal mutations are atomic across processes (senpi#2499)
 
 ### What changed

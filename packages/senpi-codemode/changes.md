@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-10-01 - The bun-1-4 pointer names the cells that need the skill (senpi#2505)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt-template.ts`: on a Bun kernel with the skill active, the runtime line says "Before a cell that installs a package, spawns a server or PTY, or starts a long run, read the bun-1-4 skill at <path> - its builtins replace the npm packages you would otherwise install" instead of "MUST READ the bun-1-4 skill at <path> before your first js cell - ...".
+- `packages/senpi-codemode/src/skill/bun-1-4/SKILL.md`: the frontmatter description opens with the same condition instead of "MUST READ before your first js eval cell".
+- `test/prompt.test.ts`, `test/eval-tool-prompt-runtime.test.ts`: assert the new sentence and that "before your first js cell" is gone; the no-skill and Node branches still assert the pointer is absent.
+
+### Why
+
+- Every GPT-6 Astra session paid one 8 KB skill read before its first cell, including cells that only read two files; a 2026-09-27 A/B found this read was the only skill read left once the catalog was removed. The condition now sits where the skill's content matters (dependency, server, PTY, long run).
+
+### Why an extension could not handle it
+
+- This is the eval tool's own description.
+
+### Expected merge conflict zones
+
+- `eval-prompt-template.ts` line 32; the skill frontmatter.
+
 ## 2026-10-01 - Animate quiet running eval cells (senpi#2503)
 
 ### What changed

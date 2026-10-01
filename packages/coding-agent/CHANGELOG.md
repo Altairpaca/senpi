@@ -8,6 +8,8 @@
 
 ### Changed
 
+- GPT-6 Astra (and the GPT-6.1 Sol / GPT-5.6 test decision it shares) carries fewer verification gates: no pre-edit re-read, no pre-registered cell state, no edit-plus-proof todo pairing, no enumerated verification floor, no "read existing tests first" or "reproduce a bug before fixing it" openers, no verified/unverified report slots, and no confirm-each-item stop audit; checks run once at the scope the change calls for. The skill catalog asks for a skill read only when its instructions would change the work, the first-turn plan opener asks for the phases the request needs instead of always naming a verification phase, and the no-goal todo reminder registers a goal only for work that outlives the turn. Rendered Astra prompt is shorter ([#2505](https://github.com/code-yeongyu/senpi/issues/2505)).
+
 - Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.286: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.285 to 0.3.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
 - The GPT-6 Astra high-reasoning warning now shows at `xhigh` as well as `max`, the same rule as GPT-5.6 Sol and GPT-6 Sol: any effort above `high` warns, and `high` or below stays quiet ([#2496](https://github.com/code-yeongyu/senpi/issues/2496)).
 
