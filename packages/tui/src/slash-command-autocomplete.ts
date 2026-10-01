@@ -61,6 +61,8 @@ export function getSlashCommandSuggestions(
 		}
 
 		const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
+		// A hint without an explicit `requiresArguments` means the command expects input.
+		const requiresArguments = ("requiresArguments" in cmd ? cmd.requiresArguments : undefined) ?? hint !== undefined;
 		const desc = cmd.description ?? "";
 		const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
 		return [
@@ -69,9 +71,7 @@ export function getSlashCommandSuggestions(
 				label: name,
 				description: fullDesc || undefined,
 				searchText: isSkill && !explicitSkillNamespace ? skillName : name,
-				awaitsArguments:
-					("requiresArguments" in cmd && cmd.requiresArguments === true) ||
-					("awaitsArguments" in cmd && cmd.awaitsArguments === true),
+				awaitsArguments: requiresArguments || ("awaitsArguments" in cmd && cmd.awaitsArguments === true),
 			},
 		];
 	});

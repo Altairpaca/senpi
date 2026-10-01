@@ -12,11 +12,13 @@ import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
-// senpi #2479: only required arguments defer picker submission, independently of usage hints.
+// senpi #2479: `requiresArguments: false` submits a hinted command on first Enter; a hint without an
+// explicit flag (an older skill or template) still completes `/name ` and waits for input.
 const COMMANDS = [
 	{ name: "new", description: "Start a new session" },
 	{ name: "model", description: "Select model", argumentHint: "<provider/model>", requiresArguments: false },
 	{ name: "skill:ulw-execute", description: "Execute a plan", argumentHint: "<plan>", requiresArguments: true },
+	{ name: "review-pr", description: "Review a PR", argumentHint: "<pr-url>" },
 ];
 
 // Hands each suggestion result to the test in order, so it can await the editor's own requests
@@ -85,6 +87,7 @@ describe("Editor slash rows with an argument hint", () => {
 		const items = getSlashCommandSuggestions(COMMANDS, "skill:");
 		const byValue = new Map(items.map((item) => [item.value, item.awaitsArguments]));
 		assert.strictEqual(byValue.get("skill:ulw-execute"), true);
+		assert.strictEqual(getSlashCommandSuggestions(COMMANDS, "rev")[0]?.awaitsArguments, true);
 		assert.strictEqual(getSlashCommandSuggestions(COMMANDS, "ne")[0]?.awaitsArguments, undefined);
 		assert.strictEqual(getSlashCommandSuggestions(COMMANDS, "mod")[0]?.awaitsArguments, undefined);
 	});
@@ -107,6 +110,16 @@ describe("Editor slash rows with an argument hint", () => {
 		editor.handleInput("\r");
 
 		assert.deepStrictEqual(submitted, ["/skill:ulw-execute"]);
+	});
+
+	it("Enter on a hint-only row (no explicit flag) completes the command and does not submit", async () => {
+		const { editor, submitted } = await openPicker("/review", "review-pr");
+
+		editor.handleInput("\r");
+
+		assert.deepStrictEqual(submitted, []);
+		assert.strictEqual(editor.getText(), "/review-pr ");
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
 	});
 
 	it("Enter on a row without a hint still submits in one press", async () => {

@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/import-repro.ts`: explicitly require arguments.
-- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`, `packages/coding-agent/src/core/extensions/builtin/look-at/commands.ts`, `packages/coding-agent/src/core/extensions/builtin/loop/command-registration.ts`, `packages/coding-agent/src/core/extensions/builtin/model-fallback/index.ts` and `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: explicitly allow bare invocation.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`, `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`, `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/look-at/commands.ts`, `packages/coding-agent/src/core/extensions/builtin/loop/command-registration.ts`, `packages/coding-agent/src/core/extensions/builtin/model-fallback/index.ts`, `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts` and `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: explicitly allow bare invocation.
 
 ### Why
 

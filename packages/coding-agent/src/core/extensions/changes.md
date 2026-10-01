@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/types.ts`: expose `RegisteredCommand.requiresArguments`; omitted or false means picker Enter submits immediately.
+- `packages/coding-agent/src/core/extensions/types.ts`: expose `RegisteredCommand.requiresArguments`; false submits on picker Enter, and when omitted a declared `argumentHint` makes Enter wait for input.
 
 ### Why
 
-A usage hint cannot tell the picker whether bare invocation opens a menu or needs input.
+A usage hint cannot tell the picker whether bare invocation opens a menu or needs input, so optional-argument commands opt into first-Enter submission.
 
 ### Why an extension could not handle it
 

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: forward `requiresArguments` from builtins, extensions, templates and skills.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: forward `requiresArguments` from builtins, extensions, templates and skills, leaving it unset when the source did not declare it.
 
 ### Why
 

@@ -3,11 +3,11 @@
 ### What changed
 
 - `packages/coding-agent/src/core/slash-commands.ts`: model, thinking, rename and login arguments are explicitly optional; import requires a path.
-- `packages/coding-agent/src/core/prompt-templates.ts` and `packages/coding-agent/src/core/skills.ts`: load boolean `requires-arguments` frontmatter separately from display hints.
+- `packages/coding-agent/src/core/prompt-templates.ts` and `packages/coding-agent/src/core/skills.ts`: load boolean `requires-arguments` frontmatter; when it is unset, a declared `argument-hint` means arguments are required.
 
 ### Why
 
-Picker Enter must submit commands that work without arguments, not infer mandatory arguments from a usage hint.
+Picker Enter must submit commands that work without arguments; those declare it explicitly, while a hint alone keeps the old wait-for-input behavior.
 
 ### Why an extension could not handle it
 

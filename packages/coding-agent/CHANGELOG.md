@@ -92,7 +92,7 @@
 
 ### Fixed
 
-- Fixed `/model`, `/thinking`, `/login`, `/rename` and optional builtin extension commands requiring a second Enter from the command picker. Required-argument commands still complete and wait. Extensions can declare `requiresArguments: true`; skills and prompt templates can declare `requires-arguments: true` ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
+- Fixed `/model`, `/thinking`, `/login`, `/rename` and optional builtin extension commands requiring a second Enter from the command picker. Commands, skills and prompt templates with an argument hint still complete and wait for input unless they opt out: extensions declare `requiresArguments: false`, skills and prompt templates `requires-arguments: false` ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
 
 - Manual `/compact` on the `anthropic-subscription` lane now replaces the resident Claude transcript with the compacted summary and retained suffix instead of forking the old uncompressed transcript, so the next request actually uses the smaller context. Thanks to @ayalcoh for the fix and @Tinycute00 for the report. ([#2331](https://github.com/code-yeongyu/senpi/issues/2331))
 

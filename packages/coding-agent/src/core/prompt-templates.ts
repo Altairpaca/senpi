@@ -13,6 +13,7 @@ export interface PromptTemplate {
 	name: string;
 	description: string;
 	argumentHint?: string;
+	/** `requires-arguments` frontmatter; defaults to true when a hint is declared, else false. */
 	requiresArguments?: boolean;
 	content: string;
 	sourceInfo: SourceInfo;
@@ -141,12 +142,13 @@ function loadTemplateFromFile(
 	}
 
 	const argumentHint = typeof frontmatter["argument-hint"] === "string" ? frontmatter["argument-hint"] : undefined;
+	const requiresArguments = frontmatter["requires-arguments"];
 	return {
 		template: {
 			name,
 			description,
 			...(argumentHint && { argumentHint }),
-			requiresArguments: frontmatter["requires-arguments"] === true,
+			requiresArguments: typeof requiresArguments === "boolean" ? requiresArguments : Boolean(argumentHint),
 			content: body,
 			sourceInfo,
 			filePath,

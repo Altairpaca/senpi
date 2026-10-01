@@ -13,7 +13,8 @@ vi.mock("../../../src/utils/version-check.ts", () => ({
 	getReleaseChangelogUrl: vi.fn((version: string) => `https://example.invalid/releases/${version}`),
 }));
 
-// senpi #2479: explicit argument requirements reach the picker independently of usage hints.
+// senpi #2479: `requiresArguments: false` lets a hinted command submit on first Enter; a hint
+// without an explicit flag still means the command expects input and the picker waits.
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -127,11 +128,44 @@ describe("command argument hints reach the picker", () => {
 		expect((await rowsFor(provider, "/import")).get("import")).toBe(true);
 	});
 
-	it("loads explicit template requirements without inferring them from hints", async () => {
+	it("keeps a hint-only skill waiting for input, like before the explicit flag existed", async () => {
+		const dir = writeSkill("name: plan-runner\ndescription: Runs a plan\nargument-hint: <plan-name>");
+		const { skills } = loadSkillsFromDir({ dir, source: "test" });
+		expect(skills[0]?.requiresArguments).toBe(true);
+
+		const provider = providerFor({ extensionCommands: [], skills });
+
+		expect((await rowsFor(provider, "/skill:plan")).get("skill:plan-runner")).toBe(true);
+	});
+
+	it("keeps a hint-only extension command waiting, and submits one marked requiresArguments: false", async () => {
+		const provider = providerFor({
+			extensionCommands: [
+				{ name: "deploy", argumentHint: "<target>" },
+				{ name: "deploy-status", argumentHint: "[target]", requiresArguments: false },
+			],
+			skills: [],
+		});
+
+		const rows = await rowsFor(provider, "/deploy");
+
+		expect(rows.get("deploy")).toBe(true);
+		expect(rows.get("deploy-status")).toBe(false);
+	});
+
+	it("loads template requirements: explicit flags win, a hint alone means arguments are required", async () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-template-requirements-"));
 		tempDirs.push(root);
 		writeFileSync(join(root, "review-required.md"), "---\ndescription: Review\nrequires-arguments: true\n---\n$1");
-		writeFileSync(join(root, "review-optional.md"), "---\ndescription: Review\nargument-hint: <filter>\n---\n$1");
+		writeFileSync(
+			join(root, "review-optional.md"),
+			"---\ndescription: Review\nargument-hint: [filter]\nrequires-arguments: false\n---\n$1",
+		);
+		writeFileSync(
+			join(root, "review-hinted.md"),
+			"---\ndescription: Review\nargument-hint: <pr-url>\n---\nReview $1",
+		);
+		writeFileSync(join(root, "review-bare.md"), "---\ndescription: Review\n---\nReview everything");
 		const { templates } = loadPromptTemplates({
 			cwd: root,
 			agentDir: root,
@@ -144,5 +178,7 @@ describe("command argument hints reach the picker", () => {
 
 		expect(rows.get("review-required")).toBe(true);
 		expect(rows.get("review-optional")).toBe(false);
+		expect(rows.get("review-hinted")).toBe(true);
+		expect(rows.get("review-bare")).toBe(false);
 	});
 });

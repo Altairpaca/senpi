@@ -4,8 +4,8 @@
 
 ### What changed
 
-- `packages/tui/src/autocomplete.ts`: add `SlashCommand.requiresArguments`, independent of `argumentHint`.
-- `packages/tui/src/slash-command-autocomplete.ts`: derive `awaitsArguments` only from explicit requirements (or a prebuilt item's explicit flag), never hint text.
+- `packages/tui/src/autocomplete.ts`: add `SlashCommand.requiresArguments`; when omitted, a declared `argumentHint` means arguments are required.
+- `packages/tui/src/slash-command-autocomplete.ts`: derive `awaitsArguments` from an explicit `requiresArguments`, falling back to whether an `argumentHint` is present (or a prebuilt item's explicit flag).
 
 ### Why
 

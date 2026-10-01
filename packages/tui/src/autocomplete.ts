@@ -269,7 +269,7 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
-	/** Whether picker Enter must wait for arguments. Omitted means no required arguments. */
+	/** Whether picker Enter must wait for arguments. Omitted means: wait only when `argumentHint` is set. */
 	requiresArguments?: boolean;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available

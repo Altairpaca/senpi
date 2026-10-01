@@ -1280,7 +1280,7 @@ export class InteractiveMode {
 			name: command.name,
 			description: command.description,
 			...(command.argumentHint && { argumentHint: command.argumentHint }),
-			requiresArguments: command.requiresArguments === true,
+			...(command.requiresArguments !== undefined && { requiresArguments: command.requiresArguments }),
 		}));
 
 		const modelCommand = slashCommands.find((command) => command.name === "model");
@@ -1339,7 +1339,7 @@ export class InteractiveMode {
 			name: cmd.name,
 			description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
 			...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
-			requiresArguments: cmd.requiresArguments === true,
+			...(cmd.requiresArguments !== undefined && { requiresArguments: cmd.requiresArguments }),
 		}));
 
 		// Convert extension commands to SlashCommand format
@@ -1351,7 +1351,7 @@ export class InteractiveMode {
 				name: cmd.invocationName,
 				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
 				...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
-				requiresArguments: cmd.requiresArguments === true,
+				...(cmd.requiresArguments !== undefined && { requiresArguments: cmd.requiresArguments }),
 				getArgumentCompletions: cmd.getArgumentCompletions,
 			}));
 
@@ -1366,7 +1366,7 @@ export class InteractiveMode {
 					name: commandName,
 					description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
 					...(skill.argumentHint && { argumentHint: skill.argumentHint }),
-					requiresArguments: skill.requiresArguments === true,
+					...(skill.requiresArguments !== undefined && { requiresArguments: skill.requiresArguments }),
 				});
 			}
 		}
