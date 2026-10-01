@@ -326,6 +326,7 @@ export default function serviceTierExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("fast", {
 		description: "Turn ChatGPT Subscription fast mode on or off for the current model",
 		argumentHint: "[on|off]",
+		requiresArguments: false,
 		getArgumentCompletions: (prefix) => toCompletions(FAST_ARGUMENTS, prefix),
 		handler: async (args, ctx) => {
 			const argument = args.trim().toLowerCase();

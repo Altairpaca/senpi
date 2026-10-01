@@ -257,7 +257,7 @@ export interface AutocompleteItem {
 	label: string;
 	description?: string;
 	/**
-	 * The command declares an argument hint: confirming the row completes `/name ` and waits for
+	 * The command requires arguments: confirming the row completes `/name ` and waits for
 	 * arguments instead of submitting.
 	 */
 	awaitsArguments?: boolean;
@@ -269,6 +269,8 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
+	/** Whether picker Enter must wait for arguments. Omitted means: wait only when `argumentHint` is set. */
+	requiresArguments?: boolean;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;
