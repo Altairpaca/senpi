@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The `eval` tool points at the bun-1-4 skill before a cell that installs a package, spawns a server or PTY, or starts a long run, instead of demanding it before the first JavaScript cell ([#2505](https://github.com/code-yeongyu/senpi/issues/2505)).
 
 ### Fixed

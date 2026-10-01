@@ -1,3 +1,21 @@
+## 2026-10-01 - Share shipped package resolution with read permissions (#2513)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: bundled extension definitions and package resolution move into `packages/coding-agent/src/core/bundled-resources.ts`, with the source-module identity guard generalized for its new location. The shared resolver also locates shipped payload roots for permission classification; development runs trust declared asset directories rather than the whole source checkout.
+
+### Why
+
+- The loader and permissions must agree on the actual installed, snapshot, packaged or compiled sidecar package, instead of trusting a hardcoded application path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` resolves the engine-owned packages before their extensions can contribute resources.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: the bundled package resolver and its imports.
+
 ## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
 
 ### What changed

@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The bundled Claude Code floor that Anthropic OAuth requests advertise when the latest published version is unknown is now 2.1.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
 
 ### Fixed

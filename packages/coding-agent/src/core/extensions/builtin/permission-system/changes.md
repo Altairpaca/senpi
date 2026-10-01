@@ -1,5 +1,27 @@
 # Permission System Builtin Extension
 
+## 2026-10-01 - Read shipped resources without approval (#2513)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: the read parser delegates to `read-permission.ts`, which uses the read tool's path resolver and canonical containment for shipped resources and outside paths.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: passes the read parser's internal prompt-suppression marker to the permission service; internal-tool allow-list policy is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts`: evaluates every read rule, including explicit denies, before suppressing ask results for shipped resources. Permission request and approval-storage shapes are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/evaluate.ts`: bundled read aliases (raw, normalized and canonical) are matched as one target with the existing last-rule precedence, preserving relative-path and resolved-symlink denies as well as later explicit allows.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-dir.ts`: shares the existing parent-directory approval pattern logic with the read parser and keeps filesystem-root targets scoped to their individual file on every platform.
+
+### Why
+
+- Bundled skill reads were classified as external directories, and ask-first also requested read approval. Symlinks escaping the shipped payload and writes must retain their normal permission policy.
+
+### Why an extension could not handle it
+
+- The permission builtin owns classification before the actual read tool executes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: imports and the read parser only; no internal-tool allow-list changes.
+
 ## 2026-10-01 - Internal harness operations do not require approval
 
 ### What changed

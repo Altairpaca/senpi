@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - GPT-6 Astra (and the GPT-6.1 Sol / GPT-5.6 test decision it shares) carries fewer verification gates: no pre-edit re-read, no pre-registered cell state, no edit-plus-proof todo pairing, no enumerated verification floor, no "read existing tests first" or "reproduce a bug before fixing it" openers, no verified/unverified report slots, and no confirm-each-item stop audit; checks run once at the scope the change calls for. The skill catalog asks for a skill read only when its instructions would change the work, the first-turn plan opener asks for the phases the request needs instead of always naming a verification phase, and the no-goal todo reminder registers a goal only for work that outlives the turn. Rendered Astra prompt is shorter ([#2505](https://github.com/code-yeongyu/senpi/issues/2505)).
 
 - Claude subscription sessions (`anthropic-subscription`) run Claude Code 2.1.286: the bundled `@anthropic-ai/claude-agent-sdk` moves from 0.3.285 to 0.3.286. ([#2481](https://github.com/code-yeongyu/senpi/issues/2481))
@@ -16,6 +28,8 @@
 ### Fixed
 
 - Remote compaction on the ChatGPT subscription lane no longer always times out on large sessions. The remote budget now grows with the size of the context being compacted (2 ms per token above a per-lane floor of 90 s on the subscription lane and 15 s on OpenAI and compatible gateways, capped at 15 minutes, with every remote route of one compaction sharing that 15-minute limit before the local summary starts), so a 383k-token compaction that takes about four minutes completes remotely instead of being cut at 90 s, while a hung request on a small session is still abandoned quickly. A remote attempt that does time out is no longer silent: a warning and the compaction status line say how long it waited, how many tokens it carried, and whether the next step is another remote route or the local summary; the fallback itself is unchanged. Thanks @rhyme227 for the measured report. ([#2434](https://github.com/code-yeongyu/senpi/issues/2434))
+
+- Reads of engine-shipped skills, prompts and resources no longer ask for permission in restricted modes, including packaged runtimes and compiled asset sidecars. Writes and outside reads retain their permission policy, and symlinks escaping a bundle remain outside paths ([#2513](https://github.com/code-yeongyu/senpi/issues/2513)).
 
 - The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. Thanks to @effortprogrammer. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
 
