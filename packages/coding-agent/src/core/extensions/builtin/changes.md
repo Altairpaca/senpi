@@ -1,3 +1,22 @@
+## 2026-10-01 - Builtin command argument audit (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/import-repro.ts`: explicitly require arguments.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`, `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`, `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/look-at/commands.ts`, `packages/coding-agent/src/core/extensions/builtin/loop/command-registration.ts`, `packages/coding-agent/src/core/extensions/builtin/model-fallback/index.ts`, `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts` and `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: explicitly allow bare invocation.
+
+### Why
+
+Account lists, menus, toggles and bare loop invocation must run on the first picker Enter, while account/provider and import-reference input must wait.
+
+### Why an extension could not handle it
+
+These are metadata changes inside the existing builtin command registrations.
+
+### Expected merge conflict zones
+
+Command registration objects in the paths listed above.
+
 ## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
 
 ### What changed

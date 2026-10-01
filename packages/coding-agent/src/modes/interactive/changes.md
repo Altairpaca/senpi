@@ -1,3 +1,21 @@
+## 2026-10-01 - Forward explicit picker argument requirements (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: forward `requiresArguments` from builtins, extensions, templates and skills, leaving it unset when the source did not declare it.
+
+### Why
+
+Optional arguments must not force a second Enter to open selectors.
+
+### Why an extension could not handle it
+
+The interactive host assembles every autocomplete command source.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: createBaseAutocompleteProvider mappings.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): interactive mode and theme
 
 ### What changed

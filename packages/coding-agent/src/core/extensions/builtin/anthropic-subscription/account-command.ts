@@ -92,6 +92,7 @@ export function registerClaudeAccountCommand(pi: ExtensionAPI, deps: ClaudeAccou
 	pi.registerCommand("claude-account", {
 		description: "List and manage Anthropic Subscription accounts.",
 		argumentHint: "[add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		requiresArguments: false,
 		handler: async (rawArgs, ctx) => {
 			if (await accountDisplayNameCommand(ctx, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, rawArgs)) return;
 			const args = parseArgs(rawArgs);
