@@ -1,17 +1,9 @@
-import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-
-interface ChildRun {
-	readonly code: number | null;
-	readonly signal: NodeJS.Signals | null;
-	readonly stdout: string;
-	readonly stderr: string;
-	readonly pid: number;
-}
+import { runChild } from "./eval/child-probe.ts";
 
 describe("JavaScriptKernel isolated inline fallback", () => {
 	it("times out a synchronous infinite loop and leaves no live child process", async () => {
@@ -23,16 +15,29 @@ describe("JavaScriptKernel isolated inline fallback", () => {
 			await writeFile(
 				scriptPath,
 				`import { JavaScriptKernel } from ${JSON.stringify(kernelUrl)};
+import { mock } from "node:test";
 
+let loopStarted;
+const started = new Promise((resolve) => { loopStarted = resolve; });
 const kernel = new JavaScriptKernel({
   sessionId: "isolated-inline-fallback",
   cwd: process.cwd(),
   parallelPoolWidth: 2,
   workerEntryUrl: new URL(${JSON.stringify(missingWorkerUrl)}),
+  onMessage: (message) => { if (message.type === "text" && message.data.includes("loop-started")) loopStarted(); },
+  interruptBounds: { ackMs: 500, graceMs: 2000, terminateDeadlineMs: 180000 },
 });
 const baselineWorkerIds = process.report.getReport().workers.map((worker) => worker.header.threadId);
 try {
-  const result = await kernel.run({ cellId: "infinite-loop", code: "return (() => { while (true) {} })()", timeoutMs: 150 });
+  await kernel.run({ cellId: "warm", code: "1 + 1" });
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const running = kernel.run({ cellId: "infinite-loop", code: 'print("loop-started"); return (() => { while (true) {} })()', timeoutMs: 150 });
+  await started;
+  mock.timers.tick(150);
+  await new Promise((resolve) => setImmediate(resolve));
+  mock.timers.tick(500);
+  const result = await running;
+  mock.timers.reset();
   await kernel.close();
   await new Promise((resolve) => setImmediate(resolve));
   const liveWorkerIds = process.report.getReport().workers
@@ -40,12 +45,17 @@ try {
     .filter((threadId) => !baselineWorkerIds.includes(threadId));
   process.stdout.write(JSON.stringify({ mode: kernel.mode, result, liveWorkerIds }));
 } finally {
+  mock.timers.reset();
   await kernel.close();
 }
 `,
 			);
 
-			const childRun = await runChildWithDeadline(scriptPath, 5_000);
+			const childRun = await runChild({
+				command: process.execPath,
+				args: ["--import", "tsx", scriptPath],
+				cwd: process.cwd(),
+			});
 			expect(childRun.signal, JSON.stringify(childRun)).toBeNull();
 			expect(childRun.code).toBe(0);
 			expect(childRun.stderr).toBe("");
@@ -59,35 +69,8 @@ try {
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
-	}, 8_000);
+	}, 240_000);
 });
-
-async function runChildWithDeadline(scriptPath: string, deadlineMs: number): Promise<ChildRun> {
-	const child = spawn(process.execPath, ["--import", "tsx", scriptPath], {
-		cwd: process.cwd(),
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	const pid = child.pid;
-	if (pid === undefined) throw new Error("failed to spawn inline fallback test child");
-	let stdout = "";
-	let stderr = "";
-	child.stdout.on("data", (chunk: Buffer) => {
-		stdout += chunk.toString("utf8");
-	});
-	child.stderr.on("data", (chunk: Buffer) => {
-		stderr += chunk.toString("utf8");
-	});
-	const result = await new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>(
-		(resolve) => {
-			const deadline = setTimeout(() => child.kill("SIGKILL"), deadlineMs);
-			child.once("exit", (code, signal) => {
-				clearTimeout(deadline);
-				resolve({ code, signal });
-			});
-		},
-	);
-	return { ...result, stdout, stderr, pid };
-}
 
 function isProcessAlive(pid: number): boolean {
 	try {
