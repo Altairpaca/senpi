@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Manual and automatic compaction now accept Amazon Bedrock sessions authenticated through the ambient AWS credential chain, and other providers such as Google Vertex that explicitly resolve ambient request-time credentials, while providers that require a missing key are still rejected before a summary request. Thanks @jerilkuriakose for the report. ([#2441](https://github.com/code-yeongyu/senpi/issues/2441))
+
 - Fixed `/model`, `/thinking`, `/login`, `/rename` and optional builtin extension commands requiring a second Enter from the command picker. Commands, skills and prompt templates with an argument hint still complete and wait for input unless they opt out: extensions declare `requiresArguments: false`, skills and prompt templates `requires-arguments: false` ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
 - On the `anthropic-subscription` lane, re-sending the whole conversation (a cold seed or flatten) no longer presents images the agent read with a tool as new user attachments. Such an image stays attached to its tool result with a note that it is tool output, identical image bytes are sent once and later copies refer back to the first, at most 8 earlier images are replayed (your own uploads first, then the most recent), and missing or unreadable image data is dropped with a one-line note. Before, one uploaded screenshot read five times was re-sent as six images, the agent took them for new uploads and read them again, and the count kept growing with each cold seed. Thanks @willowite for the precise report and reproduction, and the community report that confirmed it. ([#2490](https://github.com/code-yeongyu/senpi/issues/2490))
 
