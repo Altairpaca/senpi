@@ -167,6 +167,7 @@ describe("openai-codex streaming", () => {
 				expect(headers?.get("chatgpt-account-id")).toBe("acc_test");
 				expect(headers?.get("OpenAI-Beta")).toBe("responses=experimental");
 				expect(headers?.get("originator")).toBe("senpi");
+				expect(headers?.get("x-codex-routing-hint")).toBe("model=gpt-5.1-codex");
 				expect(headers?.get("User-Agent")).toBe(`senpi (${platform()} ${release()}; ${arch()})`);
 				expect(headers?.get("accept")).toBe("text/event-stream");
 				expect(headers?.has("x-api-key")).toBe(false);
@@ -1148,6 +1149,7 @@ describe("openai-codex streaming", () => {
 		["gpt-5.5", "flex", 0.5],
 		["gpt-5.5", "priority", 2.5],
 		["gpt-6-astra", "fast", 2],
+		["gpt-6-astra", "ultrafast", 6],
 	] as const)(
 		"uses the client-sent %s service tier for %s when Codex echoes default",
 		async (modelId, serviceTier, multiplier) => {

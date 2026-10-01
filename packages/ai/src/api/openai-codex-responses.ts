@@ -112,7 +112,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 export interface OpenAICodexResponsesOptions extends StreamOptions {
 	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: CodexReasoningSummaryInput;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	textVerbosity?: "low" | "medium" | "high";
 	toolChoice?: "auto" | "none" | "required";
 }
@@ -131,7 +131,7 @@ interface RequestBody {
 	parallel_tool_calls?: boolean;
 	temperature?: number;
 	reasoning?: ReturnType<typeof buildCodexReasoning>;
-	service_tier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
+	service_tier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
@@ -292,12 +292,21 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				body = nextBody as RequestBody;
 			}
 			const websocketRequestId = codexSessionId || uuidv7();
-			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
+			const routingHint = buildCodexRoutingHint(body.model, body.service_tier);
+			const sseHeaders = buildSSEHeaders(
+				model.headers,
+				options?.headers,
+				accountId,
+				apiKey,
+				routingHint,
+				codexSessionId,
+			);
 			const websocketHeaders = buildWebSocketHeaders(
 				model.headers,
 				options?.headers,
 				accountId,
 				apiKey,
+				routingHint,
 				websocketRequestId,
 			);
 			const bodyJson = JSON.stringify(body);
@@ -645,9 +654,13 @@ function buildRequestBody(
 
 function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-codex-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	switch (serviceTier) {
+		case "ultrafast":
+			// OpenAI publishes an Ultrafast price for GPT-6 Astra only: 6x Standard on every
+			// token class and context tier. Any other model keeps its base rate.
+			return model.id === "gpt-6-astra" ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -660,7 +673,7 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 	model: Pick<Model<"openai-codex-responses">, "id">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
@@ -674,12 +687,15 @@ function applyServiceTierPricing(
 }
 
 function resolveCodexServiceTier(
-	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
-	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
-): ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined {
+	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
+	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
+): ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined {
 	if (
 		responseServiceTier === "default" &&
-		(requestServiceTier === "flex" || requestServiceTier === "priority" || requestServiceTier === "fast")
+		(requestServiceTier === "flex" ||
+			requestServiceTier === "priority" ||
+			requestServiceTier === "fast" ||
+			requestServiceTier === "ultrafast")
 	) {
 		return requestServiceTier;
 	}
@@ -968,6 +984,7 @@ interface CachedWebSocketConnection {
 	socket: WebSocketLike;
 	busy: boolean;
 	createdAt: number;
+	routingHint: string | null;
 	idleTimer?: ReturnType<typeof setTimeout>;
 	parkedCloseListener?: WebSocketListener;
 	continuation?: CachedWebSocketContinuationState;
@@ -1251,7 +1268,14 @@ async function acquireWebSocket(
 	}
 
 	let accountEntries = websocketSessionCache.get(sessionId);
-	const cached = accountEntries?.get(accountId);
+	let cached = accountEntries?.get(accountId);
+	const routingHint = headers.get("x-codex-routing-hint");
+	if (cached && cached.routingHint !== routingHint) {
+		closeWebSocketSilently(cached.socket, 1000, "routing_hint_changed");
+		accountEntries?.delete(accountId);
+		if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
+		cached = undefined;
+	}
 	if (cached) {
 		unparkSessionWebSocket(cached);
 		if (!cached.busy && isWebSocketSessionExpired(cached)) {
@@ -1294,7 +1318,7 @@ async function acquireWebSocket(
 	}
 
 	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
-	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now() };
+	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now(), routingHint };
 	accountEntries = websocketSessionCache.get(sessionId);
 	if (!accountEntries) {
 		accountEntries = new Map();
@@ -1699,11 +1723,17 @@ function extractAccountId(token: string): string | undefined {
 	return extractChatGptSubscriptionAccountId(token);
 }
 
+/** codex's `x-codex-routing-hint`: `model=<id>`, plus `;tier=<tier>` when the request names a service tier. */
+function buildCodexRoutingHint(modelId: string, serviceTier: RequestBody["service_tier"]): string {
+	return serviceTier ? `model=${modelId};tier=${serviceTier}` : `model=${modelId}`;
+}
+
 function buildBaseCodexHeaders(
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
+	routingHint: string,
 ): Headers {
 	const headers = new Headers(initHeaders);
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
@@ -1723,6 +1753,7 @@ function buildBaseCodexHeaders(
 	headers.set("originator", identity);
 	const userAgent = _os ? `${identity} (${_os.platform()} ${_os.release()}; ${_os.arch()})` : `${identity} (browser)`;
 	headers.set("User-Agent", userAgent);
+	headers.set("x-codex-routing-hint", routingHint);
 	return headers;
 }
 
@@ -1731,9 +1762,10 @@ function buildSSEHeaders(
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
+	routingHint: string,
 	sessionId?: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token, routingHint);
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
@@ -1748,9 +1780,10 @@ function buildWebSocketHeaders(
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
+	routingHint: string,
 	requestId: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token, routingHint);
 	headers.delete("accept");
 	headers.delete("content-type");
 	headers.delete("OpenAI-Beta");

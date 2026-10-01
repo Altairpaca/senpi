@@ -22,6 +22,8 @@
 
 ### Added
 
+- Added explicit Ultrafast selection through model decorators (for example, `chatgpt-subscription/gpt-6-astra:xhigh:ultrafast`), `models.json`, and OpenAI settings. All five Astra reasoning efforts work; an Ultrafast model pin takes precedence over remembered Fast mode and `/fast` toggles. Selecting Ultrafast on any other OpenAI or ChatGPT Subscription model warns that the tier is documented for GPT-6 Astra only, and the request is still sent. Other providers, including gateways that serve GPT-6 Astra, never receive Ultrafast: selecting it there warns and the request uses that provider's default tier. ([#2410](https://github.com/code-yeongyu/senpi/pull/2410) by [@audreyt](https://github.com/audreyt))
+
 - Added inherited experimental virtual models: extensions register them with `pi.registerVirtualModel()` and pick a physical model and thinking level for each request. The footer shows the routed model, `/session` lists cost per physical model, and `examples/extensions/jev-router.ts` routes with the Jev classifier. See [Virtual Models](docs/virtual-models.md).
 
 - Added the inherited `system` theme, now the default, which derives colors from the terminal's reported foreground, background and ANSI palette and rebuilds them when the terminal switches between light and dark. The fork's grok themes stay available. See [Themes](docs/themes.md).
@@ -83,6 +85,8 @@
 ### Fixed
 
 - The thinking selector now reflects toggle-only model capabilities: eligible GLM 4.7 and Qwen rows offer `off` and enabled thinking without unsupported effort levels, while models that publish explicit effort metadata retain their declared choices. ([#891](https://github.com/code-yeongyu/senpi/issues/891))
+
+- `--model` and `--models` now honor a service-tier decorator (`:priority`, `:flex`, `:auto`, `:ultrafast`). Previously the decorator was parsed and then dropped before the session was created, so an explicit tier could run at the provider default. ([#2412](https://github.com/code-yeongyu/senpi/issues/2412))
 
 - A plain OmO helper file or artifact under `.omo/tools` no longer triggers the legacy custom-tools migration warning; the warning is now limited to the old `tools/<name>/index.ts` layout. Thanks @willowite for the report. ([#2451](https://github.com/code-yeongyu/senpi/issues/2451))
 

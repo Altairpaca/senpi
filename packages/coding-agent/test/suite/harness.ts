@@ -124,7 +124,7 @@ export interface HarnessOptions {
 	extensionFlagValues?: Map<string, boolean | string>;
 	withConfiguredAuth?: boolean;
 	upstreamModelId?: string;
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	onPayload?: (payload: unknown) => void;
 	prepareNextTurnWithContext?: AgentOptions["prepareNextTurnWithContext"];
 	persistSession?: boolean;

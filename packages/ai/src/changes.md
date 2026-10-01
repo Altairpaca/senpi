@@ -1,3 +1,43 @@
+## 2026-09-30 - ChatGPT Subscription requests carry codex's routing hint (senpi#2410)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: every Responses request on the ChatGPT Subscription lane, over SSE and on the WebSocket handshake, sends `x-codex-routing-hint: model=<id>`, plus `;tier=<tier>` when the body names a service tier (for example `model=gpt-6-astra;tier=ultrafast`). The value is built from the final request body, after `onPayload`; a cached WebSocket is rebuilt when that hint changes so a model or tier switch cannot reuse a stale handshake.
+
+### Why
+
+- `packages/ai/src/api/openai-codex-responses.ts`: codex (`build_routing_hint_header`) and oh-my-pi (`codexRoutingHint`) send this header on every ChatGPT-backend request, and it is how they tell the backend which tier a request is meant for. senpi sent no routing hint at all.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the header must match the request body the adapter builds, and it has to be on the WebSocket handshake, which extensions cannot reach.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the `sseHeaders` / `websocketHeaders` construction in `streamOpenAICodexResponses`, and the `buildBaseCodexHeaders` / `buildSSEHeaders` / `buildWebSocketHeaders` signatures.
+
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: accept `ultrafast` in shared request and model service-tier types.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: forward Ultrafast through simple and full Responses options and apply Astra's 6x Standard pricing; retain the Codex default-echo fallback.
+
+### Why
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: the typed public API must accept the tier before callers can select it.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: Astra Ultrafast needs the native request path and correct costs at every effort and context size.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: extensions cannot widen the exported request/model contracts.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: the adapters own request composition, shared response typing, and token accounting.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`, `packages/ai/src/model.ts`: service-tier type unions.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/openai-responses-shared.ts`: request/response service-tier types and pricing switches.
+
 ## 2026-09-30 - Claude Code fingerprint floor 2.1.285 (senpi#752)
 
 ### What changed
