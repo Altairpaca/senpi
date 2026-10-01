@@ -497,6 +497,19 @@ function isCutPointMessage(message: AgentMessage): boolean {
 	return false;
 }
 
+/**
+ * A failed assistant is never sent to the provider, so it weighs nothing in the
+ * keep budget: a tiny budget walked back from the newest entry must reach the turn
+ * being answered instead of stopping on the rejected attempts that followed it.
+ */
+function keepBudgetTokens(messages: readonly AgentMessage[]): number {
+	return messages.reduce(
+		(sum, message) =>
+			message.role === "assistant" && message.stopReason === "error" ? sum : sum + estimateTokens(message),
+		0,
+	);
+}
+
 function isTurnStartMessage(message: AgentMessage): boolean {
 	switch (message.role) {
 		case "user":
@@ -600,10 +613,7 @@ export function findCutPoint(
 
 	for (let i = endIndex - 1; i >= startIndex; i--) {
 		const entry = entries[i];
-		const messageTokens = contextMessagesForCompactionEntry(entry).reduce(
-			(sum, message) => sum + estimateTokens(message),
-			0,
-		);
+		const messageTokens = keepBudgetTokens(contextMessagesForCompactionEntry(entry));
 		if (messageTokens === 0) continue;
 		accumulatedTokens += messageTokens;
 
@@ -1122,7 +1132,7 @@ function findProjectedCutPoint(
 	let exceededBudget = false;
 	let cutIndex = cutPoints[0];
 	for (let i = endIndex - 1; i >= startIndex; i--) {
-		const messageTokens = entries[i].messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+		const messageTokens = keepBudgetTokens(entries[i].messages);
 		if (messageTokens === 0) continue;
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {
