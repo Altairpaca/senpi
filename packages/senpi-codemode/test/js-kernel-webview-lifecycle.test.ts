@@ -1,8 +1,7 @@
 import type { MessagePort } from "node:worker_threads";
 import { Worker } from "node:worker_threads";
 import { connectWebViewService } from "@code-yeongyu/senpi";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { labTrace } from "../src/kernels/js/webview-lab-trace.js";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createWebViewBroker } from "../../coding-agent/src/core/webview/webview-broker.ts";
 import { mainThreadWebViewService } from "../../coding-agent/src/core/webview/webview-service.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
@@ -79,8 +78,6 @@ function request(
 }
 
 describe.skipIf(!bunWebViewAvailable)("Bun.WebView lifecycle across eval kernels", BUDGET, () => {
-	beforeEach((context) => labTrace("test.start", context.task.name));
-	afterEach((context) => labTrace("test.end", `${context.task.name} state=${context.task.result?.state ?? "?"}`));
 	beforeAll(async () => {
 		page = await serveFixturePage();
 	});

@@ -1,4 +1,3 @@
-import { labTrace } from "./webview-lab-trace.js";
 import { DELIVER_EVENT, WebViewPortClient, webViewError } from "./worker-webview-client.js";
 
 // Bun constructs "chrome"-backend WebViews only on the process main thread, and this kernel runs in
@@ -57,11 +56,7 @@ function createKernelWebView(NativeWebView, requestPort) {
 
 	function connect() {
 		if (!connecting) {
-			labTrace("worker.port.request");
-			const attempt = requestPort().then(port => {
-				labTrace("worker.port.received");
-				return new WebViewPortClient(port, () => (connecting = null));
-			});
+			const attempt = requestPort().then(port => new WebViewPortClient(port, () => (connecting = null)));
 			attempt.catch(() => {
 				if (connecting === attempt) connecting = null;
 			});
@@ -105,9 +100,7 @@ function createKernelWebView(NativeWebView, requestPort) {
 			this.#ready = connect().then(async client => {
 				client.register(viewId, this);
 				finalizer.register(this, { client, viewId }, this);
-				labTrace("worker.create.request", `view=${viewId.slice(0, 8)}`);
 				const reply = await client.request({ kind: "create", viewId, options: rest, captureConsole: capture !== undefined });
-				labTrace("worker.create.reply", `view=${viewId.slice(0, 8)}`);
 				this.#apply(reply.state);
 				return client;
 			});
@@ -197,9 +190,7 @@ function createKernelWebView(NativeWebView, requestPort) {
 			if (this.#closed) throw closedError(method);
 			const trimmed = [...args];
 			while (trimmed.length > 0 && trimmed.at(-1) === undefined) trimmed.pop();
-			labTrace("worker.call.request", `view=${this.#viewId.slice(0, 8)} method=${method}`);
 			const reply = await client.request({ kind: "call", viewId: this.#viewId, method, args: trimmed });
-			labTrace("worker.call.reply", `view=${this.#viewId.slice(0, 8)} method=${method}`);
 			this.#apply(reply.state);
 			return reply.value;
 		}

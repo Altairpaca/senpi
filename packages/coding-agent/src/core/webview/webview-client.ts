@@ -8,7 +8,6 @@ import {
 	type WebViewState,
 	wireError,
 } from "./webview-wire.ts";
-import { webviewTrace } from "./webview-trace.ts";
 
 export interface WebViewClientHost {
 	/** Launches a view; `adopt` runs in the launch's own turn and returns false once the client is released. */
@@ -66,7 +65,6 @@ export class WebViewServiceClient {
 
 	release(): void {
 		if (this.#released) return;
-		webviewTrace("client.release", `client=${this.id.slice(0, 8)} views=${this.#views.size} launches=${this.#launches.size}`);
 		this.#released = true;
 		for (const view of this.#views.values()) closeQuietly(view);
 		this.#views.clear();
@@ -77,27 +75,18 @@ export class WebViewServiceClient {
 		if (!message || this.#released) return;
 		switch (message.kind) {
 			case "create":
-				webviewTrace("client.create.received", `client=${this.id.slice(0, 8)} view=${message.viewId.slice(0, 8)}`);
 				await this.#reply(message.id, async () => {
 					const view = await this.#create(message.viewId, message.options, message.captureConsole);
 					return { value: undefined, view };
 				});
-				webviewTrace("client.create.replied", `view=${message.viewId.slice(0, 8)}`);
 				return;
 			case "call":
 				await this.#reply(message.id, async () => {
 					const view = this.#view(message.viewId);
 					const method: unknown = Reflect.get(view, message.method);
 					if (typeof method !== "function") throw new TypeError(`WebView.${message.method} is not available`);
-					webviewTrace("client.call.start", `view=${message.viewId.slice(0, 8)} method=${message.method}`);
-					try {
-						const value: unknown = await Reflect.apply(method, view, [...message.args]);
-						webviewTrace("client.call.end", `view=${message.viewId.slice(0, 8)} method=${message.method}`);
-						return { value, view };
-					} catch (error) {
-						webviewTrace("client.call.error", `view=${message.viewId.slice(0, 8)} method=${message.method} ${String(error)}`);
-						throw error;
-					}
+					const value: unknown = await Reflect.apply(method, view, [...message.args]);
+					return { value, view };
 				});
 				return;
 			case "close": {

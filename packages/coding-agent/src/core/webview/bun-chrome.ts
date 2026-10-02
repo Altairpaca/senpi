@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import type { NativeWebViewClass } from "./native-webview.ts";
-import { webviewTrace } from "./webview-trace.ts";
 
 // Bun launches its Chrome with exactly this default flag run (see `Bun.WebView` backend docs);
 // together with the parent pid it tells Bun's browser apart from any other Chrome we spawned.
@@ -113,20 +112,14 @@ export async function retireBunChrome(webViewClass: NativeWebViewClass): Promise
 	// 1.25 s), and a Chrome launched meanwhile finds the profile locked ("Chrome process closed the
 	// pipe"). So the tree is listed first, ended as a whole, and awaited.
 	if (process.platform === "win32") {
-		webviewTrace("retire.start");
 		const tree = await windowsBunChromeTree();
-		webviewTrace("retire.tree", `pids=${tree.join(",")}`);
 		webViewClass.closeAll();
 		const running = tree.filter(alive);
 		if (running.length > 0) await run("taskkill", ["/F", ...running.flatMap((pid) => ["/PID", String(pid)])]);
-		webviewTrace("retire.killed", `pids=${running.join(",")}`);
 		await waitForWindowsRemoval(tree);
-		webviewTrace("retire.end");
 		return;
 	}
-	webviewTrace("retire.start");
 	const pids = await bunChromePids();
-	webviewTrace("retire.tree", `pids=${pids.join(",")}`);
 	if (process.platform === "darwin") {
 		for (const pid of pids) {
 			try {
@@ -139,5 +132,4 @@ export async function retireBunChrome(webViewClass: NativeWebViewClass): Promise
 		webViewClass.closeAll();
 	}
 	await waitForExit(pids);
-	webviewTrace("retire.end");
 }

@@ -28,7 +28,6 @@ import type {
 } from "./kernel-tools-types.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
 import { terminateProcessTrees } from "./process-tree-host.ts";
-import { labTrace } from "./webview-lab-trace.js";
 import { JavaScriptRunQueue, type PendingJavaScriptRun } from "./run-queue.ts";
 import { bridgeError, WorkerStartupCancelledError } from "./worker-host.ts";
 import { WorkerSlot } from "./worker-slot.ts";
@@ -197,7 +196,6 @@ export class JavaScriptKernel {
 		if (this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
 		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
-		labTrace("cell.start", `cell=${next.input.cellId.slice(0, 8)} timeoutMs=${next.input.timeoutMs ?? 0}`);
 		if (next.input.timeoutMs) {
 			this.#timeout = setTimeout(() => void this.#timeoutActive(next), next.input.timeoutMs);
 		}
@@ -217,7 +215,6 @@ export class JavaScriptKernel {
 	async #timeoutActive(run: PendingJavaScriptRun): Promise<void> {
 		if (this.#runs.active !== run || run.settled) return;
 		const durationMs = run.input.timeoutMs ?? 0;
-		labTrace("cell.timeout", `cell=${run.input.cellId.slice(0, 8)}`);
 		await this.#stopActive(
 			run,
 			`timed out after ${durationMs}ms`,
@@ -312,7 +309,6 @@ export class JavaScriptKernel {
 		if (message.type !== "result") return;
 		const active = this.#runs.active;
 		if (!active || active.input.cellId !== message.cellId) return;
-		labTrace("cell.result", `cell=${message.cellId.slice(0, 8)} ok=${message.ok}`);
 		this.#clearTimeout();
 		this.#runs.releaseActive(active);
 		active.settledByWorker = true;
