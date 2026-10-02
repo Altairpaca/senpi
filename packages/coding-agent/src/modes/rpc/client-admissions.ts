@@ -43,8 +43,13 @@ export class ClientAdmissions {
 		this.durableSessionId = durableSessionId;
 		for (const entry of session.sessionManager.getEntries()) {
 			if (entry.type !== "custom" || entry.customType !== CLIENT_ADMISSION_ENTRY) continue;
-			const record = clientAdmissionRecordSchema.parse(entry.data);
-			if (record.durableSessionId === durableSessionId) this.records.set(record.clientMessageId, record);
+			// A custom entry is opaque transcript data: one that does not parse as an admission
+			// (an extension reusing the type, a hand-edited file) is not an admission and must not
+			// keep the session from opening.
+			const parsed = clientAdmissionRecordSchema.safeParse(entry.data);
+			if (parsed.success && parsed.data.durableSessionId === durableSessionId) {
+				this.records.set(parsed.data.clientMessageId, parsed.data);
+			}
 		}
 		this.hasIdentities = this.records.size > 0;
 		// Agent listeners are awaited before the next provider call; a crash cannot turn a
@@ -116,6 +121,9 @@ export class ClientAdmissions {
 		command: RpcClientInput,
 		invoke: (hooks: AdmissionHooks) => Promise<PromptDisposition>,
 	): Promise<ClientMessageAdmission | undefined> {
+		// Restored input keeps its place ahead of anything delivered after the ledger opened,
+		// including deliveries that reach a freshly rebound session before its bind awaited this.
+		await this.ready;
 		this.hasIdentities ||= command.clientMessageId !== undefined || command.clientTurnId !== undefined;
 		if (command.clientMessageId === undefined) {
 			await invoke({ queued: () => {}, accepted: () => undefined });

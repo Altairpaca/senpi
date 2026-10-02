@@ -143,13 +143,14 @@ describe("durable RPC client message admission", () => {
 			return stream(model, context, options);
 		};
 		const rpc = fixture.bind();
-		await rpc.send({ type: "prompt", message: "hold", clientMessageId: "initial", clientTurnId: "initial-turn" });
-		await entered.promise;
-		const queued = { ...queueCommand, message: "after", clientMessageId: "queued", clientTurnId: "queued-turn" };
-		await rpc.send(queued);
-
-		// When
+		// Every exit path releases the held provider call, or cleanup would wait on a parked turn.
 		try {
+			await rpc.send({ type: "prompt", message: "hold", clientMessageId: "initial", clientTurnId: "initial-turn" });
+			await entered.promise;
+			const queued = { ...queueCommand, message: "after", clientMessageId: "queued", clientTurnId: "queued-turn" };
+			await rpc.send(queued);
+
+			// When
 			await rpc.send(queued);
 		} finally {
 			release.resolve();
@@ -163,5 +164,36 @@ describe("durable RPC client message admission", () => {
 			{ clientMessageId: "queued", clientTurnId: "queued-turn" },
 		]);
 		expect(fixture.session.pendingMessageCount).toBe(0);
+	});
+
+	it("does not attribute a custom-message trigger turn to the previous client message", async () => {
+		// Given
+		const fixture = await setup();
+		const rpc = fixture.bind();
+		await rpc.send({ type: "prompt", message: "hello", clientMessageId: "message-1", clientTurnId: "turn-1" });
+		await Promise.all(rpc.handler.pendingPrompts());
+
+		// When
+		const wake = {
+			type: "send_custom_message",
+			customType: "wake",
+			content: "wake",
+			display: true,
+			triggerTurn: true,
+		};
+		await rpc.send(wake);
+		await fixture.session.waitForIdle();
+
+		// Then
+		expect(getAssistantTexts(fixture.harness)).toEqual(["first answer", "second answer"]);
+		const turns = rpc.messages().filter((event) => event.type === "turn_start");
+		expect(turns).toHaveLength(2);
+		expect(turns[0]).toMatchObject({ clientMessageId: "message-1", clientTurnId: "turn-1" });
+		expect(turns[1]).not.toHaveProperty("clientMessageId");
+		const answers = rpc
+			.messages()
+			.filter((event) => event.type === "message_end" && event.message?.role === "assistant");
+		expect(answers[0]).toMatchObject({ clientMessageId: "message-1" });
+		expect(answers[1]).not.toHaveProperty("clientMessageId");
 	});
 });

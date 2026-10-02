@@ -27,12 +27,12 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: prompt and queued-input options carry client identity; prepared queue insertion has a write-before-enqueue callback; native user messages and ordered queue records preserve identity; restored accepted input bypasses input transforms. Queue consumption uses client identity when present.
+- `packages/coding-agent/src/core/agent-session.ts`: prompt and queued-input options carry client identity; prepared queue insertion has a write-before-enqueue callback; native user messages and ordered queue records preserve identity; restored accepted input bypasses input transforms. Queue consumption uses client identity when present. A started prompt that a concurrently started run displaces into the steering queue reports its prepared input through the same callback before it is enqueued.
 - `packages/coding-agent/src/core/client-message-identity.ts`: bounded identity parsing and shared prepared-input metadata.
 
 ### Why
 
-- `packages/coding-agent/src/core/agent-session.ts` previously discarded client identity before native queue insertion and matched consumed input only by text. Replayed deliveries and equal-text messages could not be distinguished.
+- `packages/coding-agent/src/core/agent-session.ts` previously discarded client identity before native queue insertion and matched consumed input only by text. Replayed deliveries and equal-text messages could not be distinguished. The displaced-prompt fallback queued input only in memory after the caller had been told it started, so a crash before delivery lost it.
 - `packages/coding-agent/src/core/client-message-identity.ts` keeps the metadata shared by RPC admission, native messages, and queue restoration.
 
 ### Why an extension could not handle it

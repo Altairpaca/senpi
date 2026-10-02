@@ -9,6 +9,8 @@ import { makeSink } from "./rpc-connection-harness.ts";
 export async function createIdentityHarness(options: HarnessOptions = {}) {
 	const harness = await createHarness({ ...options, persistSession: true, autoTitleSessions: false });
 	let session = harness.session;
+	// harness.cleanup() disposes the original session; every session opened here is disposed here, once.
+	const opened: AgentSession[] = [];
 	let request = 0;
 	const connections: ReturnType<typeof createRpcConnectionHandler>[] = [];
 	const runtimes: AgentSessionRuntime[] = [];
@@ -47,40 +49,57 @@ export async function createIdentityHarness(options: HarnessOptions = {}) {
 			},
 		};
 	};
+	const openSession = (): AgentSession => {
+		const path = harness.sessionManager.getSessionFile();
+		if (!path) throw new Error("The persistent fixture has no session file");
+		session = new AgentSession({
+			agent: new Agent({
+				initialState: { model: harness.getModel(), systemPrompt: "Test", tools: [] },
+				streamFn: harness.agent.streamFunction,
+				getApiKey: () => "faux-key",
+			}),
+			sessionManager: SessionManager.open(path),
+			settingsManager: harness.settingsManager,
+			modelRuntime: harness.session.modelRuntime,
+			resourceLoader: harness.session.resourceLoader,
+			cwd: harness.tempDir,
+			agentDir: harness.session.agentDir,
+		});
+		opened.push(session);
+		return session;
+	};
+	const detach = async (): Promise<void> => {
+		for (const connection of connections.splice(0)) await connection.dispose();
+		for (const runtime of runtimes.splice(0)) runtime.releaseSessionHold();
+	};
 	return {
 		harness,
 		get session() {
 			return session;
 		},
 		bind,
-		async reopen() {
+		async openSettled() {
 			await session.waitForIdle();
-			for (const connection of connections) await connection.dispose();
-			for (const runtime of runtimes) runtime.releaseSessionHold();
-			session.dispose();
-			const path = harness.sessionManager.getSessionFile();
-			if (!path) throw new Error("The persistent fixture has no session file");
-			const manager = SessionManager.open(path);
-			session = new AgentSession({
-				agent: new Agent({
-					initialState: { model: harness.getModel(), systemPrompt: "Test", tools: [] },
-					streamFn: harness.agent.streamFunction,
-					getApiKey: () => "faux-key",
-				}),
-				sessionManager: manager,
-				settingsManager: harness.settingsManager,
-				modelRuntime: harness.session.modelRuntime,
-				resourceLoader: harness.session.resourceLoader,
-				cwd: harness.tempDir,
-				agentDir: harness.session.agentDir,
-			});
+			await detach();
+			return openSession();
+		},
+		async reopen() {
+			await this.openSettled();
+			return bind();
+		},
+		/**
+		 * Open the transcript in a new bound session while the current one is left mid-run,
+		 * as a restarted host finds the file after the previous process died.
+		 */
+		async reopenAbandoned() {
+			await detach();
+			openSession();
 			return bind();
 		},
 		async cleanup() {
-			await session.abort();
-			for (const connection of connections) await connection.dispose();
-			for (const runtime of runtimes) runtime.releaseSessionHold();
-			session.dispose();
+			for (const each of [harness.session, ...opened]) await each.abort();
+			await detach();
+			for (const each of opened) each.dispose();
 			harness.cleanup();
 		},
 	};

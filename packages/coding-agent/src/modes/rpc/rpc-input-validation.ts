@@ -93,6 +93,13 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
 	}
+	if (
+		(value.type === "steer" || value.type === "follow_up") &&
+		value.enqueueOrder !== undefined &&
+		!(typeof value.enqueueOrder === "number" && Number.isFinite(value.enqueueOrder))
+	) {
+		return "enqueueOrder must be a finite number.";
+	}
 	if (value.type === "append_user_message" && !validContent(value.content)) {
 		return "append_user_message content must be a string or text/image content array.";
 	}

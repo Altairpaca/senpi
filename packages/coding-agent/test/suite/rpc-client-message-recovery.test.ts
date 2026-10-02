@@ -69,12 +69,12 @@ describe("RPC client identity recovery", () => {
 		};
 		const rpc = fixture.bind();
 		const command = { type: "prompt", message: "held", clientMessageId: "running" };
-		await rpc.send(command);
-		await entered.promise;
-
-		// When
 		let repeated: Awaited<ReturnType<typeof rpc.send>>;
 		try {
+			await rpc.send(command);
+			await entered.promise;
+
+			// When
 			repeated = await rpc.send(command);
 		} finally {
 			release.resolve();

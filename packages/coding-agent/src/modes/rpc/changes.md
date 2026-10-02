@@ -48,15 +48,16 @@ Prompt preflight can compact a large conversation before admitting the input. Th
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: extracted prompt/steer/follow-up dispatch into the durable admission path, restores accepted queues on bind, and correlates events.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive client IDs, admission responses, and typed ordered queue metadata.
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts`: forwards prompt and queue identity and preserves typed refusal codes.
-- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: refuses malformed client IDs before dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: refuses malformed client IDs and a non-numeric `enqueueOrder` before dispatch.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`: advertises `durable_client_message_id` on multi-session hosts.
-- New `client-admission-record.ts`, `client-admissions.ts`, `client-input-handler.ts`, and `client-message-events.ts` own the transcript ledger, duplicate/conflict handling, prepared queue recovery, and event correlation.
+- New `client-admission-record.ts`, `client-admissions.ts`, `client-input-handler.ts`, and `client-message-events.ts` own the transcript ledger, duplicate/conflict handling, prepared queue recovery, and event correlation. The ledger skips transcript entries that do not parse as admissions, admits new deliveries only after restoring the queue, and a custom-message trigger turn does not inherit the previous client identity.
+- Protocol reference: `docs/rpc.md` ("Durable client identity"); tests `test/suite/rpc-client-message-identity.test.ts`, `test/suite/rpc-client-message-recovery.test.ts`, `test/suite/rpc-client-message-running-queue.test.ts`, `test/suite/rpc-client-message-ledger.test.ts`.
 
 ### Why
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts` previously admitted each transport retry independently, so a lost acknowledgment could cause a second answer.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts` need identities independent of routing handles and transport request IDs.
-- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts` bounds the persisted identity.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts` bounds the persisted identity and keeps a malformed recovery order from being written into a record that would later fail to reopen.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts` lets clients negotiate safe replay before using it.
 
 ### Why an extension could not handle it

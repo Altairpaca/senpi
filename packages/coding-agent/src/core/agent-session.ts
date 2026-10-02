@@ -2519,6 +2519,7 @@ export class AgentSession {
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
 		deferredTurnClaim?: DeferredTurnClaim,
+		onQueuedInput?: (input: PreparedClientInput) => void,
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
@@ -2564,12 +2565,27 @@ export class AgentSession {
 					"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion."
 			) {
 				const queuedMessages = Array.isArray(messages) ? messages : [messages];
-				for (const message of queuedMessages) this.agent.steer(message);
 				const userMessage = queuedMessages.find((message) => message.role === "user");
-				if (userMessage?.role === "user") {
-					const text = this._extractUserMessageText(userMessage.content);
-					this._steeringMessages.push(text);
-					this._recordQueuedInput(text, "steer", readClientMessageIdentity(userMessage));
+				// The caller was already told this input started; it now waits in the queue, so persist
+				// it as queued input before it is enqueued, exactly like the regular queue path.
+				const prepared =
+					userMessage?.role === "user"
+						? {
+								...readClientMessageIdentity(userMessage),
+								text: this._extractUserMessageText(userMessage.content),
+								images:
+									typeof userMessage.content === "string"
+										? undefined
+										: userMessage.content.filter((part) => part.type === "image"),
+								mode: "steer" as const,
+								enqueueOrder: this.reserveQueuedInputOrder(),
+							}
+						: undefined;
+				if (prepared) onQueuedInput?.(prepared);
+				for (const message of queuedMessages) this.agent.steer(message);
+				if (prepared) {
+					this._steeringMessages.push(prepared.text);
+					this._recordQueuedInput(prepared.text, "steer", prepared);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -4976,7 +4992,7 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(messages);
+		await this._promptAgent(messages, undefined, options?.onQueuedInput);
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {

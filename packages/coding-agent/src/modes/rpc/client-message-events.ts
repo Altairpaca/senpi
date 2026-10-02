@@ -33,6 +33,9 @@ export class ClientMessageEvents {
 			this.inputs = [];
 			this.sawUser = false;
 		}
+		// A turn whose input is a custom message (a trigger turn, an extension steer) answers that
+		// message, not the last client input, so it must not inherit the previous correlation.
+		if (event.type === "message_start" && event.message.role === "custom" && !this.sawUser) this.active = [];
 		if (event.type === "message_start" && event.message.role === "user") {
 			if (!this.sawUser) this.active = [];
 			this.sawUser = true;

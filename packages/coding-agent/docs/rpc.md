@@ -1465,7 +1465,8 @@ Repeating a delivery returns the existing admission without running input handle
 appending another user message, or starting another answer. Changing the input kind,
 text, images, prompt options, or `clientTurnId` under that key fails with
 `errorCode: "client_message_id_conflict"`. Recovery `enqueueOrder` is not part of
-payload identity; the first admission's order stays authoritative.
+payload identity; the first admission's order stays authoritative. When present it must
+be a finite number; any other value is refused before admission.
 
 Successful responses echo both IDs in `data` and, when `clientMessageId` is present,
 include `data.admission`:
@@ -1481,7 +1482,11 @@ Preflight or storage rejection creates no accepted admission, so the same delive
 can be retried after the failure is repaired.
 
 Accepted queues and their prepared content survive reopening the transcript. They
-are restored in the original enqueue order without rerunning input transforms.
+are restored in the original enqueue order without rerunning input transforms, and a
+delivery that arrives while they are being restored is queued behind them. A prompt
+that was acknowledged as `started` but displaced into the steering queue by a run that
+began first is stored as queued input too, so it survives a host restart. A transcript
+entry that does not parse as an admission is ignored rather than blocking the session.
 Running or completed admissions are never replayed, and `clear_queue` retires its
 admissions before returning. Native steering priority and drain behavior are unchanged.
 Durability requires a persistent session; `--no-session` retains deduplication only
@@ -1490,7 +1495,8 @@ for that runtime's lifetime.
 The IDs appear on persisted user messages, `turn_start`, message and tool execution
 events, `turn_end`, and `agent_end`. A turn consuming several identified inputs adds
 `clientMessages` with their identities; top-level IDs identify the most recently
-consumed input. `turn_start` identifies the first consumed input. The `ordered`
+consumed input. `turn_start` identifies the first consumed input. A turn whose input is a custom
+message, such as a `send_custom_message` trigger turn, carries no client IDs. The `ordered`
 records in `queue_update`, `get_state`, `clear_queue`, `get_steering_messages`, and
 `get_follow_up_messages` carry IDs too. The legacy string `messages`, `steering`,
 and `followUp` arrays remain available.
