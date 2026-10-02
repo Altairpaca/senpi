@@ -31,7 +31,7 @@ describe.skipIf(process.platform === "win32")("budgeted gc pass scheduled by ens
 		const target = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
 
 		let presentAtResolution = -1;
-		const host = await heldRealHost(qa, qa.legacy).then((ensured) => {
+		const host = await heldRealHost(qa, qa.legacy, { gcPassInFlight: true }).then((ensured) => {
 			// Synchronous on purpose: no event-loop turn may run between the settle and this count.
 			presentAtResolution = deadDirs.filter((dir) => existsSync(dir)).length;
 			return ensured;
@@ -61,7 +61,7 @@ describe.skipIf(process.platform === "win32")("budgeted gc pass scheduled by ens
 		const timedEnsure = async (): Promise<number> => {
 			await rm(marker, { force: true });
 			const started = performance.now();
-			const elapsed = await heldRealHost(qa, qa.legacy).then((ensured) => {
+			const elapsed = await heldRealHost(qa, qa.legacy, { gcPassInFlight: true }).then((ensured) => {
 				const ms = performance.now() - started;
 				ensured.release();
 				return ms;

@@ -414,10 +414,7 @@ export class SessionEventWriter {
 	 * session's final stdout record.
 	 */
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
-		if (this.sealedSessions.has(sessionId)) return;
-		this.settleOpenTurns(sessionId);
-		// A settle that overflowed the stdio lane has already sealed the session through closeSession.
-		if (this.sealedSessions.has(sessionId)) return;
+		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
 		const targetId = this.connectionContext.getStore();
@@ -466,10 +463,7 @@ export class SessionEventWriter {
 	}
 
 	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
-		if (this.sealedSessions.has(sessionId)) return;
-		this.settleOpenTurns(sessionId);
-		// A settle that overflowed the stdio lane has already sealed the session through closeSession.
-		if (this.sealedSessions.has(sessionId)) return;
+		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
@@ -555,18 +549,23 @@ export class SessionEventWriter {
 	}
 
 	/**
+	 * Publishes the settles a seal would strand (session-open-turns.ts) while the session can still write;
+	 * false when the session is sealed already, or became sealed by a settle that overflowed the stdio lane.
+	 */
+	private settleBeforeSeal(sessionId: string): boolean {
+		if (this.sealedSessions.has(sessionId)) return false;
+		for (let owed = this.openTurns.take(sessionId); owed > 0; owed -= 1) {
+			this.enqueue(sessionId, { type: "agent_settled", reason: "session_closed" });
+		}
+		return !this.sealedSessions.has(sessionId);
+	}
+
+	/**
 	 * Drops per-session bookkeeping for a handle whose runtime is fully disposed.
 	 * Routing handles are unique per process epoch, so nothing can legitimately
 	 * emit under this id again; without this every host-closed session would
 	 * leave a permanent sealed-handle (and snapshot) entry behind.
 	 */
-	/** The settles a seal would strand (session-open-turns.ts), published while the session can still write. */
-	private settleOpenTurns(sessionId: string): void {
-		for (let owed = this.openTurns.take(sessionId); owed > 0; owed -= 1) {
-			this.enqueue(sessionId, { type: "agent_settled", reason: "session_closed" });
-		}
-	}
-
 	forgetSession(sessionId: string): void {
 		this.sealedSessions.delete(sessionId);
 		this.openTurns.take(sessionId);

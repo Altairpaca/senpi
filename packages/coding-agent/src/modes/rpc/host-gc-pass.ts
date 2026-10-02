@@ -93,17 +93,30 @@ export async function gcHostEndpointsOpportunistically(
 	return { ran: true, marker };
 }
 
-const passesRunning = new Set<string>();
+const passesRunning = new Map<string, Promise<void>>();
 
 /** Starts a pass off the caller's path; at most one at a time per agent directory in this process. */
 export function scheduleOpportunisticHostGc(options: OpportunisticGcOptions): void {
 	if (passesRunning.has(options.agentDir)) return;
-	passesRunning.add(options.agentDir);
-	setImmediate(() => {
-		gcHostEndpointsOpportunistically(options)
-			.catch((error: unknown) => recordPassFailure(options.agentDir, error))
-			.finally(() => passesRunning.delete(options.agentDir));
-	}).unref();
+	const pass = new Promise<void>((resolve) => {
+		setImmediate(() => {
+			gcHostEndpointsOpportunistically(options)
+				.then(
+					() => undefined,
+					(error: unknown) => recordPassFailure(options.agentDir, error),
+				)
+				.finally(() => {
+					passesRunning.delete(options.agentDir);
+					resolve();
+				});
+		}).unref();
+	});
+	passesRunning.set(options.agentDir, pass);
+}
+
+/** Resolves once the pass this process scheduled for `agentDir` (if any) has finished; it never rejects. */
+export function settledOpportunisticHostGc(agentDir: string): Promise<void> {
+	return passesRunning.get(agentDir) ?? Promise.resolve();
 }
 
 async function gcCandidates(options: OpportunisticGcOptions): Promise<readonly NamedEndpoint[]> {
