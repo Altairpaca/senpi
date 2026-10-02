@@ -1,3 +1,24 @@
+## 2026-10-02 - Retry a rejected tool_reference replay as text (senpi #2568)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-tool-references.ts`: new `demoteToolReferenceReplay` turns every replayed `tool_reference` into text: a native search pair (`server_tool_use` plus its `tool_search_tool_result`) becomes `Tool search found: <names>`, and `tool_reference` items inside a client `tool_result` become one `Tools loaded: <names>` text item. Tool definitions in `tools` are untouched.
+- `packages/ai/src/api/anthropic-messages.ts`: when a request that replays a `tool_reference` fails with `400 Tool reference '<name>' not found in available tools`, `stream` retries it once with `demoteToolReferenceReplay` applied and remembers the fallback per (session, base URL, model) in `toolReferenceReplayFallbacks`, next to the unsigned-thinking fallback and cleared by the same session-resource cleanup. A request that replays no reference is never retried.
+- `packages/ai/test/anthropic-tool-reference-replay-fallback.test.ts`: a local endpoint that rejects any replayed reference proves the retry, the session-level memory, and that a reference-free request is not retried.
+
+### Why
+
+- Live 2026-10-02 (omo 5.1.10, claude-sonnet-5 through an Anthropic-compatible relay): a native BM25 search returned `generate_image`, `thread_set_model`, `task`, `thread_set_reasoning`, `workpool`; the next request replayed that result and failed with `Tool reference 'generate_image' not found in available tools` although `tools` defined every name. Bisecting the captured payload against the relay showed it rejects any replayed `tool_reference` (in a search result or a `tool_result`) once the request carries six or more tools, while it accepts the same history with five. History only grows, so every later turn in the session failed the same way (`'task' not found` on the next one).
+
+### Why an extension could not handle it
+
+- The rejection is decided by the wire payload assembled from history inside the provider; an extension's `before_provider_request` hook cannot see the HTTP error to retry, and stripping references unconditionally would lose deferred-tool loading on endpoints that accept them.
+
+### Expected merge conflict zones
+
+- LOW: the retry branch sits in the fork-only `createRequest` retry block beside the unsigned-thinking fallback; `anthropic-tool-references.ts` is fork-only.
+- The demoted replay keeps the found tools callable: a deferred tool is loaded only by a replayed `tool_reference`, so `demoteToolReferenceReplay` also sends every tool a demoted reference named without `defer_loading` (other deferred tools keep it). Without this the model would have to search again before calling a tool an earlier turn found. Test: the found tools lose `defer_loading` and an unrelated deferred tool keeps it.
+
 ## 2026-10-02 - Compat faux registrations survive an API registry reset (senpi#2542)
 
 ### What changed

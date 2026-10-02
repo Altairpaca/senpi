@@ -96,7 +96,7 @@ import {
 	type TranscriptContext,
 } from "../utils/transcript.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
-import { demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
+import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import {
 	getJsonSchemaToolParameters,
@@ -373,6 +373,8 @@ type UnsignedThinkingReplay = "text" | "empty-signature";
 // A provider can reject its own empty signatures. Learn that capability for one
 // conversation without changing the shared model definition used by other sessions.
 const unsignedThinkingTextReplayFallbacks = new Set<string>();
+// Endpoints that rejected a replayed tool_reference for one conversation (senpi #2568).
+const toolReferenceReplayFallbacks = new Set<string>();
 
 registerSessionResourceCleanup((sessionId?: string) => {
 	// One small entry per (session, base URL, model) that ever hit the fallback;
@@ -380,11 +382,14 @@ registerSessionResourceCleanup((sessionId?: string) => {
 	// them for every session that ever ran.
 	if (sessionId === undefined) {
 		unsignedThinkingTextReplayFallbacks.clear();
+		toolReferenceReplayFallbacks.clear();
 		return;
 	}
 	const prefix = `${sessionId}\u0000`;
-	for (const key of unsignedThinkingTextReplayFallbacks) {
-		if (key.startsWith(prefix)) unsignedThinkingTextReplayFallbacks.delete(key);
+	for (const fallbacks of [unsignedThinkingTextReplayFallbacks, toolReferenceReplayFallbacks]) {
+		for (const key of fallbacks) {
+			if (key.startsWith(prefix)) fallbacks.delete(key);
+		}
 	}
 });
 
@@ -403,6 +408,15 @@ function isInvalidUnsignedThinkingSignatureError(error: unknown): boolean {
 		(error as { status?: unknown }).status === 400 &&
 		error instanceof Error &&
 		/Invalid signature in thinking block/i.test(error.message)
+	);
+}
+
+function isToolReferenceNotFoundError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		"status" in error &&
+		(error as { status?: unknown }).status === 400 &&
+		/Tool reference '[^']*' not found in available tools/i.test(error.message)
 	);
 }
 
@@ -1404,6 +1418,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				fallbackKey && unsignedThinkingTextReplayFallbacks.has(fallbackKey)
 					? "text"
 					: getAnthropicCompat(model).unsignedThinkingReplay;
+			let demoteReferenceReplay = fallbackKey !== undefined && toolReferenceReplayFallbacks.has(fallbackKey);
+			let requestReplaysReferences = false;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
 				let params = buildParams(model, normalizedContext, isOAuth, options, unsignedThinkingReplay);
 				const nextParams = await options?.onPayload?.(params, model);
@@ -1412,9 +1428,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				}
 				params = sanitizeAdaptiveThinkingPayload(model, params, options);
 				params = sanitizeUnsupportedNativeTools(model, params);
-				params = sanitizeAnthropicToolPairs(
-					demoteUnavailableToolReferences(params),
-				) as MessageCreateParamsStreaming;
+				params = demoteUnavailableToolReferences(params);
+				const withoutReferenceReplay = demoteToolReferenceReplay(params);
+				requestReplaysReferences = withoutReferenceReplay !== params;
+				if (demoteReferenceReplay) params = withoutReferenceReplay;
+				params = sanitizeAnthropicToolPairs(params) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
 				const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
@@ -1452,6 +1470,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							if (unsignedThinkingReplay !== "text" && isInvalidUnsignedThinkingSignatureError(error)) {
 								unsignedThinkingReplay = "text";
 								if (fallbackKey) unsignedThinkingTextReplayFallbacks.add(fallbackKey);
+								return createRequest();
+							}
+							if (!demoteReferenceReplay && requestReplaysReferences && isToolReferenceNotFoundError(error)) {
+								demoteReferenceReplay = true;
+								if (fallbackKey) toolReferenceReplayFallbacks.add(fallbackKey);
 								return createRequest();
 							}
 							if (await retryWithNewerClaudeCode(error)) {
