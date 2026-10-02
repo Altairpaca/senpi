@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { runChild } from "./eval/child-probe.ts";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const qaDriver = fileURLToPath(new URL("../scripts/qa-e2e-eval.ts", import.meta.url));
@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe("qa-e2e-eval sandbox", () => {
-	it("leaves an inherited Senpi agent directory untouched", () => {
+	it("leaves an inherited Senpi agent directory untouched", async () => {
 		const tempRoot = mkdtempSync(join(tmpdir(), "senpi-codemode-qa-isolation-"));
 		tempDirs.push(tempRoot);
 		const inheritedAgentDir = join(tempRoot, "inherited-agent");
@@ -24,20 +24,20 @@ describe("qa-e2e-eval sandbox", () => {
 		mkdirSync(inheritedAgentDir);
 		writeFileSync(sentinelPath, "must survive\n");
 
-		const result = spawnSync(process.execPath, ["--import", "tsx", qaDriver], {
+		const result = await runChild({
+			command: process.execPath,
+			args: ["--import", "tsx", qaDriver],
 			cwd: repoRoot,
-			encoding: "utf8",
 			env: {
 				...process.env,
 				PI_OFFLINE: "1",
 				SENPI_CODING_AGENT_DIR: inheritedAgentDir,
 			},
-			timeout: 30_000,
 		});
 
-		expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+		expect(result.code, `${result.stdout}\n${result.stderr}`).toBe(0);
 		expect(existsSync(sentinelPath)).toBe(true);
 		expect(readFileSync(sentinelPath, "utf8")).toBe("must survive\n");
 		expect(readdirSync(inheritedAgentDir)).toEqual(["sentinel.txt"]);
-	});
+	}, 240_000);
 });
