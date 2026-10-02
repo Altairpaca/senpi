@@ -1,3 +1,21 @@
+## 2026-10-02 - Accept Ctrl+V in direct Warp-on-WSL sessions
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: `app.clipboard.pasteImage` defaults to both `ctrl+v` and `alt+v` in direct Warp-on-WSL sessions, using the existing hardened TUI session detector. Other terminal defaults and explicit user overrides are unchanged.
+
+### Why
+
+- WSL selected only the Windows `alt+v` binding, so a delivered Ctrl+V byte never reached clipboard handling even when the Windows clipboard image could be read successfully.
+
+### Why an extension could not handle it
+
+- The app binding table controls clipboard dispatch and its displayed hints. An optional extension shortcut cannot repair the shared default for every composer.
+
+### Expected merge conflict zones
+
+- LOW: the TUI import and `app.clipboard.pasteImage` row in `packages/coding-agent/src/core/keybindings.ts`.
+
 ## 2026-10-01 - Share shipped package resolution with read permissions (#2513)
 
 ### What changed

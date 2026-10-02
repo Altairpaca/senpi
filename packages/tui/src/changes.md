@@ -1,5 +1,24 @@
 # TUI delta rendering fork changes
 
+## 2026-10-02 - Share the direct Warp-on-WSL session predicate
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: extracts `isWarpWslSession` from the Shift+Enter normalizer, retaining the Linux, non-empty Warp marker, validated interop socket, and SSH/multiplexer boundaries. The normalizer still checks only standalone LF input.
+- `packages/tui/src/index.ts`: exports `isWarpWslSession` so coding-agent clipboard defaults reuse the same environment boundary instead of duplicating detection.
+
+### Why
+
+- Clipboard shortcuts and Shift+Enter must agree on which direct Warp-on-WSL sessions qualify for compatibility behavior.
+
+### Why an extension could not handle it
+
+- Session detection is shared by TUI input normalization and the host's default keybinding table, before optional extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the Warp normalization helper in `packages/tui/src/terminal.ts` and terminal exports in `packages/tui/src/index.ts`.
+
 ## 2026-10-01 - Optional command arguments submit on picker Enter (senpi#2479)
 
 ### What changed

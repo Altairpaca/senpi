@@ -1,3 +1,21 @@
+## 2026-10-02 - Route Warp-on-WSL empty paste events to the clipboard
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`: an exact empty bracketed-paste packet invokes the existing clipboard handler only in a direct Warp-on-WSL session, using the shared hardened session predicate. Non-empty bracketed paste remains editor text input, and other terminal sessions are unchanged.
+
+### Why
+
+- Physical Ctrl+V with a copied image was captured as `ESC[200~ESC[201~`, not a Ctrl+V key byte. Adding a Ctrl+V keybinding alone could not repair this path because the base editor silently ignored empty paste content.
+
+### Why an extension could not handle it
+
+- An optional input hook can work around the event, but the default composer owns clipboard dispatch and must route the terminal paste event without requiring an installed extension.
+
+### Expected merge conflict zones
+
+- LOW: the TUI import and clipboard dispatch condition in `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`.
+
 ## 2026-10-01 - Forward explicit picker argument requirements (senpi#2479)
 
 ### What changed
