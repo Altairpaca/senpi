@@ -2166,3 +2166,25 @@ An extension `input` handler runs inside `AgentSession.prompt`, after the TUI ha
 - LOW: the `isBareSkillNamespace` checks just before the `isExtensionCommand` branch of `setupEditorSubmitHandler` and at the top of `handleFollowUp`, and the new `openSkillPickerForBareNamespace` method beside `isExtensionCommand` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
 
 - Covered production paths: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+## 2026-10-02 - Upstream logo animation and Radius login not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.lazy.ts`
+- `packages/coding-agent/src/modes/interactive/components/pi-logo-animation.ts`
+- `packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts`
+
+None of these upstream files are added to the fork.
+
+### Why
+
+The logo animation is upstream branding; the fork keeps its own header and branding. Radius sign-in is excluded from the fork on record (`core/radius.ts`).
+
+### Why an extension could not handle it
+
+Branding and the `/login` provider list are owned by the interactive mode and the excluded provider, not an extension.
+
+### Expected merge conflict zones
+
+Upstream changes to the startup header and the `/login` selector; keep the fork header and omit Radius.

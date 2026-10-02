@@ -4469,3 +4469,44 @@ The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError
 
 - LOW: the single pattern list in `core/retry-fallback/billing.ts`; the module is fork-local.
 
+## 2026-10-02 - Experimental surface stays on the fork harness (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/client-tui-chat.ts`
+- `packages/coding-agent/src/experimental/commands.ts`
+- `packages/coding-agent/src/experimental/plugin.ts`
+- `packages/coding-agent/src/experimental/services/agent-controller-provider.ts`
+- `packages/coding-agent/src/experimental/services/agent-controller.ts`
+- `packages/coding-agent/src/experimental/services/models-provider.ts`
+- `packages/coding-agent/src/experimental/services/transcript-provider.ts`
+- `packages/coding-agent/src/experimental/services/transcript.ts`
+- `packages/coding-agent/src/experimental/services/worker.ts`
+- `packages/coding-agent/src/experimental/session-worker.ts`
+- `packages/coding-agent/src/experimental/durable/harness-setup.ts`
+- `packages/coding-agent/src/experimental/durable/main.ts`
+- `packages/coding-agent/src/experimental/durable/prompt.ts`
+- `packages/coding-agent/src/experimental/durable/runtime.ts`
+- `packages/coding-agent/src/experimental/durable/sessions.ts`
+- `packages/coding-agent/src/experimental/durable/subagent.ts`
+- `packages/coding-agent/src/experimental/durable/tui.ts`
+- `packages/coding-agent/src/experimental/vacation/harness-setup.ts`
+- `packages/coding-agent/src/experimental/vacation/main.ts`
+- `packages/coding-agent/src/experimental/vacation/runtime.ts`
+- `packages/coding-agent/src/experimental/vacation/sessions.ts`
+- `packages/coding-agent/src/experimental/vacation/tui.ts`
+- `packages/coding-agent/src/experimental/vacation/vacation.ts`
+
+The first ten paths stay exactly as in the fork; upstream rewrote them onto its durable package (48dd1e2f0). The `experimental/durable/**` and `experimental/vacation/**` paths are upstream additions built on that package and are not taken.
+
+### Why
+
+The fork's experimental client, worker and transcript services run on the fork harness; the upstream rewrite would import a package the fork does not ship.
+
+### Why an extension could not handle it
+
+These are the experimental client and worker entry points themselves, which sit below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `src/experimental/**`: keep ours for the listed files and keep the durable/vacation trees absent.

@@ -1895,3 +1895,24 @@ Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
 - LOW: the `AgentState` interface tail in `types.ts`.
 
 - Covered production paths: `packages/agent/src/agent.ts`, `packages/agent/src/types.ts`.
+
+## 2026-10-02 - Harness tools kept after upstream moved them (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/agent/src/harness/tools/edit-diff.ts`
+- `packages/agent/src/harness/tools/path-utils.ts`
+
+Both files stay exactly as they were in the fork; upstream moved them into its durable package.
+
+### Why
+
+They belong to the fork-owned harness listed in `.github/agent/fork-owned-trees.txt`; the fork's edit and path handling depend on them.
+
+### Why an extension could not handle it
+
+The agent harness is package source, not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream renames or deletes of these files; keep ours and port real fixes.
