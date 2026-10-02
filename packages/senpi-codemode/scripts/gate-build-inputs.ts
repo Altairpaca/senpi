@@ -5,12 +5,14 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { GateInputError } from "./gate-input-error.ts";
+import { runProcess } from "./gate-process.ts";
 
 const manifestSchema = Type.Object({ main: Type.Optional(Type.String()) });
 const configSchema = Type.Object({
 	extends: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
 });
 export const fingerprintSchema = Type.Record(Type.String(), Type.String());
+type BuildSnapshot = Readonly<Record<string, Readonly<Record<string, string>>>>;
 
 export async function builtWorkspaces(target: string) {
 	const root = await realpath(resolve(target, "../.."));
@@ -33,7 +35,14 @@ export async function buildFingerprint(workspace: string): Promise<Record<string
 	const configs = names.filter((name) => /^tsconfig.*\.json$/u.test(name));
 	for (const name of configs) {
 		const path = resolve(workspace, name);
-		const config: unknown = JSON.parse(await readFile(path, "utf8"));
+		const parsed = await runProcess([
+			"bun", "-e",
+			"console.log(JSON.stringify(Bun.JSONC.parse(await Bun.file(process.argv[1]).text())))",
+			path,
+		], workspace);
+		if (parsed.exitCode !== 0)
+			throw new GateInputError(`build configuration: ${name}: ${parsed.stderr}`);
+		const config: unknown = JSON.parse(parsed.stdout);
 		if (!Check(configSchema, config)) throw new GateInputError(`build configuration: ${name}`);
 		const parents = typeof config.extends === "string" ? [config.extends] : config.extends ?? [];
 		for (const parent of parents) {
@@ -53,10 +62,26 @@ export async function buildFingerprint(workspace: string): Promise<Record<string
 	return files;
 }
 
-/** Called only by the successful build wrapper, never inferred during preflight. */
-export async function recordTargetBuild(target: string): Promise<void> {
+export async function captureTargetBuild(target: string): Promise<BuildSnapshot> {
+	const inputs: Record<string, Readonly<Record<string, string>>> = {};
+	for (const workspace of await builtWorkspaces(target))
+		inputs[workspace.label] = await buildFingerprint(workspace.directory);
+	return inputs;
+}
+
+/** Certifies only the inputs captured before the successful build began. */
+export async function recordTargetBuild(target: string, beforeBuild: BuildSnapshot): Promise<void> {
 	const root = await realpath(resolve(target, "../.."));
-	for (const workspace of await builtWorkspaces(target)) {
+	const workspaces = await builtWorkspaces(target);
+	if (Object.keys(beforeBuild).some((label) => !workspaces.some((workspace) => workspace.label === label)))
+		throw new GateInputError("workspaces changed during build");
+	for (const workspace of workspaces) {
+		const before = beforeBuild[workspace.label];
+		const current = await buildFingerprint(workspace.directory);
+		if (before === undefined || JSON.stringify(before) !== JSON.stringify(current))
+			throw new GateInputError(`workspace inputs changed during build: ${workspace.label}; run the gate build again`);
+	}
+	for (const workspace of workspaces) {
 		await assertUnlinkedPath(root, workspace.directory);
 		await assertUnlinkedPath(workspace.directory, workspace.entry);
 		const sidecar = resolve(workspace.directory, ".senpi-gate-inputs.json");
@@ -66,7 +91,7 @@ export async function recordTargetBuild(target: string): Promise<void> {
 				throw new GateInputError(`stale workspace dist: ${workspace.label} (missing build entry; run the gate build)`);
 			throw error;
 		});
-		const certificate = `${JSON.stringify(await buildFingerprint(workspace.directory), null, 2)}\n`;
+		const certificate = `${JSON.stringify(beforeBuild[workspace.label], null, 2)}\n`;
 		const output = await open(sidecar, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW);
 		try {
 			await output.writeFile(certificate);

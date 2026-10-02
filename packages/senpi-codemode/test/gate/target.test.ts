@@ -3,11 +3,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { recordTargetBuild } from "../../scripts/gate-build-inputs.ts";
+import { captureTargetBuild, recordTargetBuild } from "../../scripts/gate-build-inputs.ts";
 import { runProcess } from "../../scripts/gate-process.ts";
 import { assertFreshTarget } from "../../scripts/gate-target.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+async function recordFixtureBuild(target: string): Promise<void> {
+	await recordTargetBuild(target, await captureTargetBuild(target));
+}
 
 it.each(["dist", "entry", "sidecar"])("does not certify build output through a %s symlink", async (linked) => {
 	// Given: a target-controlled link to an external artifact or certification path.
@@ -38,15 +42,15 @@ it.each(["dist", "entry", "sidecar"])("does not certify build output through a %
 				throw new TypeError("Unknown link fixture");
 		}
 		// When / Then: certification refuses the link and preserves external bytes.
-		await expect(recordTargetBuild(join(root, "packages/senpi-codemode"))).rejects.toThrow();
+		await expect(recordFixtureBuild(join(root, "packages/senpi-codemode"))).rejects.toThrow();
 		expect(await readFile(join(outside, "certificate.json"), "utf8")).toBe("external certificate");
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
 });
 
-it("refuses to measure a target whose workspace dist predates its sources", async () => {
-	// Given: a target with old AI output and newer source, independent of wall-clock timing.
+it("refuses to measure changed source after its workspace build was certified", async () => {
+	// Given: matching certified output, followed by a deterministic source change.
 	const root = await mkdtemp(join(tmpdir(), "senpi-gate-stale-"));
 	try {
 		const workspace = join(root, "packages/ai");
@@ -55,8 +59,10 @@ it("refuses to measure a target whose workspace dist predates its sources", asyn
 		await mkdir(join(root, "packages/senpi-codemode"));
 		await writeFile(join(workspace, "package.json"), '{"name":"@earendil-works/pi-ai","main":"./dist/index.js"}');
 		await utimes(join(workspace, "package.json"), 100, 100);
-		await writeFile(join(workspace, "src/index.ts"), "export const model = 'current';");
+		await writeFile(join(workspace, "src/index.ts"), "export const model = 'obsolete';");
 		await writeFile(join(workspace, "dist/index.js"), "export const model = 'obsolete';");
+		await recordFixtureBuild(join(root, "packages/senpi-codemode"));
+		await writeFile(join(workspace, "src/index.ts"), "export const model = 'current';");
 		await utimes(join(workspace, "dist/index.js"), 100, 100);
 		await utimes(join(workspace, "src/index.ts"), 200, 200);
 		// When: the real gate is asked to record this target as the baseline.
@@ -67,6 +73,7 @@ it("refuses to measure a target whose workspace dist predates its sources", asyn
 		// Then: it rejects the stale package before measurement, rather than certifying its old graph.
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("stale workspace dist: packages/ai");
+		expect(result.stderr).toContain("changed or deleted inputs: src/index.ts");
 		const artifact: unknown = JSON.parse(await readFile(join(root, "report.json"), "utf8"));
 		expect(artifact).toMatchObject({
 			report: { unmeasured: expect.arrayContaining(["imports", "legacyContracts"]) },
@@ -90,7 +97,7 @@ it("allows workspace output rebuilt after its source changed", async () => {
 		await utimes(join(workspace, "package.json"), 100, 100);
 		await utimes(join(workspace, "src/index.ts"), 200, 200);
 		await utimes(join(workspace, "dist/index.js"), 300, 300);
-		await recordTargetBuild(join(root, "packages/senpi-codemode"));
+		await recordFixtureBuild(join(root, "packages/senpi-codemode"));
 		expect(await readdir(join(workspace, "dist"))).toEqual(["index.js"]);
 		const certificate: unknown = JSON.parse(await readFile(join(workspace, ".senpi-gate-inputs.json"), "utf8"));
 		expect(certificate).toHaveProperty("src/index.ts");
@@ -118,7 +125,7 @@ it("rejects a deleted source even when every remaining input predates the build"
 		await utimes(join(workspace, "src/index.ts"), 100, 100);
 		await utimes(join(workspace, "src/deleted.ts"), 100, 100);
 		await utimes(join(workspace, "dist/index.js"), 200, 200);
-		await recordTargetBuild(join(root, "packages/senpi-codemode"));
+		await recordFixtureBuild(join(root, "packages/senpi-codemode"));
 		await rm(join(workspace, "src/deleted.ts"));
 		// When / Then: mtime equality cannot certify a deleted module.
 		await expect(assertFreshTarget(join(root, "packages/senpi-codemode"))).rejects.toThrow(
@@ -145,12 +152,12 @@ it("requires a rebuild after an inherited config changes even with unchanged mti
 		await utimes(join(root, "tsconfig.base.json"), 100, 100);
 		await utimes(join(workspace, "dist/index.js"), 200, 200);
 		const target = join(root, "packages/senpi-codemode");
-		await recordTargetBuild(target);
+		await recordFixtureBuild(target);
 		await expect(assertFreshTarget(target)).resolves.toBeUndefined();
 		await writeFile(join(root, "tsconfig.base.json"), '{"compilerOptions":{"strict":false}}');
 		await utimes(join(root, "tsconfig.base.json"), 100, 100);
 		await expect(assertFreshTarget(target)).rejects.toThrow("tsconfig.base.json");
-		await recordTargetBuild(target);
+		await recordFixtureBuild(target);
 		await expect(assertFreshTarget(target)).resolves.toBeUndefined();
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -168,13 +175,13 @@ it("treats a checkout with a package-like suffix as a checkout", async () => {
 		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
 		await writeFile(join(workspace, "src/index.ts"), "export const value = 1;");
 		await writeFile(join(workspace, "dist/index.js"), "export const value = 0;");
-		await utimes(join(workspace, "dist/index.js"), 100, 100);
 		const result = await runProcess(
 			["bun", "scripts/gate-eval.ts", "--target", checkout, "--report", join(root, "report.json")],
 			packageRoot,
 		);
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("stale workspace dist: packages/ai");
+		expect(result.stderr).toContain("missing input fingerprint");
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -193,7 +200,7 @@ it("accepts unchanged certified content after an input timestamp refresh", async
 		await utimes(join(workspace, "src/index.ts"), 100, 100);
 		await utimes(join(workspace, "dist/index.js"), 200, 200);
 		const target = join(root, "packages/senpi-codemode");
-		await recordTargetBuild(target);
+		await recordFixtureBuild(target);
 		await utimes(join(workspace, "src/index.ts"), 300, 300);
 		await expect(assertFreshTarget(target)).resolves.toBeUndefined();
 	} finally {
@@ -208,7 +215,7 @@ it("labels a missing built entry with its workspace instead of a raw filesystem 
 		await mkdir(join(workspace, "src"), { recursive: true });
 		await mkdir(join(workspace, "dist"));
 		await writeFile(join(workspace, "package.json"), '{"main":"./dist/index.js"}');
-		await expect(recordTargetBuild(join(root, "packages/senpi-codemode"))).rejects.toMatchObject({
+		await expect(recordFixtureBuild(join(root, "packages/senpi-codemode"))).rejects.toMatchObject({
 			name: "GateInputError",
 			input: expect.stringContaining("packages/ai"),
 		});
