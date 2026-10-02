@@ -1256,7 +1256,13 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 - **Teardown order**: a session's provider scope closes only after its runtime disposal settles, on the graceful path
   and at the close grace deadline alike; a config-reload watcher callback bound to a closed scope is a no-op (#1905).
 
-`host_stalled` and `host_memory_pressure` are additive records: a client that does not know them ignores them.
+- **Zero-session trim**: when a host that held sessions drops to zero (opening and closing ones included), it runs one
+  full collection (`Bun.gc(true)`; `gc()` on Node only with `--expose-gc`) and, one second later, broadcasts
+  `host_trimmed { footprintBeforeMb, footprintAfterMb, measure, collected }` - the allocator returns freed pages lazily,
+  so the after reading waits for it. At most one trim per minute; never while a session exists; idle exit is unchanged.
+  That single collection is the only synchronous work the no-sync rule allows, and the record is its log.
+
+`host_stalled`, `host_memory_pressure` and `host_trimmed` are additive records: a client that does not know them ignores them.
 
 #### The no-sync rule
 
@@ -2798,6 +2804,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
+| `host_trimmed` | Multi-session host: it dropped to zero sessions and collected, with the footprint before and after |
 | `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
 | `session_parked` | Multi-session host: a retained session's handle was released while the session itself stays on disk (`{ sessionId, sessionPath }`); reopen it with `open_session { sessionPath }` |
@@ -2805,7 +2812,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 
 Event types are additive: a client that does not recognise a type must ignore that record rather than fail. `model_changed`
 and `service_tier_changed` were added after the initial protocol and are safe to ignore. `session_parked`, `host_stalled`,
-and `host_memory_pressure` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
+`host_memory_pressure` and `host_trimmed` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
 value the same way.
 
 ### session_closed.reason
@@ -2857,6 +2864,15 @@ Informational. Capacity is memory, never a refusal: the host reports the pressur
 `footprintMb` is the number compared with the threshold and `measure` names its kernel counter (`phys_footprint`,
 `rss_anon`, `private_usage`, or `rss` where none is readable); `rssMb` is what `ps` shows and can stay high after
 the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sessions` only.
+
+### host_trimmed
+
+```json
+{ "type": "host_trimmed", "footprintBeforeMb": 442, "footprintAfterMb": 237, "measure": "phys_footprint", "collected": true }
+```
+
+Informational, at most once a minute: the host's last session closed and it ran one full collection. `collected` is
+`false` where the runtime exposes none (Node without `--expose-gc`); the record is still sent, with the two readings.
 
 ### model_changed
 

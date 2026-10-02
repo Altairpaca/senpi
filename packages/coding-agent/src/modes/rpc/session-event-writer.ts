@@ -384,6 +384,15 @@ export class SessionEventWriter {
 					sessions: record.sessions,
 				};
 				break;
+			case "host_trimmed":
+				wire = {
+					type: "host_trimmed",
+					footprintBeforeMb: record.footprintBeforeMb,
+					footprintAfterMb: record.footprintAfterMb,
+					measure: record.measure,
+					collected: record.collected,
+				};
+				break;
 			default: {
 				const exhaustive: never = record;
 				throw new Error(`unexpected host record ${exhaustive}`);
