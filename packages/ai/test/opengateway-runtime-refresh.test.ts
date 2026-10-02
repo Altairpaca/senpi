@@ -6,7 +6,7 @@ import { OPENGATEWAY_MODELS } from "../src/providers/opengateway.models.ts";
 import { opengatewayProvider } from "../src/providers/opengateway.ts";
 import { GATEWAY_URL, gatewayResponse, type ListedModel, PRICES_URL, priceTable } from "./opengateway-fixtures.ts";
 
-const SHIPPED_IDS = Object.values(OPENGATEWAY_MODELS).map((model) => model.id);
+const SHIPPED_IDS: string[] = Object.values(OPENGATEWAY_MODELS).map((model) => model.id);
 const NEW_MODEL = "anthropic/claude-opus-6";
 const SERVING_TIER_BASE = "deepseek/deepseek-v4-pro";
 const NEW_SERVING_TIER = `${SERVING_TIER_BASE}-ultrafast`;
