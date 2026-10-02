@@ -1,3 +1,21 @@
+## 2026-10-02 - Compat faux registrations survive an API registry reset (senpi#2542)
+
+### What changed
+
+- `packages/ai/src/compat.ts`: `registerFauxProvider` registers through the faux registry in `providers/faux.ts` (which `getApiProvider` consults before the global registry and `resetApiProviders()` does not clear) and still adds the api-registry entry, so the provider stays visible inside provider scopes. `unregister()` removes both.
+
+### Why
+
+- `packages/ai/src/compat.ts`: `AgentSession.reload()` runs `resetApiProviders()`. Without a provider scope that clears the global registry, which held the only copy of a compat faux registration, so every request after a reload failed with "No API provider registered". Since reload holds prompts until the rebuilt runtime is bound, a prompt sent during teardown always hit that gap. When the random faux API id happened to contain a transient-looking token, the error entered auto-retry backoff and the config-reload admission test timed out in CI.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/compat.ts`: the registration lives in pi-ai's provider registry, below the extension API.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/compat.ts`: the `registerFauxProvider` body and the `./providers/faux.ts` import.
+
 ## 2026-10-01 - Claude Code fingerprint floor 2.1.286 (senpi#2481)
 
 ### What changed
