@@ -54,6 +54,11 @@ export interface HandoffHostOptions {
 	/** Environment for the successor; a `null` value removes an inherited variable. */
 	readonly env?: Readonly<Record<string, string | null>>;
 	readonly policy?: HostLifecyclePolicyInput;
+	/**
+	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a
+	 * running host performing an idle handover passes the runtime of the CLI that asked for it.
+	 */
+	readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */
