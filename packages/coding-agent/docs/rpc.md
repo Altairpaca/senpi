@@ -31,12 +31,14 @@ Prompt acceptance can require compaction before the host emits its response. Aft
 `compaction_start` for its session, `RpcClient` gives pending and subsequent prompts a bounded
 45-minute-and-30-second acknowledgement budget: up to 15 minutes of remote compaction, a
 30-minute maximum local-summary override, and the ordinary response allowance. A matching
-`compaction_end` restores the 30-second response deadline. Operation IDs distinguish stale
-terminal events; older hosts that omit IDs remain supported. Outstanding prompts retain
-their originating session, so another lease's compaction does not change their deadlines.
-Other commands retain their
-normal deadlines, and a disconnected transport still rejects immediately. Compaction events
-do not themselves acknowledge a prompt: its actual response determines success and disposition.
+`compaction_end` restores the 30-second response deadline. Each compaction operation is tracked by
+its operation ID (older hosts that omit IDs remain supported), so a stale or overlapping start never
+hides another operation's end, and a start whose end never arrives stops counting once it is older
+than that budget. However many compactions start and end while a prompt waits, it never waits more
+than 46 minutes from when it was sent. Outstanding prompts retain their originating session, so
+another lease's compaction does not change their deadlines. Other commands retain their normal
+deadlines, and a disconnected transport still rejects immediately. Compaction events do not
+themselves acknowledge a prompt: its actual response determines success and disposition.
 A timeout does not establish that the host rejected the input, so do not automatically resend it.
 
 ```bash
