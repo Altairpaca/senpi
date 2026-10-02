@@ -13,8 +13,9 @@ import { allowNetwork } from "../../test-network-env.ts";
 // refreshes itself, a model the gateway retires disappears; a saved selection of it must fall back
 // to a working model instead of breaking startup or session restore.
 
-const RETIRED = "openai/gpt-5";
 const OPENGATEWAY_DEFAULT = defaultModelPerProvider.opengateway;
+// Any shipped model other than the provider default, so a catalog refresh never invalidates the test.
+const RETIRED = getBuiltinModels("opengateway").find((model) => model.id !== OPENGATEWAY_DEFAULT)?.id ?? "";
 
 function gatewayListing(): unknown {
 	return {

@@ -4,13 +4,27 @@ import { createModels } from "../src/models.ts";
 import { InMemoryModelsStore } from "../src/models-store.ts";
 import { OPENGATEWAY_MODELS } from "../src/providers/opengateway.models.ts";
 import { opengatewayProvider } from "../src/providers/opengateway.ts";
+import type { Api, Model } from "../src/types.ts";
 import { GATEWAY_URL, gatewayResponse, type ListedModel, PRICES_URL, priceTable } from "./opengateway-fixtures.ts";
 
-const SHIPPED_IDS: string[] = Object.values(OPENGATEWAY_MODELS).map((model) => model.id);
+const SHIPPED: Model<Api>[] = Object.values(OPENGATEWAY_MODELS);
+const SHIPPED_IDS = SHIPPED.map((model) => model.id);
 const NEW_MODEL = "anthropic/claude-opus-6";
-const SERVING_TIER_BASE = "deepseek/deepseek-v4-pro";
+// Chosen from the shipped catalog so an automated catalog refresh never breaks these tests.
+function shippedId(id: string | undefined, role: string): string {
+	if (!id) throw new Error(`The shipped OpenGateway catalog has no model usable as the ${role}`);
+	return id;
+}
+const SERVING_TIER_BASE = shippedId(
+	SHIPPED.find((model) => model.thinkingLevelMap && model.compat && !SHIPPED_IDS.includes(`${model.id}-ultrafast`))
+		?.id,
+	"serving-tier base",
+);
 const NEW_SERVING_TIER = `${SERVING_TIER_BASE}-ultrafast`;
-const RETIRED_MODEL = "openai/gpt-5";
+const RETIRED_MODEL = shippedId(
+	SHIPPED_IDS.find((id) => id !== SERVING_TIER_BASE),
+	"retired model",
+);
 
 function listing(extra: ListedModel[]): unknown {
 	return gatewayResponse([
