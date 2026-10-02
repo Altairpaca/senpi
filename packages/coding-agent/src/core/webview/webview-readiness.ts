@@ -50,13 +50,24 @@ export class WebViewNotReadyError extends Error {
 	}
 }
 
-/** Resolves the readiness navigation's duration once it settled, undefined when it is still pending at the bound. */
-export async function attachedWithin(view: NativeWebView, boundMs: number): Promise<number | undefined> {
-	const startedAt = performance.now();
+/** Resolves once the readiness bound of one launch is reached; `cancel` stops it when the launch settled first. */
+export interface AttachDeadline {
+	readonly reached: Promise<void>;
+	cancel(): void;
+}
+
+export function timedDeadline(boundMs: number): AttachDeadline {
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	const bound = new Promise<undefined>((resolve) => {
-		timer = setTimeout(() => resolve(undefined), boundMs);
+	const reached = new Promise<void>((resolve) => {
+		timer = setTimeout(resolve, boundMs);
 	});
+	return { reached, cancel: () => clearTimeout(timer) };
+}
+
+/** Resolves the readiness navigation's duration once it settled, undefined when the deadline came first. */
+export async function attachedWithin(view: NativeWebView, deadline: AttachDeadline): Promise<number | undefined> {
+	const startedAt = performance.now();
+	const bound = deadline.reached.then(() => undefined);
 	// Bun throws synchronously for some invalid states; the async wrapper turns that into a rejection.
 	const navigation = (async () => await view.navigate(READINESS_URL))().then(() =>
 		Math.round(performance.now() - startedAt),
@@ -64,7 +75,7 @@ export async function attachedWithin(view: NativeWebView, boundMs: number): Prom
 	try {
 		return await Promise.race([navigation, bound]);
 	} finally {
-		clearTimeout(timer);
+		deadline.cancel();
 		// A stalled navigation is abandoned; closing its view rejects it with nobody left waiting.
 		navigation.catch(() => {});
 	}

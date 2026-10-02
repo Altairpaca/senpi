@@ -2,7 +2,7 @@ import type { MessagePort } from "node:worker_threads";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { retireBunChrome } from "../../coding-agent/src/core/webview/bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebViewClass } from "../../coding-agent/src/core/webview/native-webview.ts";
-import type { ReadinessEvent } from "../../coding-agent/src/core/webview/webview-readiness.ts";
+import type { AttachDeadline, ReadinessEvent } from "../../coding-agent/src/core/webview/webview-readiness.ts";
 import { type WebViewClientGrant, WebViewService } from "../../coding-agent/src/core/webview/webview-service.ts";
 import {
 	bunChromeChildren,
@@ -33,21 +33,41 @@ function nativeClass(): NativeWebViewClass {
 	return native;
 }
 
-/** Real Chrome launches; the launches `stalls` picks never settle their first navigation. */
-function stallingLaunches(stalls: (launch: number) => boolean): {
-	webViewClass: NativeWebViewClass;
-	launches: () => number;
-} {
+interface StallingLaunches {
+	readonly webViewClass: NativeWebViewClass;
+	readonly attachDeadline: () => AttachDeadline;
+	launches(): number;
+}
+
+/**
+ * Real Chrome launches; the launches `stalls` picks never settle their first navigation. A launch's
+ * readiness bound is reached the moment its stalled navigation starts, and never for a healthy one,
+ * so no case depends on how fast a runner's Chrome attaches.
+ */
+function stallingLaunches(stalls: (launch: number) => boolean): StallingLaunches {
 	let launches = 0;
+	let current: (() => void) | undefined;
 	const webViewClass = new Proxy(nativeClass(), {
 		construct(target, args) {
 			launches += 1;
 			const view: object = Reflect.construct(target, args);
-			if (stalls(launches)) Object.defineProperty(view, "navigate", { value: () => new Promise(() => {}) });
+			if (stalls(launches)) {
+				Object.defineProperty(view, "navigate", {
+					value: () => {
+						current?.();
+						return new Promise(() => {});
+					},
+				});
+			}
 			return view;
 		},
 	});
-	return { webViewClass, launches: () => launches };
+	const attachDeadline = (): AttachDeadline => {
+		const reached = Promise.withResolvers<void>();
+		current = reached.resolve;
+		return { reached: reached.promise, cancel: () => {} };
+	};
+	return { webViewClass, attachDeadline, launches: () => launches };
 }
 
 function connect(service: WebViewService): MessagePort {
@@ -90,8 +110,6 @@ async function greetingAfterNavigate(port: MessagePort, viewId: string): Promise
 	return read.value;
 }
 
-const BOUNDS = { attachBoundMs: 1_000, launchAttempts: 2 };
-
 describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready", { timeout: 60_000 }, () => {
 	beforeAll(async () => {
 		page = await serveFixturePage();
@@ -111,8 +129,8 @@ describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready"
 
 	it("retires the stalled launch and answers the create from a fresh Chrome", async () => {
 		const events: ReadinessEvent[] = [];
-		const { webViewClass, launches } = stallingLaunches((launch) => launch === 1);
-		const service = new WebViewService(webViewClass, { readiness: BOUNDS, onReadiness: (e) => events.push(e) });
+		const { webViewClass, attachDeadline, launches } = stallingLaunches((launch) => launch === 1);
+		const service = new WebViewService(webViewClass, { attachDeadline, onReadiness: (e) => events.push(e) });
 		const port = connect(service);
 		expect(await create(port, "view")).toMatchObject({ ok: true });
 		expect(await greetingAfterNavigate(port, "view")).toBe("hello from the fixture");
@@ -124,8 +142,8 @@ describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready"
 	});
 
 	it("fails the create naming the phase, with no Chrome left, once every launch stalled", async () => {
-		const { webViewClass, launches } = stallingLaunches(() => true);
-		const service = new WebViewService(webViewClass, { readiness: BOUNDS });
+		const { webViewClass, attachDeadline, launches } = stallingLaunches(() => true);
+		const service = new WebViewService(webViewClass, { attachDeadline });
 		const port = connect(service);
 		const reply = await create(port, "view");
 		expect(reply).toMatchObject({ ok: false, error: { code: "ERR_WEBVIEW_NOT_READY" } });
@@ -136,8 +154,8 @@ describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready"
 	});
 
 	it("keeps another kernel's ready view on the shared Chrome while a stalled create fails", async () => {
-		const { webViewClass, launches } = stallingLaunches((launch) => launch > 1);
-		const service = new WebViewService(webViewClass, { readiness: BOUNDS });
+		const { webViewClass, attachDeadline, launches } = stallingLaunches((launch) => launch > 1);
+		const service = new WebViewService(webViewClass, { attachDeadline });
 		const healthy = connect(service);
 		const stalled = connect(service);
 		expect(await create(healthy, "kept")).toMatchObject({ ok: true });
@@ -148,22 +166,14 @@ describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready"
 	});
 
 	it("does not relaunch for a client released while its launch stalls, and leaves no Chrome behind", async () => {
+		const { webViewClass, launches } = stallingLaunches(() => true);
 		const stalled = Promise.withResolvers<void>();
-		let launches = 0;
-		const webViewClass = new Proxy(nativeClass(), {
-			construct(target, args) {
-				launches += 1;
-				const view: object = Reflect.construct(target, args);
-				Object.defineProperty(view, "navigate", {
-					value: () => {
-						stalled.resolve();
-						return new Promise(() => {});
-					},
-				});
-				return view;
-			},
-		});
-		const service = new WebViewService(webViewClass, { readiness: BOUNDS });
+		const bound = Promise.withResolvers<void>();
+		const attachDeadline = (): AttachDeadline => {
+			stalled.resolve();
+			return { reached: bound.promise, cancel: () => {} };
+		};
+		const service = new WebViewService(webViewClass, { attachDeadline });
 		const grant = service.connect(owner);
 		grant.port.postMessage({
 			kind: "create",
@@ -173,9 +183,12 @@ describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready"
 			captureConsole: false,
 		});
 		await stalled.promise;
-		await service.release(grant.clientId, owner);
+		// The kernel goes away mid-stall (cell timeout, reset); only then is the launch's bound reached.
+		const released = service.release(grant.clientId, owner);
+		bound.resolve();
+		await released;
+		expect(launches()).toBe(1);
 		expect(await bunChromeChildren()).toEqual([]);
-		expect(launches).toBe(1);
 		expect(service.viewCount).toBe(0);
 	});
 });

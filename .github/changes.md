@@ -1,3 +1,21 @@
+## 2026-10-02 - The WebView job runs the readiness regression and prints the readiness log (senpi#2353)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`webview-kernel`): the Vitest step adds `test/js-kernel-webview-readiness.test.ts` (a Chrome launch whose CDP attach never completes fails fast or is relaunched, with no Chrome left) and sets `SENPI_WEBVIEW_READINESS_LOG`; a new always-run step prints that log, one line per Chrome launch with its attach time or the stalled phase.
+
+### Why
+
+- The intermittent Windows WebView failure was silent about where a launch stuck; the job now shows the readiness of every launch on every OS, and the regression for the stalled attach runs where a real Chrome is available.
+
+### Why an extension could not handle it
+
+- Which suites the WebView runners execute, and what they print, belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `webview-kernel` Vitest file list and its step list.
+
 ## 2026-10-01 - Session gateway Windows parity suites run, by name, in `rpc-windows` (senpi#2328)
 
 ### What changed

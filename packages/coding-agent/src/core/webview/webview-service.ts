@@ -4,10 +4,12 @@ import { retireBunChrome, settleDeadBunChrome } from "./bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebView, type NativeWebViewClass } from "./native-webview.ts";
 import { closeQuietly, WebViewServiceClient } from "./webview-client.ts";
 import {
+	type AttachDeadline,
 	attachedWithin,
 	DEFAULT_READINESS,
 	type ReadinessEvent,
 	readinessLogFromEnvironment,
+	timedDeadline,
 	WebViewNotReadyError,
 	type WebViewReadinessPolicy,
 } from "./webview-readiness.ts";
@@ -15,6 +17,8 @@ import {
 export interface WebViewServiceOptions {
 	readonly readiness?: Partial<WebViewReadinessPolicy>;
 	readonly onReadiness?: (event: ReadinessEvent) => void;
+	/** The readiness bound of each launch; defaults to `attachBoundMs`. Tests signal it instead of waiting. */
+	readonly attachDeadline?: (launch: number) => AttachDeadline;
 }
 
 export interface WebViewClientGrant {
@@ -31,6 +35,7 @@ export class WebViewService {
 	readonly #webViewClass: NativeWebViewClass;
 	readonly #readiness: WebViewReadinessPolicy;
 	readonly #onReadiness: (event: ReadinessEvent) => void;
+	readonly #attachDeadline: (launch: number) => AttachDeadline;
 	readonly #clients = new Map<string, WebViewServiceClient>();
 	#retiring: Promise<void> = Promise.resolve();
 	#chromeInUse = false;
@@ -41,6 +46,8 @@ export class WebViewService {
 		this.#webViewClass = webViewClass;
 		this.#readiness = { ...DEFAULT_READINESS, ...options.readiness };
 		this.#onReadiness = options.onReadiness ?? (() => {});
+		const boundMs = this.#readiness.attachBoundMs;
+		this.#attachDeadline = options.attachDeadline ?? (() => timedDeadline(boundMs));
 	}
 
 	get viewCount(): number {
@@ -122,7 +129,7 @@ export class WebViewService {
 		const view = await this.#launch(viewOptions);
 		let attachMs: number | undefined;
 		try {
-			attachMs = await attachedWithin(view, this.#readiness.attachBoundMs);
+			attachMs = await attachedWithin(view, this.#attachDeadline(launch));
 		} catch (error) {
 			closeQuietly(view);
 			throw error;
