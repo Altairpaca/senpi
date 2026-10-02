@@ -55,12 +55,7 @@ import { builtinModels, getBuiltinModel, getBuiltinModels, getBuiltinProviders }
 
 export type { BuiltinProvider } from "./providers/all.ts";
 
-import {
-	type FauxProviderRegistration,
-	getRegisteredFauxProvider,
-	type RegisterFauxProviderOptions,
-	registerFauxProvider as registerResetSafeFauxProvider,
-} from "./providers/faux.ts";
+import { createFauxCore, type FauxProviderRegistration, type RegisterFauxProviderOptions } from "./providers/faux.ts";
 import {
 	getProtocol,
 	getToolCallFormat,
@@ -110,17 +105,22 @@ import {
 } from "./api-registry.ts";
 
 export function registerFauxProvider(options: RegisterFauxProviderOptions = {}): FauxProviderRegistration {
-	// The faux registry outlives resetApiProviders(), which a session reload runs, so the caller's
-	// provider still answers after a reload; the api-registry entry keeps it visible inside provider scopes.
-	const registration = registerResetSafeFauxProvider(options);
-	const core = getRegisteredFauxProvider(registration.api);
-	if (!core) throw new Error(`Faux provider ${registration.api} was not registered`);
+	const core = createFauxCore(options);
 	const sourceId = `faux-provider-${Math.random().toString(36).slice(2, 10)}`;
-	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId);
+	// A session reload runs resetApiProviders(); the caller's provider must still answer afterwards, in or out of a provider scope.
+	registerApiProvider({ api: core.api, stream: core.stream, streamSimple: core.streamSimple }, sourceId, {
+		survivesClear: true,
+	});
 	return {
-		...registration,
+		api: core.api,
+		models: core.models,
+		getModel: core.getModel,
+		state: core.state,
+		setResponses: core.setResponses,
+		appendResponses: core.appendResponses,
+		getPendingResponseCount: core.getPendingResponseCount,
+		getCallLog: core.getCallLog,
 		unregister() {
-			registration.unregister();
 			unregisterApiProviders(sourceId);
 		},
 	};

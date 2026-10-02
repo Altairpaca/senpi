@@ -2,19 +2,21 @@
 
 ### What changed
 
-- `packages/ai/src/compat.ts`: `registerFauxProvider` registers through the faux registry in `providers/faux.ts` (which `getApiProvider` consults before the global registry and `resetApiProviders()` does not clear) and still adds the api-registry entry, so the provider stays visible inside provider scopes. `unregister()` removes both.
+- `packages/ai/src/api-registry.ts`: `registerApiProvider` accepts `{ survivesClear: true }`. `clearApiProviders()` (and so `resetApiProviders()`) keeps such entries in the registry it clears, the global one or the active scope's overlay; `unregisterApiProviders(sourceId)` still removes them.
+- `packages/ai/src/compat.ts`: `registerFauxProvider` registers with `survivesClear`, so a reset leaves the caller's faux provider in place, in or out of a provider scope.
 
 ### Why
 
-- `packages/ai/src/compat.ts`: `AgentSession.reload()` runs `resetApiProviders()`. Without a provider scope that clears the global registry, which held the only copy of a compat faux registration, so every request after a reload failed with "No API provider registered". Since reload holds prompts until the rebuilt runtime is bound, a prompt sent during teardown always hit that gap. When the random faux API id happened to contain a transient-looking token, the error entered auto-retry backoff and the config-reload admission test timed out in CI.
+- `packages/ai/src/api-registry.ts`, `packages/ai/src/compat.ts`: `AgentSession.reload()` runs `resetApiProviders()`, which cleared the only copy of a compat faux registration, so every request after a reload failed with "No API provider registered". Reload holds prompts until the rebuilt runtime is bound, so a prompt sent during teardown always hit that gap. When the random faux API id happened to contain a transient-looking token, the error entered auto-retry backoff and the config-reload admission test timed out in CI.
 
 ### Why an extension could not handle it
 
-- `packages/ai/src/compat.ts`: the registration lives in pi-ai's provider registry, below the extension API.
+- `packages/ai/src/api-registry.ts`, `packages/ai/src/compat.ts`: the registration and the reset live in pi-ai's provider registry, below the extension API.
 
 ### Expected merge conflict zones
 
-- `packages/ai/src/compat.ts`: the `registerFauxProvider` body and the `./providers/faux.ts` import.
+- `packages/ai/src/api-registry.ts`: `RegisteredApiProvider`, `createRegisteredProvider`, `registerApiProvider`, `clearApiProviders`.
+- `packages/ai/src/compat.ts`: the `registerFauxProvider` body.
 
 ## 2026-10-01 - Claude Code fingerprint floor 2.1.286 (senpi#2481)
 

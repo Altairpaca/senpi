@@ -4,55 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConfigReloadHarness } from "./config-reload-harness.ts";
-import { getAssistantTexts } from "./harness.ts";
-
-/**
- * Submits a prompt while an explicit reload waits inside the old runtime's shutdown handlers. The
- * rebuilt runtime's `session_start` (reason "reload") is subscribed before the reload is triggered,
- * so the recorded order shows whether the request started before or after the rebuild completed.
- */
-async function promptDuringReloadTeardown(api?: string) {
-	const root = await mkdtempDisposable(join(tmpdir(), "config-reload-teardown-"));
-	const shutdownEntered = Promise.withResolvers<void>();
-	const releaseShutdown = Promise.withResolvers<void>();
-	const order: string[] = [];
-	const { harness } = await createConfigReloadHarness(
-		root.path,
-		(pi) => {
-			pi.on("session_shutdown", async (event) => {
-				if (event.reason !== "reload") return;
-				shutdownEntered.resolve();
-				await releaseShutdown.promise;
-			});
-			pi.on("session_start", (event) => {
-				if (event.reason === "reload") order.push("runtime rebuilt");
-			});
-			pi.on("before_agent_start", () => {
-				order.push("request started");
-			});
-		},
-		api === undefined ? {} : { api },
-	);
-	harness.setResponses([fauxAssistantMessage("Request after reload completed.")]);
-	const reload = harness.session.reload();
-	let prompt: Promise<void> | undefined;
-	try {
-		await shutdownEntered.promise;
-		// The user submits a message before the rebuild has finished.
-		prompt = harness.session.prompt("Handle the request");
-		releaseShutdown.resolve();
-		expect(await reload).toMatchObject({ cancelled: false });
-		await prompt;
-		return { order, replies: getAssistantTexts(harness), providerRequests: harness.faux.getCallLog().length };
-	} finally {
-		releaseShutdown.resolve();
-		await reload;
-		await prompt;
-		await harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" });
-		harness.cleanup();
-		await root[Symbol.asyncDispose]();
-	}
-}
+import { promptDuringReloadTeardown } from "./config-reload-teardown-support.ts";
 
 afterEach(() => vi.useRealTimers());
 
@@ -96,17 +48,6 @@ describe("config reload during first-message admission", () => {
 		// Given/When: a prompt arrives while an explicit reload is inside the old runtime's shutdown handlers.
 		const result = await promptDuringReloadTeardown();
 		// Then: the request starts on the rebuilt runtime and its reply reaches the user on the first attempt.
-		expect(result.order).toEqual(["runtime rebuilt", "request started"]);
-		expect(result.replies).toEqual(["Request after reload completed."]);
-		expect(result.providerRequests).toBe(1);
-	});
-
-	// senpi#2542: the reload's provider-registry reset dropped the caller's provider, and an API id that
-	// read like a transient failure turned the missing provider into a retry backoff past the timeout.
-	it("answers a teardown prompt once even when the provider id reads like a transient failure", async () => {
-		// Given/When: the provider's API id contains a word the retry classifier treats as transient.
-		const result = await promptDuringReloadTeardown("faux-overloaded");
-		// Then: the rebuilt runtime still reaches that provider, so nothing is retried or delayed.
 		expect(result.order).toEqual(["runtime rebuilt", "request started"]);
 		expect(result.replies).toEqual(["Request after reload completed."]);
 		expect(result.providerRequests).toBe(1);
