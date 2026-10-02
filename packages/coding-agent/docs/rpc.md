@@ -3507,6 +3507,7 @@ When the question resolves (answered, comment-submitted, timed_out, or cancelled
   "requestId": "ask-user-1",
   "toolCallId": "call_abc123",
   "outcome": "answered",
+  "resolvedBy": "rpc_connection",
   "answers": { "q1": { "selected": ["PostgreSQL"] } },
   "comment": "",
   "unanswered": []
@@ -3514,6 +3515,20 @@ When the question resolves (answered, comment-submitted, timed_out, or cancelled
 ```
 
 A late answer after resolution receives a `question_already_resolved` error.
+
+`resolvedBy` identifies the surface that submitted the winning answer: `local_ui` for the terminal
+widget or composer, `rpc_connection` for an RPC client (including the sequential dialog fallback),
+and `control_endpoint` for an answer received through the session's terminal control endpoint.
+It is omitted for outcomes with no answering surface: `timed_out`, `cancelled`,
+`orphaned-after-restart`, and `unavailable`. Clients do not supply this field; the answering bridge
+sets it. Competing or late answers do not change the winner's surface.
+
+The built-in `ask_user_question` and `request_user_input` tools retain the field in blocking
+`tool_execution_end` result details and in the `response` of `ask-user:settled`. Extensions can
+subscribe to `pi.events.on("ask-user:closed", handler)` for `{ requestId, status, resolvedBy? }`,
+emitted once for every terminal outcome, including silent cancellations. `ask-user:settled`
+continues to skip cancellation. A reload that preserves a pending question does not close it;
+a terminal outcome while detached is published once through the next bound extension runner.
 
 `RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
 
