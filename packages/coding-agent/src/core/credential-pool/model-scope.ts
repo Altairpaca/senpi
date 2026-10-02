@@ -89,11 +89,12 @@ export function mergeModelBlocks(
 	right: ModelBlocks | undefined,
 	now: number,
 ): ModelBlocks | undefined {
-	const merged: Record<string, { blockedUntil: number }> = { ...pruneModelBlocks(left, now) };
+	// A Map, then fromEntries: keys are user model ids, so `__proto__` must stay an own entry.
+	const merged = new Map(Object.entries(pruneModelBlocks(left, now) ?? {}));
 	for (const [key, block] of Object.entries(pruneModelBlocks(right, now) ?? {})) {
-		merged[key] = { blockedUntil: Math.max(merged[key]?.blockedUntil ?? 0, block.blockedUntil) };
+		merged.set(key, { blockedUntil: Math.max(merged.get(key)?.blockedUntil ?? 0, block.blockedUntil) });
 	}
-	return Object.keys(merged).length === 0 ? undefined : merged;
+	return merged.size === 0 ? undefined : Object.fromEntries(merged);
 }
 
 export function describeModelBlocks(blocks: ModelBlocks | undefined, now: number): string[] {
