@@ -1,5 +1,9 @@
 import { stat } from "node:fs/promises";
 
+// Only these codes mean the directory is gone or was never one; anything else (EACCES, ELOOP,
+// EMFILE, EIO, ...) is a real failure that reopening the session would not fix, so it surfaces as is.
+const MISSING_DIRECTORY_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR"]);
+
 export class CodemodeSessionCwdUnavailableError extends Error {
 	readonly name = "CodemodeSessionCwdUnavailableError";
 	readonly cwd: string;
@@ -17,7 +21,12 @@ export async function assertSessionCwdAvailable(cwd: string): Promise<void> {
 	try {
 		isDirectory = (await stat(cwd)).isDirectory();
 	} catch (error) {
-		if (error instanceof Error && "code" in error && typeof error.code === "string") {
+		if (
+			error instanceof Error &&
+			"code" in error &&
+			typeof error.code === "string" &&
+			MISSING_DIRECTORY_CODES.has(error.code)
+		) {
 			throw new CodemodeSessionCwdUnavailableError(cwd, error.code);
 		}
 		throw error;

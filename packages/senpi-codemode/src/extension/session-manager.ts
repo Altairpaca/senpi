@@ -215,6 +215,9 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			throw new CodemodeSessionDisposedError();
 		}
 		this.#kernels.set(language, kernel);
+		// The directory can vanish while the interpreter starts; every caller sharing this creation
+		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
+		await assertSessionCwdAvailable(this.#options.cwd);
 		return kernel;
 	}
 

@@ -1,5 +1,6 @@
+import { Buffer } from "node:buffer";
 import { syncBuiltinESMExports } from "node:module";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { isMainThread } from "node:worker_threads";
 
 // A worker thread cannot chdir (process.chdir throws ERR_WORKER_UNSUPPORTED_OPERATION under Node
@@ -54,7 +55,16 @@ const CHILD_PROCESS_COMMAND_ARGS = ["exec", "execSync"];
 export function installSessionCwd(cwd) {
 	if (isMainThread) throw new Error("installSessionCwd must only run inside a kernel worker thread");
 	const root = resolve(cwd);
-	const at = (path) => (typeof path === "string" && !isAbsolute(path) ? resolve(root, path) : path);
+	const rootBytes = Buffer.from(root.endsWith(sep) ? root : `${root}${sep}`);
+	// fs also takes Buffer/Uint8Array paths; a relative one gets the session root prepended as bytes,
+	// so non-UTF-8 names survive. A file: URL is always absolute, so URLs pass through unchanged.
+	const at = (path) => {
+		if (typeof path === "string") return isAbsolute(path) ? path : resolve(root, path);
+		if (path instanceof Uint8Array && !isAbsolute(Buffer.from(path).toString("latin1"))) {
+			return Buffer.concat([rootBytes, path]);
+		}
+		return path;
+	};
 	process.cwd = () => root;
 	const path = process.getBuiltinModule("node:path");
 	const resolveFromProcess = path.resolve;
