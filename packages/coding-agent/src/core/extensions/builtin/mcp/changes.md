@@ -897,3 +897,24 @@ loader's auto-activation of newly registered tools.
 ### Expected merge conflict zones
 
 - LOW: `index.ts` `session_start` registration block; new `test/suite/mcp-reload-deferral.test.ts`.
+
+
+## 2026-10-02 - Claim legacy MCP credentials under a shared migration lock
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`
+
+`read()` migrated a URL-keyed legacy record (read/copy/delete) without a lock, so two processes could both read it before either removed it and persist the same rotating grant under two different server-name keys. The claim is now serialized on a lock file created with O_EXCL and keyed on the legacy hash (shared by every consumer of that URL), with the legacy record and the destination both re-checked under the lock before writing.
+
+### Why
+
+Duplicating a single-use refresh-token family across identities defeats the new per-server account isolation and can invalidate the grant on the next refresh. The per-server update locks are keyed by destination and cannot serialize this migration.
+
+### Why an extension could not handle it
+
+The token store is the fork's credential-persistence layer; no extension hook sits between read() and the on-disk legacy record.
+
+### Expected merge conflict zones
+
+Upstream edits to `token-store.ts` legacy migration at the next sync.
