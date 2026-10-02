@@ -197,4 +197,49 @@ describe("OpenGateway runtime catalog refresh", () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 		expect(models.getModel("opengateway", NEW_MODEL)).toBeUndefined();
 	});
+
+	it("removes a shipped model a successful listing no longer includes", async () => {
+		const [unlisted, ...rest] = SHIPPED_IDS;
+		serveGateway({ status: 200, body: gatewayResponse(rest.map((id) => ({ id }))) });
+		const models = await configuredRuntime();
+
+		const result = await models.refresh({ providers: ["opengateway"] });
+
+		expect(result.errors).toEqual(new Map());
+		expect(models.getModel("opengateway", unlisted ?? "")).toBeUndefined();
+		expect(catalogIds(models).sort()).toEqual([...rest].sort());
+	});
+
+	it("does not download the price table when the gateway lists nothing new", async () => {
+		const fetchSpy = serveGateway({ status: 200, body: gatewayResponse(SHIPPED_IDS.map((id) => ({ id }))) });
+		const models = await configuredRuntime();
+
+		await models.refresh({ providers: ["opengateway"] });
+
+		const urls = fetchSpy.mock.calls.map(([input]) => String(input instanceof Request ? input.url : input));
+		expect(urls).toEqual([GATEWAY_URL]);
+	});
+
+	it("caps a newly served GPT model's context to OpenAI's input budget", async () => {
+		const gpt = "openai/gpt-6-future";
+		serveGateway(
+			{ status: 200, body: listing([{ id: gpt, context_window: 1050000, max_output_tokens: 128000 }]) },
+			{ status: 200, body: priceTable({ [gpt]: { input: 5, output: 30 } }) },
+		);
+		const models = await configuredRuntime();
+
+		await models.refresh({ providers: ["opengateway"] });
+
+		expect(models.getModel("opengateway", gpt)).toMatchObject({ contextWindow: 922000, maxTokens: 128000 });
+	});
+
+	it("treats an empty gateway listing as an outage and keeps the last good list", async () => {
+		serveGateway({ status: 200, body: { object: "list", data: [] } });
+		const models = await configuredRuntime();
+
+		const result = await models.refresh({ providers: ["opengateway"] });
+
+		expect(result.errors.get("opengateway")?.message).toMatch(/no models/);
+		expect(catalogIds(models).sort()).toEqual([...SHIPPED_IDS].sort());
+	});
 });

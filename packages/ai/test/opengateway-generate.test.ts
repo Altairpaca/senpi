@@ -154,6 +154,23 @@ describe("fetchOpenGatewayModels", () => {
 		expect(models.map((model) => model.id)).toEqual(["moonshotai/kimi-k3"]);
 	});
 
+	// Folded from a parallel OpenGateway refresh branch: one broken third-party row must not sink the refresh.
+	it("drops only the model whose models.dev entry is malformed", async () => {
+		stubFetch(
+			gatewayResponse([{ id: "z-ai/glm-good" }, { id: "z-ai/glm-broken" }]),
+			modelsDevResponse({
+				zai: {
+					"glm-good": { name: "GLM Good", tool_call: true, limit: { context: 200000, output: 32000 } },
+					"glm-broken": { name: "GLM Broken", tool_call: true, limit: { context: "huge" } },
+				},
+			}),
+		);
+
+		const models = await fetchOpenGatewayModels(() => {}, { strict: true });
+
+		expect(models.map((model) => model.id)).toEqual(["z-ai/glm-good"]);
+	});
+
 	it("skips non-chat, unenrichable, and tool-incapable models", async () => {
 		stubFetch(
 			gatewayResponse([

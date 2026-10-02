@@ -1,3 +1,21 @@
+## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the OpenAI input/output split (`applyOpenAiInputCap`) moved to `src/utils/openai-input-cap.ts` unchanged, so the OpenGateway runtime refresh caps a newly served GPT-5.x/GPT-6 row the same way the generator caps shipped rows. The generator imports it instead of keeping a private copy.
+
+### Why
+
+The runtime refresh adds models the shipped catalog lacks; without the shared cap a new GPT row would advertise the raw 1,050,000-token window and over-budget prompts would be rejected upstream (#1422).
+
+### Why an extension could not handle it
+
+The generator and the built-in OpenGateway provider both live in the AI package and must share one input-budget rule.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the import block and the OpenAI context-window constants next to `OPENAI_MAX_CONTEXT_INPUT_CAP`; an upstream edit to the removed helper belongs in `src/utils/openai-input-cap.ts`.
+
 ## 2026-09-30 - Scope model data generation to selected providers (senpi#1431)
 
 ### What changed

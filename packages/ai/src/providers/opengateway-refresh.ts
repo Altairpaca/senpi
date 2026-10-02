@@ -1,18 +1,19 @@
-// Runtime refresh for the OpenGateway provider. The shipped catalog (generated
-// from the gateway plus models.dev) stays the baseline; the gateway's public
-// listing only changes availability between releases:
+// Runtime refresh for the OpenGateway provider. A successful gateway listing is
+// authoritative for availability; the shipped catalog (generated from the gateway
+// plus models.dev) supplies metadata and is the offline fallback:
 //
 // - a servable model the shipped catalog lacks is added, built from its shipped
 //   serving-tier base when there is one, priced from the gateway price table;
-// - a shipped model the gateway now marks retired is removed;
+// - a shipped model the gateway retired, or no longer lists, is removed;
 // - shipped rows keep their generated metadata (input caps, thinking maps,
 //   prices). Correcting those is the scheduled catalog regeneration's job.
 //
-// Any fetch failure keeps the last good list and surfaces as a refresh error.
+// Any fetch or parse failure keeps the last good list and surfaces as a refresh error.
 
 import type { RefreshModelsContext } from "../models.ts";
 import type { AnyModel, Model } from "../types.ts";
 import { isModelType } from "../utils/model-operations.ts";
+import { applyOpenAiInputCap } from "../utils/openai-input-cap.ts";
 import {
 	isServableChatModel,
 	OPENGATEWAY_BASE_URL,
@@ -29,7 +30,8 @@ import {
 
 type OpenGatewayModel = Model<"openai-completions">;
 
-export const OPENGATEWAY_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
+export const OPENGATEWAY_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 15_000;
 /** Max output for an added model the gateway publishes no limit for and that has no shipped base. */
 const UNPUBLISHED_MAX_OUTPUT_TOKENS = 32768;
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -61,7 +63,7 @@ function addedModel(
 				contextWindow,
 				maxTokens: UNPUBLISHED_MAX_OUTPUT_TOKENS,
 			};
-	return {
+	const model: OpenGatewayModel = {
 		...template,
 		id: item.id,
 		input: item.inputModalities.includes("image") ? ["text", "image"] : ["text"],
@@ -69,6 +71,17 @@ function addedModel(
 		contextWindow,
 		maxTokens: Math.min(item.maxOutputTokens ?? template.maxTokens, contextWindow),
 	};
+	applyOpenAiInputCap(model);
+	return model;
+}
+
+/** Servable gateway models the shipped catalog lacks; only these need the price table. */
+export function unshippedServableModels(
+	shipped: readonly OpenGatewayModel[],
+	listing: readonly OpenGatewayListedModel[],
+): OpenGatewayListedModel[] {
+	const shippedIds = new Set(shipped.map((model) => model.id));
+	return listing.filter((item) => isServableChatModel(item) && !shippedIds.has(item.id));
 }
 
 export function overlayOpenGatewayCatalog(
@@ -76,12 +89,12 @@ export function overlayOpenGatewayCatalog(
 	listing: readonly OpenGatewayListedModel[],
 	prices: OpenGatewayPriceTable,
 ): OpenGatewayModel[] {
-	const retired = new Set(listing.filter((item) => item.status === "retired").map((item) => item.id));
+	const servable = new Set(listing.filter(isServableChatModel).map((item) => item.id));
 	const shippedById = new Map(shipped.map((model) => [model.id, model]));
-	const added = listing
-		.filter((item) => isServableChatModel(item) && !shippedById.has(item.id))
-		.flatMap((item) => addedModel(item, shippedById, prices) ?? []);
-	return [...shipped.filter((model) => !retired.has(model.id)), ...added];
+	const added = unshippedServableModels(shipped, listing).flatMap(
+		(item) => addedModel(item, shippedById, prices) ?? [],
+	);
+	return [...shipped.filter((model) => servable.has(model.id)), ...added];
 }
 
 async function fetchJson(url: string, signal: AbortSignal): Promise<unknown> {
@@ -90,15 +103,27 @@ async function fetchJson(url: string, signal: AbortSignal): Promise<unknown> {
 	return response.json();
 }
 
+async function fetchRefreshedCatalog(
+	shipped: readonly OpenGatewayModel[],
+	signal: AbortSignal,
+): Promise<OpenGatewayModel[]> {
+	const listing = parseOpenGatewayListing(await fetchJson(OPENGATEWAY_MODELS_URL, signal));
+	const prices =
+		unshippedServableModels(shipped, listing).length > 0
+			? parseOpenGatewayPriceTable(await fetchJson(OPENGATEWAY_PRICES_URL, signal))
+			: [];
+	return overlayOpenGatewayCatalog(shipped, listing, prices);
+}
+
 function isOpenGatewayChatModel(model: AnyModel): model is OpenGatewayModel {
 	return model.provider === "opengateway" && isModelType(model, "chat") && model.api === "openai-completions";
 }
 
 /**
  * Catalog state for the provider: `getModels()` is synchronous, `refresh()` restores the
- * persisted overlay and revalidates it against the gateway at most every four hours.
- * A persisted overlay older than the shipped catalog is ignored, so an upgrade never
- * resurrects metadata the new release corrected.
+ * persisted list and revalidates it against the gateway at most hourly. A persisted list
+ * older than the shipped catalog is ignored, so an upgrade never resurrects metadata the
+ * new release corrected.
  */
 export function createOpenGatewayCatalog(shipped: readonly OpenGatewayModel[], shippedGeneratedAt: number | undefined) {
 	let current: readonly OpenGatewayModel[] = shipped;
@@ -114,7 +139,6 @@ export function createOpenGatewayCatalog(shipped: readonly OpenGatewayModel[], s
 			if (usable && stored) {
 				const restored = stored.models.filter(isOpenGatewayChatModel);
 				if (
-					restored.length > 0 &&
 					!(await context.publish({
 						update: () => {
 							current = restored;
@@ -124,14 +148,12 @@ export function createOpenGatewayCatalog(shipped: readonly OpenGatewayModel[], s
 					return;
 			}
 			if (!context.allowNetwork || context.signal.aborted) return;
-			if (!context.force && usable && Date.now() - (storedCheckedAt ?? 0) < OPENGATEWAY_REFRESH_INTERVAL_MS) return;
+			const age = Date.now() - (storedCheckedAt ?? 0);
+			if (!context.force && usable && age >= 0 && age < OPENGATEWAY_REFRESH_INTERVAL_MS) return;
 
-			const [listing, prices] = await Promise.all([
-				fetchJson(OPENGATEWAY_MODELS_URL, context.signal).then(parseOpenGatewayListing),
-				fetchJson(OPENGATEWAY_PRICES_URL, context.signal).then(parseOpenGatewayPriceTable),
-			]);
+			const signal = AbortSignal.any([context.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
+			const refreshed = await fetchRefreshedCatalog(shipped, signal);
 			if (context.signal.aborted) return;
-			const refreshed = overlayOpenGatewayCatalog(shipped, listing, prices);
 			await context.publish({
 				persist: { models: refreshed, checkedAt: Date.now() },
 				update: () => {

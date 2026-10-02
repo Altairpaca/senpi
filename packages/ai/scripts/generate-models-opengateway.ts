@@ -25,34 +25,12 @@ import {
 	withGatewayPrice,
 } from "../src/providers/opengateway-catalog.ts";
 import type { Model, ModelCost } from "../src/types.ts";
-import type { ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
+import { asEnrichmentSource, type OpenGatewayEnrichmentSource } from "./opengateway-enrichment-schema.ts";
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const LAST_GOOD_CATALOG_PATH = join(dirname(fileURLToPath(import.meta.url)), "../src/providers/data/opengateway.json");
 
-/** Subset of the models.dev model entry used for OpenGateway enrichment. */
-interface OpenGatewayEnrichmentSource {
-	name?: string;
-	tool_call?: boolean;
-	reasoning?: boolean;
-	reasoning_options?: ModelsDevReasoningOption[];
-	limit?: { context?: number; output?: number };
-	cost?: {
-		input?: number;
-		output?: number;
-		cache_read?: number;
-		cache_write?: number;
-		tiers?: {
-			input?: number;
-			output?: number;
-			cache_read?: number;
-			cache_write?: number;
-			tier?: { type?: string; size?: number };
-		}[];
-	};
-}
-
-type ModelsDevProviderCatalogs = Record<string, { models?: Record<string, OpenGatewayEnrichmentSource> } | undefined>;
+type ModelsDevProviderCatalogs = Record<string, { models?: Record<string, unknown> } | undefined>;
 
 /** models.dev provider key used to enrich an OpenGateway owner prefix. */
 const OPENGATEWAY_OWNER_TO_MODELS_DEV: Record<string, string> = {
@@ -144,7 +122,10 @@ function sourceCost(source: OpenGatewayEnrichmentSource | undefined, override: O
 function lookupSource(id: string, modelsDev: ModelsDevProviderCatalogs): OpenGatewayEnrichmentSource | undefined {
 	const [owner, upstreamId] = id.split("/", 2);
 	const ownerKey = OPENGATEWAY_OWNER_TO_MODELS_DEV[owner];
-	return (ownerKey ? modelsDev[ownerKey]?.models?.[upstreamId] : undefined) ?? modelsDev.openrouter?.models?.[id];
+	return (
+		asEnrichmentSource(ownerKey ? modelsDev[ownerKey]?.models?.[upstreamId] : undefined) ??
+		asEnrichmentSource(modelsDev.openrouter?.models?.[id])
+	);
 }
 
 /**

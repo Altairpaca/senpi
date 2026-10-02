@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
+import { applyOpenAiInputCap } from "../src/utils/openai-input-cap.ts";
 import { MODEL_SHARD_SUFFIX, importedModelShards, isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
@@ -487,10 +488,6 @@ const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 // The split follows the model, not the gateway: `applyOpenAiInputCap` runs over every provider's
 // GPT-5.x / GPT-6 rows (Azure, Bedrock, Copilot, OpenRouter, Vercel, OpenGateway, OpenCode...)
 // because those gateways forward the same upstream limit. Issue #1422.
-const OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS: ReadonlyMap<number, number> = new Map([
-	[400000, OPENAI_LONG_CONTEXT_INPUT_THRESHOLD],
-	[1050000, 922000],
-]);
 const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // Flagship default context windows. OpenAI documents a 1,050,000-token window for every one of
 // these models; the project deliberately ships cost-tier prompt budgets (users widen through model
@@ -534,28 +531,6 @@ function isGpt6FamilyId(modelId: string): boolean {
 	return gpt6FamilyDefaultContextWindow(modelId) !== undefined;
 }
 
-function toOpenAiInputCap(contextWindow: number, maxTokens: number): number {
-	if (maxTokens !== 128000) return contextWindow;
-	return OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS.get(contextWindow) ?? contextWindow;
-}
-
-const OPENAI_GATEWAY_ID_PREFIX = /^(?:[a-z]{2}\.)?(?:global\.)?openai[./]/;
-
-/** GPT-5.x / GPT-6 rows on any provider: the OpenAI input/output split follows the model, not the gateway. */
-function isOpenAiFlagshipFamilyId(id: string): boolean {
-	const bare = id.replace(OPENAI_GATEWAY_ID_PREFIX, "");
-	return /^gpt-(?:5|6)(?:[.-]|$)/.test(bare) && !bare.startsWith("gpt-oss");
-}
-
-function applyOpenAiInputCap(model: Model<Api>): void {
-	if (!isOpenAiFlagshipFamilyId(model.id)) return;
-	// models.dev (and the gateways that mirror it) report gpt-5-pro output as 272000,
-	// a duplicate of the input sub-limit; the documented max output is 128000.
-	if (model.id.replace(OPENAI_GATEWAY_ID_PREFIX, "") === "gpt-5-pro" && model.maxTokens === 272000) {
-		model.maxTokens = 128000;
-	}
-	model.contextWindow = toOpenAiInputCap(model.contextWindow, model.maxTokens);
-}
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
