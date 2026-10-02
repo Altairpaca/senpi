@@ -25,6 +25,8 @@
 
 ### Fixed
 
+- Anthropic sessions behind a relay that rejects replayed native tool-search results no longer stay stuck on `Tool reference '<name>' not found in available tools` (for example `generate_image` right after a `tool_search_tool_bm25` search). The rejected request is retried once with the search results replayed as text, the tools themselves stay available, and the rest of the session sends the text form directly ([#2568](https://github.com/code-yeongyu/senpi/issues/2568)).
+
 - After a shared RPC host handoff, the replaced generation no longer deletes the successor's registration or boot settings on its way out. A predecessor that noticed its socket taken over before the handoff recorded the successor could remove both, so the next client attached to the running successor reported `pid: 0`, and the next handoff lost the endpoint's lifecycle policy. A taken-over generation now removes only its own records ([#2536](https://github.com/code-yeongyu/senpi/issues/2536)).
 - RPC prompt acknowledgement waits now account for observed conversation compaction instead of reporting failure after 30 seconds while the same input can still be admitted later. The real host response remains authoritative, waiting stays bounded, and transport failures still reject immediately ([#2548](https://github.com/code-yeongyu/senpi/pull/2548) by [@namseokyoo](https://github.com/namseokyoo)).
 
