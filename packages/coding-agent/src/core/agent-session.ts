@@ -100,6 +100,12 @@ import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import {
+	type ClientMessageIdentity,
+	clientMessageIdentity,
+	type PreparedClientInput,
+	readClientMessageIdentity,
+} from "./client-message-identity.ts";
+import {
 	type CacheFriendlySummaryOptions,
 	type CompactionPreparation,
 	type CompactionResult,
@@ -420,7 +426,7 @@ export type AgentSessionEvent =
 			type: "queue_update";
 			steering: readonly string[];
 			followUp: readonly string[];
-			ordered: readonly { text: string; mode: "steer" | "followUp"; enqueueOrder: number }[];
+			ordered: readonly QueuedInput[];
 	  }
 	| { type: "compaction_start"; reason: CompactionReason; requestId?: string }
 	| {
@@ -841,7 +847,7 @@ export type QueuedInputDisposition = "handled" | "queued";
 /** Options for AgentSession.prompt() */
 export type PromptDisposition = QueuedInputDisposition | "started";
 
-export type QueuedInput = {
+export type QueuedInput = ClientMessageIdentity & {
 	readonly text: string;
 	readonly mode: "steer" | "followUp";
 	readonly enqueueOrder: number;
@@ -855,7 +861,7 @@ export type ClearedQueue = {
 };
 
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
-export interface QueuedInputOptions {
+export interface QueuedInputOptions extends ClientMessageIdentity {
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
 	 * messages with their original order so the queue is rebuilt as the user typed it.
@@ -863,9 +869,11 @@ export interface QueuedInputOptions {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
+	/** Persist the prepared queue record before publishing or enqueuing it. */
+	onQueuedInput?: (input: PreparedClientInput) => void;
 }
 
-export interface PromptOptions {
+export interface PromptOptions extends ClientMessageIdentity {
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
@@ -890,6 +898,7 @@ export interface PromptOptions {
 	/** Internal callback used by fire-and-forget extension input to retain session-work ownership after its barrier wait. */
 	onSessionWorkReady?: () => void;
 	sessionTitlePrompt?: string | false;
+	onQueuedInput?: (input: PreparedClientInput) => void;
 }
 
 /** Result from cycleModel() */
@@ -2518,6 +2527,7 @@ export class AgentSession {
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
 		deferredTurnClaim?: DeferredTurnClaim,
+		onQueuedInput?: (input: PreparedClientInput) => void,
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
@@ -2563,12 +2573,27 @@ export class AgentSession {
 					"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion."
 			) {
 				const queuedMessages = Array.isArray(messages) ? messages : [messages];
-				for (const message of queuedMessages) this.agent.steer(message);
 				const userMessage = queuedMessages.find((message) => message.role === "user");
-				if (userMessage?.role === "user") {
-					const text = this._extractUserMessageText(userMessage.content);
-					this._steeringMessages.push(text);
-					this._recordQueuedInput(text, "steer");
+				// The caller was already told this input started; it now waits in the queue, so persist
+				// it as queued input before it is enqueued, exactly like the regular queue path.
+				const prepared =
+					userMessage?.role === "user"
+						? {
+								...readClientMessageIdentity(userMessage),
+								text: this._extractUserMessageText(userMessage.content),
+								images:
+									typeof userMessage.content === "string"
+										? undefined
+										: userMessage.content.filter((part) => part.type === "image"),
+								mode: "steer" as const,
+								enqueueOrder: this.reserveQueuedInputOrder(),
+							}
+						: undefined;
+				if (prepared) onQueuedInput?.(prepared);
+				for (const message of queuedMessages) this.agent.steer(message);
+				if (prepared) {
+					this._steeringMessages.push(prepared.text);
+					this._recordQueuedInput(prepared.text, "steer", prepared);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -2978,18 +3003,29 @@ export class AgentSession {
 			this._retryFallback.resetTurn();
 			const messageText = contentText(event.message.content, "");
 			if (messageText) {
+				const { clientMessageId } = readClientMessageIdentity(event.message);
+				const queued =
+					clientMessageId === undefined
+						? undefined
+						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId);
 				// Check steering queue first
-				const steeringIndex = this._steeringMessages.indexOf(messageText);
+				const steeringIndex =
+					clientMessageId === undefined || queued?.mode === "steer"
+						? this._steeringMessages.indexOf(messageText)
+						: -1;
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
-					this._removeQueuedInput(messageText, "steer");
+					this._removeQueuedInput(messageText, "steer", clientMessageId);
 					this._emitQueueUpdate();
 				} else {
 					// Check follow-up queue
-					const followUpIndex = this._followUpMessages.indexOf(messageText);
+					const followUpIndex =
+						clientMessageId === undefined || queued?.mode === "followUp"
+							? this._followUpMessages.indexOf(messageText)
+							: -1;
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
-						this._removeQueuedInput(messageText, "followUp");
+						this._removeQueuedInput(messageText, "followUp", clientMessageId);
 						this._emitQueueUpdate();
 					}
 				}
@@ -4771,9 +4807,9 @@ export class AgentSession {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4790,9 +4826,9 @@ export class AgentSession {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
 				if (options?.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4810,9 +4846,9 @@ export class AgentSession {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
 				if (options?.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4839,9 +4875,9 @@ export class AgentSession {
 						);
 					}
 					if (options?.streamingBehavior === "followUp") {
-						await this._queueFollowUp(expandedText, currentImages);
+						await this._queueFollowUp(expandedText, currentImages, options);
 					} else {
-						await this._queueSteer(expandedText, currentImages);
+						await this._queueSteer(expandedText, currentImages, options);
 					}
 					emitPendingCommandInvocation();
 					await emitInputDisposition("queued");
@@ -4863,9 +4899,9 @@ export class AgentSession {
 						this._compactionLifecycle.state.status === "aborted"))
 			) {
 				if (options?.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4914,6 +4950,7 @@ export class AgentSession {
 				role: "user",
 				content: userContent,
 				timestamp: Date.now(),
+				...clientMessageIdentity(options),
 			});
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -4963,7 +5000,7 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(messages);
+		await this._promptAgent(messages, undefined, options?.onQueuedInput);
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -5172,9 +5209,9 @@ export class AgentSession {
 		expandedText = templateExpansion.text;
 
 		if (behavior === "steer") {
-			await this._queueSteer(expandedText, processedInput.images, options?.enqueueOrder);
+			await this._queueSteer(expandedText, processedInput.images, options);
 		} else {
-			await this._queueFollowUp(expandedText, processedInput.images, options?.enqueueOrder);
+			await this._queueFollowUp(expandedText, processedInput.images, options);
 		}
 		await this._emitInputDisposition(processedInput.inputId, "queued");
 		if (templateExpansion.template) {
@@ -5298,55 +5335,63 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[], enqueueOrder?: number): Promise<void> {
-		this._steeringMessages.push(text);
-		this._recordQueuedInput(text, "steer", enqueueOrder);
-		this._sessionLogger.debug("queue_enqueue", {
-			mode: "steer",
-			count: this._steeringMessages.length,
-		});
-		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
-		}
-		const message: AgentMessage = {
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		};
-		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
-			this._postCompactionDeferredSteeringMessages.push(message);
-			return;
-		}
-		this.agent.steer(message);
+	private async _queueSteer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[], enqueueOrder?: number): Promise<void> {
-		this._followUpMessages.push(text);
-		this._recordQueuedInput(text, "followUp", enqueueOrder);
+	private async _queueFollowUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
+	}
+
+	/** Restore accepted input without re-running input transforms or changing its enqueue order. */
+	async restoreQueuedInput(input: PreparedClientInput): Promise<void> {
+		this._enqueuePreparedInput(input);
+	}
+
+	private _enqueuePreparedInput(input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder">): void {
+		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
+		const prepared = {
+			...clientMessageIdentity(input),
+			text: input.text,
+			images: input.images,
+			mode: input.mode,
+			enqueueOrder,
+		};
+		input.onQueuedInput?.(prepared);
+		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
+		queue.push(input.text);
+		this._recordQueuedInput(input.text, input.mode, prepared);
 		this._sessionLogger.debug("queue_enqueue", {
-			mode: "followUp",
-			count: this._followUpMessages.length,
+			mode: input.mode,
+			count: queue.length,
 		});
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
-		}
+		const content: (TextContent | ImageContent)[] = [{ type: "text", text: input.text }, ...(input.images ?? [])];
 		const message: AgentMessage = {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			...clientMessageIdentity(input),
 		};
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
-			this._postCompactionDeferredFollowUpMessages.push(message);
+			const deferred =
+				input.mode === "steer"
+					? this._postCompactionDeferredSteeringMessages
+					: this._postCompactionDeferredFollowUpMessages;
+			deferred.push(message);
 			return;
 		}
-		this.agent.followUp(message);
+		switch (input.mode) {
+			case "steer":
+				this.agent.steer(message);
+				break;
+			case "followUp":
+				this.agent.followUp(message);
+				break;
+		}
 	}
 
 	private _flushPostCompactionDeferredMessages(): void {
@@ -5637,14 +5682,18 @@ export class AgentSession {
 		return this._nextQueuedInputOrder;
 	}
 
-	private _recordQueuedInput(text: string, mode: QueuedInput["mode"], enqueueOrder?: number): void {
-		const order = enqueueOrder ?? this.reserveQueuedInputOrder();
+	private _recordQueuedInput(text: string, mode: QueuedInput["mode"], options?: QueuedInputOptions): void {
+		const order = options?.enqueueOrder ?? this.reserveQueuedInputOrder();
 		this._nextQueuedInputOrder = Math.max(this._nextQueuedInputOrder, order);
-		this._queuedInputOrder.push({ text, mode, enqueueOrder: order });
+		this._queuedInputOrder.push({ text, mode, enqueueOrder: order, ...clientMessageIdentity(options) });
 	}
 
-	private _removeQueuedInput(text: string, mode: QueuedInput["mode"]): void {
-		const index = this._queuedInputOrder.findIndex((message) => message.mode === mode && message.text === text);
+	private _removeQueuedInput(text: string, mode: QueuedInput["mode"], clientMessageId?: string): void {
+		const index = this._queuedInputOrder.findIndex((message) =>
+			clientMessageId === undefined
+				? message.mode === mode && message.text === text
+				: message.clientMessageId === clientMessageId,
+		);
 		if (index !== -1) this._queuedInputOrder.splice(index, 1);
 	}
 
@@ -5692,6 +5741,10 @@ export class AgentSession {
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
 		return this._followUpMessages;
+	}
+
+	getQueuedInputs(): readonly QueuedInput[] {
+		return [...this._queuedInputOrder].sort((left, right) => left.enqueueOrder - right.enqueueOrder);
 	}
 
 	get resourceLoader(): ResourceLoader {
