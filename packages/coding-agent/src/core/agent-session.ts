@@ -248,6 +248,7 @@ import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
+import { checkSessionReloadVeto } from "./reload-veto.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
@@ -3837,7 +3838,7 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
-	/** Whether the session has no active agent run, retry, auto-compaction, or queued continuation. */
+	/** Whether the session has no active agent run, retry, or queued continuation. */
 	get isIdle(): boolean {
 		return !this._isAgentRunActive;
 	}
@@ -9083,6 +9084,19 @@ export class AgentSession {
 		if (veto.cancelled) {
 			return veto;
 		}
+		if (this._promptStartPending) return this.checkReloadVeto();
+		// Prompts admitted from here on wait for the rebuilt runtime instead of starting on the retiring one.
+		const finishReloadWork = this._sessionWorkBarrier.begin();
+		try {
+			return await this._rebuildRuntimeForReload(options);
+		} finally {
+			finishReloadWork();
+		}
+	}
+
+	private async _rebuildRuntimeForReload(options?: {
+		beforeSessionStart?: () => void | Promise<void>;
+	}): Promise<{ cancelled: false }> {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
@@ -9195,16 +9209,7 @@ export class AgentSession {
 	 * without starting their reload UI.
 	 */
 	async checkReloadVeto(): Promise<{ cancelled: boolean; reason?: string }> {
-		if (!this._extensionRunner.hasHandlers("session_before_reload")) {
-			return { cancelled: false };
-		}
-		const result = await this._extensionRunner.emit({
-			type: "session_before_reload",
-		});
-		if (result?.cancel !== true) {
-			return { cancelled: false };
-		}
-		return result.reason === undefined ? { cancelled: true } : { cancelled: true, reason: result.reason };
+		return checkSessionReloadVeto(this._extensionRunner, () => this._promptStartPending);
 	}
 
 	// =========================================================================
