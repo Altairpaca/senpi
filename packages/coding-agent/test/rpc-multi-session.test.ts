@@ -54,6 +54,7 @@ describe("multi-session RPC routing", () => {
 					"multi_session",
 					"auto_title_sessions",
 					"media_placeholders",
+					"durable_client_message_id",
 					"retain_on_disconnect",
 					"session_context",
 					"session_kind",
@@ -61,6 +62,7 @@ describe("multi-session RPC routing", () => {
 					"durable_session_id",
 					"prompt_surface",
 					"prompt_surface_chat",
+					"permission_preset_accept_edits",
 				],
 				mode: "multi",
 				// Host identity (`protocol-identity.ts`): the instance is this process, the

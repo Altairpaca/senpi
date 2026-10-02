@@ -1,5 +1,41 @@
 # mcp Extension Changes
 
+## 2026-10-01 - Skill MCP declarations are cached by file stamp (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `readSkillServers` keeps each skill's parsed declarations keyed by the mtime and size of its `mcp.json` sidecar and `SKILL.md`, and re-reads only when either changes.
+
+### Why
+
+`before_agent_start` parses every skill's declarations on every turn; re-reading and re-parsing each file stalled each background-triggered turn.
+
+### Why an extension could not handle it
+
+This is the builtin MCP extension's own skill scan.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `readSkillServers`.
+
+## 2026-10-01 - Feed the attaching session's tool-search service (senpi#2509)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSession` resolves the attaching session's tool-search service; the fallback for callers without a loaded extension is unchanged.
+
+### Why
+
+- The tool-search builtin no longer keeps one module-level service for every session, so the MCP service must feed the catalog of the session it attaches to. This change only plumbs that lookup; the MCP service itself is still shared in-process (follow-up senpi#2514).
+
+### Why an extension could not handle it
+
+- The tool-search lookup is internal to the MCP builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: the tool-search import and the activation-runtime block in `attachSession`.
+
 ## 2026-09-29 - list_changed re-registers a non-shared connection's current listing (#2188)
 
 ### What changed

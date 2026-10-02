@@ -1,5 +1,47 @@
 # Permission System Builtin Extension
 
+## 2026-10-01 - Read shipped resources without approval (#2513)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: the read parser delegates to `read-permission.ts`, which uses the read tool's path resolver and canonical containment for shipped resources and outside paths.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: passes the read parser's internal prompt-suppression marker to the permission service; internal-tool allow-list policy is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts`: evaluates every read rule, including explicit denies, before suppressing ask results for shipped resources. Permission request and approval-storage shapes are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/evaluate.ts`: bundled read aliases (raw, normalized and canonical) are matched as one target with the existing last-rule precedence, preserving relative-path and resolved-symlink denies as well as later explicit allows.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-dir.ts`: shares the existing parent-directory approval pattern logic with the read parser and keeps filesystem-root targets scoped to their individual file on every platform.
+
+### Why
+
+- Bundled skill reads were classified as external directories, and ask-first also requested read approval. Symlinks escaping the shipped payload and writes must retain their normal permission policy.
+
+### Why an extension could not handle it
+
+- The permission builtin owns classification before the actual read tool executes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: imports and the read parser only; no internal-tool allow-list changes.
+
+## 2026-10-01 - Internal harness operations do not require approval
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/internal-tools.ts` defines the engine-owned bookkeeping and observation tool set.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` preserves these tools during startup filtering and exempts only no-parser fallback requests and monitor rearming. Command and file monitors keep their normal checks. Every explicit tool-owned parser request remains enforced, including a scoped request named after the tool.
+
+### Why
+
+- Internal bookkeeping stopped desktop turns on approval cards in command-asking modes. Preset entries alone could be overridden by user rules and disable the tools again.
+
+### Why an extension could not handle it
+
+- The permission builtin owns active-tool filtering and the approval decision before tool execution.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: session-start filtering and the tool-call request parsing boundary.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/internal-tools.ts`: fixed internal-tool classification.
+
 ## 2026-09-27 - Tools classify their own calls with `permissionParser`
 
 ### What changed
@@ -32,6 +74,7 @@ Full port of opencode's permission system to senpi-mono as a builtin extension.
 - `service.ts` - Permission service core (ask/reply/list)
 - `events.ts` - Event system (permission_asked/replied)
 - `parsers.ts` - Tool input parser registry
+- `internal-tools.ts` - Engine-owned bookkeeping tool classification
 - `prompt.ts` - TUI permission prompt
 - `non-interactive.ts` - No-UI fallback handler
 - `settings.ts` - settings.json integration
@@ -146,3 +189,21 @@ Following pi-mono's extension-first philosophy. All permission logic is in the e
   `bash` permission class (shared `parseBashLikePermission` helper). Otherwise read-only/ask
   presets would be bypassable by steering a background session. `kill_bash`/`bash_resize`/
   `bash_output` fall back to their own tool-named (session-control/read) permissions.
+## 2026-09-30 - Edit-only project preset (senpi#2430, DESKTOP-55)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/config.ts`: accept-edits starts with a wildcard ask reset, allows read/list/grep/edit, asks bash and external_directory, and exports its host capability name.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/types.ts`, `cli.ts`, `index.ts`, `settings.ts`: accept-edits is accepted in settings/CLI and documented by flag help and validation guidance. Settings tests assert acceptance/rejection behavior rather than the validation sentence.
+
+### Why
+
+workspace allows bash. A client promising automatic project edits and command confirmation needs a separate preset.
+
+### Why an extension could not handle it
+
+The permission-system builtin owns preset policy and parsing; all policy remains in this extension.
+
+### Expected merge conflict zones
+
+Preset union, CLI switch and rules table. Existing workspace semantics and approval storage remain unchanged.
