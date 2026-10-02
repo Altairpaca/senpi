@@ -5190,31 +5190,31 @@
     ]
   },
   "observations": {
-    "targetRevision": "755bbed5dfe812eba4834f90746862c561655001",
+    "targetRevision": "37cff966db35b21645ea6157d429d594f8a1245b",
     "platform": "darwin",
     "js-bun/version": "1.4.2",
     "js-bun/memoryAfter50Cells": {
-      "liveBytes": 3087679,
+      "liveBytes": 3090785,
       "measure": "heap"
     },
     "js-node/version": "v26.7.0",
     "js-node/memoryAfter50Cells": {
-      "liveBytes": 17162583,
+      "liveBytes": 17520556,
       "measure": "heap"
     },
     "py/version": "Python 3.14.7",
     "py/memoryAfter50Cells": {
-      "liveBytes": 27541960,
+      "liveBytes": 27296224,
       "measure": "footprint"
     },
     "rb/version": "ruby 4.0.7 (2026-09-15 revision 229531a6cf) +PRISM [arm64-darwin25]",
     "rb/memoryAfter50Cells": {
-      "liveBytes": 19087840,
+      "liveBytes": 19022328,
       "measure": "footprint"
     },
     "jl/version": "julia version 1.12.7",
     "jl/memoryAfter50Cells": {
-      "liveBytes": 167297888,
+      "liveBytes": 167723920,
       "measure": "footprint"
     },
     "virtualSpecifiers": [
@@ -6424,6 +6424,17 @@
       "test/output/tail-line-ring.test.ts/TailLineRing matches the byte-tail last-lines reference for: production budget with a long numbered stream": "passed",
       "test/output/tail-line-ring.test.ts/TailLineRing keeps only the last eight lines of a small stream": "passed",
       "test/output/tail-line-ring.test.ts/TailLineRing keeps the unterminated partial line as the window's last element": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses local assets": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses the sidecar": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets replaces Bun virtual paths": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws an actionable error": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws for missing local assets": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /$bunfs/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path ~BUN/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path %7EBUN/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /tmp/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through JS resolver": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through Python resolver": "passed",
       "test/kernels/rb/subprocess-kernel-interrupt.test.ts/SubprocessKernel interrupt interrupts the active cell and starts queued work after confirmed exit": "passed",
       "test/kernels/rb/subprocess-kernel-interrupt.test.ts/SubprocessKernel interrupt fails closed after SIGKILL grace expires without confirmed exit": "passed",
       "test/kernels/rb/subprocess-kernel.test.ts/SubprocessKernel sends bridge init over stdin without leaking port or token into argv": "passed",
@@ -6449,18 +6460,7 @@
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
-      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses local assets": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses the sidecar": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets replaces Bun virtual paths": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws an actionable error": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws for missing local assets": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /$bunfs/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path ~BUN/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path %7EBUN/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /tmp/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through JS resolver": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through Python resolver": "passed"
+      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed"
     }
   },
   "unmeasured": []
