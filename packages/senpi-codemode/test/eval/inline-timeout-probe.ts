@@ -1,6 +1,11 @@
 import type { ResultMessage } from "../../src/kernels/js/kernel-contract.ts";
 
-export const INLINE_PROBE_BOUNDS = { ackMs: 500, graceMs: 2000, terminateDeadlineMs: 180000 } as const;
+export const INLINE_PROBE_BOUNDS = {
+	cellTimeoutMs: 150,
+	ackMs: 500,
+	graceMs: 2000,
+	terminateDeadlineMs: 180000,
+} as const;
 
 /** Drives the same clock used by the kernel; advancement also drains scheduled microtasks. */
 export async function driveInlineTimeout(
@@ -15,7 +20,8 @@ export async function driveInlineTimeout(
 			throw new TypeError("Inline probe settled before its startup marker");
 		}),
 	]);
-	await advance(150);
+	// Fire the kernel's cell timeout before its acknowledgement and retirement deadlines.
+	await advance(INLINE_PROBE_BOUNDS.cellTimeoutMs);
 	await advance(INLINE_PROBE_BOUNDS.ackMs);
 	await advance(INLINE_PROBE_BOUNDS.terminateDeadlineMs);
 	return await running;

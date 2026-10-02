@@ -3,7 +3,7 @@ import { runProcess } from "../../scripts/gate-process.ts";
 
 it("isolates codemode overrides while preserving the explicit mutation control", async () => {
 	vi.stubEnv("PI_GATE_HOST", "host");
-	vi.stubEnv("SENPI_CODEMODE_LANGUAGES", "host");
+	vi.stubEnv("SENPI_CODEMODE_JS", "node");
 	vi.stubEnv("SENPI_CODEMODE_GATE_MUTATE", "drop-phase");
 	try {
 		const result = await runProcess(
@@ -13,7 +13,7 @@ it("isolates codemode overrides while preserving the explicit mutation control",
 				`
 console.log(JSON.stringify({
 	host: process.env.PI_GATE_HOST,
-	languages: process.env.SENPI_CODEMODE_LANGUAGES,
+	javascript: process.env.SENPI_CODEMODE_JS,
 	mutation: process.env.SENPI_CODEMODE_GATE_MUTATE,
 	required: process.env.SENPI_QA_REQUIRE_ALL_LANGUAGES,
 }));

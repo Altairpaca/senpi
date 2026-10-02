@@ -9,6 +9,8 @@ it("removes its owned temporary root after a startup import fails", async () => 
 	const root = await mkdtemp(join(tmpdir(), "senpi-gate-startup-"));
 	const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 	vi.stubEnv("TMPDIR", root);
+	vi.stubEnv("TMP", root);
+	vi.stubEnv("TEMP", root);
 	try {
 		const result = await runProcess(
 			["bun", "scripts/gate-runtime.ts", join(root, "missing-target"), "js", "test/gate/helpers.golden.json"],

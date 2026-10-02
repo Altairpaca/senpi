@@ -41,7 +41,7 @@ const baselineWorkerIds = process.report.getReport().workers.map((worker) => wor
 try {
   await kernel.run({ cellId: "warm", code: "1 + 1" });
   mock.timers.enable({ apis: ["setTimeout"] });
-  const running = kernel.run({ cellId: "infinite-loop", code: 'print("loop-started"); return (() => { while (true) {} })()', timeoutMs: 150 });
+  const running = kernel.run({ cellId: "infinite-loop", code: 'print("loop-started"); return (() => { while (true) {} })()', timeoutMs: INLINE_PROBE_BOUNDS.cellTimeoutMs });
   const result = await driveInlineTimeout(started, running, async (milliseconds) => {
     mock.timers.tick(milliseconds);
     await new Promise((resolve) => setImmediate(resolve));
