@@ -41,6 +41,7 @@ Prompt preflight can compact a large conversation before admitting the input. Th
 - `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: response construction and the sequential dialog fallback.
 
 ## 2026-10-01 - Durable client message admissions (desktop#1325, senpi#1971)
+## 2026-10-02 - Durable client message admissions (desktop#1325, senpi#1971)
 
 ### What changed
 
@@ -48,7 +49,6 @@ Prompt preflight can compact a large conversation before admitting the input. Th
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive client IDs, admission responses, and typed ordered queue metadata.
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts`: forwards prompt and queue identity and preserves typed refusal codes.
 - `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: refuses malformed client IDs before dispatch.
-- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: reads ordered queue records through the session API.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`: advertises `durable_client_message_id` on multi-session hosts.
 - New `client-admission-record.ts`, `client-admissions.ts`, `client-input-handler.ts`, and `client-message-events.ts` own the transcript ledger, duplicate/conflict handling, prepared queue recovery, and event correlation.
 
@@ -57,12 +57,11 @@ Prompt preflight can compact a large conversation before admitting the input. Th
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts` previously admitted each transport retry independently, so a lost acknowledgment could cause a second answer.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts` need identities independent of routing handles and transport request IDs.
 - `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts` bounds the persisted identity.
-- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts` must expose the same identity as queue events.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts` lets clients negotiate safe replay before using it.
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own wire admission, responses, and host capabilities outside extension control.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own wire admission, responses, and host capabilities outside extension control.
 
 ### Expected merge conflict zones
 
@@ -70,7 +69,6 @@ Prompt preflight can compact a large conversation before admitting the input. Th
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: input, response and queue types.
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts`: prompt options and queue sends.
 - `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: input payload validation.
-- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: ordered queue projection.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`: capability list only; host lifecycle is unchanged.
 
 ## 2026-10-02 - Runtime identity in host status and a conditional idle handover (desktop #1364, #1055)

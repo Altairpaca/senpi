@@ -71,10 +71,10 @@ export async function handleClientInput(
 									acceptedAdmission = hooks.accepted(next);
 								},
 								preflightResult: (succeeded) => {
-							if (succeeded && disposition !== undefined) {
-								preflightSucceeded = true;
-								accepted.resolve(disposition);
-								respond(acceptedAdmission);
+									if (succeeded && disposition !== undefined) {
+										preflightSucceeded = true;
+										accepted.resolve(disposition);
+										respond(acceptedAdmission);
 									}
 								},
 							})

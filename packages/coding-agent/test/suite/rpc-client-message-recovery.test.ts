@@ -13,7 +13,11 @@ describe("RPC client identity recovery", () => {
 	const setup = async (options: HarnessOptions = {}) => {
 		const fixture = await createIdentityHarness(options);
 		fixtures.push(fixture);
-		fixture.harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
+		fixture.harness.setResponses([
+			fauxAssistantMessage("one"),
+			fauxAssistantMessage("two"),
+			fauxAssistantMessage("three"),
+		]);
 		return fixture;
 	};
 
@@ -203,14 +207,16 @@ describe("RPC client identity recovery", () => {
 		const queued = Promise.withResolvers<void>();
 		const release = Promise.withResolvers<void>();
 		const fixture = await setup({
-			extensionFactories: [(pi) => {
-				pi.on("input", () => ({ action: "continue" }));
-				pi.on("input_disposition", async (event) => {
-					if (event.disposition !== "queued") return;
-					queued.resolve();
-					await release.promise;
-				});
-			}],
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "continue" }));
+					pi.on("input_disposition", async (event) => {
+						if (event.disposition !== "queued") return;
+						queued.resolve();
+						await release.promise;
+					});
+				},
+			],
 		});
 		const rpc = fixture.bind();
 		const command = { type: "steer", message: "clear before ack", clientMessageId: "clear-race" };
