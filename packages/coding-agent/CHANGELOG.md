@@ -11,7 +11,7 @@
 ### Fixed
 
 - The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
-- Clipboard images pasted with Ctrl+V now attach in direct local Warp-on-WSL sessions by handling Warp's empty bracketed-paste event. Raw Ctrl+V and Alt+V remain supported, without changing non-empty text paste or other terminal defaults.
+- Clipboard images pasted with Ctrl+V now attach in direct local Warp-on-WSL sessions by handling Warp's empty bracketed-paste event. Raw Ctrl+V and Alt+V remain supported, without changing non-empty text paste or other terminal defaults ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
 
 - Configuration hot-reload ignores creation of an empty project configuration directory or task runtime state, while still discovering real configuration added at the same time or later. It also waits for admitted first requests and rechecks readiness after asynchronous reload vetoes ([omo#9363](https://github.com/code-yeongyu/oh-my-openagent/issues/9363), [omo#9365](https://github.com/code-yeongyu/oh-my-openagent/issues/9365)).
 

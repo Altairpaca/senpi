@@ -6,7 +6,7 @@
 
 ### Added
 
-- Exported `isWarpWslSession()` so clipboard handling can reuse the hardened direct-local Warp-on-WSL predicate without duplicating terminal detection; existing Shift+Enter normalization remains unchanged.
+- Exported `isWarpWslSession()` so clipboard handling can reuse the hardened direct-local Warp-on-WSL predicate without duplicating terminal detection; existing Shift+Enter normalization remains unchanged ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
 
 ### Changed
 
