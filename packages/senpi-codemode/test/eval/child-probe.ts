@@ -78,6 +78,7 @@ export function watchChild(child: ChildProcess, options: { readonly resultLine?:
 		}, CHILD_HANG_WATCHDOG_MS);
 	};
 
+	const captureLine = options.resultLine === true;
 	const closed = new Promise<ChildResult>((resolve, reject) => {
 		rejectClosed = reject;
 		child.once("spawn", () => {
@@ -86,11 +87,13 @@ export function watchChild(child: ChildProcess, options: { readonly resultLine?:
 		});
 		child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
 			stdout += chunk;
-			const newline = stdout.indexOf("\n");
-			if (line === undefined && newline !== -1) {
-				line = stdout.slice(0, newline);
-				stage = "exit";
-				for (const waiter of lineWaiters.splice(0)) waiter.resolve(line);
+			if (captureLine && line === undefined) {
+				const newline = stdout.indexOf("\n");
+				if (newline !== -1) {
+					line = stdout.slice(0, newline).replace(/\r$/u, "");
+					stage = "exit";
+					for (const waiter of lineWaiters.splice(0)) waiter.resolve(line);
+				}
 			}
 			arm();
 		});

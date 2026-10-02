@@ -89,6 +89,14 @@ it("delivers the result line while the child is still running", async () => {
 	}
 });
 
+it("trims a trailing carriage return from a CRLF result line", async () => {
+	const watched = watchChild(spawnHeld('process.stdout.write("result\\r\\n"); process.exit(0);'), {
+		resultLine: true,
+	});
+	await expect(watched.resultLine()).resolves.toBe("result");
+	await expect(watched.closed).resolves.toMatchObject({ code: 0, signal: null });
+});
+
 it("rejects the result line when the child exits without writing one", async () => {
 	const watched = watchChild(spawnHeld("process.exit(3)"), { resultLine: true });
 	await expect(watched.resultLine()).rejects.toThrow(/closed before its result line \(code 3/);
