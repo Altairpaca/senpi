@@ -6,8 +6,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProcessFootprint } from "../src/core/process-footprint.ts";
-import { bunFootprintBytes, bunHost } from "./helpers/rpc-bun-host.ts";
+import { bunFootprint, bunFootprintBytes, bunHost } from "./helpers/rpc-bun-host.ts";
 import { JsonlPeer, openedSessionId } from "./helpers/rpc-generation-support.ts";
 import { endpointScratch, hostChildren, sweepEndpointScratches, tracked } from "./helpers/rpc-host-endpoint-scratch.ts";
 
@@ -63,9 +62,11 @@ describe.skipIf(process.platform === "win32")("zero-session trim on a real host"
 		expect(record).toMatchObject({ type: "host_trimmed", collected: true });
 		// The measure is whatever this platform's footprint reader reports for the host
 		// (phys_footprint on darwin, rss_anon on linux): pin that contract, not one string.
-		const measure = readProcessFootprint(host)?.measure;
-		if (measure === undefined) throw new Error("host footprint unreadable");
-		expect(record.measure).toBe(measure);
+		// Read it through the same bun child as the baseline/peak bytes: this test may run
+		// under node, where a direct readProcessFootprint(host) cannot bind the FFI reader.
+		const hostMeasure = (await bunFootprint(host))?.measure;
+		if (hostMeasure === undefined) throw new Error("host footprint unreadable");
+		expect(record.measure).toBe(hostMeasure);
 		const { footprintBeforeMb, footprintAfterMb } = record;
 		if (typeof footprintBeforeMb !== "number" || typeof footprintAfterMb !== "number")
 			throw new Error("no footprint");

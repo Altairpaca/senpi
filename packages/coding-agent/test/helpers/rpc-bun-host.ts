@@ -31,14 +31,18 @@ export async function bunHost(qa: EndpointScratch, socket: string, extension?: s
 	return host.pid;
 }
 
-export function bunFootprintBytes(pid: number): Promise<number | undefined> {
+export function bunFootprint(pid: number): Promise<{ bytes: number; measure: string } | undefined> {
 	const script = `import { readProcessFootprint } from ${JSON.stringify(footprintModule)};
 console.log(JSON.stringify(readProcessFootprint(${pid}) ?? null));`;
 	return new Promise((resolveFootprint, reject) => {
 		execFile("bun", ["-e", script], { encoding: "utf8", timeout: 30_000 }, (error, stdout) => {
 			if (error) return reject(error);
 			const parsed = footprintSchema.nullable().parse(JSON.parse(stdout.trim().split("\n").at(-1) ?? "null"));
-			resolveFootprint(parsed?.bytes);
+			resolveFootprint(parsed ?? undefined);
 		});
 	});
+}
+
+export async function bunFootprintBytes(pid: number): Promise<number | undefined> {
+	return (await bunFootprint(pid))?.bytes;
 }
