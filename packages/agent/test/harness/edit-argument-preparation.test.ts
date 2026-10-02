@@ -2,10 +2,11 @@ import type { JsonObject } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { prepareToolCall } from "../../src/harness/execution/tools.ts";
 import { createEditTool } from "../../src/harness/tools/edit.ts";
+import type { ExecutionToolContext } from "../../src/harness/tools/tool-context.ts";
 import type { AgentHarnessTool } from "../../src/harness/types.ts";
 import type { AgentToolCall } from "../../src/types.ts";
 
-const tools = [createEditTool() as AgentHarnessTool<undefined>];
+const tools: AgentHarnessTool<ExecutionToolContext>[] = [createEditTool()];
 
 function editCall(arguments_: JsonObject): AgentToolCall {
 	return { type: "toolCall", id: "edit-legacy", name: "edit", arguments: arguments_ };
