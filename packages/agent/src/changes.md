@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/agent/src/agent.ts`: in `one-at-a-time` mode a queue that starts with app-defined notices (custom roles such as monitor, task or background-command events) drains that whole leading run at once. User, assistant, tool-result and system messages still drain one at a time and end a run of notices. `all` mode is unchanged (it already drained everything).
+- `packages/agent/src/types.ts`: the `QueueMode` documentation describes the notice batching.
 
 ### Why
 
@@ -15,6 +16,7 @@ The queue drain policy is inside the agent loop; extensions only enqueue.
 ### Expected merge conflict zones
 
 - `packages/agent/src/agent.ts`: `PendingMessageQueue.peek`.
+- `packages/agent/src/types.ts`: the `QueueMode` doc comment.
 
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
 
