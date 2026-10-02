@@ -3519,9 +3519,11 @@ A late answer after resolution receives a `question_already_resolved` error.
 `resolvedBy` identifies the surface that submitted the winning answer: `local_ui` for the terminal
 widget or composer, `rpc_connection` for an RPC client (including the sequential dialog fallback),
 and `control_endpoint` for an answer received through the session's terminal control endpoint.
-It is omitted for outcomes with no answering surface: `timed_out`, `cancelled`,
-`orphaned-after-restart`, and `unavailable`. Clients do not supply this field; the answering bridge
-sets it. Competing or late answers do not change the winner's surface.
+It is omitted for `timed_out` and `cancelled`, the frame's outcomes with no answering surface.
+Restart orphaning and unavailable UI never reach `question_resolved` with their own status: an
+extension that aborts the dialog for either is reported to connections as `cancelled`, and only the
+tool result and the `ask-user:closed` extension event carry the true status. Clients do not supply
+this field; the answering bridge sets it. Competing or late answers do not change the winner's surface.
 
 The built-in `ask_user_question` and `request_user_input` tools retain the field in blocking
 `tool_execution_end` result details and in the `response` of `ask-user:settled`. Extensions can

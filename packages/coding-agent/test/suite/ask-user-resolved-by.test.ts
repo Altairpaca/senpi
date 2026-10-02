@@ -140,6 +140,7 @@ it.each([true, false])("attributes a control endpoint answer, wait=%s", async (w
 	if (wait) expect(result.details).toMatchObject({ resolvedBy: "control_endpoint" });
 	expect(fixture.closed).toEqual([{ requestId: "endpoint", status: "answered", resolvedBy: "control_endpoint" }]);
 	expect(fixture.settled).toHaveLength(1);
+	expect(fixture.settled[0]).toMatchObject({ response: { resolvedBy: "control_endpoint" } });
 });
 
 it.each(["local_ui", "control_endpoint"] as const)(
@@ -172,6 +173,7 @@ it.each(["local_ui", "control_endpoint"] as const)(
 		entry.cancel();
 		expect(fixture.closed).toEqual([{ requestId: "race", status: "answered", resolvedBy: winner }]);
 		expect(fixture.settled).toHaveLength(1);
+		expect(fixture.settled[0]).toMatchObject({ response: { resolvedBy: winner } });
 		expect(fixture.delivery.deliveries).toHaveLength(1);
 	},
 );
