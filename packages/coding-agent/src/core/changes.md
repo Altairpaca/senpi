@@ -1,3 +1,28 @@
+## 2026-10-02 - Model-scoped usage limits in the credential pool (senpi#2555)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts` (new): `rateLimitModelFamily` reads the family a limit text binds ("Fable limit", "Opus limit", "Sonnet limit", with an optional version or window word); `modelBlockKey`, `activeModelBlockUntil`, `pruneModelBlocks`, `withModelBlock` and `describeModelBlocks` manage `{ [family or model id]: { blockedUntil } }` maps.
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: a `rate_limit` block carries `modelFamily` when the text names one.
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`: slot state gains optional `modelBlocks`. Files written before parse unchanged; their `blockedUntil`/`blockReason` keep meaning "slot blocked".
+- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts` (new, split out of `rotation-stream.ts`): slot listing and sidecar overlay. `listRotationSlots` takes `modelId`; a live block on that model makes the slot unavailable to that request only, and such a slot never takes the half-open probe lease.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `streamWithCredentialRotation` takes `modelId`. A family-scoped rate limit writes a model block and keeps the slot's own health (releasing a probe lease it held); an account-level block keeps live model blocks; a success lifts only the blocks on the model that served. Re-exports `listRotationSlots` and the slot types from `rotation-slots.ts`.
+- `packages/coding-agent/src/core/model-runtime.ts`: both `streamWithCredentialRotation` calls pass `modelId: model.id`.
+- `packages/coding-agent/src/core/credential-accounts.ts`: summaries carry `blockedModels` (live model blocks from the sidecar and from a stored slot's own `modelBlocks`); `builtin/account/index.ts` prints them as "blocked for <model> until <iso>".
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: `usageLimitScope` reports `model` for a text naming a family, so Claude Code's "You've reached your Fable limit. Switch to another model to continue." moves only that model and leaves the provider eligible.
+
+### Why
+
+- The unified rate-limit headers name the exceeded window, and Claude Code renders it into the failure text: "session limit"/"weekly limit" bind the account, "Opus limit"/"Sonnet limit"/"Fable limit" one family. The pool blocked the whole slot for any rate limit, so one exhausted family made every other model on that account unusable until the block expired (oh-my-openagent#9421). Limits that name no family stay account-wide.
+
+### Why an extension could not handle it
+
+- Slot selection, the persisted sidecar and the fallback scope classifier run inside the model runtime and session core; no extension hook sees a slot's block state.
+
+### Expected merge conflict zones
+
+- LOW: the two `streamWithCredentialRotation` calls in `model-runtime.ts`; the rest is fork-only (`credential-pool/`, `credential-accounts.ts`, `retry-fallback/`).
+
 ## 2026-10-02 - Accept Ctrl+V in direct Warp-on-WSL sessions
 
 ### What changed
