@@ -2209,3 +2209,26 @@ Branding and the `/login` provider list are owned by the interactive mode and th
 ### Expected merge conflict zones
 
 Upstream changes to the startup header and the `/login` selector; keep the fork header and omit Radius.
+
+## Adopted upstream v1.0.0 interactive mode rendering (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+- `packages/coding-agent/src/modes/interactive/theme/system-theme.ts`
+
+Upstream interactive-mode fixes are kept: one copy of each rendered user-message line and pastel system-theme chroma, with the fork's tuiMode `regular` default preserved (D-5).
+
+### Why
+
+These are upstream rendering improvements that do not break fork behaviour; the fork's header and tuiMode defaults stay.
+
+### Why an extension could not handle it
+
+Interactive-mode components and theme are rendering internals below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to interactive-mode components at the next sync.
