@@ -5,7 +5,8 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/goal/stale-context.ts`: `isStaleExtensionContextError` also matches `STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE` ("stale extension generation after reload"), the message `AgentSession.reload()` retires the old generation with. The runner keeps the first retirement message, so a context retired by a reload never carries the replacement prefix the check looked for.
-- Tests (`packages/coding-agent/test/suite/regressions/2549-stale-context-detection.test.ts`): the check recognizes the errors a context retired by a real harness reload and by a real dispose throw, rejects unrelated errors, and `GoalElapsedTicker` retires on the reload error.
+- `packages/coding-agent/src/core/extensions/builtin/goal/elapsed-ticker.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/wait-ticker.ts`: `sync()` returns without arming the interval when its immediate render hit a retired ctx (the tick already cleared `ctx`), instead of leaving an inert interval running until the next `stop()`. The next live `sync()` arms it.
+- Tests (`packages/coding-agent/test/suite/regressions/2549-stale-context-detection.test.ts`): the check recognizes the errors a context retired by a real harness reload and by a real dispose throw, rejects unrelated errors, `GoalElapsedTicker` retires on the reload error, and neither goal ticker arms an interval for a sync whose first render is stale, while the next live sync does.
 
 ### Why
 

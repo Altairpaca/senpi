@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GoalElapsedTicker } from "../../../src/core/extensions/builtin/goal/elapsed-ticker.ts";
 import { isStaleExtensionContextError } from "../../../src/core/extensions/builtin/goal/stale-context.ts";
 import type { Goal } from "../../../src/core/extensions/builtin/goal/types.ts";
+import { GoalWaitTicker } from "../../../src/core/extensions/builtin/goal/wait-ticker.ts";
 import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
 import { createHarness } from "../harness.ts";
 
@@ -90,6 +91,54 @@ describe("#2549 retired extension context detection", () => {
 
 			expect(() => vi.advanceTimersByTime(1_000)).not.toThrow();
 			expect(ticker.running).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not arm the goal elapsed ticker for a sync whose first render is stale, and re-arms on a live sync", async () => {
+		const reloadError = await captureRetiredContextError("reload");
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		try {
+			let stale = true;
+			const ticker = new GoalElapsedTicker({
+				render: () => {
+					if (stale) throw reloadError;
+				},
+			});
+			const ctx = { ui: { setStatus: () => {} } } as unknown as ExtensionContext;
+
+			expect(() => ticker.sync(ctx, activeGoal(), Date.now())).not.toThrow();
+			expect(ticker.running).toBe(false);
+
+			stale = false;
+			ticker.sync(ctx, activeGoal(), Date.now());
+			expect(ticker.running).toBe(true);
+			ticker.stop();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not arm the goal wait ticker for a sync whose first render is stale, and re-arms on a live sync", async () => {
+		const reloadError = await captureRetiredContextError("reload");
+		vi.useFakeTimers();
+		try {
+			const ticker = new GoalWaitTicker({ render: () => {} });
+			const wait = { kind: "monitor", remainingMs: 60_000, totalMs: 60_000, channelCounts: {} } as const;
+			const retired = {
+				isIdle: () => {
+					throw reloadError;
+				},
+			} as unknown as ExtensionContext;
+
+			expect(() => ticker.sync(retired, wait)).not.toThrow();
+			expect(ticker.running).toBe(false);
+
+			ticker.sync({ isIdle: () => true } as unknown as ExtensionContext, wait);
+			expect(ticker.running).toBe(true);
+			ticker.stop();
 		} finally {
 			vi.useRealTimers();
 		}

@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/senpi-codemode/src/extension/stale-context.ts` (new): `isStaleExtensionContextError` matches the two messages the host retires a context with (replacement prefix and reload message), mirroring the host's `builtin/goal/stale-context.ts`, which the host does not export.
+- `packages/senpi-codemode/src/extension/stale-context.ts` (new): `isStaleExtensionContextError` matches the two messages the host retires a context with (replacement prefix and reload message), mirroring the host's `builtin/goal/stale-context.ts`. The host keeps that module internal to its builtins (the `@code-yeongyu/senpi` package does not export it) and older host versions predate the reload message, so codemode carries the two messages locally for compatibility.
 - `packages/senpi-codemode/src/extension/eval-status-ticker.ts`: `tick()` catches that error, stops the ticker and returns `false`; `sync()` does not re-arm after a stale immediate render; the next live `sync()` re-arms. Other render errors are rethrown.
 - Tests: `test/eval-status-ticker-stale-context.test.ts` (retire on both messages, re-arm, no re-arm on a stale first render, non-stale error surfaces) and `test/eval-status-wiring-stale-context.test.ts` (a reload, new session and switch while a detached cell ticks: no throw, and the next session's cell renders and advances).
 
