@@ -89,6 +89,17 @@ describe("faux provider across an API registry reset (senpi#2542)", () => {
 		expect(getApiProvider("reset-clears-me")).toBeUndefined();
 	});
 
+	it("gives a builtin API back once a faux override of it is unregistered after a reset", () => {
+		const builtin = getApiProvider("openai-completions");
+		const override = registerFauxProvider({ api: "openai-completions" });
+
+		resetApiProviders();
+		expect(getApiProvider("openai-completions")).not.toBe(builtin);
+		override.unregister();
+
+		expect(getApiProvider("openai-completions")).toBe(builtin);
+	});
+
 	it("stops answering once unregistered, even if a reset happened in between", async () => {
 		const registration = registerFauxProvider();
 		registration.setResponses([fauxAssistantMessage("should not be sent")]);

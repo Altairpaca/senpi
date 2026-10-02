@@ -155,7 +155,11 @@ export function unregisterApiProviders(sourceId: string): void {
 	const scope = getActiveProviderScope();
 	const registry = scope ? scope.overlay : apiProviderRegistry;
 	for (const [api, entry] of registry.entries()) {
-		if (entry.sourceId === sourceId) registry.delete(api);
+		if (entry.sourceId !== sourceId) continue;
+		registry.delete(api);
+		// A scope overlay already falls back to the builtin; the global registry must get it back.
+		const builtin = builtinApiProviderRegistry.get(api);
+		if (!scope && builtin) registry.set(api, builtin);
 	}
 }
 
