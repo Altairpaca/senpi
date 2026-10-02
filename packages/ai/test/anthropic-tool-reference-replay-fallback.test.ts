@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { demoteToolReferenceReplay } from "../src/api/anthropic-tool-references.ts";
 import { getModel } from "../src/compat.ts";
 import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Context, Model } from "../src/types.ts";
@@ -113,5 +114,61 @@ describe("Anthropic tool-reference replay fallback", () => {
 		expect(requests).toHaveLength(1);
 		expect(result?.stopReason).toBe("error");
 		expect(result?.errorMessage).toContain(REJECTION);
+	});
+});
+
+describe("a demoted tool_reference replay keeps the found tools callable (senpi #2568)", () => {
+	it("sends every tool a demoted reference named without defer_loading, and leaves other deferred tools deferred", () => {
+		const params = {
+			model: "claude-test",
+			max_tokens: 1024,
+			stream: true,
+			tools: [
+				{ name: "read", input_schema: { type: "object" } },
+				{ name: "generate_image", input_schema: { type: "object" }, defer_loading: true },
+				{ name: "task", input_schema: { type: "object" }, defer_loading: true },
+				{ name: "web_fetch", input_schema: { type: "object" }, defer_loading: true },
+			],
+			messages: [
+				{ role: "user", content: "make an image" },
+				{
+					role: "assistant",
+					content: [{ type: "tool_use", id: "call_1", name: "tool_search", input: { query: "image" } }],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "call_1",
+							content: [
+								{ type: "tool_reference", tool_name: "generate_image" },
+								{ type: "tool_reference", tool_name: "task" },
+							],
+						},
+					],
+				},
+			],
+		} as unknown as Parameters<typeof demoteToolReferenceReplay>[0];
+
+		const demoted = demoteToolReferenceReplay(params) as unknown as { tools: Array<Record<string, unknown>> };
+		const byName = new Map(demoted.tools.map((tool) => [tool.name, tool]));
+
+		expect(byName.get("generate_image")?.defer_loading).toBeUndefined();
+		expect(byName.get("task")?.defer_loading).toBeUndefined();
+		expect(byName.get("web_fetch")?.defer_loading).toBe(true);
+		expect(byName.get("read")?.defer_loading).toBeUndefined();
+	});
+
+	it("leaves the tools untouched when the history replays no reference", () => {
+		const params = {
+			model: "claude-test",
+			max_tokens: 1024,
+			stream: true,
+			tools: [{ name: "generate_image", input_schema: { type: "object" }, defer_loading: true }],
+			messages: [{ role: "user", content: "hello" }],
+		} as unknown as Parameters<typeof demoteToolReferenceReplay>[0];
+
+		expect(demoteToolReferenceReplay(params)).toBe(params);
 	});
 });

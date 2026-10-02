@@ -17,6 +17,7 @@
 ### Expected merge conflict zones
 
 - LOW: the retry branch sits in the fork-only `createRequest` retry block beside the unsigned-thinking fallback; `anthropic-tool-references.ts` is fork-only.
+- The demoted replay keeps the found tools callable: a deferred tool is loaded only by a replayed `tool_reference`, so `demoteToolReferenceReplay` also sends every tool a demoted reference named without `defer_loading` (other deferred tools keep it). Without this the model would have to search again before calling a tool an earlier turn found. Test: the found tools lose `defer_loading` and an unrelated deferred tool keeps it.
 
 ## 2026-10-02 - Compat faux registrations survive an API registry reset (senpi#2542)
 

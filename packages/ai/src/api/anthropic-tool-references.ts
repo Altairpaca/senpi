@@ -205,7 +205,9 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
  * (`server_tool_use` plus its `tool_search_tool_result`, which may sit in a later
  * assistant message) becomes a note naming the tools it found, and
  * `tool_reference` items inside a client `tool_result` become one text item.
- * Returns `params` unchanged when the history replays no reference.
+ * A deferred tool is loaded only by a replayed reference, so every tool the demoted
+ * references named is sent without `defer_loading`: it stays callable without another
+ * search. Returns `params` unchanged when the history replays no reference.
  */
 export function demoteToolReferenceReplay(params: MessageCreateParamsStreaming): MessageCreateParamsStreaming {
 	const messages = params.messages;
@@ -222,6 +224,7 @@ export function demoteToolReferenceReplay(params: MessageCreateParamsStreaming):
 	}
 
 	let changed = false;
+	const demotedNames = new Set<string>();
 	const rewrittenMessages: MessageParam[] = [];
 	for (const message of messages) {
 		if (!Array.isArray(message.content)) {
@@ -241,6 +244,7 @@ export function demoteToolReferenceReplay(params: MessageCreateParamsStreaming):
 					const names = isNativeToolSearchResultBlock(block)
 						? toolReferenceNames(block.content.tool_references)
 						: [];
+					for (const name of names) demotedNames.add(name);
 					content.push({
 						type: "text",
 						text: names.length > 0 ? `Tool search found: ${names.join(", ")}` : "Tool search found no tools.",
@@ -252,6 +256,7 @@ export function demoteToolReferenceReplay(params: MessageCreateParamsStreaming):
 				const names = toolReferenceNames(block.content);
 				if (names.length > 0) {
 					messageChanged = true;
+					for (const name of names) demotedNames.add(name);
 					const kept = block.content.filter((item) => !(isRecord(item) && item.type === "tool_reference"));
 					content.push({
 						...block,
@@ -270,7 +275,25 @@ export function demoteToolReferenceReplay(params: MessageCreateParamsStreaming):
 		if (content.length > 0) rewrittenMessages.push({ ...message, content });
 	}
 
-	return changed ? { ...params, messages: rewrittenMessages } : params;
+	if (!changed) return params;
+	return { ...params, messages: rewrittenMessages, ...residentTools(params.tools, demotedNames) };
+}
+
+/** Drops `defer_loading` from the tools a demoted reference named; the rest keep their deferral. */
+function residentTools(
+	tools: MessageCreateParamsStreaming["tools"],
+	names: ReadonlySet<string>,
+): Pick<MessageCreateParamsStreaming, "tools"> | Record<string, never> {
+	if (!Array.isArray(tools) || names.size === 0) return {};
+	let changed = false;
+	const rewritten = tools.map((tool) => {
+		if (!isRecord(tool) || tool.defer_loading !== true || typeof tool.name !== "string" || !names.has(tool.name))
+			return tool;
+		changed = true;
+		const { defer_loading: _deferLoading, ...resident } = tool;
+		return resident as typeof tool;
+	});
+	return changed ? { tools: rewritten } : {};
 }
 
 function toolReferenceNames(items: readonly unknown[]): string[] {
