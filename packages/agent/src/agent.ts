@@ -169,6 +169,13 @@ export interface AgentContinuationOptions {
 	streamStartTimeoutMs?: number;
 }
 
+const LLM_ROLES: ReadonlySet<string> = new Set(["user", "assistant", "toolResult", "system"]);
+
+/** A queued message with an app-defined role (monitor, task or background-command notices). */
+function isBackgroundNotice(message: AgentMessage): boolean {
+	return !LLM_ROLES.has(message.role);
+}
+
 class PendingMessageQueue {
 	private messages: AgentMessage[] = [];
 	private clearGeneration = 0;
@@ -191,17 +198,17 @@ class PendingMessageQueue {
 	}
 
 	/**
-	 * `one-at-a-time` gives each user message its own turn. Background notices (any non-user
-	 * message, such as monitor or task events) queued back to back are one batch: a burst of events
-	 * is answered by one turn instead of one turn per event.
+	 * `one-at-a-time` gives each queued LLM message (user, assistant, tool result, system) its own
+	 * drain. Background notices (custom roles, such as monitor or task events) queued back to back
+	 * are one batch: a burst of events is answered by one turn instead of one turn per event.
 	 */
 	peek(): AgentMessage[] {
 		if (this.mode === "all") return this.messages.slice();
 		const first = this.messages[0];
 		if (!first) return [];
-		if (first.role === "user") return [first];
+		if (!isBackgroundNotice(first)) return [first];
 		let end = 1;
-		while (end < this.messages.length && this.messages[end]?.role !== "user") end++;
+		while (end < this.messages.length && isBackgroundNotice(this.messages[end]!)) end++;
 		return this.messages.slice(0, end);
 	}
 

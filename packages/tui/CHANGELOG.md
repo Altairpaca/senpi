@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- Frames over long output no longer re-scan every line: a frame whose line count changed reuses the unchanged normalized prefix, image presence is measured once per frame, and the main-screen renderer no longer walks the whole component tree and copies every line on each frame. Components can report `getRenderRevision()` so containers reuse their output until it changes ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+- Frames over long output no longer re-scan every line: a frame whose line count changed reuses the unchanged normalized prefix, image presence is measured once per frame, and the main-screen renderer no longer walks the whole component tree and copies every line on each frame. Components can report `getRenderRevision()`, a change signal that containers caching their children's output use to tell when a child must render again ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
 
 ### Removed
 

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: lines are queued per log file and appended in order by one asynchronous writer (rotation is checked per chunk); whatever is still queued at process exit is written synchronously then. `flushCompactionLogs()` resolves once every line logged so far is on disk.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: lines are queued per log file and appended in order by one asynchronous writer; rotation is decided per line against the size cap, as before. Whatever is still queued or in flight at process exit is written synchronously then. Logging stays best-effort: `flushCompactionLogs()` resolves once every line logged so far was appended or its write failed (the first failure is reported once on stderr).
 
 ### Why
 

@@ -103,9 +103,19 @@ export class ExplorationGroup extends Container {
 			this.memberSnapshot = [...members];
 			this.bumpRenderRevision();
 		}
+		const callsChanged =
+			calls.length !== this.calls.length ||
+			calls.some(
+				({ component, call }, index) =>
+					component !== this.calls[index]?.component || call !== this.calls[index]?.call,
+			);
+		const rulesChanged =
+			rules.length !== this.rules.length || rules.some((rule, index) => rule !== this.rules[index]);
 		this.children = members;
 		this.calls = calls;
 		this.rules = rules;
+		// Call objects are cached per card revision, so unchanged identities mean an unchanged body.
+		if (!callsChanged && !rulesChanged) return;
 		const bodyKey = `${calls
 			.map(({ call }) => `${call.action}\u0000${call.label}\u0000${call.pending ? 1 : 0}${call.failed ? 1 : 0}`)
 			.join("\u0001")}\u0002${rules.join("\u0001")}`;

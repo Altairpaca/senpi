@@ -91,7 +91,9 @@ describe("a burst of background events while the agent works", () => {
 		// Then: one follow-up turn carried all 40 events instead of 40 separate turns
 		const continuation = requests.slice(1);
 		expect(continuation).toHaveLength(1);
-		expect(noticesIn(continuation[0]!)).toHaveLength(BURST);
+		expect(noticesIn(continuation[0]!)).toEqual(
+			Array.from({ length: BURST }, (_, index) => `CI check ${index} finished`),
+		);
 	});
 
 	it("still gives each typed follow-up its own turn", async () => {

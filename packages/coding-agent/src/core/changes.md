@@ -84,7 +84,7 @@ Id generation and the path/tree walks are the session store itself.
 
 ### Why
 
-Every background-triggered turn copied the whole session several times (context checks, hook previews, stop-hook history scans, footer usage) and re-read every skill file, and the first fallback check re-read provider settings per model; each copy blocked input for tens to hundreds of milliseconds in a 10k-entry session.
+Every background-triggered turn copied the whole session several times (context checks, hook previews, stop-hook history scans, footer usage) and re-parsed the skill MCP declaration files, and the first fallback check re-read provider settings per model; each copy blocked input for tens to hundreds of milliseconds in a 10k-entry session.
 
 ### Why an extension could not handle it
 

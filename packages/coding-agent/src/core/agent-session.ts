@@ -10591,7 +10591,8 @@ export class AgentSession {
 	/**
 	 * Context usage is shown on every frame (footer), but it only changes when a message is appended or
 	 * replaced, the branch moves, or the model changes. Messages are appended in place, so the key is the
-	 * array, its length and last message, plus the leaf and the model's window.
+	 * array, its length and last message (with a fingerprint of its content and usage, in case it grows
+	 * in place), plus the leaf and the model's window.
 	 */
 	getContextUsage(): ContextUsage | undefined {
 		const model = this._limitsModel();
@@ -10600,6 +10601,7 @@ export class AgentSession {
 			messages: runtimeMessages,
 			length: runtimeMessages.length,
 			last: runtimeMessages.at(-1),
+			lastFingerprint: messageFingerprint(runtimeMessages.at(-1)),
 			leafId: this.sessionManager.getLeafId(),
 			contextWindow: model?.contextWindow,
 		};
@@ -10609,6 +10611,7 @@ export class AgentSession {
 			cached.key.messages === key.messages &&
 			cached.key.length === key.length &&
 			cached.key.last === key.last &&
+			cached.key.lastFingerprint === key.lastFingerprint &&
 			cached.key.leafId === key.leafId &&
 			cached.key.contextWindow === key.contextWindow
 		) {
@@ -10625,6 +10628,7 @@ export class AgentSession {
 					readonly messages: AgentMessage[];
 					readonly length: number;
 					readonly last: AgentMessage | undefined;
+					readonly lastFingerprint: string;
 					readonly leafId: string | null;
 					readonly contextWindow: number | undefined;
 				};
@@ -10812,4 +10816,21 @@ export class AgentSession {
 	get extensionRunner(): ExtensionRunner {
 		return this._extensionRunner;
 	}
+}
+
+/** Changes whenever a message's content grows or its usage is filled in, without walking other messages. */
+function messageFingerprint(message: AgentMessage | undefined): string {
+	if (message === undefined) return "";
+	const content = (message as { content?: unknown }).content;
+	let size = 0;
+	if (typeof content === "string") size = content.length;
+	else if (Array.isArray(content)) {
+		for (const part of content as Array<{ text?: unknown; thinking?: unknown; arguments?: unknown }>) {
+			size += 1;
+			if (typeof part.text === "string") size += part.text.length;
+			if (typeof part.thinking === "string") size += part.thinking.length;
+		}
+	}
+	const usage = (message as { usage?: { input?: number; output?: number; totalTokens?: number } }).usage;
+	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}`;
 }

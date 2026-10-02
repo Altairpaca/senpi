@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FILE_STORAGE_LOCK_OPTIONS } from "../src/core/lockfile-policy.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
+import { getSettingsPath, SettingsManager } from "../src/core/settings-manager.ts";
 
 // A tip is recorded in settings on almost every turn. While another writer (a second senpi
 // process, a settings editor) holds the settings lock, recording it must not freeze the UI, and
@@ -23,6 +23,7 @@ describe("saving settings while another writer holds the settings lock", () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		rmSync(root, { recursive: true, force: true });
 	});
 
@@ -51,6 +52,32 @@ describe("saving settings while another writer holds the settings lock", () => {
 		expect(written.tipsHistory).toEqual({ welcome: 1_000 });
 		expect(written.theme).toBe("dark");
 		expect(settings.drainErrors()).toEqual([]);
+	});
+
+	it("drops a project settings write whose project stopped being trusted while it waited for the lock", async () => {
+		const cwd = join(root, "work");
+		const projectPath = getSettingsPath(cwd, agentDir, "project", root);
+		mkdirSync(dirname(projectPath), { recursive: true });
+		writeFileSync(projectPath, JSON.stringify({ packages: [] }), "utf-8");
+		const settings = SettingsManager.create(cwd, agentDir, { projectTrusted: true });
+		const release = await lockfile.lock(projectPath, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+
+		const waiting = new Promise<void>((resolve) => {
+			const original = lockfile.lock.bind(lockfile);
+			vi.spyOn(lockfile, "lock").mockImplementation((...args: Parameters<typeof lockfile.lock>) => {
+				resolve();
+				return original(...args);
+			});
+		});
+
+		settings.setProjectPackages([{ source: "npm:untrusted-write" }]);
+		await waiting;
+		settings.setProjectTrusted(false);
+		await release();
+		await settings.flush();
+
+		expect(JSON.parse(readFileSync(projectPath, "utf-8"))).toEqual({ packages: [] });
+		expect(settings.drainErrors().map((error) => error.scope)).toEqual(["project"]);
 	});
 
 	it("reports a lock that never frees without throwing at the caller, and keeps the setting in memory", async () => {

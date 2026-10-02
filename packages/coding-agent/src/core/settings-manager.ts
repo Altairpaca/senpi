@@ -471,7 +471,11 @@ export interface SettingsStorage {
 	 * The same locked read-modify-write without blocking the caller's thread while another writer
 	 * holds the lock. Queued saves use it when present; `withLock` stays for synchronous callers.
 	 */
-	withLockAsync?(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): Promise<void>;
+	withLockAsync?(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void>;
 	/** `withLock` when the lock is free right now; false (and nothing written) when it is held. */
 	tryWithLock?(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): boolean;
 	selectSource?(scope: SettingsScope): SettingsSourceSelection | undefined;
@@ -581,7 +585,11 @@ export class FileSettingsStorage implements SettingsStorage {
 	 * held elsewhere. The protocol is unchanged: lock-free read, merge, re-merge under the lock if
 	 * another writer won, then publish through a same-directory temp file and rename.
 	 */
-	async withLockAsync(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): Promise<void> {
+	async withLockAsync(
+		scope: SettingsScope,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void> {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 		const readCurrent = async (): Promise<string | undefined> => {
 			try {
@@ -597,14 +605,17 @@ export class FileSettingsStorage implements SettingsStorage {
 		await mkdir(dirname(path), { recursive: true });
 		const release = await this.acquireLockWithRetry(path);
 		try {
-			const underLock = await readCurrent();
-			if (underLock !== current) next = fn(underLock);
+			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
+			underLock?.();
+			const lockedContent = await readCurrent();
+			if (lockedContent !== current) next = fn(lockedContent);
 			if (next !== undefined) {
 				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 				try {
 					await writeFile(tempPath, next, "utf-8");
-					recordSelfWrite(path, next);
 					await rename(tempPath, path);
+					// After the rename: a failed publish must not mark identical content as our own write.
+					recordSelfWrite(path, next);
 				} catch (error) {
 					await rm(tempPath, { force: true });
 					throw error;
@@ -1221,7 +1232,11 @@ export class SettingsManager {
 		// Uncontended (the normal case): written before save() returns, as callers expect. Only when
 		// another writer holds the lock does the wait move off the UI thread.
 		if (storage.tryWithLock(scope, merge)) return;
-		return storage.withLockAsync(scope, merge);
+		return storage.withLockAsync(
+			scope,
+			merge,
+			scope === "project" ? () => this.assertProjectTrustedForWrite() : undefined,
+		);
 	}
 
 	private save(): void {

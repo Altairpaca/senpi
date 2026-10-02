@@ -1,3 +1,5 @@
+# mcp Extension Changes
+
 ## 2026-10-01 - Skill MCP declarations are cached by file stamp (senpi#2508)
 
 ### What changed
@@ -15,10 +17,6 @@ This is the builtin MCP extension's own skill scan.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/extensions/builtin/mcp/skills.ts`: `readSkillServers`.
-
-# mcp Extension Changes
-
-# mcp Extension Changes
 
 ## 2026-10-01 - Feed the attaching session's tool-search service (senpi#2509)
 

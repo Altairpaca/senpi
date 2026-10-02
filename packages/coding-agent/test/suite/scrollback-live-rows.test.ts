@@ -1,8 +1,28 @@
-import { type Component, Container, type Terminal, Text, TuiMainScreen } from "@earendil-works/pi-tui";
-import { describe, expect, it } from "vitest";
+import {
+	type Component,
+	Container,
+	resetMainScreenHistoryLines,
+	type Terminal,
+	Text,
+	TuiMainScreen,
+} from "@earendil-works/pi-tui";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ExplorationTranscriptContainer } from "../../src/modes/interactive/components/exploration-transcript-container.ts";
 
 const SCROLLBACK_RESET = "\x1b[3J";
+
+// The early live rows must stay inside the kept history window, whatever the environment sets.
+let previousHistoryLines: string | undefined;
+beforeEach(() => {
+	previousHistoryLines = process.env.PI_TUI_HISTORY_LINES;
+	process.env.PI_TUI_HISTORY_LINES = "2000";
+	resetMainScreenHistoryLines();
+});
+afterEach(() => {
+	if (previousHistoryLines === undefined) delete process.env.PI_TUI_HISTORY_LINES;
+	else process.env.PI_TUI_HISTORY_LINES = previousHistoryLines;
+	resetMainScreenHistoryLines();
+});
 
 class RecordingTerminal implements Terminal {
 	columns = 80;

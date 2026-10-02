@@ -60,6 +60,11 @@ export class ExplorationTranscriptContainer extends Container {
 		let members: Component[] = [];
 		let calls: ExplorationGroup["calls"] = [];
 		let rules: string[] = [];
+		// Members are handed to the group once it is complete: per added member it rescanned the group.
+		const closeGroup = (): void => {
+			group?.setMembers(members, calls, rules);
+			group = undefined;
+		};
 		for (const child of this.children) {
 			const call = child instanceof ToolExecutionComponent ? this.explorationCallOf(child) : undefined;
 			if (child instanceof ToolExecutionComponent && call) {
@@ -73,18 +78,21 @@ export class ExplorationTranscriptContainer extends Container {
 				}
 				members.push(child);
 				calls.push({ component: child, call });
-				group.setMembers(members, calls, rules);
-			} else if (group && child instanceof AssistantMessageComponent && child.isExplorationDetail) {
+				continue;
+			}
+			const childRules =
+				group && child instanceof CustomEntryComponent ? projectRulesOfCall(child, calls) : undefined;
+			if (group && child instanceof AssistantMessageComponent && child.isExplorationDetail) {
 				members.push(child);
-			} else if (group && child instanceof CustomEntryComponent && projectRulesOfCall(child, calls)) {
+			} else if (group && childRules) {
 				members.push(child);
-				rules = [...rules, ...(projectRulesOfCall(child, calls) ?? [])];
-				group.setMembers(members, calls, rules);
+				rules = [...rules, ...childRules];
 			} else {
-				group = undefined;
+				closeGroup();
 				projected.push(child);
 			}
 		}
+		closeGroup();
 		this.projection = { source: [...this.children], clock: currentRenderRevision(), projected };
 		return projected;
 	}

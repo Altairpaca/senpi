@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `packages/agent/src/agent.ts`: in `one-at-a-time` mode a queue that starts with non-user messages (custom notices such as monitor, task or background-command events) drains that whole leading run at once; a user message still drains alone, and a user message ends a run of notices.
+- `packages/agent/src/agent.ts`: in `one-at-a-time` mode a queue that starts with app-defined notices (custom roles such as monitor, task or background-command events) drains that whole leading run at once. User, assistant, tool-result and system messages still drain one at a time and end a run of notices. `all` mode is unchanged (it already drained everything).
 
 ### Why
 
-Every queued notice started its own model turn, so a burst of 100 monitor events meant 100 turns, each re-preparing the whole context while the TUI streamed each reply; input froze for seconds. Notices are context for the agent, not separate requests.
+In `one-at-a-time` mode every queued notice started its own model turn, so a burst of 100 monitor events meant 100 turns, each re-preparing the whole context while the TUI streamed each reply; input froze for seconds. Notices are context for the agent, not separate requests.
 
 ### Why an extension could not handle it
 

@@ -127,6 +127,28 @@ describe("compaction logger", () => {
 		);
 	});
 
+	it("Given a burst larger than the size cap When it settles Then neither file holds more than one cap of lines and the newest lines are kept", async () => {
+		const dir = createTempAgentDir("senpi-compaction-log-burst-rotate-");
+		const maxBytes = 400;
+		const logger = createCompactionLogger(dir, { maxBytes });
+
+		for (let index = 0; index < 60; index++) logger.info("skip_cap", { count: index });
+		await flushCompactionLogs();
+
+		const current = readFileSync(join(dir, "logs", "compaction.log"), "utf8");
+		const previous = readFileSync(join(dir, "logs", "compaction.log.1"), "utf8");
+		expect(Buffer.byteLength(current)).toBeLessThanOrEqual(maxBytes);
+		expect(Buffer.byteLength(previous)).toBeLessThanOrEqual(maxBytes);
+		const counts = (text: string) =>
+			text
+				.trim()
+				.split("\n")
+				.map((line) => (JSON.parse(line) as { count: number }).count);
+		const kept = [...counts(previous), ...counts(current)];
+		expect(kept.at(-1)).toBe(59);
+		expect(kept).toEqual([...kept].sort((a, b) => a - b));
+	});
+
 	it("Given an unwritable log directory When logging Then the caller never throws and later lines still go to the sink", async () => {
 		const dir = createTempAgentDir("senpi-compaction-log-unwritable-");
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});

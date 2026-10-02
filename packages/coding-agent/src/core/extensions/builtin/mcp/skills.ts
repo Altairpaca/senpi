@@ -85,7 +85,7 @@ const skillServersCache = new Map<string, { readonly key: string; readonly serve
 function fileStamp(path: string): string {
 	try {
 		const stat = statSync(path);
-		return `${stat.mtimeMs}:${stat.size}`;
+		return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
 	} catch {
 		return "missing";
 	}

@@ -2,7 +2,7 @@
  * Minimal TUI implementation with differential rendering
  */
 
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -638,21 +638,33 @@ const DEFAULT_HISTORY_LINES = 2000;
 /** Writing this many lines into a terminal takes ~0.2 s, the most a resume or repaint may spend on history. */
 const MAX_HISTORY_LINES = 5000;
 let terminalScrollbackLines: number | null | undefined;
+/** Bumped by {@link resetMainScreenHistoryLines}, so a tmux answer for an older environment is dropped. */
+let scrollbackLookupGeneration = 0;
 
+/**
+ * The override is read at once; tmux is asked in the background (a process run inside the first
+ * render would hold input and painting while tmux answers), and the default applies until it does.
+ */
 function readTerminalScrollbackLines(): number | null {
 	const override = Number(process.env.PI_TUI_HISTORY_LINES);
 	if (Number.isFinite(override) && override > 0) return Math.floor(override);
 	if (!process.env.TMUX) return null;
+	const generation = scrollbackLookupGeneration;
 	try {
-		const result = spawnSync("tmux", ["display-message", "-p", "#{history_limit}"], {
-			encoding: "utf8",
-			timeout: 500,
-		});
-		const limit = Number(result.stdout.trim());
-		return result.status === 0 && Number.isFinite(limit) && limit > 0 ? limit : null;
+		execFile(
+			"tmux",
+			["display-message", "-p", "#{history_limit}"],
+			{ encoding: "utf8", timeout: 500 },
+			(error, stdout) => {
+				if (generation !== scrollbackLookupGeneration) return;
+				const limit = Number(stdout.trim());
+				if (!error && Number.isFinite(limit) && limit > 0) terminalScrollbackLines = limit;
+			},
+		);
 	} catch {
-		return null;
+		// tmux is not runnable: keep the default.
 	}
+	return null;
 }
 
 /**
@@ -663,12 +675,13 @@ function readTerminalScrollbackLines(): number | null {
 export function mainScreenHistoryLines(rows = renderFrame.rows): number {
 	if (terminalScrollbackLines === undefined) terminalScrollbackLines = readTerminalScrollbackLines();
 	const preferred = Math.min(MAX_HISTORY_LINES, terminalScrollbackLines ?? DEFAULT_HISTORY_LINES);
-	return Math.max(2 * Math.max(1, rows), preferred);
+	return Math.min(MAX_HISTORY_LINES, Math.max(2 * Math.max(1, rows), preferred));
 }
 
 /** Forget the measured terminal scrollback size, e.g. after the environment changed in a test. */
 export function resetMainScreenHistoryLines(): void {
 	terminalScrollbackLines = undefined;
+	scrollbackLookupGeneration += 1;
 }
 
 /**
@@ -747,7 +760,13 @@ export class CompositeRevision {
 		const revisions: number[] = [];
 		for (const child of children) {
 			const revision = child.getRenderRevision?.();
-			if (revision === undefined) return undefined;
+			if (revision === undefined) {
+				// Unrevisioned: nothing to compare against next time, and removed children must not stay referenced.
+				this.children = [];
+				this.childRevisions = [];
+				this.checkedAt = -1;
+				return undefined;
+			}
 			revisions.push(revision);
 		}
 		const changed = replaced || revisions.some((revision, index) => revision !== this.childRevisions[index]);

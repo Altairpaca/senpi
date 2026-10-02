@@ -130,10 +130,16 @@ export class ProgressiveTranscriptContainer extends Container {
 	 * O(kept history) instead of O(session). Moves forward only in steps, see `HISTORY_SLACK`.
 	 */
 	private historyStart = 0;
-	private hiddenMessages: { readonly start: number; readonly total: number; readonly count: number } | undefined;
+	/** Non-spacer children before `start`; `anchor` is the child just before `start` when counted. */
+	private hiddenMessages:
+		| { readonly start: number; readonly anchor: Component | undefined; readonly count: number }
+		| undefined;
 	/** Children below this index are not warmed: the main screen will never paint them. */
 	private hydrationFloor = 0;
-	private readonly childHeights = new WeakMap<Component, RenderKey & { readonly height: number }>();
+	private readonly childHeights = new WeakMap<
+		Component,
+		RenderKey & { readonly height: number; readonly revision: number | undefined }
+	>();
 
 	constructor(options: ProgressiveTranscriptOptions) {
 		super();
@@ -154,6 +160,9 @@ export class ProgressiveTranscriptContainer extends Container {
 		this.lastRenderWidth = width;
 		const frameRow = claimFrameRow(this);
 		const total = this.children.length;
+		// Children replaced by fewer in place (without clear/detachAll) must not leave the watermarks past the end.
+		if (this.visibleFrom > total) this.visibleFrom = total;
+		if (this.warmedFrom > total) this.warmedFrom = total;
 		const key: RenderKey = { width, capabilities: getCapabilities(), generation: this.generation };
 		const floor = frameMode() === "regular" ? this.keptHistoryStart(key) : 0;
 		if (floor === 0) this.historyStart = 0;
@@ -191,7 +200,7 @@ export class ProgressiveTranscriptContainer extends Container {
 		if (from === 0 || from !== this.historyStart || this.historyStart === 0) {
 			return this.renderRange(from, total, width, true, frameRow);
 		}
-		const marker = this.historyMarker(this.hiddenMessageCount(from, total));
+		const marker = this.historyMarker(this.hiddenMessageCount(from));
 		const lines = this.renderRange(from, total, width, true, frameRow === undefined ? undefined : frameRow + 1);
 		if (this.paintedLayout) {
 			this.paintedLayout = {
@@ -203,14 +212,18 @@ export class ProgressiveTranscriptContainer extends Container {
 		return [marker, ...lines];
 	}
 
-	private hiddenMessageCount(start: number, total: number): number {
+	/**
+	 * Appends below the window never change the hidden count, and a window move only adds the
+	 * children it passed, so this stays O(moved children) unless earlier children were replaced.
+	 */
+	private hiddenMessageCount(start: number): number {
 		const cached = this.hiddenMessages;
-		if (cached?.start === start && cached.total === total) return cached.count;
-		let count = 0;
-		for (let index = 0; index < start; index++) {
+		const intact = cached !== undefined && cached.start <= start && this.children[cached.start - 1] === cached.anchor;
+		let count = intact ? cached.count : 0;
+		for (let index = intact ? cached.start : 0; index < start; index++) {
 			if (!(this.children[index] instanceof Spacer)) count++;
 		}
-		this.hiddenMessages = { start, total, count };
+		this.hiddenMessages = { start, anchor: this.children[start - 1], count };
 		return count;
 	}
 
@@ -257,6 +270,8 @@ export class ProgressiveTranscriptContainer extends Container {
 			this.scrolledLiveRows.delete(child);
 			child.invalidate();
 		}
+		// Released rows are cold again: fullscreen warms them in the background before showing them.
+		if (this.warmedFrom !== PENDING_FIRST_PAINT && this.warmedFrom < to) this.warmedFrom = to;
 		this.stablePrefix = undefined;
 	}
 
@@ -266,7 +281,8 @@ export class ProgressiveTranscriptContainer extends Container {
 			known !== undefined &&
 			known.width === key.width &&
 			known.capabilities === key.capabilities &&
-			known.generation === key.generation
+			known.generation === key.generation &&
+			(known.revision === undefined || known.revision === child.getRenderRevision?.())
 		) {
 			return known.height;
 		}
@@ -287,7 +303,8 @@ export class ProgressiveTranscriptContainer extends Container {
 
 	override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
 		const layout = this.paintedLayout;
-		if (layout?.width !== event.width) return super.handleMouse(event);
+		// A click laid out for another width than the last paint cannot be mapped to what is on screen.
+		if (layout?.width !== event.width) return undefined;
 		if (event.y < 0 || event.y >= event.height) return undefined;
 		let childY = 0;
 		for (let index = 0; index < layout.children.length; index++) {
@@ -379,7 +396,7 @@ export class ProgressiveTranscriptContainer extends Container {
 			const child = this.children[index];
 			if (child === undefined) continue;
 			const { lines, revision } = this.renderChild(child, key, row, scrollbackRows);
-			this.childHeights.set(child, { ...key, height: lines.length });
+			this.childHeights.set(child, { ...key, height: lines.length, revision });
 			if (row !== undefined) row += lines.length;
 			if (prefixOpen && revision !== undefined) {
 				prefixChildren.push(child);
@@ -518,7 +535,14 @@ export class ProgressiveTranscriptContainer extends Container {
 	 */
 	private warmNextChunk(generation: number): void {
 		if (this.hydrationHalted || generation !== this.hydrationGeneration) return;
-		if (this.warmedFrom === 0) return;
+		if (this.warmedFrom <= this.hydrationFloor) {
+			// Nothing below the window is cold: show the warmed range if the last frame still hid it.
+			if (this.visibleFrom > this.hydrationFloor) {
+				this.visibleFrom = this.hydrationFloor;
+				this.requestRender();
+			}
+			return;
+		}
 
 		const chunkEnd = this.warmedFrom;
 		const floor = Math.min(this.hydrationFloor, chunkEnd);

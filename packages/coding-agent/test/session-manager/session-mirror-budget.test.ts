@@ -70,7 +70,7 @@ describe("SessionManager resident mirror", () => {
 				"message",
 				"compaction",
 			]);
-			// The history read at trim time is reused, and entries appended since still appear.
+			// The first full read after the trim is kept and reused, and entries appended since still appear.
 			const laterId = session.appendMessage(userMsg("later"));
 			expect(
 				session

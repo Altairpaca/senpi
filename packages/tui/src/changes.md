@@ -1,3 +1,5 @@
+# TUI delta rendering fork changes
+
 ## 2026-10-01 - Bound the line normalization memo (senpi#2508)
 
 ### What changed
@@ -16,7 +18,7 @@ This is the renderer's own cache.
 
 - `packages/tui/src/tui.ts`: `normalizeLine` and the static fields beside `SEGMENT_RESET`.
 
-# TUI delta rendering fork changes
+
 
 ## 2026-10-02 - Share the direct Warp-on-WSL session predicate
 
@@ -61,8 +63,6 @@ Render scheduling, line normalization, diffing and the component contract live i
 - `packages/tui/src/tui.ts`: `Component` interface, `Container`, `applyViewportLineResets`, `setPreviousLines`, mouse frame bookkeeping.
 - `packages/tui/src/tui-main-screen.ts`: `doRender` and press/release handling.
 - `packages/tui/src/components/{text,markdown,spacer,box,mouse-region}.ts`: invalidation and cache fields.
-
-# TUI delta rendering fork changes
 
 ## 2026-10-01 - Optional command arguments submit on picker Enter (senpi#2479)
 

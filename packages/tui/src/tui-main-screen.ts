@@ -103,7 +103,11 @@ export class TuiMainScreen extends TuiBase {
 	}
 
 	private pressLayoutUnchanged(press: { frame: readonly string[]; components: readonly Component[] }): boolean {
-		if (press.frame !== this.previousLines) return false;
+		const lines = this.previousLines;
+		if (press.frame !== lines) {
+			if (press.frame.length !== lines.length) return false;
+			for (let index = 0; index < lines.length; index++) if (press.frame[index] !== lines[index]) return false;
+		}
 		const components = this.collectMouseComponents();
 		return (
 			components.length === press.components.length &&

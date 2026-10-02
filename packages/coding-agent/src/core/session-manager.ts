@@ -2350,19 +2350,18 @@ export class SessionManager {
 		const roots: SessionTreeNode[] = [];
 
 		// Create nodes with resolved labels
+		// A file with duplicated entry ids (#1247) lists one id more than once. The first occurrence owns
+		// the id here (node, label and parent edge); attaching later ones would multiply every subtree.
 		for (const entry of entries) {
+			if (nodeMap.has(entry.id)) continue;
 			const label = this.labelsById.get(entry.id);
 			const labelTimestamp = this.labelTimestampsById.get(entry.id);
 			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
-		// Build tree. A file with duplicated entry ids (#1247) lists the same node more than once;
-		// attaching it again would multiply every subtree below it on each later walk.
-		const attached = new Set<SessionTreeNode>();
 		for (const entry of entries) {
 			const node = nodeMap.get(entry.id)!;
-			if (attached.has(node)) continue;
-			attached.add(node);
+			if (node.entry !== entry) continue;
 			if (entry.parentId === null || entry.parentId === entry.id) {
 				roots.push(node);
 			} else {
