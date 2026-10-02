@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `.github/workflows/ci.yml` (`webview-kernel`): the Vitest step adds `test/js-kernel-webview-readiness.test.ts` (a Chrome launch whose CDP attach never completes fails fast or is relaunched, with no Chrome left) and sets `SENPI_WEBVIEW_READINESS_LOG`; a new always-run step prints that log, one line per Chrome launch with its attach time or the stalled phase.
+- `.github/workflows/ci.yml` (`webview-kernel`): the Vitest step adds `test/js-kernel-webview-readiness.test.ts` (a Chrome launch whose CDP attach never completes fails fast or is relaunched, with no Chrome left), sets `SENPI_WEBVIEW_READINESS_LOG`, adds the `hanging-process` reporter, and gets a 12-minute step timeout below the 20-minute job timeout; a new always-run step prints the readiness log, one line per Chrome launch with its attach time or the stalled phase.
 
 ### Why
 
-- The intermittent Windows WebView failure was silent about where a launch stuck; the job now shows the readiness of every launch on every OS, and the regression for the stalled attach runs where a real Chrome is available.
+- The intermittent Windows WebView failure was silent about where a launch stuck, and a hung suite ran into the job timeout, whose cancellation discards the job log; the job now fails the step instead, keeps its log, shows the readiness of every launch on every OS, and runs the regression for the stalled attach where a real Chrome is available.
 
 ### Why an extension could not handle it
 

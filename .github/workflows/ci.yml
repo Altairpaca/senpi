@@ -474,11 +474,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # senpi#2353: a hung suite fails this step (not the whole job), so its log and the readiness log survive.
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
+        timeout-minutes: 12
         env:
           SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
-        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
+        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=default --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json
         working-directory: packages/senpi-codemode
 
       # senpi#2353: one line per Chrome launch (time to attach, or the stalled phase and the retirement).
