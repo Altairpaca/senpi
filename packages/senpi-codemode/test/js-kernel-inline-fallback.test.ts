@@ -3,19 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { runChild } from "./eval/child-probe.ts";
+import { CHILD_PROBE_TEST_TIMEOUT_MS, startChild } from "./eval/child-probe.ts";
 
 describe("JavaScriptKernel isolated inline fallback", () => {
-	it("times out a synchronous infinite loop and leaves no live child process", async () => {
-		const root = await mkdtemp(join(tmpdir(), "senpi-js-inline-fallback-"));
-		try {
-			const scriptPath = join(root, "fallback-runner.mjs");
-			const kernelUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "context-manager.ts")).href;
-			const missingWorkerUrl = pathToFileURL(join(root, "missing-worker-entry.js")).href;
-			const driverUrl = pathToFileURL(join(process.cwd(), "test", "eval", "inline-timeout-probe.ts")).href;
-			await writeFile(
-				scriptPath,
-				`import { JavaScriptKernel } from ${JSON.stringify(kernelUrl)};
+	it(
+		"times out a synchronous infinite loop and leaves no live child process",
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), "senpi-js-inline-fallback-"));
+			try {
+				const scriptPath = join(root, "fallback-runner.mjs");
+				const kernelUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "context-manager.ts")).href;
+				const missingWorkerUrl = pathToFileURL(join(root, "missing-worker-entry.js")).href;
+				const driverUrl = pathToFileURL(join(process.cwd(), "test", "eval", "inline-timeout-probe.ts")).href;
+				await writeFile(
+					scriptPath,
+					`import { JavaScriptKernel } from ${JSON.stringify(kernelUrl)};
 import { mock } from "node:test";
 import { Worker } from "node:worker_threads";
 import { driveInlineTimeout, INLINE_PROBE_BOUNDS } from ${JSON.stringify(driverUrl)};
@@ -52,7 +54,7 @@ try {
   const liveWorkerIds = process.report.getReport().workers
     .map((worker) => worker.header.threadId)
     .filter((threadId) => !baselineWorkerIds.includes(threadId));
-  process.stdout.write(JSON.stringify({ mode: kernel.mode, result, liveWorkerIds }));
+  process.stdout.write(JSON.stringify({ mode: kernel.mode, result, liveWorkerIds }) + "\\n");
 } finally {
   mock.timers.reset();
   await kernel.close();
@@ -60,27 +62,33 @@ try {
   Worker.prototype.terminate = originalTerminate;
 }
 `,
-			);
+				);
 
-			const childRun = await runChild({
-				command: process.execPath,
-				args: ["--import", "tsx", scriptPath],
-				cwd: process.cwd(),
-			});
-			expect(childRun.signal, JSON.stringify(childRun)).toBeNull();
-			expect(childRun.code).toBe(0);
-			expect(childRun.stderr).toBe("");
-			const output: unknown = JSON.parse(childRun.stdout);
-			expect(output).toMatchObject({
-				mode: "inline",
-				result: { ok: false, error: { message: expect.stringMatching(/timed out/i) } },
-				liveWorkerIds: [],
-			});
-			expect(isProcessAlive(childRun.pid)).toBe(false);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	}, 240_000);
+				const child = startChild(
+					{ command: process.execPath, args: ["--import", "tsx", scriptPath], cwd: process.cwd() },
+					{ resultLine: true },
+				);
+				try {
+					const output: unknown = JSON.parse(await child.resultLine());
+					expect(output).toMatchObject({
+						mode: "inline",
+						result: { ok: false, error: { message: expect.stringMatching(/timed out/i) } },
+						liveWorkerIds: [],
+					});
+					const childRun = await child.closed;
+					expect(childRun.signal, JSON.stringify(childRun)).toBeNull();
+					expect(childRun.code).toBe(0);
+					expect(childRun.stderr).toBe("");
+					expect(isProcessAlive(childRun.pid)).toBe(false);
+				} finally {
+					child.dispose();
+				}
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+		CHILD_PROBE_TEST_TIMEOUT_MS,
+	);
 });
 
 function isProcessAlive(pid: number): boolean {
