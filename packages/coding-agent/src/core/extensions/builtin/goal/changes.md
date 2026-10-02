@@ -1,5 +1,24 @@
 # goal Extension Changes
 
+## 2026-10-02 - Stale-context detection recognizes a reload retirement (senpi#2549)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/stale-context.ts`: `isStaleExtensionContextError` also matches `STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE` ("stale extension generation after reload"), the message `AgentSession.reload()` retires the old generation with. The runner keeps the first retirement message, so a context retired by a reload never carries the replacement prefix the check looked for.
+- Tests (`packages/coding-agent/test/suite/regressions/2549-stale-context-detection.test.ts`): the check recognizes the errors a context retired by a real harness reload and by a real dispose throw, rejects unrelated errors, and `GoalElapsedTicker` retires on the reload error.
+
+### Why
+
+- On main the reload error was not recognized, so `GoalElapsedTicker`, `GoalWaitTicker`, the monitor continuation and stop lifecycle (#1028) rethrew it from their timer callbacks, and the monitor footer ticker fixed for senpi#2549 shares this check.
+
+### Why an extension could not handle it
+
+- The check is the goal builtin's own helper, shared by the terminal builtin's ticker.
+
+### Expected merge conflict zones
+
+- `stale-context.ts`. Fork-only surface.
+
 ## 2026-10-01 - The no-goal todo reminder names when a goal is worth registering (senpi#2505)
 
 ### What changed

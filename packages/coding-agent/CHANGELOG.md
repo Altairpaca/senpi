@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Reloading or replacing a session while a monitor is watching no longer kills the process with "This extension ctx is stale after session replacement or reload". The footer's once-a-second monitor ticker now stops when its session's context is retired and starts again with the next live session; any other footer error still surfaces. A context retired by a reload is now recognized as stale too, so the goal footer tickers also stop on a reload instead of rethrowing ([#2549](https://github.com/code-yeongyu/senpi/issues/2549) by [@rhyme227](https://github.com/rhyme227)).
 - The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
 - Clipboard images pasted with Ctrl+V now attach in direct local Warp-on-WSL sessions by handling Warp's empty bracketed-paste event. Raw Ctrl+V and Alt+V remain supported, without changing non-empty text paste or other terminal defaults ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
 

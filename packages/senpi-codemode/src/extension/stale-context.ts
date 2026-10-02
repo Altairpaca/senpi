@@ -1,0 +1,16 @@
+/**
+ * Detection for the error a retired host extension context throws once its session
+ * was replaced (new/fork/switch) or reloaded. Mirrors the host's
+ * `builtin/goal/stale-context.ts`: the host does not export the check, and codemode
+ * loads under hosts that predate any such export, so the two messages live here too.
+ */
+const STALE_EXTENSION_CONTEXT_ERROR_PREFIX = "This extension ctx is stale after session replacement or reload.";
+const STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE = "stale extension generation after reload";
+
+export function isStaleExtensionContextError(error: unknown): error is Error {
+	return (
+		error instanceof Error &&
+		(error.message.startsWith(STALE_EXTENSION_CONTEXT_ERROR_PREFIX) ||
+			error.message === STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE)
+	);
+}
