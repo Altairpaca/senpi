@@ -2562,7 +2562,9 @@
       "ceilingMarks": 1,
       "pendingAfterBreach": true,
       "recycledResults": 1,
-      "pendingAfterRecycle": false
+      "pendingAfterRecycle": false,
+      "uncollectedOverCeiling": false,
+      "uncollectedPending": false
     },
     "js/retentionPolicy": {
       "retained": 32,
@@ -2579,7 +2581,9 @@
       "ceilingMarks": 1,
       "pendingAfterBreach": true,
       "recycledResults": 1,
-      "pendingAfterRecycle": false
+      "pendingAfterRecycle": false,
+      "uncollectedOverCeiling": false,
+      "uncollectedPending": false
     },
     "py/retentionPolicy": {
       "retained": 32,
@@ -2589,14 +2593,14 @@
       "live": 0
     },
     "rb/memoryPolicy": {
-      "noticeCount": 3,
-      "globalNames": [
-        "rows"
-      ],
-      "ceilingMarks": 1,
+      "noticeCount": 1,
+      "globalNames": [],
+      "ceilingMarks": 2,
       "pendingAfterBreach": true,
       "recycledResults": 1,
-      "pendingAfterRecycle": false
+      "pendingAfterRecycle": false,
+      "uncollectedOverCeiling": true,
+      "uncollectedPending": true
     },
     "rb/retentionPolicy": {
       "retained": 32,
@@ -2606,14 +2610,14 @@
       "live": 0
     },
     "jl/memoryPolicy": {
-      "noticeCount": 3,
-      "globalNames": [
-        "rows"
-      ],
-      "ceilingMarks": 1,
+      "noticeCount": 1,
+      "globalNames": [],
+      "ceilingMarks": 2,
       "pendingAfterBreach": true,
       "recycledResults": 1,
-      "pendingAfterRecycle": false
+      "pendingAfterRecycle": false,
+      "uncollectedOverCeiling": true,
+      "uncollectedPending": true
     },
     "jl/retentionPolicy": {
       "retained": 32,
@@ -4904,41 +4908,19 @@
   },
   "imports": {
     "extension": [
-      "node:assert",
       "node:async_hooks",
-      "node:buffer",
       "node:child_process",
-      "node:console",
-      "node:constants",
       "node:crypto",
-      "node:diagnostics_channel",
-      "node:dns",
       "node:events",
       "node:fs",
       "node:fs/promises",
       "node:http",
-      "node:http2",
-      "node:inspector",
-      "node:module",
-      "node:net",
       "node:os",
       "node:path",
-      "node:perf_hooks",
-      "node:process",
-      "node:querystring",
       "node:readline",
-      "node:stream",
-      "node:stream/promises",
-      "node:stream/web",
-      "node:string_decoder",
-      "node:timers",
-      "node:timers/promises",
-      "node:tty",
       "node:url",
       "node:util",
-      "node:util/types",
       "node:worker_threads",
-      "node:zlib",
       "node_modules/@babel/parser/lib/index.js",
       "packages/senpi-codemode/src/bridge/http-server.ts",
       "packages/senpi-codemode/src/bridge/kernel-tools-protocol.ts",
@@ -5048,43 +5030,21 @@
       "packages/senpi-codemode/src/tool/types.ts"
     ],
     "firstKernel": [
-      "node:assert",
       "node:async_hooks",
-      "node:buffer",
       "node:child_process",
-      "node:console",
-      "node:constants",
       "node:crypto",
-      "node:diagnostics_channel",
-      "node:dns",
       "node:events",
       "node:fs",
       "node:fs/promises",
       "node:http",
-      "node:http2",
-      "node:inspector",
-      "node:module",
-      "node:net",
       "node:os",
       "node:path",
-      "node:perf_hooks",
-      "node:process",
-      "node:querystring",
       "node:readline",
-      "node:stream",
-      "node:stream/promises",
-      "node:stream/web",
-      "node:string_decoder",
-      "node:timers",
-      "node:timers/promises",
-      "node:tty",
       "node:url",
       "node:util",
-      "node:util/types",
       "node:v8",
       "node:vm",
       "node:worker_threads",
-      "node:zlib",
       "node_modules/@babel/parser/lib/index.js",
       "packages/senpi-codemode/src/bridge/http-server.ts",
       "packages/senpi-codemode/src/bridge/kernel-tools-protocol.ts",
@@ -5218,31 +5178,31 @@
     ]
   },
   "observations": {
-    "targetRevision": "1fc9f40971441b03bb650279e4bbaa9d06aa1c22",
+    "targetRevision": "d8b19b2360982f2eb3d8c1eea609d18e6da46517",
     "platform": "darwin",
     "js-bun/version": "1.4.2",
     "js-bun/memoryAfter50Cells": {
-      "liveBytes": 2890098,
+      "liveBytes": 2893856,
       "measure": "heap"
     },
     "js-node/version": "v26.7.0",
     "js-node/memoryAfter50Cells": {
-      "liveBytes": 17232020,
+      "liveBytes": 17303604,
       "measure": "heap"
     },
-    "py/version": "Python 3.13.12",
+    "py/version": "Python 3.14.7",
     "py/memoryAfter50Cells": {
-      "liveBytes": 25494032,
+      "liveBytes": 27427296,
       "measure": "footprint"
     },
-    "rb/version": "ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [arm64-darwin25]",
+    "rb/version": "ruby 4.0.7 (2026-09-15 revision 229531a6cf) +PRISM [arm64-darwin25]",
     "rb/memoryAfter50Cells": {
-      "liveBytes": 18891304,
+      "liveBytes": 19022328,
       "measure": "footprint"
     },
-    "jl/version": "julia version 1.12.6",
+    "jl/version": "julia version 1.12.7",
     "jl/memoryAfter50Cells": {
-      "liveBytes": 165135272,
+      "liveBytes": 167232352,
       "measure": "footprint"
     },
     "virtualSpecifiers": [
@@ -5931,6 +5891,13 @@
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given no session environment when Bun.spawnSync runs then it passes through unchanged and restore reinstates it": "passed",
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given no session environment when capture installs then spawn options pass through unchanged": "passed",
       "test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given explicit stdio choices or no active cell when Bun.spawn runs then the options pass through unchanged": "passed",
+      "test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native shell wait": "passed",
+      "test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native text wait": "passed",
+      "test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native lines wait": "passed",
+      "test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait": "passed",
+      "test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals without a shell restart notice when Stop interrupts a normal await": "passed",
+      "test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps normal shell output and globals when the cell finishes": "passed",
+      "test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting": "passed",
       "test/js-kernel-webview-launch.test.ts/a Chrome launch whose kernel is released mid-launch retires the Chrome a launch starts after its kernel was released mid-launch": "skipped",
       "test/js-kernel-webview-lifecycle.test.ts/Bun.WebView lifecycle across eval kernels keeps one kernel's views out of another kernel's reach": "skipped",
       "test/js-kernel-webview-lifecycle.test.ts/Bun.WebView lifecycle across eval kernels answers a raw port that names another client's view as unknown, and leaves that view alive": "skipped",
@@ -6416,6 +6383,17 @@
       "test/output/tail-line-ring.test.ts/TailLineRing matches the byte-tail last-lines reference for: production budget with a long numbered stream": "passed",
       "test/output/tail-line-ring.test.ts/TailLineRing keeps only the last eight lines of a small stream": "passed",
       "test/output/tail-line-ring.test.ts/TailLineRing keeps the unterminated partial line as the window's last element": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses local assets": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses the sidecar": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets replaces Bun virtual paths": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws an actionable error": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws for missing local assets": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /$bunfs/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path ~BUN/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path %7EBUN/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /tmp/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through JS resolver": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through Python resolver": "passed",
       "test/kernels/rb/subprocess-kernel-interrupt.test.ts/SubprocessKernel interrupt interrupts the active cell and starts queued work after confirmed exit": "passed",
       "test/kernels/rb/subprocess-kernel-interrupt.test.ts/SubprocessKernel interrupt fails closed after SIGKILL grace expires without confirmed exit": "passed",
       "test/kernels/rb/subprocess-kernel.test.ts/SubprocessKernel sends bridge init over stdin without leaking port or token into argv": "passed",
@@ -6441,18 +6419,8 @@
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
-      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses local assets": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses the sidecar": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets replaces Bun virtual paths": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws an actionable error": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws for missing local assets": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /$bunfs/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path ~BUN/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path %7EBUN/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /tmp/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through JS resolver": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through Python resolver": "passed"
+      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed"
     }
-  }
+  },
+  "unmeasured": []
 }
