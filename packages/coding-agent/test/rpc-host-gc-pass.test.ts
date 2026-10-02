@@ -36,7 +36,7 @@ async function deadEndpoints(agentDir: string, count: number) {
 	const endpoints = [];
 	for (let index = 0; index < count; index += 1) {
 		const socket = join(agentDir, "d", `e${index}.sock`);
-		endpoints.push({ socket, ...(await deadEndpoint(socket, agentDir)) });
+		endpoints.push({ ...(await deadEndpoint(socket, agentDir)), socket });
 	}
 	return endpoints.sort((left, right) => (basename(left.dir) < basename(right.dir) ? -1 : 1));
 }
