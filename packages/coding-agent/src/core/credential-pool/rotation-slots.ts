@@ -105,15 +105,20 @@ export async function listRotationSlots(
 				if (!lease) continue;
 				const leased = await repository.listSlots(providerId, "stored");
 				const leasedState = leased[slot.name];
+				const leasedApplicable = leasedState?.credentialRevision === storedRevision ? leasedState : undefined;
+				// Re-read after the awaits: a concurrent request may have blocked this model meanwhile.
 				slots.push(
-					overlayState(
-						{
-							name: slot.name,
-							lane: "stored",
-							pinned: (credential as PooledCredential).pinned === slot.name,
-							storedRevision,
-						},
-						leasedState?.credentialRevision === storedRevision ? leasedState : undefined,
+					overlayModelBlock(
+						overlayState(
+							{
+								name: slot.name,
+								lane: "stored",
+								pinned: (credential as PooledCredential).pinned === slot.name,
+								storedRevision,
+							},
+							leasedApplicable,
+						),
+						activeModelBlockUntil(leasedApplicable?.modelBlocks, modelId, now()),
 					),
 				);
 				continue;
@@ -161,7 +166,7 @@ async function listEnvRotationSlots(
 		const persisted = state[slot.name];
 		const revision = await repository.envCredentialRevision(slot.envVarName, slot.key);
 		let applicable = persisted?.credentialRevision === revision ? persisted : undefined;
-		const modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
+		let modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 		if (
 			acquireLeases &&
 			modelUntil === undefined &&
@@ -174,6 +179,7 @@ async function listEnvRotationSlots(
 			if (!lease) continue;
 			const leased = await repository.listSlots(providerId, "env");
 			applicable = leased[slot.name];
+			modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 		}
 		slots.push(
 			overlayModelBlock(

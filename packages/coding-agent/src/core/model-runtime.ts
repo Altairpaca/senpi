@@ -1011,7 +1011,7 @@ export class ModelRuntime implements Models {
 				const { rotation } = await this.loadCredentialPool();
 				return rotation.streamWithCredentialRotation({
 					sources,
-					modelId: model.id,
+					modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 					...(streamOptions?.affinityKey !== undefined
 						? { affinityKey: streamOptions.affinityKey }
 						: streamOptions?.sessionId !== undefined
@@ -1118,7 +1118,7 @@ export class ModelRuntime implements Models {
 				const { rotation } = await this.loadCredentialPool();
 				return rotation.streamWithCredentialRotation({
 					sources,
-					modelId: model.id,
+					modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 					...(streamOptions?.sessionId === undefined ? {} : { affinityKey: streamOptions.sessionId }),
 					runAttempt: (slot) =>
 						this.attemptWithTokenRecovery(

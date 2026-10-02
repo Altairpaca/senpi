@@ -55,7 +55,9 @@ function blockPatch(
 		return modelBlockPatch(block.modelFamily, modelId, blockedUntil, current, now, credentialRevision);
 	}
 	const failureCount = (current?.failureCount ?? 0) + 1;
-	const liveModelBlocks = pruneModelBlocks(current?.modelBlocks, now);
+	// Model blocks belong to the material that earned them, like every other health field.
+	const liveModelBlocks =
+		current?.credentialRevision === credentialRevision ? pruneModelBlocks(current?.modelBlocks, now) : undefined;
 	const base = {
 		failureCount,
 		...(credentialRevision === undefined ? {} : { credentialRevision }),

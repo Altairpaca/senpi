@@ -10,6 +10,7 @@
  * stays account-wide.
  */
 
+const FAMILY_KEY = /^(?:opus|sonnet|haiku|fable|mythos)$/;
 const MODEL_FAMILY_LIMIT =
 	/\b(opus|sonnet|haiku|fable|mythos)(?:\s+\d+(?:\.\d+)?)?(?:\s+(?:weekly|daily|monthly|session|\d+-hour))?\s+limit\b/i;
 
@@ -34,7 +35,7 @@ export function modelBlockKey(family: string, modelId: string): string {
 }
 
 function applies(key: string, modelId: string): boolean {
-	return key === modelId || inFamily(modelId, key);
+	return key === modelId || (FAMILY_KEY.test(key) && inFamily(modelId, key));
 }
 
 /** The latest live expiry among the blocks that bind `modelId`, or undefined when it is free. */
@@ -76,7 +77,23 @@ export function withModelBlock(
 	blockedUntil: number,
 	now: number,
 ): ModelBlocks {
-	return { ...pruneModelBlocks(blocks, now), [key]: { blockedUntil } };
+	return mergeModelBlocks(pruneModelBlocks(blocks, now), { [key]: { blockedUntil } }, now) ?? {};
+}
+
+/**
+ * Union of two block maps, the later expiry winning per key: a failure without a
+ * reset hint, or a concurrent writer's stale snapshot, never shortens a live block.
+ */
+export function mergeModelBlocks(
+	left: ModelBlocks | undefined,
+	right: ModelBlocks | undefined,
+	now: number,
+): ModelBlocks | undefined {
+	const merged: Record<string, { blockedUntil: number }> = { ...pruneModelBlocks(left, now) };
+	for (const [key, block] of Object.entries(pruneModelBlocks(right, now) ?? {})) {
+		merged[key] = { blockedUntil: Math.max(merged[key]?.blockedUntil ?? 0, block.blockedUntil) };
+	}
+	return Object.keys(merged).length === 0 ? undefined : merged;
 }
 
 export function describeModelBlocks(blocks: ModelBlocks | undefined, now: number): string[] {

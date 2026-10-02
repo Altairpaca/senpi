@@ -1,5 +1,10 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import { activeModelBlockUntil, modelBlockKey, withModelBlock } from "../../../credential-pool/model-scope.ts";
+import {
+	activeModelBlockUntil,
+	mergeModelBlocks,
+	modelBlockKey,
+	withModelBlock,
+} from "../../../credential-pool/model-scope.ts";
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
 import { clearExpiredBlocks } from "./affinity.ts";
@@ -124,6 +129,7 @@ async function persistBlock(
 	store: CredentialStore,
 	providerId: string,
 	account: AccountSlot,
+	now: number,
 ): Promise<AccountSlot | undefined> {
 	let superseded: AccountSlot | undefined;
 	await store.modify(providerId, async (current) => {
@@ -137,7 +143,12 @@ async function persistBlock(
 					[account.name]: {
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
-						modelBlocks: account.modelBlocks,
+						// Union with what a concurrent request stored meanwhile, later expiry winning.
+						modelBlocks: mergeModelBlocks(
+							credential.slotState?.[account.name]?.modelBlocks,
+							account.modelBlocks,
+							now,
+						),
 					},
 				},
 			};
@@ -157,7 +168,7 @@ async function persistBlock(
 						...existing,
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
-						modelBlocks: account.modelBlocks,
+						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
 					}
 				: existing,
 		);
@@ -207,7 +218,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			if (!classification.retryable) throw classified;
 
 			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
-			const superseded = await persistBlock(options.store, options.providerId, blocked);
+			const superseded = await persistBlock(options.store, options.providerId, blocked, now());
 			if (
 				superseded &&
 				!visibleDeltaEmitted &&
