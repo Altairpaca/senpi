@@ -101,6 +101,48 @@ describe("owned runtime teardown observation", () => {
 		}
 	});
 
+	it("names an unref'd polling interval whose setInterval was captured before observation", async () => {
+		// Given: a kernel module that captured setInterval at load time, before the window opened.
+		const capturedSetInterval = globalThis.setInterval;
+		const resources = observeResources();
+		const ticked = Promise.withResolvers<void>();
+		const polling = capturedSetInterval(() => ticked.resolve(), 1).unref();
+		try {
+			// When: the interval has actually polled and is still alive.
+			await ticked.promise;
+			const live = await resources.counts();
+			// Then: unref() cannot hide background polling, and the creation site is named.
+			expect(cleanupFailures(live, "fixture")).toContain("cleanup fixture: timers=1");
+			expect(resources.liveTimers()).toEqual([expect.stringMatching(/^setInterval at .*resources\.test\.ts:\d+/)]);
+		} finally {
+			try {
+				clearInterval(polling);
+				expect(cleanupFailures(await resources.counts(), "fixture")).toEqual([]);
+				expect(resources.liveTimers()).toEqual([]);
+			} finally {
+				resources.restore();
+			}
+		}
+	});
+
+	it("does not count timeouts that fired or were cleared by their numeric id", async () => {
+		// Given: one timeout that runs to completion and one cleared through its primitive id.
+		const resources = observeResources();
+		const fired = Promise.withResolvers<void>();
+		setTimeout(() => fired.resolve(), 1);
+		const cancelled = setTimeout(() => undefined, 60_000);
+		try {
+			// When
+			clearTimeout(Number(cancelled));
+			await fired.promise;
+			// Then: only live timers are a cleanup failure.
+			expect(cleanupFailures(await resources.counts(), "fixture")).toEqual([]);
+		} finally {
+			clearTimeout(cancelled);
+			resources.restore();
+		}
+	});
+
 	it("counts an open server and a pending subscription until both are released", async () => {
 		// Given: real open handle and event-ordered pending host call.
 		const resources = observeResources();

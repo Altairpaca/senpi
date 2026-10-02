@@ -24,6 +24,7 @@ const runtimeReportSchema = Type.Object({
 	hostRuntime: Type.Union([Type.Literal("bun"), Type.Literal("node")]),
 	memory: Type.Optional(Type.Unknown()),
 	cleanup: cleanupSchema,
+	liveTimers: Type.Array(Type.String()),
 });
 const importsSchema = Type.Object({
 	extension: Type.Array(Type.String()),
@@ -110,7 +111,8 @@ async function main(): Promise<void> {
 				for (const [scenario, witness] of Object.entries(measured.witnesses))
 					report.invariants[`${runtime.id}/${scenario}`] = witness;
 				report.invariants[`${runtime.id}/cleanup`] = measured.cleanup;
-				failures.push(...cleanupFailures(measured.cleanup, runtime.id));
+				failures.push(...cleanupFailures(measured.cleanup, runtime.id),
+					...measured.liveTimers.map((site) => `cleanup ${runtime.id}: live ${site}`));
 			} catch (error: unknown) {
 				failures.push(`runtime ${runtime.id} failed: ${error instanceof Error ? error.message : canonical(error)}`);
 				if (!report.runtimes.some((item) => item.id === runtime.id)) report.runtimes.push({ id: runtime.id, available: false });

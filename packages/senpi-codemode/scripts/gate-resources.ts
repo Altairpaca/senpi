@@ -6,10 +6,11 @@ import net from "node:net";
 import workerThreads from "node:worker_threads";
 import { Type } from "typebox";
 import { GateInputError } from "./gate-input-error.ts";
+import { observeTimers } from "./gate-timers.ts";
 
 export const cleanupSchema = Type.Object({
 	processes: Type.Number(), workers: Type.Number(), sockets: Type.Number(),
-	handles: Type.Number(), subscriptions: Type.Number(), listeners: Type.Number(),
+	handles: Type.Number(), timers: Type.Number(), subscriptions: Type.Number(), listeners: Type.Number(),
 });
 type ResourceKind = "processes" | "workers" | "sockets" | "handles";
 type OwnedResource = {
@@ -35,6 +36,7 @@ export function observeResources() {
 		createServer: http.createServer, connect: net.connect, createConnection: net.createConnection,
 		gateObserver: globalThis.__senpiCodemodeGateObserveResource,
 	};
+	const timerWindow = observeTimers();
 	function track(kind: ResourceKind, emitter: EventEmitter, closeEvent: string): void {
 		if (owned.some((item) => item.emitter === emitter)) return;
 		const completion = Promise.withResolvers<void>();
@@ -118,7 +120,7 @@ export function observeResources() {
 			const count = (kind: ResourceKind) => active.filter((entry) => entry.kind === kind).length;
 			return {
 				processes: count("processes"), workers: count("workers"), sockets: count("sockets"),
-				handles: count("handles"), subscriptions: subscriptions.size,
+				handles: count("handles"), timers: timerWindow.count(), subscriptions: subscriptions.size,
 				listeners: process.eventNames().reduce((total, event) => {
 					const baseline = [...(processListeners.get(event) ?? [])];
 					return total + process.listeners(event).reduce((extra, listener) => {
@@ -132,8 +134,12 @@ export function observeResources() {
 						.reduce((sum, event) => sum + entry.emitter.listenerCount(event), 0), 0),
 			};
 		},
+		liveTimers(): string[] {
+			return timerWindow.sites();
+		},
 		restore() {
 			for (const entry of owned) entry.restore();
+			timerWindow.stop();
 			globalThis.__senpiCodemodeGateObserveResource = originals.gateObserver;
 			Object.assign(workerThreads, { Worker: originals.Worker });
 			Object.assign(childProcess, { spawn: originals.spawn });
