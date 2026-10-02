@@ -1,3 +1,25 @@
+## 2026-10-02 - Prompt acknowledgements wait through observed compaction
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: tracks session-scoped compaction events and adjusts only prompt acknowledgement deadlines. Each pending request retains its original wire session; a new lease's events cannot change older prompts' deadlines. Pending prompts and prompts submitted during observed compaction wait for their real response; matching terminal events restore the ordinary deadline. Duplicate starts and stale terminal events do not reset an operation's budget. Transport failure retains immediate rejection and timer cleanup.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: derives the bounded compaction wait from the remote compaction total budget, the maximum local-summary override, and the normal response allowance.
+- `packages/coding-agent/docs/rpc.md`: documents admission waiting without synthetic success or automatic replay.
+- `packages/coding-agent/test/suite/rpc-client-compaction-deadline.test.ts`: real socket regressions for delayed admission, legacy events, stale operation IDs, ordinary deadlines, bounded waiting, disconnect cleanup, and outstanding requests across lease changes.
+
+### Why
+
+Prompt preflight can compact a large conversation before admitting the input. The fixed 30-second deadline in `packages/coding-agent/src/modes/rpc/rpc-client.ts`, budgeted by `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`, expired while that valid work was still running, even though the host could admit and execute the same request later. A caller retrying the apparent failure could duplicate the input.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/rpc-client.ts` owns client-side request correlation and timers; `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts` owns their budgets. Agent extensions cannot adjust another process's pending acknowledgement deadlines.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: pending-request callbacks, constructor event subscription, transport/session resets, and `send`.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: deadline constants and imports.
+
 ## 2026-09-30 - An updated client retires a live pre-layout-2 host with no session (senpi#2423)
 
 ### What changed

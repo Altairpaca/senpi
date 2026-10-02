@@ -36,6 +36,7 @@ import {
 	armRequestDeadline,
 	OPEN_AFTER_QUEUED_DEADLINE_MS,
 	openStalledMessage,
+	PROMPT_COMPACTION_DEADLINE_MS,
 	REQUEST_DEADLINE_MS,
 } from "./rpc-request-deadline.ts";
 import type {
@@ -185,15 +186,18 @@ export class RpcClient {
 	private pendingRequests: Map<
 		string,
 		{
+			readonly sessionId: string | undefined;
 			resolve: (response: RpcResponse) => void;
 			reject: (error: Error) => void;
 			onResponse?: (response: RpcResponse) => void;
 			onReject?: (error: Error) => void;
 			onQueued?: (position: unknown) => void;
+			onCompaction?: (compacting: boolean) => void;
 		}
 	> = new Map();
 	private requestId = 0;
 	private sessionId: string | undefined;
+	private compaction: { readonly requestId: string | undefined } | undefined;
 	private pendingOpenSession = false;
 	private pendingSessionEvents: Array<{ sessionId: string; event: RpcClientEvent; bytes: number }> = [];
 	private pendingSessionEventBytes = 0;
@@ -205,6 +209,28 @@ export class RpcClient {
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
+		// The event stream is already scoped to this client's session, including
+		// pre-lease events replayed after open_session.
+		this.onEvent((event) => {
+			switch (event.type) {
+				case "compaction_start":
+					if (this.compaction && this.compaction.requestId === event.requestId) return;
+					this.compaction = { requestId: event.requestId };
+					break;
+				case "compaction_end":
+					if (!this.compaction || this.compaction.requestId !== event.requestId) return;
+					this.compaction = undefined;
+					break;
+				case "session_replaced":
+					this.compaction = undefined;
+					break;
+				default:
+					return;
+			}
+			for (const pending of this.pendingRequests.values()) {
+				if (pending.sessionId === this.sessionId) pending.onCompaction?.(this.compaction !== undefined);
+			}
+		});
 	}
 
 	/**
@@ -216,6 +242,7 @@ export class RpcClient {
 		}
 
 		this.exitError = null;
+		this.compaction = undefined;
 		this.stopping = false;
 		this.disconnectNotified = false;
 		if (this.options.socketPath) {
@@ -301,6 +328,7 @@ export class RpcClient {
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
+		this.compaction = undefined;
 		this.pendingOpenSession = false;
 		this.pendingSessionEvents = [];
 		this.pendingSessionEventBytes = 0;
@@ -422,6 +450,7 @@ export class RpcClient {
 			const response = await this.send({ type: "open_session", ...options }, false);
 			const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
 			this.sessionId = opened.sessionId;
+			this.compaction = undefined;
 			this.pendingOpenSession = false;
 			this.flushPendingSessionEvents();
 			return opened;
@@ -449,7 +478,10 @@ export class RpcClient {
 		} catch (error) {
 			if (!isTransportGoneError(error)) throw error;
 		}
-		if (this.sessionId === sessionId) this.sessionId = undefined;
+		if (this.sessionId === sessionId) {
+			this.sessionId = undefined;
+			this.compaction = undefined;
+		}
 	}
 
 	async listSessions(): Promise<
@@ -1214,10 +1246,14 @@ export class RpcClient {
 			stream.write(serializeJsonLine(fullCommand));
 			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
 		}
+		const sessionId = "sessionId" in fullCommand ? fullCommand.sessionId : undefined;
 		return new Promise((resolve, reject) => {
+			const timeoutMessage = () => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`;
 			const deadline = armRequestDeadline(
-				REQUEST_DEADLINE_MS,
-				() => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`,
+				command.type === "prompt" && this.compaction && sessionId === this.sessionId
+					? PROMPT_COMPACTION_DEADLINE_MS
+					: REQUEST_DEADLINE_MS,
+				timeoutMessage,
 				(timeoutError) => {
 					const pending = this.pendingRequests.get(id);
 					this.pendingRequests.delete(id);
@@ -1227,6 +1263,7 @@ export class RpcClient {
 			);
 
 			this.pendingRequests.set(id, {
+				sessionId,
 				resolve: (response) => {
 					deadline.clear();
 					resolve(response);
@@ -1235,6 +1272,15 @@ export class RpcClient {
 					deadline.clear();
 					reject(error);
 				},
+				...(command.type === "prompt"
+					? {
+							onCompaction: (compacting: boolean) =>
+								deadline.extend(
+									compacting ? PROMPT_COMPACTION_DEADLINE_MS : REQUEST_DEADLINE_MS,
+									timeoutMessage,
+								),
+						}
+					: {}),
 				...(command.type === "open_session"
 					? {
 							onQueued: (position: unknown) =>

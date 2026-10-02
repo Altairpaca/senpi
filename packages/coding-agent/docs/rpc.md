@@ -27,6 +27,18 @@ A label is stored NFC-normalized with internal whitespace collapsed, must contai
 
 `RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
 
+Prompt acceptance can require compaction before the host emits its response. After observing
+`compaction_start` for its session, `RpcClient` gives pending and subsequent prompts a bounded
+45-minute-and-30-second acknowledgement budget: up to 15 minutes of remote compaction, a
+30-minute maximum local-summary override, and the ordinary response allowance. A matching
+`compaction_end` restores the 30-second response deadline. Operation IDs distinguish stale
+terminal events; older hosts that omit IDs remain supported. Outstanding prompts retain
+their originating session, so another lease's compaction does not change their deadlines.
+Other commands retain their
+normal deadlines, and a disconnected transport still rejects immediately. Compaction events
+do not themselves acknowledge a prompt: its actual response determines success and disposition.
+A timeout does not establish that the host rejected the input, so do not automatically resend it.
+
 ```bash
 senpi --mode rpc [options]
 ```
