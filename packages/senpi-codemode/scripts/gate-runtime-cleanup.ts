@@ -7,12 +7,16 @@ interface RuntimeCleanup {
 
 /** Cleanup failures must not prevent the other owned resources from retiring. */
 export async function cleanupRuntime(actions: RuntimeCleanup): Promise<void> {
-	const results = await Promise.allSettled(
-		[actions.retireKernel, actions.closeBridge, actions.restoreObservers, actions.removeRoot]
+	const shutdown = await Promise.allSettled(
+		[actions.retireKernel, actions.closeBridge]
+			.map((action) => Promise.resolve().then(action)),
+	);
+	const finalizers = await Promise.allSettled(
+		[actions.restoreObservers, actions.removeRoot]
 			.map((action) => Promise.resolve().then(action)),
 	);
 	const failures: unknown[] = [];
-	for (const result of results) {
+	for (const result of [...shutdown, ...finalizers]) {
 		switch (result.status) {
 			case "fulfilled":
 				break;
@@ -25,5 +29,8 @@ export async function cleanupRuntime(actions: RuntimeCleanup): Promise<void> {
 			}
 		}
 	}
-	if (failures.length > 0) throw new AggregateError(failures, "Runtime cleanup failed");
+	if (failures.length > 0) {
+		const details = failures.map((error) => error instanceof Error ? error.message : String(error));
+		throw new AggregateError(failures, `Runtime cleanup failed: ${details.join("; ")}`);
+	}
 }

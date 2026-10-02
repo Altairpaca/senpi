@@ -51,6 +51,7 @@ it.each(["kernel", "bridge", "observer", "none"] as const)(
 				expect(reported).toBeInstanceOf(AggregateError);
 				if (!(reported instanceof AggregateError)) throw new TypeError("Missing cleanup failure");
 				expect(reported.errors).toContain(original);
+				expect(reported.message).toContain(original.message);
 			}
 		} finally {
 			await close();
@@ -58,3 +59,37 @@ it.each(["kernel", "bridge", "observer", "none"] as const)(
 		}
 	},
 );
+
+it("keeps the root and observers until kernel and bridge shutdown settle", async () => {
+	const retiring = Promise.withResolvers<void>();
+	const closing = Promise.withResolvers<void>();
+	const started = Promise.withResolvers<void>();
+	let restored = false;
+	let removed = false;
+	const cleanup = cleanupRuntime({
+		retireKernel: async () => {
+			started.resolve();
+			await retiring.promise;
+		},
+		closeBridge: () => closing.promise,
+		restoreObservers: () => {
+			restored = true;
+		},
+		removeRoot: async () => {
+			removed = true;
+		},
+	});
+	try {
+		await started.promise;
+		expect(restored).toBe(false);
+		expect(removed).toBe(false);
+		closing.resolve();
+		expect(removed).toBe(false);
+	} finally {
+		retiring.resolve();
+		closing.resolve();
+		await cleanup;
+	}
+	expect(restored).toBe(true);
+	expect(removed).toBe(true);
+});
