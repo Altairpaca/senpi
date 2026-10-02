@@ -434,6 +434,13 @@ alive at the teardown witness, then closes it in `finally`; nonzero process,
 worker, socket, handle, subscription and active-resource listener counts fail
 by name. Constructors are observed because Bun's active-handle/report APIs
 return empty arrays even for live workers.
+Live timers are observed independently of the import census, including unref'd
+global timers, named and namespace imports from `node:timers`,
+`node:timers/promises` (including interval iterators and the scheduler), and
+self-rearming `AbortSignal.timeout` polls. Failures name the timer API and its
+creation site. The gate installs delegating wrappers before the kernel graph
+loads; on Bun its module-replacement API also updates builtin ESM bindings.
+These wrappers run only in gate processes and keep the native timer behavior.
 The only production-source additions are an inert gate observer at the existing
 worker, interpreter-process and bridge-server constructors. It is undefined in
 normal execution. This hook is necessary because Bun does not refresh named
