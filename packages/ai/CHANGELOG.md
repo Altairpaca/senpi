@@ -20,6 +20,8 @@
 - The OpenGateway catalog now takes context windows, max output, and prices from the gateway itself, and `-ultrafast` serving tiers inherit their base model's capabilities. It adds `deepseek/deepseek-v4.1-flash-ultrafast`, `z-ai/glm-5.3-ultrafast`, and `z-ai/glm-5.3-flash-ultrafast`, and corrects 20 models, including `moonshotai/kimi-k3-ultrafast` (max output 20,480), `anthropic/claude-sonnet-4-6` (max output 64,000), `anthropic/claude-sonnet-4-5` (context 200,000), and the DeepSeek, GLM, and Qwen prices the gateway bills. A daily job now opens a refresh PR whenever the gateway's catalog changes. ([#2552](https://github.com/code-yeongyu/senpi/issues/2552))
 ### Fixed
 
+- A request that replays a `tool_reference` and is rejected by an Anthropic-compatible relay with `400 Tool reference ... not found in available tools` is retried once with the replay turned into text, and the tools those references named stay callable. Thanks to @ldz281. ([#2568](https://github.com/code-yeongyu/senpi/issues/2568), [#2574](https://github.com/code-yeongyu/senpi/pull/2574))
+
 - Fixed inherited context overflow detection for Z.AI CN endpoint `Prompt exceeds max length` errors ([#10208](https://github.com/earendil-works/pi/issues/10208)).
 
 - Anthropic requests no longer fail when a `strict: "prefer"` tool schema uses keywords Anthropic strict tool use rejects, such as `minimum`/`maximum`; such tools are sent non-strict through the shared constrained-sampling policy (inherited, [#9953](https://github.com/earendil-works/pi/issues/9953)).
