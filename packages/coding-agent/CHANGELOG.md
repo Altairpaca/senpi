@@ -8,9 +8,15 @@
 
 - Shared RPC hosts report `runtimeBuildId`, a content digest of the runtime they loaded at startup (engine files, plugins, flavour, platform), in `get_protocol_info` and `host status`, and `host ensure` reports the `clientRuntimeBuildId` it would launch, so a client can tell two builds of one version apart and see a bundle replaced in place. `senpi host handoff --when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>` asks the running host to hand over to the caller's runtime at its next idle point: it stops admitting new work, lets running turns finish, never aborts one, answers `handover_pending` meanwhile, and keeps serving if the successor does not come up. A repeated operation id returns the existing operation.
 
+- Settled user questions identify their answering surface (`resolvedBy`) in tool results, `ask-user:settled` notifications, and RPC `question_resolved` frames. Extensions can also observe the new `ask-user:closed` event once for every terminal outcome, including silent cancellations; `ask-user:settled` keeps firing for the same outcomes as before ([#2533](https://github.com/code-yeongyu/senpi/issues/2533)).
+
 ### Changed
 
 ### Fixed
+
+- RPC prompt acknowledgement waits now account for observed conversation compaction instead of reporting failure after 30 seconds while the same input can still be admitted later. The real host response remains authoritative, waiting stays bounded, and transport failures still reject immediately ([#2548](https://github.com/code-yeongyu/senpi/pull/2548) by [@namseokyoo](https://github.com/namseokyoo)).
+
+- When one model family's usage limit runs out on an Anthropic subscription account (for example "You've reached your Fable limit"), only that family is blocked on that account, until its own reset. Opus and Sonnet on the same account keep serving, the fallback chain moves only the limited model to its next rung, and `/claude-account` and `/account` show the block as "blocked for fable until ...". Session and weekly limits, auth failures and disabled accounts still block the whole account, and existing account-level cooldowns are honoured until they expire (reported in [oh-my-openagent#9421](https://github.com/code-yeongyu/oh-my-openagent/issues/9421) by [@hsnam-OBELAB](https://github.com/hsnam-OBELAB)) ([#2555](https://github.com/code-yeongyu/senpi/issues/2555)).
 
 - Reloading or replacing a session while a monitor is watching no longer kills the process with "This extension ctx is stale after session replacement or reload". The footer's once-a-second monitor ticker now stops when its session's context is retired and starts again with the next live session; any other footer error still surfaces. A context retired by a reload is now recognized as stale too, so the goal footer tickers also stop on a reload instead of rethrowing ([#2549](https://github.com/code-yeongyu/senpi/issues/2549) by [@rhyme227](https://github.com/rhyme227)).
 - The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
