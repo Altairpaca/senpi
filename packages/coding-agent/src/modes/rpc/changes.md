@@ -40,7 +40,6 @@ Prompt preflight can compact a large conversation before admitting the input. Th
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: RpcQuestionResolvedEvent.
 - `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: response construction and the sequential dialog fallback.
 
-## 2026-10-01 - Durable client message admissions (desktop#1325, senpi#1971)
 ## 2026-10-02 - Durable client message admissions (desktop#1325, senpi#1971)
 
 ### What changed

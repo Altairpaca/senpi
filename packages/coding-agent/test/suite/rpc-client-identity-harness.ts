@@ -97,10 +97,15 @@ export async function createIdentityHarness(options: HarnessOptions = {}) {
 			return bind();
 		},
 		async cleanup() {
-			for (const each of [harness.session, ...opened]) await each.abort();
-			await detach();
-			for (const each of opened) each.dispose();
-			harness.cleanup();
+			const aborts = await Promise.allSettled([harness.session, ...opened].map((each) => each.abort()));
+			try {
+				await detach();
+			} finally {
+				for (const each of opened) each.dispose();
+				harness.cleanup();
+			}
+			const failed = aborts.find((result) => result.status === "rejected");
+			if (failed?.status === "rejected") throw failed.reason;
 		},
 	};
 }

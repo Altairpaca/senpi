@@ -192,7 +192,14 @@ describe("durable RPC client message admission", () => {
 		expect(turns[1]).not.toHaveProperty("clientMessageId");
 		const answers = rpc
 			.messages()
-			.filter((event) => event.type === "message_end" && event.message?.role === "assistant");
+			.filter(
+				(event) =>
+					event.type === "message_end" &&
+					typeof event.message === "object" &&
+					event.message !== null &&
+					"role" in event.message &&
+					event.message.role === "assistant",
+			);
 		expect(answers[0]).toMatchObject({ clientMessageId: "message-1" });
 		expect(answers[1]).not.toHaveProperty("clientMessageId");
 	});
