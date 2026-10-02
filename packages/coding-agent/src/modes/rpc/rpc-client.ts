@@ -36,6 +36,7 @@ import {
 	armRequestDeadline,
 	OPEN_AFTER_QUEUED_DEADLINE_MS,
 	openStalledMessage,
+	PROMPT_ACK_MAX_WAIT_MS,
 	PROMPT_COMPACTION_DEADLINE_MS,
 	REQUEST_DEADLINE_MS,
 } from "./rpc-request-deadline.ts";
@@ -197,7 +198,12 @@ export class RpcClient {
 	> = new Map();
 	private requestId = 0;
 	private sessionId: string | undefined;
-	private compaction: { readonly requestId: string | undefined } | undefined;
+	/**
+	 * Compactions observed for this client's session and not yet ended, keyed by operation id (`""` for
+	 * hosts that send none), with the time each started. Tracking each operation separately means a
+	 * stale or overlapping start never hides another operation's end.
+	 */
+	private readonly compactions = new Map<string, number>();
 	private pendingOpenSession = false;
 	private pendingSessionEvents: Array<{ sessionId: string; event: RpcClientEvent; bytes: number }> = [];
 	private pendingSessionEventBytes = 0;
@@ -213,22 +219,23 @@ export class RpcClient {
 		// pre-lease events replayed after open_session.
 		this.onEvent((event) => {
 			switch (event.type) {
-				case "compaction_start":
-					if (this.compaction && this.compaction.requestId === event.requestId) return;
-					this.compaction = { requestId: event.requestId };
+				case "compaction_start": {
+					const key = event.requestId ?? "";
+					if (this.compactions.has(key)) return;
+					this.compactions.set(key, Date.now());
 					break;
+				}
 				case "compaction_end":
-					if (!this.compaction || this.compaction.requestId !== event.requestId) return;
-					this.compaction = undefined;
+					if (!this.compactions.delete(event.requestId ?? "")) return;
 					break;
 				case "session_replaced":
-					this.compaction = undefined;
+					this.compactions.clear();
 					break;
 				default:
 					return;
 			}
 			for (const pending of this.pendingRequests.values()) {
-				if (pending.sessionId === this.sessionId) pending.onCompaction?.(this.compaction !== undefined);
+				if (pending.sessionId === this.sessionId) pending.onCompaction?.(this.isCompacting());
 			}
 		});
 	}
@@ -242,7 +249,7 @@ export class RpcClient {
 		}
 
 		this.exitError = null;
-		this.compaction = undefined;
+		this.compactions.clear();
 		this.stopping = false;
 		this.disconnectNotified = false;
 		if (this.options.socketPath) {
@@ -325,10 +332,23 @@ export class RpcClient {
 	}
 
 	/**
+	 * Whether a compaction is in progress for this client's session. A start whose end never arrives (a
+	 * dropped frame, or a host that stopped without one) stops counting once it is older than the
+	 * compaction budget, so it cannot leave every later prompt on the long wait.
+	 */
+	private isCompacting(): boolean {
+		const now = Date.now();
+		for (const [key, startedAt] of this.compactions) {
+			if (now - startedAt >= PROMPT_COMPACTION_DEADLINE_MS) this.compactions.delete(key);
+		}
+		return this.compactions.size > 0;
+	}
+
+	/**
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
-		this.compaction = undefined;
+		this.compactions.clear();
 		this.pendingOpenSession = false;
 		this.pendingSessionEvents = [];
 		this.pendingSessionEventBytes = 0;
@@ -450,7 +470,7 @@ export class RpcClient {
 			const response = await this.send({ type: "open_session", ...options }, false);
 			const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
 			this.sessionId = opened.sessionId;
-			this.compaction = undefined;
+			this.compactions.clear();
 			this.pendingOpenSession = false;
 			this.flushPendingSessionEvents();
 			return opened;
@@ -480,7 +500,7 @@ export class RpcClient {
 		}
 		if (this.sessionId === sessionId) {
 			this.sessionId = undefined;
-			this.compaction = undefined;
+			this.compactions.clear();
 		}
 	}
 
@@ -1249,27 +1269,39 @@ export class RpcClient {
 		const sessionId = "sessionId" in fullCommand ? fullCommand.sessionId : undefined;
 		return new Promise((resolve, reject) => {
 			const timeoutMessage = () => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`;
+			let promptCap: ReturnType<typeof setTimeout> | undefined;
+			const expire = (timeoutError: Error) => {
+				clearTimeout(promptCap);
+				const pending = this.pendingRequests.get(id);
+				this.pendingRequests.delete(id);
+				pending?.onReject?.(timeoutError);
+				reject(timeoutError);
+			};
 			const deadline = armRequestDeadline(
-				command.type === "prompt" && this.compaction && sessionId === this.sessionId
+				command.type === "prompt" && sessionId === this.sessionId && this.isCompacting()
 					? PROMPT_COMPACTION_DEADLINE_MS
 					: REQUEST_DEADLINE_MS,
 				timeoutMessage,
-				(timeoutError) => {
-					const pending = this.pendingRequests.get(id);
-					this.pendingRequests.delete(id);
-					pending?.onReject?.(timeoutError);
-					reject(timeoutError);
-				},
+				expire,
 			);
+			// Compaction events extend a prompt's wait, but never past this cap from when it was sent.
+			if (command.type === "prompt") {
+				promptCap = setTimeout(() => {
+					deadline.clear();
+					expire(new Error(timeoutMessage()));
+				}, PROMPT_ACK_MAX_WAIT_MS);
+			}
 
 			this.pendingRequests.set(id, {
 				sessionId,
 				resolve: (response) => {
 					deadline.clear();
+					clearTimeout(promptCap);
 					resolve(response);
 				},
 				reject: (error) => {
 					deadline.clear();
+					clearTimeout(promptCap);
 					reject(error);
 				},
 				...(command.type === "prompt"

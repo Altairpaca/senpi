@@ -11,6 +11,12 @@ export const PROMPT_COMPACTION_DEADLINE_MS =
 	SUMMARIZATION_TOTAL_BUDGET_MS + SUMMARIZATION_MAX_DURATION_CAP_MS + REQUEST_DEADLINE_MS;
 
 /**
+ * The longest a prompt waits for its acknowledgement, however many compactions start and end while it
+ * is pending: one full compaction budget plus the ordinary allowance it may already have spent first.
+ */
+export const PROMPT_ACK_MAX_WAIT_MS = PROMPT_COMPACTION_DEADLINE_MS + REQUEST_DEADLINE_MS;
+
+/**
  * How long an open the host acknowledged with `queued` may take to answer. The host is building the
  * session on its loop, which on a loaded in-process host was measured at ~57 s; a lost transport
  * still rejects at once, so this ceiling only bounds a host that accepted and then went silent

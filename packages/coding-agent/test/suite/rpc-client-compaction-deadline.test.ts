@@ -5,6 +5,16 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { attachJsonlLineReader, serializeJsonLine } from "../../src/modes/rpc/jsonl.ts";
 import { RpcClient, type RpcClientEvent, RpcTransportGoneError } from "../../src/modes/rpc/rpc-client.ts";
+import {
+	PROMPT_ACK_MAX_WAIT_MS,
+	PROMPT_COMPACTION_DEADLINE_MS,
+	REQUEST_DEADLINE_MS,
+} from "../../src/modes/rpc/rpc-request-deadline.ts";
+
+// Captured before any test installs fake timers, so a lost event fails fast instead of hanging.
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+const EVENT_DELIVERY_BOUND_MS = 5_000;
 
 async function createHost(autoOpenSessions = false) {
 	const directory = await mkdtemp(join(tmpdir(), "rpc-compaction-deadline-"));
@@ -60,7 +70,15 @@ async function createHost(autoOpenSessions = false) {
 				}
 			});
 			peer.write(serializeJsonLine(event));
-			await seen.promise;
+			const bound = realSetTimeout(() => {
+				unsubscribe();
+				seen.reject(new Error(`the client never delivered the ${event.type} event it was sent`));
+			}, EVENT_DELIVERY_BOUND_MS);
+			try {
+				await seen.promise;
+			} finally {
+				realClearTimeout(bound);
+			}
 		},
 		async close() {
 			await client.stop();
@@ -320,9 +338,10 @@ describe("RpcClient prompt admission during compaction", () => {
 			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "current" });
 
 			// When
-			await vi.advanceTimersByTimeAsync(30 * 60_000);
+			const firstStretch = Math.floor(PROMPT_COMPACTION_DEADLINE_MS / 2);
+			await vi.advanceTimersByTimeAsync(firstStretch);
 			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "current" });
-			await vi.advanceTimersByTimeAsync(15 * 60_000 + 30_000 - 1);
+			await vi.advanceTimersByTimeAsync(PROMPT_COMPACTION_DEADLINE_MS - firstStretch - 1);
 			let settled = false;
 			void prompt.then(() => {
 				settled = true;
@@ -332,6 +351,120 @@ describe("RpcClient prompt admission during compaction", () => {
 			await vi.advanceTimersByTimeAsync(1);
 
 			// Then
+			expect(settled).toBe(true);
+			expect(await prompt).toBeInstanceOf(Error);
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
+
+	test("keeps waiting while another compaction operation is still running after one ends", async () => {
+		// Given: two compaction operations overlap while a prompt waits for admission.
+		const host = await createHost();
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			let settled = false;
+			const prompt = host.client
+				.prompt("request")
+				.catch((error: unknown) => error)
+				.finally(() => {
+					settled = true;
+				});
+			await host.request;
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "first" });
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "second" });
+
+			// When: only the first one ends.
+			await host.emit({
+				type: "compaction_end",
+				reason: "threshold",
+				requestId: "first",
+				result: undefined,
+				aborted: false,
+				willRetry: false,
+			});
+			await vi.advanceTimersByTimeAsync(REQUEST_DEADLINE_MS * 2);
+
+			// Then: the prompt is still waiting, and once the second ends the ordinary deadline returns.
+			expect(settled).toBe(false);
+			await host.emit({
+				type: "compaction_end",
+				reason: "threshold",
+				requestId: "second",
+				result: undefined,
+				aborted: false,
+				willRetry: false,
+			});
+			await vi.advanceTimersByTimeAsync(REQUEST_DEADLINE_MS);
+			expect(settled).toBe(true);
+			expect(await prompt).toBeInstanceOf(Error);
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
+
+	test("stops extending later prompts once a compaction whose end never arrived is older than its budget", async () => {
+		// Given: a compaction starts and its end is never delivered.
+		const host = await createHost();
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "lost-end" });
+			await vi.advanceTimersByTimeAsync(PROMPT_COMPACTION_DEADLINE_MS);
+
+			// When: a later prompt is sent.
+			let settled = false;
+			const prompt = host.client
+				.prompt("request")
+				.catch((error: unknown) => error)
+				.finally(() => {
+					settled = true;
+				});
+			await host.request;
+			await vi.advanceTimersByTimeAsync(REQUEST_DEADLINE_MS);
+
+			// Then: it gets the ordinary deadline, not the compaction wait.
+			expect(settled).toBe(true);
+			expect(await prompt).toBeInstanceOf(Error);
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await host.close();
+		}
+	});
+
+	test("never waits past the per-prompt cap, however many compactions start and end", async () => {
+		// Given: a prompt is waiting, and compaction operations keep starting and ending.
+		const host = await createHost();
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			let settled = false;
+			const prompt = host.client
+				.prompt("request")
+				.catch((error: unknown) => error)
+				.finally(() => {
+					settled = true;
+				});
+			await host.request;
+			await vi.advanceTimersByTimeAsync(REQUEST_DEADLINE_MS - 1);
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "first" });
+			await vi.advanceTimersByTimeAsync(PROMPT_COMPACTION_DEADLINE_MS - REQUEST_DEADLINE_MS);
+			await host.emit({
+				type: "compaction_end",
+				reason: "threshold",
+				requestId: "first",
+				result: undefined,
+				aborted: false,
+				willRetry: false,
+			});
+			await host.emit({ type: "compaction_start", reason: "threshold", requestId: "second" });
+
+			// When: time reaches the cap measured from when the prompt was sent.
+			await vi.advanceTimersByTimeAsync(PROMPT_ACK_MAX_WAIT_MS - PROMPT_COMPACTION_DEADLINE_MS);
+			expect(settled).toBe(false);
+			await vi.advanceTimersByTimeAsync(1);
+
+			// Then: the prompt fails at the cap instead of starting a second full compaction wait.
 			expect(settled).toBe(true);
 			expect(await prompt).toBeInstanceOf(Error);
 			expect(vi.getTimerCount()).toBe(0);
