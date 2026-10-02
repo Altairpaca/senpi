@@ -1,5 +1,24 @@
 # senpi-codemode fork changes
 
+
+## 2026-10-02 - Display images are validated before they are kept (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/image.ts`: an image `display()` payload is kept only when it is valid base64 with a PNG, JPEG (not JPEG-LS), GIF or WebP signature; line breaks are dropped, the detected type replaces the declared one, and invalid data is dropped with a `[display: image dropped — <reason>]` line in the output.
+
+### Why
+
+Upstream fixed the same defect in its codemode `image()` helper (d2931ad3d): providers reject a whole request on a bad image, and a kept image block is resent on every later turn, so one corrupted image broke the session. Providers also reject a declared type that does not match the bytes.
+
+### Why an extension could not handle it
+
+This is the eval extension's own output collector.
+
+### Expected merge conflict zones
+
+None from upstream (fork-only package).
+
 ## 2026-09-30 - Self-contained eval action schemas (senpi#2240)
 
 ### What changed
@@ -19,7 +38,6 @@
 ### Expected merge conflict zones
 
 - LOW: `createEvalInputSchema` in `packages/senpi-codemode/src/tool/types.ts`.
-
 ## 2026-10-02 - Detached-cell footer ticker retires on a stale context (senpi#2549)
 
 ### What changed
@@ -39,7 +57,6 @@
 ### Expected merge conflict zones
 
 - `eval-status-ticker.ts` `sync()`/`tick()`. Fork-only surface.
-
 ## 2026-10-01 - Explicit state-loss notice for Stop during a native shell wait (senpi#2453)
 
 ### What changed
