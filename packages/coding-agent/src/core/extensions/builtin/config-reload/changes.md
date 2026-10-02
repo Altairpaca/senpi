@@ -6,6 +6,7 @@
 
 - `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: rechecks the live idle, pending-message, and compaction state after awaiting extension reload vetoes.
 - `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts`: separates presence-watch rearming from a real configuration change. Newly discovered files still request a reload; creating only the project configuration container does not.
+- Files discovered by that rearm pass through the same self-write, routine-settings and generated-shim filters as the event's own paths.
 
 ### Why
 

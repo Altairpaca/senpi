@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONFIG_DIR_NAME } from "../../src/config.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { createConfigReloadHarness } from "./config-reload-harness.ts";
 
 afterEach(() => vi.useRealTimers());
@@ -37,6 +38,25 @@ describe("project configuration directory discovery", () => {
 			await notify(harness.tempDir, CONFIG_DIR_NAME);
 			// Then: the discovered settings still request one reload.
 			expect(reloads).toEqual([true]);
+		} finally {
+			await harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" });
+			harness.cleanup();
+		}
+	});
+
+	it("does not reload for the session's own settings write that creates the configuration directory", async () => {
+		// Given: a trusted project without a configuration directory.
+		await using agent = await mkdtempDisposable(join(tmpdir(), "config-presence-self-write-"));
+		const { harness, reloads, notify } = await createConfigReloadHarness(agent.path);
+		try {
+			vi.useFakeTimers();
+			// When: this process saves a project setting, creating the directory and its settings file.
+			const writer = SettingsManager.create(harness.tempDir, agent.path, { projectTrusted: true });
+			writer.setProjectSkillPaths(["skills"]);
+			await writer.flush();
+			await notify(harness.tempDir, CONFIG_DIR_NAME);
+			// Then: its own write is recognised even though the rearm discovered the file.
+			expect(reloads).toEqual([]);
 		} finally {
 			await harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" });
 			harness.cleanup();

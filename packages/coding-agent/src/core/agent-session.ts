@@ -9085,6 +9085,18 @@ export class AgentSession {
 			return veto;
 		}
 		if (this._promptStartPending) return this.checkReloadVeto();
+		// Prompts admitted from here on wait for the rebuilt runtime instead of starting on the retiring one.
+		const finishReloadWork = this._sessionWorkBarrier.begin();
+		try {
+			return await this._rebuildRuntimeForReload(options);
+		} finally {
+			finishReloadWork();
+		}
+	}
+
+	private async _rebuildRuntimeForReload(options?: {
+		beforeSessionStart?: () => void | Promise<void>;
+	}): Promise<{ cancelled: false }> {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();

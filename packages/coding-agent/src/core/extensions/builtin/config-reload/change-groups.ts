@@ -11,7 +11,7 @@ export type ActiveTarget = {
 export function groupChangedPaths(
 	paths: readonly string[],
 	targets: readonly ActiveTarget[],
-	createdPaths: readonly string[],
+	rearmedContainers: readonly string[],
 ): Map<string, string[]> {
 	const groups = new Map<string, string[]>();
 	for (const path of paths) {
@@ -19,8 +19,9 @@ export function groupChangedPaths(
 		for (const activeTarget of targets) {
 			if (!targetMatchesPath(activeTarget.target, path)) continue;
 			matched = true;
-			// The container rearms discovery; newly discovered config files carry the change.
-			if (activeTarget.target.id === "builtin-project-presence" && createdPaths.includes(path)) continue;
+			// The project container only rearms discovery; newly discovered config files carry the change.
+			if (activeTarget.target.id === "builtin-project-presence" && rearmedContainers.includes(resolve(path)))
+				continue;
 			const group = groups.get(activeTarget.registrationId) ?? [];
 			if (!group.includes(path)) group.push(path);
 			groups.set(activeTarget.registrationId, group);

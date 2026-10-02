@@ -40,6 +40,7 @@
 
 - `packages/coding-agent/src/core/agent-session.ts`: the existing reload veto checks the prompt-admission hold before and after asynchronous extension gates, and reload rechecks admission immediately before teardown. The shared `isIdle` behavior remains unchanged.
 - `packages/coding-agent/src/core/reload-veto.ts`: owns the extracted reload decision and preserves extension cancellation reasons.
+- `packages/coding-agent/src/core/agent-session.ts`: once the veto passes, `reload` holds the session work barrier until the rebuilt runtime is bound, so a prompt submitted during teardown starts on the new generation instead of the retiring one.
 
 ### Why
 

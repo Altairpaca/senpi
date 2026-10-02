@@ -43,7 +43,7 @@ import {
 } from "./watch-engine.ts";
 
 const BUILTIN_REGISTRATION_ID = "builtin";
-const DEFAULT_DEBOUNCE_MS = 200;
+export const DEFAULT_DEBOUNCE_MS = 200;
 const COMPACTION_RECHECK_MS = 250;
 const VETO_RECHECK_MS = 1000;
 const CONFIG_FILE_NAMES = ["settings.jsonc", "settings.json", "models.json", "keybindings.json"] as const;
@@ -251,35 +251,34 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		// so it must be resolved before grouping: a path watched by several
 		// registrations would otherwise be classified once per group and reach the
 		// reload flow through the later group.
-		const watchedPaths = excludeSelfWrites(
-			change.changedPaths,
-			engine,
-			agentDir,
-			currentContext.cwd,
-			logger,
-			settingsContents,
-		);
-		const significantPaths = excludeRoutineOnlySettingsChanges(
-			watchedPaths,
-			settingsContents,
-			agentDir,
-			currentContext.cwd,
-			logger,
-		);
-		const configPaths = excludeGeneratedExtensionShims(significantPaths, agentDir);
-		for (const path of significantPaths) {
-			if (!configPaths.includes(path)) logger.debug("generated_shim_change_suppressed", { path });
-		}
-		const rearmDirectoryWatch = change.created.some((path) =>
-			activeTargets.some((target) => target.rearmOnCreation === resolve(path)),
-		);
-		if (rearmDirectoryWatch) {
+		const suppress = (paths: readonly string[], context: ExtensionContext): string[] => {
+			const watchedPaths = excludeSelfWrites(paths, engine, agentDir, context.cwd, logger, settingsContents);
+			const significantPaths = excludeRoutineOnlySettingsChanges(
+				watchedPaths,
+				settingsContents,
+				agentDir,
+				context.cwd,
+				logger,
+			);
+			const kept = excludeGeneratedExtensionShims(significantPaths, agentDir);
+			for (const path of significantPaths) {
+				if (!kept.includes(path)) logger.debug("generated_shim_change_suppressed", { path });
+			}
+			return kept;
+		};
+		const configPaths = suppress(change.changedPaths, currentContext);
+		// Rebuilding recomputes the targets, so record which created paths were presence containers first.
+		const rearmedContainers = change.created
+			.map((path) => resolve(path))
+			.filter((path) => activeTargets.some((target) => target.rearmOnCreation === path));
+		if (rearmedContainers.length > 0) {
 			const previous = engine?.getBaselineSnapshot() ?? new Map<string, string>();
 			rebuildWatchers(currentContext);
 			const current = engine?.getBaselineSnapshot() ?? new Map<string, string>();
-			configPaths.push(...compareSnapshots(previous, current));
+			// Files discovered by the rearm pass through the same self-write, routine and shim filters.
+			configPaths.push(...suppress(compareSnapshots(previous, current), currentContext));
 		}
-		const groups = groupChangedPaths(configPaths, activeTargets, change.created);
+		const groups = groupChangedPaths(configPaths, activeTargets, rearmedContainers);
 		for (const [registrationId, paths] of groups) {
 			const errors = await validateChangedPaths(registrationId, paths, registrations, agentDir, currentContext.cwd);
 			if (!started || currentContext !== changeContext) return;

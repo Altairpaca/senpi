@@ -115,18 +115,23 @@ describe("real builtin tools across extension generation replacement", () => {
 		}
 	});
 
-	it.each(TOOL_NAMES)("requires explicit activation when a new extension takes over %s", async (name) => {
-		// Given: an active tool name is registered by a different extension after reload.
-		const { harness, args } = await reloadHarness(name, "new-owner");
-		try {
-			harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), name]);
-			await harness.session.reload();
-			// When: a caller relies on the old owner's activation without opting into a new one.
-			const execution = harness.session.executeTool(name, args);
-			// Then: the replacement cannot silently inherit the old owner's active status.
-			await expect(execution).rejects.toMatchObject({ code: "inactive_tool", toolName: name });
-		} finally {
-			harness.cleanup();
-		}
-	});
+	// tool_search re-activates itself whenever its catalog has documents, so only tools whose activation stays
+	// explicit can show that a new owner does not inherit the previous owner's active status.
+	it.each(["todo", "read"] as const)(
+		"requires explicit activation when a new extension takes over %s",
+		async (name) => {
+			// Given: an active tool name is registered by a different extension after reload.
+			const { harness, args } = await reloadHarness(name, "new-owner");
+			try {
+				harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), name]);
+				await harness.session.reload();
+				// When: a caller relies on the old owner's activation without opting into a new one.
+				const execution = harness.session.executeTool(name, args);
+				// Then: the replacement cannot silently inherit the old owner's active status.
+				await expect(execution).rejects.toMatchObject({ code: "inactive_tool", toolName: name });
+			} finally {
+				harness.cleanup();
+			}
+		},
+	);
 });

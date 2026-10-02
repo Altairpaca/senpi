@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { vi } from "vitest";
-import configReloadExtension from "../../src/core/extensions/builtin/config-reload/index.ts";
+import configReloadExtension, { DEFAULT_DEBOUNCE_MS } from "../../src/core/extensions/builtin/config-reload/index.ts";
 import type { WatchEventListener } from "../../src/core/extensions/builtin/config-reload/watch-engine.ts";
 import type { ExtensionFactory } from "../../src/index.ts";
 import { createHarness } from "./harness.ts";
@@ -54,7 +54,7 @@ export async function createConfigReloadHarness(
 		reloads,
 		async notify(path: string, filename: string) {
 			for (const listener of listeners.get(resolve(path)) ?? []) listener("change", filename);
-			await vi.advanceTimersByTimeAsync(200);
+			await vi.advanceTimersByTimeAsync(DEFAULT_DEBOUNCE_MS);
 		},
 	};
 }
