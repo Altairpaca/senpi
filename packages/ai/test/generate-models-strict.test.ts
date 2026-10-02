@@ -145,6 +145,7 @@ describe("strict model generation", () => {
 		const selectedFirst = selected.map((provider) =>
 			readFileSync(join(isolatedPackageRoot, `src/providers/data/${provider}.json`), "utf8"),
 		);
+		for (const content of selectedFirst) expect(content).toContain('"chat:glm-4.7"');
 		const manifestFirst = readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8");
 
 		const second = spawnSync(process.execPath, args, { cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 });

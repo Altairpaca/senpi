@@ -19,6 +19,7 @@ interface CatalogRow {
 	maxTokens?: number;
 	cost?: Record<string, unknown>;
 	thinkingLevelMap?: Record<string, unknown>;
+	[field: string]: unknown;
 }
 
 export interface OpenGatewayCatalogDiff {
@@ -27,7 +28,6 @@ export interface OpenGatewayCatalogDiff {
 	changed: { id: string; changes: string[] }[];
 }
 
-const COMPARED_FIELDS = ["name", "reasoning", "input", "contextWindow", "maxTokens", "cost", "thinkingLevelMap"] as const;
 
 function rows(grouped: Record<string, Record<string, CatalogRow>>): Map<string, CatalogRow> {
 	return new Map(
@@ -51,9 +51,10 @@ export function diffOpenGatewayCatalogs(
 	for (const [id, row] of after) {
 		const previous = before.get(id);
 		if (!previous) continue;
-		const changes = COMPARED_FIELDS.filter((field) => show(previous[field]) !== show(row[field])).map(
-			(field) => `${field}: ${show(previous[field])} -> ${show(row[field])}`,
-		);
+		const fields = [...new Set([...Object.keys(previous), ...Object.keys(row)])].sort() as (keyof CatalogRow)[];
+		const changes = fields
+			.filter((field) => show(previous[field]) !== show(row[field]))
+			.map((field) => `${field}: ${show(previous[field])} -> ${show(row[field])}`);
 		if (changes.length > 0) changed.push({ id, changes });
 	}
 	return {

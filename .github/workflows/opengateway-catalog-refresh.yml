@@ -31,8 +31,56 @@ env:
   MAX_STALE_DAYS: '14'
 
 jobs:
+  # Pull requests run PR-controlled code, so their dry-run gets a read-only token.
+  dry-run:
+    name: Dry-run the OpenGateway catalog refresh
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # --strict: a gateway, price-table, or models.dev outage fails this run instead of
+      # silently keeping yesterday's catalog.
+      - name: Regenerate the OpenGateway catalog
+        working-directory: packages/ai
+        run: npx tsx scripts/generate-models.ts --strict --providers opengateway
+
+      - name: Validate model data
+        working-directory: packages/ai
+        run: npx tsx scripts/check-model-data.ts
+
+      - name: Summarize catalog changes
+        id: summary
+        working-directory: packages/ai
+        run: |
+          set -euo pipefail
+          git show HEAD:packages/ai/src/providers/data/opengateway.json > "$RUNNER_TEMP/opengateway-before.json"
+          npx tsx scripts/opengateway-catalog-diff.ts \
+            --base "$RUNNER_TEMP/opengateway-before.json" \
+            --head src/providers/data/opengateway.json \
+            --markdown "$RUNNER_TEMP/opengateway-summary.md" \
+            --changelog CHANGELOG.md >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/opengateway-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
   refresh:
     name: Regenerate the OpenGateway catalog
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -42,7 +90,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'main' }}
+          ref: main
           persist-credentials: false
 
       - name: Setup Node.js
@@ -78,13 +126,16 @@ jobs:
           cat "$RUNNER_TEMP/opengateway-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update the refresh PR
-        if: github.event_name != 'pull_request'
         env:
-          # A PAT lets the refresh PR trigger CI; GITHUB_TOKEN-created PRs do not.
-          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN || github.token }}
+          # A PAT is required: PRs pushed with GITHUB_TOKEN do not trigger the required CI checks.
+          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           CHANGED: ${{ steps.summary.outputs.changed }}
         run: |
           set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::UPSTREAM_AUTOMATION_TOKEN is required so the refresh PR runs CI."
+            exit 1
+          fi
           open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json number --jq '.[0].number // empty')"
           if [[ "$CHANGED" != "true" ]]; then
             if [[ -n "$open_pr" ]]; then
@@ -113,7 +164,6 @@ jobs:
           fi
 
       - name: Fail when the shipped catalog has been stale too long
-        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

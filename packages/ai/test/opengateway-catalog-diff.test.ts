@@ -76,6 +76,17 @@ describe("OpenGateway refresh PR summary", () => {
 		expect(updated).toContain("### Changed\n\n- The refresh.\n- An earlier change.\n\n### Fixed");
 	});
 
+	it("reports a change that only touches request compatibility", () => {
+		const withCompat = (strict: boolean) => ({
+			"openai-completions": { "chat:z-ai/glm-6": { id: "z-ai/glm-6", compat: { supportsStrictMode: strict } } },
+		});
+
+		const diff = diffOpenGatewayCatalogs(withCompat(true), withCompat(false));
+
+		expect(hasCatalogChanges(diff)).toBe(true);
+		expect(renderCatalogDiffMarkdown(diff)).toContain("compat:");
+	});
+
 	it("reports no change when the regenerated catalog matches the committed one", () => {
 		expect(hasCatalogChanges(diffOpenGatewayCatalogs(committed, committed))).toBe(false);
 	});

@@ -112,7 +112,10 @@ async function fetchRefreshedCatalog(
 		unshippedServableModels(shipped, listing).length > 0
 			? parseOpenGatewayPriceTable(await fetchJson(OPENGATEWAY_PRICES_URL, signal))
 			: [];
-	return overlayOpenGatewayCatalog(shipped, listing, prices);
+	const refreshed = overlayOpenGatewayCatalog(shipped, listing, prices);
+	if (refreshed.length === 0)
+		throw new Error("OpenGateway listing has no servable chat models; keeping the last good catalog");
+	return refreshed;
 }
 
 function isOpenGatewayChatModel(model: AnyModel): model is OpenGatewayModel {

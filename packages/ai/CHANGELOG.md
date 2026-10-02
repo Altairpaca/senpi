@@ -6,7 +6,7 @@
 
 ### Added
 
-- OpenGateway models refresh at runtime once OpenGateway is configured: a model the gateway starts serving appears without a senpi release, sized and priced from the gateway's own listing and price table, and a model the gateway retires disappears. A failed refresh keeps the last good list. ([#2552](https://github.com/code-yeongyu/senpi/issues/2552))
+- OpenGateway models refresh at runtime once OpenGateway is configured: a chat model the gateway starts serving appears without a senpi release when the gateway publishes its price and context window (or it is a serving tier of a shipped model), sized and priced from the gateway's own listing and price table; a model the gateway retires or stops listing disappears. A failed refresh keeps the last good list. ([#2552](https://github.com/code-yeongyu/senpi/issues/2552))
 
 ### Changed
 

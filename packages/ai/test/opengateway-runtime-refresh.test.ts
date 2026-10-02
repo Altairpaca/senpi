@@ -242,4 +242,14 @@ describe("OpenGateway runtime catalog refresh", () => {
 		expect(result.errors.get("opengateway")?.message).toMatch(/no models/);
 		expect(catalogIds(models).sort()).toEqual([...SHIPPED_IDS].sort());
 	});
+
+	it("keeps the last good list when the gateway lists only retired models", async () => {
+		serveGateway({ status: 200, body: gatewayResponse(SHIPPED_IDS.map((id) => ({ id, status: "retired" }))) });
+		const models = await configuredRuntime();
+
+		const result = await models.refresh({ providers: ["opengateway"] });
+
+		expect(result.errors.get("opengateway")?.message).toMatch(/no servable chat models/);
+		expect(catalogIds(models).sort()).toEqual([...SHIPPED_IDS].sort());
+	});
 });
