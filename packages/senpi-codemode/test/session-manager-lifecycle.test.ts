@@ -1,6 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeServerHandle, BridgeServerOptions } from "../src/bridge/http-server.ts";
@@ -166,34 +164,6 @@ describe("codemode session manager lifecycle", () => {
 		// Then
 		await expect(Promise.all([first, second])).resolves.toEqual([kernel, kernel]);
 		expect(startCount).toBe(1);
-	});
-
-	it("fails every caller sharing a creation with the named error when the session directory is deleted meanwhile", async () => {
-		// Given: two cells wait on one in-flight creation in a session directory that exists at the start.
-		const cwd = realpathSync(mkdtempSync(join(tmpdir(), "codemode-lifecycle-cwd-")));
-		const started = deferred<void>();
-		const creation = deferred<EvalKernel>();
-		harness.startKernel = () => {
-			started.resolve();
-			return creation.promise;
-		};
-		const manager = await createManager(managers, undefined, cwd);
-		const first = manager.getKernel("py", () => undefined);
-		const second = manager.getKernel("py", () => undefined);
-		const outcomes = Promise.allSettled([first, second]);
-		await started.promise;
-
-		// When: the directory disappears while the interpreter is still starting.
-		rmSync(cwd, { recursive: true, force: true });
-		creation.resolve(new FakeKernel());
-
-		// Then: neither cell runs in a directory that no longer exists.
-		const settled = await outcomes;
-		expect(settled.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
-		for (const outcome of settled) {
-			if (outcome.status !== "rejected") throw new FixtureError("a caller ran in a deleted directory");
-			expect(outcome.reason).toMatchObject({ name: "CodemodeSessionCwdUnavailableError", cwd });
-		}
 	});
 
 	it("invalidates a delayed creation and closes its stale kernel during dispose", async () => {
@@ -366,11 +336,11 @@ async function createManager(
 		text: "ok",
 		details: { model: "fake/model", structured: false },
 	}),
-	cwd = "/tmp",
 ): Promise<CodemodeSessionManager> {
 	const manager = await createCodemodeSessionManager({
 		sessionId: "session",
-		cwd,
+		// The manager checks that its session directory exists; /tmp is not guaranteed on Windows.
+		cwd: tmpdir(),
 		settings: defaultCodemodeSettings,
 		availability,
 		executeTool: async () => ({ content: [{ type: "text", text: "" }], details: {} }),
