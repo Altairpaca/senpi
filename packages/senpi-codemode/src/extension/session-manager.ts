@@ -125,14 +125,16 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
 		if (this.#disposePromise) throw new CodemodeSessionDisposedError();
-		await assertSessionCwdAvailable(this.#options.cwd);
 		// Persistent kernels are reused across cells, but each cell needs its OWN
 		// onMessage (bound to that cell's streaming state). Rebind on every call via
 		// a stable dispatcher so the 2nd+ cell's text/display/log output is attributed
 		// to the current cell, not the one that first created the kernel.
 		this.#onMessageRefs.set(language, onMessage);
 		const existing = this.#kernels.get(language);
-		if (existing) return existing;
+		if (existing) {
+			await assertSessionCwdAvailable(this.#options.cwd);
+			return existing;
+		}
 		const pending = this.#kernelCreations.get(language);
 		if (pending) return await pending;
 		// A bound method, never a closure in this frame: the dispatcher outlives every
@@ -206,6 +208,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		onMessage: (message: KernelToHostMessage) => void,
 		generation: number,
 	): Promise<EvalKernel> {
+		await assertSessionCwdAvailable(this.#options.cwd);
 		const kernel = await this.#createKernel(language, onMessage);
 		if (generation !== this.#generation) {
 			await kernel.close();
