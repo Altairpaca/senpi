@@ -15,6 +15,9 @@
 ### Fixed
 
 - RPC prompt acknowledgement waits now account for observed conversation compaction instead of reporting failure after 30 seconds while the same input can still be admitted later. The real host response remains authoritative, waiting stays bounded, and transport failures still reject immediately ([#2548](https://github.com/code-yeongyu/senpi/pull/2548) by [@namseokyoo](https://github.com/namseokyoo)).
+
+- When one model family's usage limit runs out on an Anthropic subscription account (for example "You've reached your Fable limit"), only that family is blocked on that account, until its own reset. Opus and Sonnet on the same account keep serving, the fallback chain moves only the limited model to its next rung, and `/claude-account` and `/account` show the block as "blocked for fable until ...". Session and weekly limits, auth failures and disabled accounts still block the whole account, and existing account-level cooldowns are honoured until they expire (reported in [oh-my-openagent#9421](https://github.com/code-yeongyu/oh-my-openagent/issues/9421) by [@hsnam-OBELAB](https://github.com/hsnam-OBELAB)) ([#2555](https://github.com/code-yeongyu/senpi/issues/2555)).
+
 - The PR changelog gate no longer fails with `spawnSync git ENOBUFS` once a changelog grows past one mebibyte, which every pull request touching this changelog hit after the 2026.10.1-3 release.
 - Clipboard images pasted with Ctrl+V now attach in direct local Warp-on-WSL sessions by handling Warp's empty bracketed-paste event. Raw Ctrl+V and Alt+V remain supported, without changing non-empty text paste or other terminal defaults ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
 
