@@ -197,6 +197,92 @@ export function demoteUnavailableToolReferences(params: MessageCreateParamsStrea
 }
 
 /**
+ * Some Anthropic-compatible endpoints run a native tool search inside one request
+ * but reject every `tool_reference` replayed from history once the request
+ * carries more than a handful of tools: "Tool reference '<name>' not found in
+ * available tools" even though `tools` defines the name (senpi #2568). The
+ * request is then retried with the replay demoted to text: a native search pair
+ * (`server_tool_use` plus its `tool_search_tool_result`, which may sit in a later
+ * assistant message) becomes a note naming the tools it found, and
+ * `tool_reference` items inside a client `tool_result` become one text item.
+ * Returns `params` unchanged when the history replays no reference.
+ */
+export function demoteToolReferenceReplay(params: MessageCreateParamsStreaming): MessageCreateParamsStreaming {
+	const messages = params.messages;
+	if (!Array.isArray(messages) || messages.length === 0) return params;
+
+	const searchUseIds = new Set<string>();
+	for (const message of messages) {
+		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const block of message.content) {
+			if (isRecord(block) && block.type === "tool_search_tool_result" && typeof block.tool_use_id === "string") {
+				searchUseIds.add(block.tool_use_id);
+			}
+		}
+	}
+
+	let changed = false;
+	const rewrittenMessages: MessageParam[] = [];
+	for (const message of messages) {
+		if (!Array.isArray(message.content)) {
+			rewrittenMessages.push(message);
+			continue;
+		}
+		let messageChanged = false;
+		const content: ContentBlockParam[] = [];
+		for (const block of message.content) {
+			if (message.role === "assistant" && isRecord(block)) {
+				if (block.type === "server_tool_use" && typeof block.id === "string" && searchUseIds.has(block.id)) {
+					messageChanged = true;
+					continue;
+				}
+				if (block.type === "tool_search_tool_result") {
+					messageChanged = true;
+					const names = isNativeToolSearchResultBlock(block)
+						? toolReferenceNames(block.content.tool_references)
+						: [];
+					content.push({
+						type: "text",
+						text: names.length > 0 ? `Tool search found: ${names.join(", ")}` : "Tool search found no tools.",
+					});
+					continue;
+				}
+			}
+			if (isRecord(block) && block.type === "tool_result" && Array.isArray(block.content)) {
+				const names = toolReferenceNames(block.content);
+				if (names.length > 0) {
+					messageChanged = true;
+					const kept = block.content.filter((item) => !(isRecord(item) && item.type === "tool_reference"));
+					content.push({
+						...block,
+						content: [...kept, { type: "text", text: `Tools loaded: ${names.join(", ")}` }],
+					} as ContentBlockParam);
+					continue;
+				}
+			}
+			content.push(block);
+		}
+		if (!messageChanged) {
+			rewrittenMessages.push(message);
+			continue;
+		}
+		changed = true;
+		if (content.length > 0) rewrittenMessages.push({ ...message, content });
+	}
+
+	return changed ? { ...params, messages: rewrittenMessages } : params;
+}
+
+function toolReferenceNames(items: readonly unknown[]): string[] {
+	const names = new Set<string>();
+	for (const item of items) {
+		if (isRecord(item) && item.type === "tool_reference" && typeof item.tool_name === "string")
+			names.add(item.tool_name);
+	}
+	return [...names];
+}
+
+/**
  * Folds every `tool_reference` item in `items` onto the request's own tool
  * name and drops the ones that still do not resolve. Returns undefined when
  * nothing changed so callers can keep the original block identity.
