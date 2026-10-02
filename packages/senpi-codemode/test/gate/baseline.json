@@ -3092,6 +3092,7 @@
       "workers": 0,
       "sockets": 0,
       "handles": 0,
+      "timers": 0,
       "subscriptions": 0,
       "listeners": 0
     },
@@ -3561,6 +3562,7 @@
       "workers": 0,
       "sockets": 0,
       "handles": 0,
+      "timers": 0,
       "subscriptions": 0,
       "listeners": 0
     },
@@ -4008,6 +4010,7 @@
       "workers": 0,
       "sockets": 0,
       "handles": 0,
+      "timers": 0,
       "subscriptions": 0,
       "listeners": 0
     },
@@ -4455,6 +4458,7 @@
       "workers": 0,
       "sockets": 0,
       "handles": 0,
+      "timers": 0,
       "subscriptions": 0,
       "listeners": 0
     },
@@ -4902,6 +4906,7 @@
       "workers": 0,
       "sockets": 0,
       "handles": 0,
+      "timers": 0,
       "subscriptions": 0,
       "listeners": 0
     }
@@ -4943,6 +4948,7 @@
       "packages/senpi-codemode/src/extension/kernel-preludes.ts",
       "packages/senpi-codemode/src/extension/runtime-factory.ts",
       "packages/senpi-codemode/src/extension/runtime-info.ts",
+      "packages/senpi-codemode/src/extension/session-cwd.ts",
       "packages/senpi-codemode/src/extension/session-manager-proxy.ts",
       "packages/senpi-codemode/src/extension/session-manager.ts",
       "packages/senpi-codemode/src/extension/skill-contribution.ts",
@@ -5031,12 +5037,14 @@
     ],
     "firstKernel": [
       "node:async_hooks",
+      "node:buffer",
       "node:child_process",
       "node:crypto",
       "node:events",
       "node:fs",
       "node:fs/promises",
       "node:http",
+      "node:module",
       "node:os",
       "node:path",
       "node:readline",
@@ -5067,6 +5075,7 @@
       "packages/senpi-codemode/src/extension/kernel-preludes.ts",
       "packages/senpi-codemode/src/extension/runtime-factory.ts",
       "packages/senpi-codemode/src/extension/runtime-info.ts",
+      "packages/senpi-codemode/src/extension/session-cwd.ts",
       "packages/senpi-codemode/src/extension/session-manager-proxy.ts",
       "packages/senpi-codemode/src/extension/session-manager.ts",
       "packages/senpi-codemode/src/extension/skill-contribution.ts",
@@ -5100,6 +5109,7 @@
       "packages/senpi-codemode/src/kernels/js/run-queue.ts",
       "packages/senpi-codemode/src/kernels/js/webview-host.ts",
       "packages/senpi-codemode/src/kernels/js/worker-core.js",
+      "packages/senpi-codemode/src/kernels/js/worker-cwd.js",
       "packages/senpi-codemode/src/kernels/js/worker-entry.js",
       "packages/senpi-codemode/src/kernels/js/worker-global-sizes.js",
       "packages/senpi-codemode/src/kernels/js/worker-heap.js",
@@ -5178,31 +5188,31 @@
     ]
   },
   "observations": {
-    "targetRevision": "d8b19b2360982f2eb3d8c1eea609d18e6da46517",
+    "targetRevision": "f794a6828d4b5d1fe506692bdfa6c5d9ca1dd153",
     "platform": "darwin",
     "js-bun/version": "1.4.2",
     "js-bun/memoryAfter50Cells": {
-      "liveBytes": 2893856,
+      "liveBytes": 3084949,
       "measure": "heap"
     },
     "js-node/version": "v26.7.0",
     "js-node/memoryAfter50Cells": {
-      "liveBytes": 17303604,
+      "liveBytes": 17533116,
       "measure": "heap"
     },
-    "py/version": "Python 3.14.7",
+    "py/version": "Python 3.13.12",
     "py/memoryAfter50Cells": {
-      "liveBytes": 27427296,
+      "liveBytes": 25313760,
       "measure": "footprint"
     },
-    "rb/version": "ruby 4.0.7 (2026-09-15 revision 229531a6cf) +PRISM [arm64-darwin25]",
+    "rb/version": "ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [arm64-darwin25]",
     "rb/memoryAfter50Cells": {
-      "liveBytes": 19022328,
+      "liveBytes": 18334248,
       "measure": "footprint"
     },
     "jl/version": "julia version 1.12.7",
     "jl/memoryAfter50Cells": {
-      "liveBytes": 167232352,
+      "liveBytes": 168051600,
       "measure": "footprint"
     },
     "virtualSpecifiers": [
@@ -5862,6 +5872,8 @@
       "test/js-kernel-orphan-collect-bun.test.ts/JavaScript kernel collects a retired worker's children Given a worker retired while it owned a running child when the retirement returns then the child is collected, not a zombie": "passed",
       "test/js-kernel-orphan-collect-bun.test.ts/JavaScript kernel collects a retired worker's children Given no collector when a worker is retired then its killed child is left as a zombie of the host": "passed",
       "test/js-kernel-prelude-source-url.test.ts/JS kernel loader prelude source URL (#2263) evaluates the prelude under one stable URL across cells of a worker generation": "passed",
+      "test/js-kernel-session-cwd-bun.test.ts/JavaScript kernel under Bun runs in the session's project directory Given a session on a project when a cell uses Bun's relative path APIs then they resolve in that project": "passed",
+      "test/js-kernel-session-cwd-bun.test.ts/JavaScript kernel under Bun runs in the session's project directory Given a relative path that only exists in the host directory when a cell reads it then it is not found": "passed",
       "test/js-kernel-session-env.test.ts/JavaScriptKernel session environment exposes PI_SESSION_ID to env(), process.env, and child processes in the worker kernel": "passed",
       "test/js-kernel-session-env.test.ts/JavaScriptKernel session environment exposes PI_SESSION_ID to env(), process.env, and child processes in the inline fallback kernel": "passed",
       "test/js-kernel-session-env.test.ts/JavaScriptKernel session environment clears inherited PI_* values the active session does not set": "passed",
@@ -6217,6 +6229,8 @@
       "test/session-env.test.ts/session environment contract omits optional variables the session does not provide": "passed",
       "test/session-env.test.ts/session environment contract clears inherited cwd and goal-store values when the session environment is empty": "passed",
       "test/session-env.test.ts/session environment contract replaces inherited PI_* values instead of leaking them": "passed",
+      "test/session-manager-cwd-lifecycle.test.ts/codemode session directory checks around kernel creation fails every caller sharing a creation with the named error when the session directory is deleted meanwhile": "passed",
+      "test/session-manager-cwd-lifecycle.test.ts/codemode session directory checks around kernel creation never hands out a kernel when the session is disposed while the directory is rechecked": "passed",
       "test/session-manager-first-cell-pin.test.ts/kernel dispatcher first-cell pin (#2260) collects the settled first cell's listener once it is released": "passed",
       "test/session-manager-js-local-roots.test.ts/codemode session manager JS local roots Given artifactsDir when a js cell writes a local:// path then it resolves under <artifactsDir>/local": "passed",
       "test/session-manager-js-local-roots.test.ts/codemode session manager JS local roots Given explicit localRoots when a js cell reads a local:// path then it resolves under that root": "passed",
@@ -6239,6 +6253,17 @@
       "test/session-manager-reserved-bridge.test.ts/codemode session manager reserved bridge routing answers __schema__ from the tool catalog without touching executeTool": "passed",
       "test/session-manager-reserved-bridge.test.ts/codemode session manager reserved bridge routing still forwards ordinary tool names straight to executeTool": "passed",
       "test/session-manager-reserved-bridge.test.ts/codemode session manager reserved bridge routing marshals ordinary tool results into the same {text, images} shape the JS kernel receives": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given a session opened on a project when a js cell uses relative paths then they resolve in that project": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given relative Buffer and file: URL paths when a js cell reads them then they resolve in the project": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given an absolute Buffer path when a js cell reads it then the path is used as given": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given an explicit relative cwd for a child when a js cell spawns it then it is taken from the project": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given the session moves to another project when the next js cell runs then it sees the new directory": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given a session opened on a project when a python cell uses relative paths then they resolve in that project": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given a session whose directory does not exist when a js cell starts then it fails with a named error": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given a session whose directory does not exist when a py cell starts then it fails with a named error": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given a session directory under a regular file when a js cell starts then it fails with the named error": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given a session directory that cannot be resolved for another reason when a js cell starts then the real error surfaces": "passed",
+      "test/session-manager-session-cwd.test.ts/codemode eval kernels run in the session's project directory Given the project directory is deleted mid-session when the next js cell starts then it fails with a named error": "passed",
       "test/session-manager.test.ts/codemode session manager kernel reuse rebinds onMessage per cell for a reused JS kernel": "passed",
       "test/status-events.test.ts/upsertStatusEvent appends distinct agent events in first-seen order": "passed",
       "test/status-events.test.ts/upsertStatusEvent coalesces agent progress by id without changing its original position": "passed",
@@ -6383,17 +6408,6 @@
       "test/output/tail-line-ring.test.ts/TailLineRing matches the byte-tail last-lines reference for: production budget with a long numbered stream": "passed",
       "test/output/tail-line-ring.test.ts/TailLineRing keeps only the last eight lines of a small stream": "passed",
       "test/output/tail-line-ring.test.ts/TailLineRing keeps the unterminated partial line as the window's last element": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses local assets": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses the sidecar": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets replaces Bun virtual paths": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws an actionable error": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws for missing local assets": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /$bunfs/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path ~BUN/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path %7EBUN/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /tmp/x": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through JS resolver": "passed",
-      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through Python resolver": "passed",
       "test/kernels/rb/subprocess-kernel-interrupt.test.ts/SubprocessKernel interrupt interrupts the active cell and starts queued work after confirmed exit": "passed",
       "test/kernels/rb/subprocess-kernel-interrupt.test.ts/SubprocessKernel interrupt fails closed after SIGKILL grace expires without confirmed exit": "passed",
       "test/kernels/rb/subprocess-kernel.test.ts/SubprocessKernel sends bridge init over stdin without leaking port or token into argv": "passed",
@@ -6419,7 +6433,18 @@
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
       "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one": "passed",
-      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed"
+      "test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given an interpreter footprint over the notice threshold but under the ceiling when a cell settles then the result reports the footprint without a notice": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses local assets": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets uses the sidecar": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets replaces Bun virtual paths": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws an actionable error": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets throws for missing local assets": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /$bunfs/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path ~BUN/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path %7EBUN/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets detects virtual path /tmp/x": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through JS resolver": "passed",
+      "test/kernels/shared/runtime-asset.test.ts/codemode runtime assets propagates through Python resolver": "passed"
     }
   },
   "unmeasured": []
