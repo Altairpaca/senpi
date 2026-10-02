@@ -455,7 +455,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 100
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -474,12 +474,35 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Run eval kernel WebView suites (Bun)
+      # LAB (senpi#2353): ten fresh-process iterations with named launch phases; removed before merge.
+      - name: Run eval kernel WebView suites (Bun) - LAB x10
         shell: bash
-        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts --reporter=default --reporter=json --outputFile=vitest-webview.json
+        run: |
+          fails=0
+          for i in $(seq -w 1 10); do
+            export SENPI_WEBVIEW_TRACE_DIR="$RUNNER_TEMP/wvtrace/iter-$i"
+            started=$(date +%s)
+            if bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts --reporter=default > "$RUNNER_TEMP/vitest-$i.txt" 2>&1; then result=pass; else result=FAIL; fails=$((fails+1)); fi
+            echo "LAB iter=$i result=$result secs=$(( $(date +%s) - started ))"
+            grep -E ' [x×] | FAIL |Error' "$RUNNER_TEMP/vitest-$i.txt" | head -20 || true
+            if [ "$result" = FAIL ]; then echo "--- trace iter-$i"; cat "$SENPI_WEBVIEW_TRACE_DIR"/*.log; fi
+          done
+          echo "--- first-cell phases"
+          node scripts/lab-webview-phases.mjs "$RUNNER_TEMP/wvtrace"
+          echo "LAB fails=$fails/10"
+          [ "$fails" -eq 0 ]
         working-directory: packages/senpi-codemode
 
+      - name: Upload LAB traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: webview-lab-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wvtrace
+          if-no-files-found: warn
+
       - name: Require the WebView suites to have executed
+        if: false
         shell: bash
         run: |
           node -e '

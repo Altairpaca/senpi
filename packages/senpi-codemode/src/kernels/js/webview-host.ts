@@ -1,12 +1,18 @@
 import type { MessagePort } from "node:worker_threads";
 import type { WebViewServiceConnection } from "@code-yeongyu/senpi";
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
+import { labTrace } from "./webview-lab-trace.js";
 import { bridgeError } from "./worker-host.ts";
 
 export type WebViewConnector = () => Promise<WebViewServiceConnection>;
 
 // Loaded on the first WebView a cell asks for, so starting a kernel never pays for the host barrel.
-const connectThroughHost: WebViewConnector = async () => (await import("@code-yeongyu/senpi")).connectWebViewService();
+const connectThroughHost: WebViewConnector = async () => {
+	labTrace("host.barrel-import.start");
+	const barrel = await import("@code-yeongyu/senpi");
+	labTrace("host.barrel-import.end");
+	return await barrel.connectWebViewService();
+};
 
 /**
  * The WebView clients one worker generation asked for. Chrome-backed `Bun.WebView`s only run on the
@@ -42,9 +48,12 @@ export class KernelWebViewClients {
 
 	async #grant(requestId: string): Promise<void> {
 		let connection: WebViewServiceConnection;
+		labTrace("host.grant.start");
 		try {
 			connection = await this.#connect();
+			labTrace("host.grant.connected");
 		} catch (error) {
+			labTrace("host.grant.failed", String(error));
 			const cause = error instanceof Error ? error : new Error(String(error));
 			if (!this.#retired) this.#post({ type: "webview-port", requestId, ok: false, error: bridgeError(cause) }, []);
 			return;

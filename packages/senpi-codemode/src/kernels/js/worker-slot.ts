@@ -5,6 +5,7 @@ import { retireWorker, type WorkerRetirement } from "./interrupt-bounds.ts";
 import type { JavaScriptKernelMode } from "./kernel-contract.ts";
 import type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 import { KernelWebViewClients } from "./webview-host.ts";
+import { labTrace } from "./webview-lab-trace.js";
 import { WorkerStartupCancelledError } from "./worker-host.ts";
 import { startWorkerWithInlineFallback } from "./worker-startup.ts";
 
@@ -55,6 +56,7 @@ export class WorkerSlot {
 			const generation = this.#generation === 0 ? ++this.#generation : this.#generation;
 			const controller = new AbortController();
 			this.#startupAbort = controller;
+			labTrace("worker.startup.start", `generation=${generation}`);
 			const ready = startWorkerWithInlineFallback(
 				{
 					options: this.#options,
@@ -72,6 +74,7 @@ export class WorkerSlot {
 			void ready.then(
 				() => {
 					if (this.#ready !== ready) return;
+					labTrace("worker.startup.ready", `generation=${generation}`);
 					this.#startupAbort = null;
 					this.#mode = this.#worker?.mode ?? this.#mode;
 				},
@@ -95,10 +98,13 @@ export class WorkerSlot {
 		const webViews = this.#webViews;
 		this.#worker = null;
 		this.#webViews = null;
+		labTrace("worker.retire.start");
 		const retirement = worker
 			? await retireWorker(worker, this.#options.interruptBounds?.terminateDeadlineMs)
 			: "terminated";
+		labTrace("worker.retire.terminated", retirement);
 		await webViews?.release();
+		labTrace("worker.retire.webviews-released");
 		return retirement;
 	}
 

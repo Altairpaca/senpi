@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { labTrace } from "../src/kernels/js/webview-lab-trace.js";
 import { retireBunChrome } from "../../coding-agent/src/core/webview/bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebViewClass } from "../../coding-agent/src/core/webview/native-webview.ts";
 import { type WebViewClientGrant, WebViewService } from "../../coding-agent/src/core/webview/webview-service.ts";
@@ -6,6 +7,8 @@ import { bunChromeChildren, bunWebViewAvailable } from "./eval/webview-fixtures.
 
 // Its own file, so the launch it drives runs in a process no earlier test has stopped or killed Chrome in.
 describe.skipIf(!bunWebViewAvailable)("a Chrome launch whose kernel is released mid-launch", () => {
+	beforeEach((context) => labTrace("test.start", context.task.name));
+	afterEach((context) => labTrace("test.end", `${context.task.name} state=${context.task.result?.state ?? "?"}`));
 	it("retires the Chrome a launch starts after its kernel was released mid-launch", async () => {
 		const nativeClass = mainThreadWebViewClass();
 		if (!nativeClass) throw new Error("expected Bun.WebView on the main thread");

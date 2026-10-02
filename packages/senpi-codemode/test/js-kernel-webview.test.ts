@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { labTrace } from "../src/kernels/js/webview-lab-trace.js";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 import {
@@ -37,6 +38,8 @@ function fixtureUrl(): string {
 }
 
 describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout: TEST_TIMEOUT_MS }, () => {
+	beforeEach((context) => labTrace("test.start", context.task.name));
+	afterEach((context) => labTrace("test.end", `${context.task.name} state=${context.task.result?.state ?? "?"}`));
 	beforeAll(async () => {
 		page = await serveFixturePage();
 	});

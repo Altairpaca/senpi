@@ -3,6 +3,7 @@ import { MessageChannel, type MessagePort } from "node:worker_threads";
 import { retireBunChrome, settleDeadBunChrome } from "./bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebView, type NativeWebViewClass } from "./native-webview.ts";
 import { closeQuietly, WebViewServiceClient } from "./webview-client.ts";
+import { startMainThreadLagSampler, webviewTrace } from "./webview-trace.ts";
 
 export interface WebViewClientGrant {
 	readonly clientId: string;
@@ -24,6 +25,7 @@ export class WebViewService {
 
 	constructor(webViewClass: NativeWebViewClass) {
 		this.#webViewClass = webViewClass;
+		startMainThreadLagSampler();
 	}
 
 	get viewCount(): number {
@@ -72,15 +74,21 @@ export class WebViewService {
 	): Promise<NativeWebView> {
 		this.#launching++;
 		let view: NativeWebView;
+		webviewTrace("service.launch.start", `views=${this.viewCount} launching=${this.#launching}`);
 		try {
 			view = await this.#launch(onConsole ? { ...options, console: onConsole } : options);
 		} catch (error) {
 			this.#launching--;
+			webviewTrace("service.launch.failed", String(error));
 			await this.#retireIfIdle();
 			throw error;
 		}
 		this.#launching--;
-		if (adopt(view)) return view;
+		if (adopt(view)) {
+			webviewTrace("service.launch.adopted");
+			return view;
+		}
+		webviewTrace("service.launch.unadopted");
 		closeQuietly(view);
 		await this.#retireIfIdle();
 		throw new Error("WebView client released");
@@ -89,12 +97,18 @@ export class WebViewService {
 	async #launch(viewOptions: Readonly<Record<string, unknown>>): Promise<NativeWebView> {
 		// No retirement is scheduled while a launch is pending, so the one awaited here is the last.
 		await this.#retiring;
+		webviewTrace("service.launch.retiring-awaited");
 		await settleDeadBunChrome();
+		webviewTrace("service.launch.dead-settled");
 		this.#chromeInUse = true;
 		for (let attempt = 1; ; attempt++) {
 			try {
-				return new this.#webViewClass(viewOptions);
+				webviewTrace("service.construct.start", `attempt=${attempt}`);
+				const view = new this.#webViewClass(viewOptions);
+				webviewTrace("service.construct.end", `attempt=${attempt}`);
+				return view;
 			} catch (error) {
+				webviewTrace("service.construct.error", `attempt=${attempt} ${String(error)}`);
 				if (!isChromeRelaunchWindow(error) || attempt >= RELAUNCH_ATTEMPTS) throw error;
 				await new Promise((resolve) => setTimeout(resolve, RELAUNCH_RETRY_MS));
 			}
@@ -113,6 +127,7 @@ export class WebViewService {
 	#retireIfIdle(): Promise<void> {
 		if (!this.#chromeInUse || this.#busy()) return this.#retiring;
 		this.#chromeInUse = false;
+		webviewTrace("service.retire.scheduled");
 		this.#retiring = this.#retiring.then(() => (this.#busy() ? undefined : retireBunChrome(this.#webViewClass)));
 		return this.#retiring;
 	}

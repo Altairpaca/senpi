@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { labTrace } from "../src/kernels/js/webview-lab-trace.js";
 import { mainThreadWebViewService } from "../../coding-agent/src/core/webview/webview-service.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
@@ -49,6 +50,8 @@ async function onlyBunChrome(): Promise<number> {
 }
 
 describe.skipIf(!bunWebViewAvailable)("a misbehaving Chrome behind the main-thread WebView service", BUDGET, () => {
+	beforeEach((context) => labTrace("test.start", context.task.name));
+	afterEach((context) => labTrace("test.end", `${context.task.name} state=${context.task.result?.state ?? "?"}`));
 	beforeAll(async () => {
 		page = await serveFixturePage();
 	});
