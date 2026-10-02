@@ -1956,3 +1956,21 @@ Every built-in mutating tool goes through this queue inside the harness.
 ### Expected merge conflict zones
 
 None from upstream (it no longer ships this file); future ports from `packages/durable/src/tools/file-mutation-queue.ts`.
+
+## 2026-10-02 - Edit argument preparation no longer rewrites the provider call (upstream v1.0.0 sync, port P-3)
+
+### What changed
+
+- `packages/agent/src/harness/tools/edit.ts`: `prepareEditArguments` normalizes a copy of the arguments (edits sent as a JSON string, a single edit object, or a top-level oldText/newText pair) and returns array input unchanged so validation rejects it.
+
+### Why
+
+Upstream fixed the same defect in its durable copy: the fork assigned the normalized `edits` back into the provider's tool-call arguments, which rewrote the recorded assistant message and threw on frozen arguments. The fork keeps its harness, so the fix is ported here.
+
+### Why an extension could not handle it
+
+Argument preparation runs inside the harness before any tool hook sees the call.
+
+### Expected merge conflict zones
+
+None from upstream (it no longer ships this file); future ports from `packages/durable/src/tools/edit.ts`.
