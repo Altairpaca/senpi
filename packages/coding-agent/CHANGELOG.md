@@ -8,6 +8,8 @@
 
 - Shared RPC hosts report `runtimeBuildId`, a content digest of the runtime they loaded at startup (engine files, plugins, flavour, platform), in `get_protocol_info` and `host status`, and `host ensure` reports the `clientRuntimeBuildId` it would launch, so a client can tell two builds of one version apart and see a bundle replaced in place. `senpi host handoff --when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>` asks the running host to hand over to the caller's runtime at its next idle point: it stops admitting new work, lets running turns finish, never aborts one, answers `handover_pending` meanwhile, and keeps serving if the successor does not come up. A repeated operation id returns the existing operation.
 
+- Settled user questions identify their answering surface (`resolvedBy`) in tool results, `ask-user:settled` notifications, and RPC `question_resolved` frames. Extensions can also observe the new `ask-user:closed` event once for every terminal outcome, including silent cancellations; `ask-user:settled` keeps firing for the same outcomes as before ([#2533](https://github.com/code-yeongyu/senpi/issues/2533)).
+
 ### Changed
 
 ### Fixed
