@@ -119,6 +119,8 @@ const kernelToHostMessageSchema = Type.Union([
 		valueRepr: Type.Optional(Type.String()),
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		/** Host-set: the bracketed notice that this cell ran on a kernel restarted after its interpreter died. */
+		notice: Type.Optional(Type.String()),
 	}),
 	Type.Object({
 		type: Type.Literal("result"),
@@ -127,6 +129,7 @@ const kernelToHostMessageSchema = Type.Union([
 		error: bridgeErrorSchema,
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		notice: Type.Optional(Type.String()),
 	}),
 	Type.Object({ type: Type.Literal("closed") }),
 	Type.Object({ type: Type.Literal("webview-connect"), requestId: Type.String({ minLength: 1 }) }),
