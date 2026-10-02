@@ -34,6 +34,26 @@
 
 - `agent-session.ts`: the tool-search service field and lookups, `dispose()`, and the line after `new ExtensionRunner` in `_buildRuntime`.
 
+## 2026-10-01 - Veto configuration reload during prompt admission
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the existing reload veto checks the prompt-admission hold before and after asynchronous extension gates, and reload rechecks admission immediately before teardown. The shared `isIdle` behavior remains unchanged.
+- `packages/coding-agent/src/core/reload-veto.ts`: owns the extracted reload decision and preserves extension cancellation reasons.
+- `packages/coding-agent/src/core/agent-session.ts`: once the veto passes, `reload` holds the session work barrier until the rebuilt runtime is bound, so a prompt submitted during teardown starts on the new generation instead of the retiring one.
+
+### Why
+
+- A watched configuration change could request a reload during the first request's admission, retiring extension APIs that the request was still using. This complements the lazy-activation generation reset in senpi#2506 and covers the first-message failure reported in oh-my-openagent#9365.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the synchronous admission hold. Changing shared idleness also changes hook submission and queued continuation behavior, so admission is checked only at the reload boundary.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `reload` and `checkReloadVeto`.
+
 ## 2026-10-01 - Skill catalog: read a skill when it would change the work, not on a loose match (senpi#2505)
 
 ### What changed
