@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { daemonEnvironment } from "../../src/modes/rpc/host-daemon-env.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { probeHost } from "../../src/modes/rpc/host-probe.ts";
-import { hostLaunchProfile } from "../../src/modes/rpc/protocol-identity.ts";
+import { socketHostLaunchProfile } from "../../src/modes/rpc/protocol-identity.ts";
 import { computeRuntimeBuildId } from "../../src/modes/rpc/runtime-build-id.ts";
 import {
 	GENERATION_HOST_ARGS,
@@ -44,7 +44,7 @@ function pluginBuild(qa: GenerationScratch, name: string): readonly string[] {
 }
 
 async function describeBuild(hostArgs: readonly string[]): Promise<HandoverBuild> {
-	const profile = hostLaunchProfile(["--mode", "rpc", "--multi-session", ...hostArgs], process.cwd());
+	const profile = socketHostLaunchProfile(hostArgs, process.cwd());
 	return { hostArgs, runtimeBuildId: await computeRuntimeBuildId({ profile: profile.core }) };
 }
 

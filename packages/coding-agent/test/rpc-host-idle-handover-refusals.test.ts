@@ -30,7 +30,10 @@ const pids: number[] = [];
 
 afterEach(async () => {
 	for (const peer of peers.splice(0)) peer.destroy();
-	for (const model of models.splice(0)) await model.close();
+	for (const model of models.splice(0)) {
+		model.release();
+		await model.close();
+	}
 	for (const pid of pids.splice(0)) if (signalGeneration(pid, "SIGKILL")) await waitForPidGone(pid, 20_000);
 	for (const qa of scratches.splice(0)) {
 		await reapProcessesUnder(qa.root);
@@ -112,7 +115,7 @@ describe.skipIf(process.platform === "win32")("conditional idle handover refusal
 	it("refuses from the CLI when the target is not the runtime this CLI would launch", async () => {
 		const host = await rig("ih-cli");
 		const target = { socket: host.qa.socket, agentDir: host.qa.agentDir };
-		const spec = { hostArgs: host.buildA.hostArgs, env: generationEnv(host.qa) };
+		const spec = { hostArgs: host.buildA.hostArgs, policy: { idleExitMs: 600_000 }, env: generationEnv(host.qa) };
 		const terms = {
 			operationId: "op-cli",
 			ifInstanceId: host.instanceId,

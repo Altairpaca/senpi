@@ -21,7 +21,10 @@ const pids: number[] = [];
 
 afterEach(async () => {
 	for (const peer of peers.splice(0)) peer.destroy();
-	for (const model of models.splice(0)) await model.close();
+	for (const model of models.splice(0)) {
+		model.release();
+		await model.close();
+	}
 	for (const pid of pids.splice(0)) if (signalGeneration(pid, "SIGKILL")) await waitForPidGone(pid, 20_000);
 	for (const qa of scratches.splice(0)) {
 		await reapProcessesUnder(qa.root);

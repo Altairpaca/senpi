@@ -13,7 +13,7 @@ import {
 } from "./host-decision.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
 import { hostSummary } from "./host-status.ts";
-import { hostLaunchProfile } from "./protocol-identity.ts";
+import { socketHostLaunchProfile } from "./protocol-identity.ts";
 import { computeRuntimeBuildId } from "./runtime-build-id.ts";
 
 export const HOST_EXIT_OK = 0;
@@ -53,7 +53,7 @@ export function identityPayload(
  * argv. A runtime that cannot be read reports `null` (unverified) rather than failing the request.
  */
 export async function clientRuntimeBuildId(spec: ResolvedHostLaunchSpec): Promise<string | null> {
-	const profile = hostLaunchProfile(["--mode", "rpc", "--multi-session", ...spec.hostArgs], process.cwd());
+	const profile = socketHostLaunchProfile(spec.hostArgs, process.cwd());
 	return computeRuntimeBuildId({ profile: profile.core }).catch((cause: unknown) => {
 		process.stderr.write(`senpi host: runtime identity unreadable: ${String(cause)}\n`);
 		return null;
