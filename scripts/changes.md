@@ -1752,3 +1752,23 @@ These are repository check scripts, not runtime behaviour.
 ### Expected merge conflict zones
 
 Upstream edits to the browser smoke entry list; keep the fork's entries.
+
+## 2026-10-02 - Adopted upstream binary build script (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/build-binaries.sh`
+
+The upstream build script change is kept.
+
+### Why
+
+Repository build tooling from upstream; the fork does not modify it.
+
+### Why an extension could not handle it
+
+Build tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream edits to scripts/build-binaries.sh at the next sync.

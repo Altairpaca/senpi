@@ -4510,3 +4510,35 @@ These are the experimental client and worker entry points themselves, which sit 
 ### Expected merge conflict zones
 
 Upstream edits to `src/experimental/**`: keep ours for the listed files and keep the durable/vacation trees absent.
+
+## 2026-10-02 - Adopted upstream session, settings and runtime changes (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`
+- `packages/coding-agent/src/core/agent-session.ts`
+- `packages/coding-agent/src/core/extensions/loader.ts`
+- `packages/coding-agent/src/core/model-runtime.ts`
+- `packages/coding-agent/src/core/remote-catalog-provider.ts`
+- `packages/coding-agent/src/core/sdk.ts`
+- `packages/coding-agent/src/core/settings-manager.ts`
+- `packages/coding-agent/src/index.ts`
+- `packages/coding-agent/src/main.ts`
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+- `packages/coding-agent/src/modes/interactive/theme/system-theme.ts`
+
+The upstream changes are kept with fork behaviour preserved: `--provider` requires `--model` (D-7), `quietStartup: "header"` (D-6), `/reload` enables tools newly added to defaultTools, one copy of each rendered user-message line, pastel system-theme chroma, and the absorbed main's runtime catalog work.
+
+### Why
+
+Each is an upstream improvement that does not break a fork behaviour; the fork alternatives (tuiMode regular, fork header, eval-only policy) are preserved and tested.
+
+### Why an extension could not handle it
+
+Session runtime, settings and interactive mode own these paths below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to session/settings/runtime paths at the next sync.

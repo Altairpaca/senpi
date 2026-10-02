@@ -5706,3 +5706,30 @@ TextContent and pi-messages request construction.
 - Expected merge conflict zones: LOW, the `validateServerRetryDelayMs` signature and its single call site in `getRetryDelayMs`.
 
 - Covered production paths: `packages/ai/src/utils/provider-retry.ts`.
+
+## 2026-10-02 - Adopted upstream provider and auth fixes (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/ai/package.json`
+- `packages/ai/src/api/anthropic-messages.ts`
+- `packages/ai/src/api/constrained-sampling.ts`
+- `packages/ai/src/api/openai-responses-shared.ts`
+- `packages/ai/src/auth/oauth/anthropic.ts`
+- `packages/ai/src/env-api-keys.ts`
+- `packages/ai/src/providers/anthropic.ts`
+- `packages/ai/src/utils/overflow.ts`
+
+The upstream v1.0.0 (and absorbed main) changes are kept: Anthropic workload identity federation, the Anthropic copy-code login, non-strict tools when a schema uses rejected keywords (through the fork's constrained-sampling policy), Z.AI CN overflow detection, grammar tool-call replay id dropping, and the lightweight `./models` entry with its export block.
+
+### Why
+
+These are additive upstream fixes and features the fork adopted (D-12) on top of its kept provider/auth behaviour; every recorded pin stays.
+
+### Why an extension could not handle it
+
+Provider authentication and API behaviour live in this package, below any extension hook.
+
+### Expected merge conflict zones
+
+Upstream provider/auth changes in these files at the next sync.
