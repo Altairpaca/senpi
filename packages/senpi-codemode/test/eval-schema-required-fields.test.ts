@@ -51,6 +51,34 @@ describe("eval action schemas", () => {
 		}
 	});
 
+	// senpi#2569: Anthropic-compatible gateways (CodeBuddy-backed routes) reject the whole
+	// request, HTTP 400 code 11133, when a root anyOf branch carries an enum. Every wire form
+	// the providers send must keep the branches enum-free (const-typed literals instead).
+	it("keeps every root anyOf branch free of enum in each provider's wire schema", () => {
+		const enumPaths = (node: unknown, path: string): string[] => {
+			if (node === null || typeof node !== "object") return [];
+			const own = "enum" in node ? [path] : [];
+			return [...own, ...Object.entries(node).flatMap(([key, value]) => enumPaths(value, `${path}.${key}`))];
+		};
+		const anthropic = buildAnthropicWarmPromptCacheParams(getModel("anthropic", "claude-haiku-4-5"), {
+			messages: [],
+			tools: [tool],
+		}).tools?.[0];
+		const wires: Array<[string, unknown]> = [
+			["raw", schema],
+			["anthropic", anthropic && "input_schema" in anthropic ? anthropic.input_schema : undefined],
+			["openai-compat", normalizeToolParametersForOpenAICompat({ ...schema })],
+			["moonshot", normalizeToolParametersForMoonshot({ ...schema })],
+		];
+		for (const [label, wire] of wires) {
+			expect(wire, label).toBeDefined();
+			const branches = (JSON.parse(JSON.stringify(wire)) as { anyOf?: unknown[] }).anyOf ?? [];
+			// The raw schema keeps the run/control union; a converter may flatten it away entirely.
+			if (label === "raw") expect(branches.length).toBeGreaterThan(0);
+			expect(branches.flatMap((branch, i) => enumPaths(branch, `${label}.anyOf[${i}]`))).toEqual([]);
+		}
+	});
+
 	it("falls back from preferred OpenAI strict sampling without requiring run fields on controls", () => {
 		expect(
 			convertResponsesTools([{ ...tool, constrainedSampling: { type: "json_schema", strict: "prefer" } }])[0],
