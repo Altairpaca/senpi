@@ -8,6 +8,7 @@
 
 - Every live eval kernel in a process is listed in a process-wide registry with its session, language, measure, and last-known memory reading; a JavaScript kernel keeps the heap reading from each result and idle collection and answers an on-demand heap query between cells without running one, while Python, Ruby, and Julia kernels report their interpreter's footprint on demand. Thresholds, notices, and the result frame are unchanged ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
 
+- Added an interleaved eval timing benchmark with A/A calibration, process CPU accounting across interpreter crashes, and explicit inconclusive results for incomplete or noisy comparisons. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 ### Changed
 
 ### Fixed
