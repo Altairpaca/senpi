@@ -16,6 +16,7 @@ import { RubyKernel } from "../kernels/rb/kernel.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
 import { marshalToolResult } from "../tool/image.ts";
 import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from "../tool/types.ts";
+import { assertSessionCwdAvailable } from "./session-cwd.ts";
 
 export interface CodemodeSessionManager extends EvalKernelManager {
 	dispose(): Promise<void>;
@@ -124,6 +125,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
 		if (this.#disposePromise) throw new CodemodeSessionDisposedError();
+		await assertSessionCwdAvailable(this.#options.cwd);
 		// Persistent kernels are reused across cells, but each cell needs its OWN
 		// onMessage (bound to that cell's streaming state). Rebind on every call via
 		// a stable dispatcher so the 2nd+ cell's text/display/log output is attributed
