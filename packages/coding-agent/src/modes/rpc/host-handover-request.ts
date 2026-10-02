@@ -52,20 +52,22 @@ export async function idleHandoverOutcome(
 	terms: IdleHandoverTerms,
 ): Promise<HostOutcome> {
 	const { socket } = target;
+	if (process.platform === "win32") {
+		return refusal("refuse", undefined, { reason: "upgrade_unsupported", socket, operationId: terms.operationId });
+	}
 	const before = await probeProtocolInfo(socket, PROBE_TIMEOUT_MS);
 	const refuse = (reason: string, extra: Record<string, unknown> = {}) =>
 		refusal("refuse", before, { reason, socket, operationId: terms.operationId, ...extra });
-	if (process.platform === "win32") return refuse("upgrade_unsupported");
-	if (before === undefined) return refuse("no_host");
-	if (before.runtimeBuildId === terms.targetRuntimeBuildId) {
-		return answered(target, "handover_completed", before, terms, null);
-	}
 	const client = await clientRuntimeBuildId(spec);
 	if (client !== terms.targetRuntimeBuildId) {
 		return refuse("target_build_mismatch", {
 			detail: `this CLI launches ${client ?? "a runtime it cannot read"}`,
 			clientRuntimeBuildId: client,
 		});
+	}
+	if (before === undefined) return refuse("no_host");
+	if (before.runtimeBuildId === terms.targetRuntimeBuildId) {
+		return answered(target, "handover_completed", before, terms, null);
 	}
 	if (before.instanceId !== terms.ifInstanceId || before.generation !== terms.ifGeneration) {
 		return refuse("stale_generation", {
@@ -141,7 +143,7 @@ async function answered(
 		payload: {
 			action,
 			...identityPayload(target.socket, await servingPid(target), host),
-			operationId: terms.operationId,
+			operationId: typeof handover?.operation_id === "string" ? handover.operation_id : terms.operationId,
 			clientRuntimeBuildId: terms.targetRuntimeBuildId,
 			handover,
 		},

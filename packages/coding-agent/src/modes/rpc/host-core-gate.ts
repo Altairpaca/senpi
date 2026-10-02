@@ -74,7 +74,7 @@ export class HostCoreGate {
 	 * is told the outcome instead of reading a closed connection.
 	 */
 	async answered(): Promise<void> {
-		await Promise.allSettled([...this.answering]);
+		while (this.answering.size > 0) await Promise.allSettled([...this.answering]);
 	}
 
 	async dispatch(command: RpcCommand): Promise<object | undefined> {

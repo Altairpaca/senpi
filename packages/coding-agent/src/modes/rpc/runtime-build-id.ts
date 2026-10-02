@@ -24,10 +24,11 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBunBinary } from "../../config.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { BUILTIN_PATH_PREFIX } from "../../core/source-info.ts";
 import type { RpcLaunchProfileCore } from "./rpc-types.ts";
 
 /** Host capability: reports `runtimeBuildId` and runs the conditional idle handover. */
@@ -65,7 +66,7 @@ export function parseRuntimeBuildId(value: unknown): string | undefined {
 
 export async function computeRuntimeBuildId(input: RuntimeBuildIdInput): Promise<string> {
 	const source = input.source ?? loadedRuntimeSource();
-	const plugins = await Promise.all(input.profile.extensions.map((path) => treeDigest(path)));
+	const plugins = await Promise.all(input.profile.extensions.map((path) => extensionDigest(path)));
 	const manifest = {
 		schema: 1,
 		flavour: source.flavour,
@@ -102,6 +103,15 @@ function nearestPackageRoot(start: string): string {
 	}
 }
 
+/**
+ * A `builtin:<name>` extension is code inside the runtime, already in its digest; the launch profile
+ * resolves it against the cwd like a path, so only its name counts here.
+ */
+function extensionDigest(path: string): Promise<string> {
+	const name = basename(path);
+	return name.startsWith(BUILTIN_PATH_PREFIX) ? Promise.resolve(sha256(name)) : treeDigest(path);
+}
+
 async function treeDigest(root: string): Promise<string> {
 	const files: [string, string][] = [];
 	const top = await stat(root);
@@ -116,9 +126,14 @@ async function treeDigest(root: string): Promise<string> {
 }
 
 async function collect(dir: string, prefix: string, files: [string, string][], seen: Set<string>): Promise<void> {
+	// A real directory is digested once, under the first (sorted) name that reaches it, so a symlinked
+	// alias never adds a second copy of the same files.
 	if (seen.has(dir)) return;
 	seen.add(dir);
-	for (const entry of await readdir(dir, { withFileTypes: true })) {
+	const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
+		a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+	);
+	for (const entry of entries) {
 		if (entry.name.startsWith(".") || EXCLUDED_NAMES.has(entry.name)) continue;
 		const path = join(dir, entry.name);
 		const name = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
@@ -127,7 +142,6 @@ async function collect(dir: string, prefix: string, files: [string, string][], s
 		if (kind.isDirectory()) await collect(await realpath(path), name, files, seen);
 		else if (kind.isFile() && !EXCLUDED_FILE.test(entry.name)) files.push([name, path]);
 	}
-	seen.delete(dir);
 }
 
 async function mapLimited<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {

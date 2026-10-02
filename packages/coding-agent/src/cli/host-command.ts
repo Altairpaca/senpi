@@ -237,8 +237,11 @@ function handoverTerms(flags: Readonly<Record<string, string>>): IdleHandoverTer
 	if (!operationId || !ifInstanceId || !generation || !targetRuntimeBuildId) {
 		return `Error: "${APP_NAME} host handoff --when idle" needs --operation, --if-instance, --if-generation and --target-build.`;
 	}
-	if (!/^\d+$/.test(generation)) return `Error: --if-generation must be a non-negative integer.`;
-	return { operationId, ifInstanceId, ifGeneration: Number(generation), targetRuntimeBuildId };
+	const ifGeneration = Number(generation);
+	if (!/^\d+$/.test(generation) || !Number.isSafeInteger(ifGeneration)) {
+		return `Error: --if-generation must be a non-negative integer.`;
+	}
+	return { operationId, ifInstanceId, ifGeneration, targetRuntimeBuildId };
 }
 
 /** One line, synchronously, so an exit cannot truncate the answer the caller is parsing. */

@@ -18,10 +18,19 @@
  *      reopen by path). A successor that does not come up leaves this generation serving and admits
  *      input again (`handover_blocked { reason }`).
  *
- * A repeated `operationId` answers with the operation that already exists, whatever its state, so a
- * caller that lost a reply can ask again without starting a second one.
+ * A repeated `operationId` with the same terms answers with the operation that already exists,
+ * whatever its state, so a caller that lost a reply can ask again without starting a second one; the
+ * same id with other terms is refused (`operation_conflict`). Another id for the same target joins
+ * the pending operation and is answered with ITS id; another target is refused
+ * (`handover_in_progress`) until the pending operation ends.
  */
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+
+/**
+ * Set on a successor launched by an idle handover: the runtime it must report. A successor that
+ * computes another id exits before it listens, so the socket never moves to the wrong runtime.
+ */
+export const EXPECTED_RUNTIME_BUILD_ID_ENV = "SENPI_RPC_HOST_EXPECTED_RUNTIME_BUILD_ID";
 
 export type HandoverState = "handover_pending" | "handover_switching" | "handover_completed" | "handover_blocked";
 
@@ -124,7 +133,11 @@ export class HostIdleHandover {
 
 	async begin(request: IdleHandoverRequest): Promise<HandoverAnswer> {
 		const current = this.operation;
-		if (current !== undefined && current.view.operationId === request.operationId) return answer(current);
+		if (current !== undefined && current.view.operationId === request.operationId) {
+			return sameTerms(current.request, request)
+				? answer(current)
+				: { kind: "refused", reason: "operation_conflict", detail: "this operation id names other terms" };
+		}
 		if (current !== undefined && current.view.state !== "handover_blocked") {
 			return current.request.targetRuntimeBuildId === request.targetRuntimeBuildId
 				? answer(current)
@@ -198,6 +211,14 @@ export class HostIdleHandover {
 		if (this.timer !== undefined) clearInterval(this.timer);
 		this.timer = undefined;
 	}
+}
+
+function sameTerms(a: IdleHandoverRequest, b: IdleHandoverRequest): boolean {
+	return (
+		a.targetRuntimeBuildId === b.targetRuntimeBuildId &&
+		a.ifInstanceId === b.ifInstanceId &&
+		a.ifGeneration === b.ifGeneration
+	);
 }
 
 function answer(operation: Operation): HandoverAnswer {

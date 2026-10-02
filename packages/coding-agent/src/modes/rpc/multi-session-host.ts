@@ -20,6 +20,7 @@ import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
+import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { type HostMemoryReading, HostMemorySampler } from "./host-memory-sampler.ts";
@@ -250,6 +251,13 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	let handoffAnnounced = false;
 	const hostContext = hostSessionContext(socketPath);
 	const runtimeBuildId = await startupRuntimeBuildId();
+	const expected = process.env[EXPECTED_RUNTIME_BUILD_ID_ENV];
+	if (expected !== undefined && expected !== runtimeBuildId) {
+		// An idle handover started this host for a runtime it does not run (the files changed since the
+		// request). Exiting before it listens leaves the predecessor serving, and the handover blocked.
+		hostLog(`runtime ${runtimeBuildId ?? "unreadable"} is not the handover target ${expected}; exiting`);
+		process.exit(1);
+	}
 	const canHandOver = runtimeBuildId !== undefined && process.platform !== "win32";
 	const { router, handle, handover, handoverAnswered } = createHostCore(
 		options,

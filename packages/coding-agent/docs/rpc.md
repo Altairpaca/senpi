@@ -322,7 +322,9 @@ A POSIX socket host with an id advertises `runtime_identity_handover` and accept
 by the named generation, and `handover_unsupported` when the host does not advertise the capability. It then
 sends the host `begin_handover`, and the HOST owns the operation:
 
-1. it re-checks, before anything else, that it is the named generation (`stale_generation`);
+1. a request with an `operationId` it already holds answers with that operation when the terms match (and
+   `operation_conflict` when they do not); a new operation is checked first against the named generation
+   (`stale_generation`);
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
@@ -330,13 +332,15 @@ sends the host `begin_handover`, and the HOST owns the operation:
    judgement a drain parks by. A retained session with no work is idle. The wait has no deadline; a long turn
    delays the handover and is never aborted for it;
 4. it hands the socket over through the generation handoff above, launched from the CLI's runtime with the
-   CLI's daemon environment, and drains. A successor that never answers is stopped, the host keeps serving and
-   admits work again (`handover_blocked`).
+   CLI's daemon environment, and drains. The successor is told the target id and exits before it listens when
+   its own runtime digests to another one (its files changed since the request). A successor that never
+   answers is stopped, the host keeps serving and admits work again (`handover_blocked`).
 
 The answer is exit 0 `{ action: "handover_completed" | "handover_pending", operationId, handover, ... }`: a host
 idle at once hands over before answering, and a request whose target already serves the socket answers
 `handover_completed` without touching anything. A repeated `operationId` answers with the operation that
-already exists; a different one for another target while one is pending refuses `handover_in_progress`. A
+already exists; another id for the same target joins the pending operation (the answer names its id), and
+one for another target while one is pending refuses `handover_in_progress`. A
 blocked operation refuses `handover_blocked` with the successor's failure in `detail`; a lost reply exits 1
 `handover_reply_lost` after checking whether the target now serves the socket. `host status` shows the
 operation as `handover: { operation_id, state, target_runtime_build_id, reason?, successor? }` with `state`

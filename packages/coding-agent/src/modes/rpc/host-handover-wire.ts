@@ -10,7 +10,13 @@
 import { writeDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { handoffHost } from "./host-handoff.ts";
-import type { HandoverAnswer, HandoverOutcome, HandoverView, IdleHandoverRequest } from "./host-idle-handover.ts";
+import {
+	EXPECTED_RUNTIME_BUILD_ID_ENV,
+	type HandoverAnswer,
+	type HandoverOutcome,
+	type HandoverView,
+	type IdleHandoverRequest,
+} from "./host-idle-handover.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { selectDrainVerdicts } from "./session-drain.ts";
@@ -121,7 +127,9 @@ export function isHostIdle(
 
 /**
  * Runs the handover the host decided on: the ordinary generation handoff, launched from the
- * runtime of the CLI that asked, with that CLI's daemon environment. The env is applied EXACTLY:
+ * runtime of the CLI that asked, with that CLI's daemon environment. The successor is told the
+ * runtime it must report (`EXPECTED_RUNTIME_BUILD_ID_ENV`) and exits before it listens when it
+ * computes another one, so a runtime changed since the request leaves this generation serving. The env is applied EXACTLY:
  * every name this host has and the CLI did not send is removed, so the successor does not inherit
  * the old runtime's view of the world.
  */
@@ -134,6 +142,7 @@ export async function performIdleHandover(context: {
 	const env: Record<string, string | null> = {};
 	for (const name of Object.keys(process.env)) env[name] = null;
 	Object.assign(env, request.env);
+	env[EXPECTED_RUNTIME_BUILD_ID_ENV] = request.targetRuntimeBuildId;
 	const result = await handoffHost({
 		socket,
 		agentDir,
@@ -145,7 +154,12 @@ export async function performIdleHandover(context: {
 	if (result.action === "refuse") {
 		return { ok: false, reason: result.detail === undefined ? result.reason : `${result.reason}: ${result.detail}` };
 	}
-	await writeDaemonEnvKeys(createHostDaemonPaths({ socket, agentDir }), Object.keys(request.env).sort());
+	// Bookkeeping after the socket moved: a failed write must not report a live successor as blocked.
+	await writeDaemonEnvKeys(createHostDaemonPaths({ socket, agentDir }), Object.keys(request.env).sort()).catch(
+		(cause: unknown) => {
+			process.stderr.write(`senpi rpc handover: could not record the daemon environment: ${String(cause)}\n`);
+		},
+	);
 	const successor = await probeProtocolInfo(socket, SUCCESSOR_PROBE_TIMEOUT_MS);
 	return {
 		ok: true,

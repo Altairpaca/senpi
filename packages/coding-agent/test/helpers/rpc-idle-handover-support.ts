@@ -5,6 +5,7 @@
  * that tells them apart is the content digest - which is the point of `runtimeBuildId`.
  */
 import { writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { daemonEnvironment } from "../../src/modes/rpc/host-daemon-env.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
@@ -17,6 +18,7 @@ import {
 	generationEnv,
 	generationScratch,
 	JsonlPeer,
+	reapProcessesUnder,
 	supervisorLaunch,
 	type WireRecord,
 } from "./rpc-generation-support.ts";
@@ -50,6 +52,16 @@ async function describeBuild(hostArgs: readonly string[]): Promise<HandoverBuild
 
 export async function startHandoverRig(label: string, modelOrigin?: string): Promise<HandoverRig> {
 	const qa = generationScratch(label);
+	try {
+		return await startRigIn(qa, modelOrigin);
+	} catch (error) {
+		await reapProcessesUnder(qa.root);
+		await rm(qa.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+		throw error;
+	}
+}
+
+async function startRigIn(qa: GenerationScratch, modelOrigin: string | undefined): Promise<HandoverRig> {
 	writeRpcModelsJson(qa.agentDir, modelOrigin ?? "http://127.0.0.1:1");
 	const buildA = await describeBuild(pluginBuild(qa, "build-a"));
 	const buildB = await describeBuild(pluginBuild(qa, "build-b"));
