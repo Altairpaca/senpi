@@ -16,6 +16,17 @@
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
+		},
+		"senpi#2444": {
+			"additions": [
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas preserves valid runs and controls through provider schema conversions",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps every root anyOf branch free of enum in each provider's wire schema",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas falls back from preferred OpenAI strict sampling without requiring run fields on controls",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas requires every run field with an explicit or omitted action",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas keeps list, peek and stop usable without run fields",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas declares every required field inside the branch that requires it"
+			],
+			"reason": "Reviewed with senpi#2444 (fixes #2240 and #2569): contract tests for the self-contained, const-typed eval action branches, including the gateway-safe no-enum-in-root-anyOf check. The intended eval schema change is recorded in baseline.json in the same PR."
 		}
 	}
 }
