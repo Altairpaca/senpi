@@ -50,6 +50,15 @@
     "legacyContracts/test/upstream-v1-codemode-parity.test.ts/collapsed preview counts wrapped lines one long JSON line does not fill the screen when collapsed"
    ],
    "reason": "senpi#2557 (upstream v1.0.0 sync), lead+release-senpi approved: new tests from the sync only. The eval display-image validation tests cover the ported upstream fix d2931ad3d (invalid base64 dropped, detected type kept); the parity tests cover upstream v1.0.0 behaviours the fork already has (Windows Bun worker path, wrapped-line preview). No prompt, schema, invariant, census or import change, and no existing contract changed."
+  },
+  "29": {
+   "additions": [
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready retires the stalled launch and answers the create from a fresh Chrome",
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready fails the create naming the phase, with no Chrome left, once every launch stalled",
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready keeps another kernel's ready view on the shared Chrome while a stalled create fails",
+    "legacyContracts/test/js-kernel-webview-readiness.test.ts/a Chrome launch that never becomes ready does not relaunch for a client released while its launch stalls, and leaves no Chrome behind"
+   ],
+   "reason": "Node 29 (senpi#2353): RED/GREEN regressions for a Chrome-backed WebView launch whose CDP attach never completes (bounded readiness, retire, one relaunch, sibling views kept). No prompt, schema, helper, or default changes."
   }
  }
 }
