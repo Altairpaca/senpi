@@ -10,13 +10,7 @@
 import { writeDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { handoffHost } from "./host-handoff.ts";
-import {
-	EXPECTED_RUNTIME_BUILD_ID_ENV,
-	type HandoverAnswer,
-	type HandoverOutcome,
-	type HandoverView,
-	type IdleHandoverRequest,
-} from "./host-idle-handover.ts";
+import type { HandoverAnswer, HandoverOutcome, HandoverView, IdleHandoverRequest } from "./host-idle-handover.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { selectDrainVerdicts } from "./session-drain.ts";
@@ -142,12 +136,12 @@ export async function performIdleHandover(context: {
 	const env: Record<string, string | null> = {};
 	for (const name of Object.keys(process.env)) env[name] = null;
 	Object.assign(env, request.env);
-	env[EXPECTED_RUNTIME_BUILD_ID_ENV] = request.targetRuntimeBuildId;
 	const result = await handoffHost({
 		socket,
 		agentDir,
 		hostArgs: request.hostArgs,
 		env,
+		expectedRuntimeBuildId: request.targetRuntimeBuildId,
 		...(request.policy !== undefined && { policy: request.policy }),
 		launch: (argv) => ({ command: request.launch.command, args: [...request.launch.args, ...argv] }),
 	});

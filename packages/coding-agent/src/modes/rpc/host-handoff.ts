@@ -53,6 +53,8 @@ export interface HandoffHostOptions {
 	readonly hostArgs?: readonly string[];
 	/** Environment for the successor; a `null` value removes an inherited variable. */
 	readonly env?: Readonly<Record<string, string | null>>;
+	/** The runtimeBuildId the successor must compute; set on its environment, never inherited by later daemons. */
+	readonly expectedRuntimeBuildId?: string;
 	readonly policy?: HostLifecyclePolicyInput;
 	/**
 	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a

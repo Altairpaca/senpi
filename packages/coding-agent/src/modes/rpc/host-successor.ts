@@ -100,6 +100,7 @@ export async function startSuccessor(context: {
 			env: successorHostEnvironment({
 				agentDir: options.agentDir,
 				env: options.env,
+				expectedRuntimeBuildId: options.expectedRuntimeBuildId,
 				paths,
 				generation,
 				instanceId,
