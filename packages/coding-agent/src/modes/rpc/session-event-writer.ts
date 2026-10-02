@@ -11,6 +11,7 @@ import type {
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
+import { SessionOpenTurns } from "./session-open-turns.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
@@ -103,6 +104,7 @@ export class SessionEventWriter {
 	private readonly sealedSessions = new Set<string>();
 	/** Sessions whose lifecycle records stay on their attached connections (`kind: "worker"`). */
 	private readonly workerSessions = new Set<string>();
+	private readonly openTurns = new SessionOpenTurns();
 	private readonly writeRaw: RawWriter;
 	private readonly waitForBackpressure?: BackpressureWaiter;
 	private readonly scheduleFlush: FlushScheduler;
@@ -246,6 +248,7 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
+		this.openTurns.note(sessionId, record.type);
 		const targets = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// A record is only walked and re-serialized when a target asked for placeholders;
 		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
@@ -412,6 +415,9 @@ export class SessionEventWriter {
 	 */
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
 		if (this.sealedSessions.has(sessionId)) return;
+		this.settleOpenTurns(sessionId);
+		// A settle that overflowed the stdio lane has already sealed the session through closeSession.
+		if (this.sealedSessions.has(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
 		const targetId = this.connectionContext.getStore();
@@ -460,6 +466,9 @@ export class SessionEventWriter {
 	}
 
 	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
+		if (this.sealedSessions.has(sessionId)) return;
+		this.settleOpenTurns(sessionId);
+		// A settle that overflowed the stdio lane has already sealed the session through closeSession.
 		if (this.sealedSessions.has(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
@@ -551,8 +560,16 @@ export class SessionEventWriter {
 	 * emit under this id again; without this every host-closed session would
 	 * leave a permanent sealed-handle (and snapshot) entry behind.
 	 */
+	/** The settles a seal would strand (session-open-turns.ts), published while the session can still write. */
+	private settleOpenTurns(sessionId: string): void {
+		for (let owed = this.openTurns.take(sessionId); owed > 0; owed -= 1) {
+			this.enqueue(sessionId, { type: "agent_settled", reason: "session_closed" });
+		}
+	}
+
 	forgetSession(sessionId: string): void {
 		this.sealedSessions.delete(sessionId);
+		this.openTurns.take(sessionId);
 		this.workerSessions.delete(sessionId);
 		this.fanout.forgetSession(sessionId);
 	}

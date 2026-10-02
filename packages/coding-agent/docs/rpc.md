@@ -2977,6 +2977,10 @@ Emitted after the full session-level run settles. At this point senpi will not c
 {"type": "agent_settled"}
 ```
 
+A multi-session host that closes, parks or releases a session mid-turn first publishes the settle that turn will now
+never write, with `"reason": "session_closed"`, on the same broadcast as every `agent_settled`: whoever counted the
+`agent_start` (the supervisor's idle-exit observer included) sees it end. Older hosts never send `reason`.
+
 ### turn_start / turn_end
 
 A turn consists of one assistant response plus any resulting tool calls and results.

@@ -20,6 +20,32 @@
 - `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the drain state declarations, the supersession watch callback and `performShutdown`'s release call.
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `_test` options and the line before `writeHostRegistration`.
 
+## 2026-10-02 - Idle task hosts give their cost back (senpi#2567)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: once `ensureHost` has returned a host, it schedules the budgeted gc pass (`packages/coding-agent/src/modes/rpc/host-gc-pass.ts`, marker `packages/coding-agent/src/modes/rpc/host-gc-pass-marker.ts`) from an unref'd immediate, outside every lock, never awaited. `packages/coding-agent/src/modes/rpc/host-gc.ts` exports `gcEndpoint` so both entry points share one evidence and removal path. The ensure's start, stop, client identity and option types move to `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-stop.ts`, `packages/coding-agent/src/modes/rpc/host-ensure-client.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`, and the tmpdir reaper to `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`; `host-ensure.ts` re-exports every name it exported before.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the in-process registry reports its size after every open and close (`onSizeChange`); its types, the entry `switchSession` factory, the path-claim reconciliation and attach-on-open move to `packages/coding-agent/src/modes/rpc/session-registry-types.ts`, `packages/coding-agent/src/modes/rpc/session-registry-switch.ts`, `packages/coding-agent/src/modes/rpc/session-registry-claims.ts` and `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, re-exported from `session-registry.ts`.
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`, `packages/coding-agent/src/modes/rpc/host-observers.ts`, `packages/coding-agent/src/modes/rpc/host-core-gate.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a host that drops to zero sessions collects once (at most once a minute) and broadcasts `host_trimmed` one tick later; `startHostObservers` moves to `host-observers.ts`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-host-lifecycle-types.ts`: the host lifecycle record types move to their own module (re-exported) and gain `RpcHostTrimmedEvent`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: before a session is sealed (close, park, release), the writer publishes the `agent_settled { reason: "session_closed" }` of every turn the session's records opened and did not settle; the writer also renders `host_trimmed`.
+
+### Why
+
+An idle task shard stayed resident: a session closed mid-turn left the supervisor's busy count above zero for good (its real settle is written after the seal and dropped), a host that dropped to zero sessions held its peak footprint for its whole idle window, and dead endpoint records under an agent directory were only ever reaped by an operator running `senpi host gc`.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/session-event-writer.ts` owns sealing and lifecycle delivery, `packages/coding-agent/src/modes/rpc/session-registry.ts` owns the session count, `packages/coding-agent/src/modes/rpc/host-ensure.ts` owns the ensure path, and the trim runs on the host loop (`packages/coding-agent/src/modes/rpc/multi-session-host.ts`); none of these is reachable from an extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueue`, `closeSession`, `sealWithLifecycle`, `forgetSession`, `broadcastHostRecord`.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: imports, the class header, `openSession` (attach branch and `entries.set`/`delete`).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: imports and `ensureHost`; anything that touched `startHost` or the stop helpers now lives in `host-ensure-start.ts`/`host-ensure-stop.ts`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` registry options, `runStdioHost`/`runSocketHost` observer wiring.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the host lifecycle event block, now a re-export.
+
 ## 2026-10-02 - Prompt acknowledgements wait through observed compaction
 
 ### What changed
