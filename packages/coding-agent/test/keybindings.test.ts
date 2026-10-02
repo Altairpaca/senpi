@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { isWarpWslSession } from "@earendil-works/pi-tui";
+import { describe, expect, it } from "vitest";
 import { KEYBINDINGS, useWindowsKeybindings } from "../src/core/keybindings.ts";
 
 describe("Windows keybinding defaults", () => {
