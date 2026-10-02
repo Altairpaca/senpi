@@ -13,10 +13,12 @@ export function compareReports(input: Comparison) {
 	const failures: string[] = unmeasured.map((section) => `unmeasured section: ${section}`);
 	const additions: string[] = [];
 	for (const runtime of input.baseline.runtimes) {
+		if (!isMeasured(`runtimes/${runtime.id}`)) continue;
 		if (!input.report.runtimes.find((item) => item.id === runtime.id)?.available)
 			failures.push(`required interpreter missing: ${runtime.id}`);
 	}
 	for (const runtime of input.report.runtimes) {
+		if (!isMeasured(`runtimes/${runtime.id}`)) continue;
 		if (!runtime.available && !input.baseline.runtimes.some((item) => item.id === runtime.id))
 			failures.push(`required interpreter missing: ${runtime.id}`);
 	}

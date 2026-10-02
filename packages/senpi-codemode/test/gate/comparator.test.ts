@@ -55,10 +55,11 @@ describe("eval regression report comparison", () => {
 		const report: GateReport = {
 			...baseline,
 			helperCensus: {},
+			runtimes: [],
 			invariants: {},
 			imports: {},
 			observations: { platform: "darwin" },
-			unmeasured: ["helperCensus/js", "invariants/terminalEvents", "imports", "legacyContracts"],
+			unmeasured: ["helperCensus/js", "runtimes", "invariants/terminalEvents", "imports", "legacyContracts"],
 		};
 		const result = compareReports({ baseline, report, additions: [] });
 		expect(result.exitCode).toBe(1);
