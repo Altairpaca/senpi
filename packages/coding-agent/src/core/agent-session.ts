@@ -5122,6 +5122,8 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
+		const unloadedTokens = new Set<SkillInvocationToken>();
+		const skippedSkillNames: string[] = [];
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -5130,17 +5132,10 @@ export class AgentSession {
 				continue;
 			}
 
-			if (skillBlocks.length >= maxExpansions) {
-				this._extensionRunner.emitError({
-					extensionPath: "skill:expansion",
-					event: "skill_expansion",
-					error: `Expanded at most ${maxExpansions} skills; remaining skill commands were left as literal text.`,
-				});
-				break;
-			}
-
-			removedTokens.push(token);
+			// A repeat of an already expanded skill adds no context, so it never counts
+			// against the cap and keeps its positional marker.
 			if (expandedSkillNames.has(skill.name)) {
+				removedTokens.push(token);
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -5148,6 +5143,15 @@ export class AgentSession {
 				});
 				continue;
 			}
+
+			if (skillBlocks.length >= maxExpansions) {
+				removedTokens.push(token);
+				unloadedTokens.add(token);
+				if (!skippedSkillNames.includes(skill.name)) skippedSkillNames.push(skill.name);
+				continue;
+			}
+
+			removedTokens.push(token);
 
 			try {
 				const content = readFileSync(skill.filePath, "utf-8");
@@ -5174,8 +5178,16 @@ export class AgentSession {
 			}
 		}
 
+		if (skippedSkillNames.length > 0) {
+			const count = skippedSkillNames.length;
+			this._extensionRunner.emitError({
+				extensionPath: "skill:expansion",
+				event: "skill_expansion",
+				error: `Skipped ${count} skill${count === 1 ? "" : "s"} (${skippedSkillNames.join(", ")}): at most ${maxExpansions} skills load per prompt. Raise maxSkillExpansionsPerPrompt to load more.`,
+			});
+		}
 		if (skillBlocks.length === 0) return text;
-		const userRequest = removeSkillInvocationTokens(text, removedTokens);
+		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });
 		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}
