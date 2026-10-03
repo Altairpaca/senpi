@@ -6,6 +6,8 @@
 
 ### Added
 
+- An edited assistant response can be continued with no new prompt: the RPC `continue_from_leaf` command (advertised as the `continue_from_leaf` capability) starts a turn from the session leaf through a hidden nudge the transcript never shows, refusing with `streaming`, `nothing_to_continue`, or `leaf_not_assistant` (the conversation ends on a user message). `get_available_models` rows report `supportsAssistantPrefill` (false for every model today) ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
+
 ### Changed
 
 ### Fixed
