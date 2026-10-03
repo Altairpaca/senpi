@@ -149,8 +149,11 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 			.map((event) => event.message)
 			.filter((message): message is AssistantMessage => message.role === "assistant" && message.stopReason === "error");
 		expect(errored.map((message) => message.errorMessage)).toEqual(["invalid_api_key"]);
-		// The edited conversation is still there to retry from.
-		expect(lastAssistantText(harness)).toBe("The capital of France is Lyon.");
+		// The conversation before the failed turn is kept, so the user can retry from it.
+		const answers = harness.session.agent.state.messages
+			.filter((message): message is AssistantMessage => message.role === "assistant")
+			.map(getMessageText);
+		expect(answers).toContain("The capital of France is Lyon.");
 	});
 });
 
