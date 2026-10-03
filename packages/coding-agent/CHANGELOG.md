@@ -6,13 +6,15 @@
 
 ### Added
 
+- `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning.
+
 ### Changed
 
 ### Fixed
 
 - Fixed sessions on a provider lane that owns compaction (Anthropic subscription) refusing every prompt with "Context remains above the compaction threshold" after a resume, until restart: a resume compaction requirement is now re-checked against the current context and model, and a committed manual `/compact` clears it ([#2589](https://github.com/code-yeongyu/senpi/issues/2589), [#2488](https://github.com/code-yeongyu/senpi/issues/2488)).
 - Re-using an already loaded skill on a later line of the same prompt (for example `$review` on line 3 after the per-prompt skill cap was reached) no longer triggers the cap warning or stays as bare text: it keeps its `[skill: review]` marker where it was written.
-- Skills skipped by the per-prompt skill cap no longer reach the model as bare `$name` / `/skill:name` text: they become `[skill not loaded: name]` where they were written, so the model knows it does not have them. The cap warning is shown once per prompt.
+- Skills skipped by the per-prompt skill cap no longer reach the model as bare `$name` / `/skill:name` text: they become `[skill not loaded: name]` where they were written, so the model knows it does not have them. One warning per prompt names the skipped skills and the cap, for example `Skipped 2 skills (s6, s7): at most 5 skills load per prompt.` Thanks to @trac3r00.
 
 ### Removed
 

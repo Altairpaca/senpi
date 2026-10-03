@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, a new skill is not expanded and is replaced in place by `[skill not loaded: name]` (leading or inline); scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt.
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, a new skill is not expanded and is replaced in place by `[skill not loaded: name]` (leading or inline); scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt. Skills skipped by the per-prompt cap (the effective `maxSkillExpansionsPerPrompt` value) are reported once, after the scan, in one warning that names them.
 - `packages/coding-agent/src/core/skill-invocation.ts`: `removeSkillInvocationTokens()` takes an optional `unloaded` token set and renders those tokens as `[skill not loaded: name]`.
 
 ### Why
@@ -17,6 +17,27 @@ Skill commands are resource-loader entries expanded inside the private `AgentSes
 ### Expected merge conflict zones
 
 - LOW: `agent-session.ts` `_expandSkillCommand()` loop if upstream revises skill-command parsing.
+
+## 2026-10-02 - Configurable skill expansion cap
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: new optional `maxSkillExpansionsPerPrompt` setting with `getMaxSkillExpansionsPerPrompt()`, which returns the configured positive integer or `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5) for a missing or invalid value.
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` reads the cap from `getMaxSkillExpansionsPerPrompt()` instead of the constant, so both the limit and its `Expanded at most N skills` warning follow the setting.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `MAX_SKILL_EXPANSIONS_PER_PROMPT` stays 5 and is now documented as the default.
+
+### Why
+
+- Prompts that pair a process skill with its helpers name six or more skills, and the sixth silently stayed literal. The cap from #365 bounds worst-case context, so it stays 5 by default and is raised only by users who opt in.
+
+### Why an extension could not handle it
+
+Skill commands are resource-loader entries expanded inside the private `AgentSession` prompt and queue boundary before the outbound user message is assembled; no extension hook sees the tokens or the cap.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` if upstream revises skill-command parsing.
+- LOW: `settings-manager.ts` `Settings` interface and the skill-command getters.
 
 ## 2026-10-02 - Model-scoped usage limits in the credential pool (senpi#2555)
 
@@ -7356,7 +7377,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 ### What changed
 
 - `agent-session.ts`: `/skill:<name>` now accepts a leading whitespace-separated run of loaded skills, expanding each unique skill in written order before appending the remaining prompt text. Repeated skills expand only once, unknown skills stop the run and remain literal, and slash text outside that leading run is never interpreted as a skill command.
-- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
+- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5) by default; since 2026-10-02 the `maxSkillExpansionsPerPrompt` setting can raise it (see that entry). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
 - The shared expansion seam is called by `prompt()`, `steer()`, and `followUp()`, so queued and non-TUI/RPC prompt paths receive identical behavior.
 
 ### Why extension system couldn't handle this alone

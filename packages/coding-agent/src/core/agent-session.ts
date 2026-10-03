@@ -300,7 +300,6 @@ import {
 } from "./settings-manager.ts";
 import {
 	formatSkillInvocationPrompt,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
 	parseSkillInvocationTokens,
 	removeSkillInvocationTokens,
 	type SkillInvocationPromptSkill,
@@ -5113,6 +5112,7 @@ export class AgentSession {
 			knownSkillNames: new Set(skills.map((skill) => skill.name)),
 		});
 		if (invocationTokens.length === 0) return text;
+		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
 
 		const expandedSkillNames = new Set<string>();
 		const skillBlocks: SkillInvocationPromptSkill[] = [];
@@ -5123,7 +5123,7 @@ export class AgentSession {
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
 		const unloadedTokens = new Set<SkillInvocationToken>();
-		let capReported = false;
+		const skippedSkillNames: string[] = [];
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -5144,17 +5144,10 @@ export class AgentSession {
 				continue;
 			}
 
-			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
-				if (!capReported) {
-					this._extensionRunner.emitError({
-						extensionPath: "skill:expansion",
-						event: "skill_expansion",
-						error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; the remaining skills were not loaded and are marked [skill not loaded: <name>] in the prompt.`,
-					});
-					capReported = true;
-				}
+			if (skillBlocks.length >= maxExpansions) {
 				removedTokens.push(token);
 				unloadedTokens.add(token);
+				if (!skippedSkillNames.includes(skill.name)) skippedSkillNames.push(skill.name);
 				continue;
 			}
 
@@ -5185,6 +5178,14 @@ export class AgentSession {
 			}
 		}
 
+		if (skippedSkillNames.length > 0) {
+			const count = skippedSkillNames.length;
+			this._extensionRunner.emitError({
+				extensionPath: "skill:expansion",
+				event: "skill_expansion",
+				error: `Skipped ${count} skill${count === 1 ? "" : "s"} (${skippedSkillNames.join(", ")}): at most ${maxExpansions} skills load per prompt. Raise maxSkillExpansionsPerPrompt to load more.`,
+			});
+		}
 		if (skillBlocks.length === 0) return text;
 		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });

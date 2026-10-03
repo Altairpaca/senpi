@@ -203,5 +203,8 @@ export function removeSkillInvocationTokens(
 	return tokens.some((token) => token.position === "leading") ? stripLeadingInvocationSeparators(result) : result;
 }
 
-/** Caps explicit skill expansion so one prompt cannot consume unbounded context. */
+/**
+ * Default cap on explicit skill expansion so one prompt cannot consume unbounded context.
+ * Users who compose more skills raise it with the `maxSkillExpansionsPerPrompt` setting.
+ */
 export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 5;
