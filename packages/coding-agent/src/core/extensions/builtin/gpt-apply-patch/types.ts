@@ -1,3 +1,4 @@
+import type { ContextLineIndex } from "./line-endings.ts";
 import type { ExtensionAPI, ToolDefinition } from "../../types.ts";
 import type { APPLY_PATCH_PARAMS } from "./constants.ts";
 
@@ -10,6 +11,7 @@ export type PatchChunk = {
 	changeContexts: string[];
 	oldLines: string[];
 	newLines: string[];
+	contextLineIndices: ContextLineIndex[];
 	isEndOfFile: boolean;
 };
 
