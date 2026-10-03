@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/tui/src/stdin-buffer.ts`: `StdinBuffer` now treats a newline-bearing stdin burst that carries no ESC bytes and no bracketed-paste markers as an unbracketed paste. A batch with two or more line breaks (`\n`, `\r\n`, `\r`) plus pasted text emits one `paste` event instead of per-character `data` events; a single trailing newline that arrives inside `burstWindowMs` (default 20ms) of the previous input is held briefly and released on flush or timeout, so a burst split across stdin reads still lands as one block. Keystroke-paced input (gap above the window, first-ever input, ESC-bearing sequences, bracketed pastes) flows through the previous paths byte-identically. New options `burstWindowMs` and `now` (clock injection for tests) join the existing `timeout`/`escapeTimeout` tuning surface.
+- `packages/tui/src/stdin-buffer.ts`: `StdinBuffer` recognises a marker-free paste from stdin framing. A read with no ESC bytes that carries two or more line breaks (`\n`, `\r\n`, `\r`), or text after a line break, plus pasted text emits one `paste` event instead of per-character `data` events; typing delivers one key per read, so a read of bare Enters stays keystrokes and is forwarded at once. Text plus a trailing line break that arrives inside `burstWindowMs` (default 20ms) of the previous input holds the line break until the next read, a flush or the timeout, so a paste split across reads still lands as one block; a line break held within the window right after such a paste is released as part of the paste, never as Enter. Keystroke-paced input (gap above the window, first-ever input, ESC-bearing sequences, bracketed pastes) flows through the previous paths byte-identically. New options `burstWindowMs` and `now` (clock injection for tests).
 
 ### Why
 
@@ -583,7 +583,6 @@ Every path listed above conflicts again where upstream edits the hunks named in 
 - LOW: `packages/tui/src/terminal.ts` at `forwardInputSequence()` and its normalization helpers,
   `packages/tui/src/mux.ts` at shared multiplexer detection, and `packages/tui/test/terminal.test.ts`
   beside the existing native Shift+Enter normalization coverage.
-
 ## 2026-08-27 - Preserve Windows Terminal scrollback during resize redraws
 
 ### What changed

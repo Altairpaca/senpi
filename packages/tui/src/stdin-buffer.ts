@@ -28,6 +28,7 @@ const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 const LINE_BREAK = /\r\n|\r|\n/g;
 const TRAILING_LINE_BREAK_RUN = /(\r\n|\r|\n)+$/;
+const LINE_BREAK_BEFORE_TEXT = /[\r\n][^\r\n]/;
 
 function countLineBreaks(text: string): number {
 	const matches = text.match(LINE_BREAK);
@@ -317,6 +318,8 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private readonly clock: () => number;
 	private lastInputAt: number | undefined;
 	private heldNewline: string = "";
+	private heldNewlineEndsPaste = false;
+	private lastBurstPasteAt: number | undefined;
 	private burstTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: StdinBufferOptions = {}) {
@@ -479,8 +482,11 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		if (breaks === 0) {
 			return false;
 		}
-		if (breaks >= 2 && /[^\r\n]/.test(text)) {
+		// Typing delivers one key per read, so a single read that holds two line breaks, or text after a
+		// line break, is pasted. Both carry text: a run of bare Enters stays keystrokes.
+		if ((breaks >= 2 || LINE_BREAK_BEFORE_TEXT.test(text)) && /[^\r\n]/.test(text)) {
 			this.buffer = "";
+			this.lastBurstPasteAt = this.lastInputAt;
 			this.emit("paste", text);
 			return true;
 		}
@@ -489,16 +495,27 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return false;
 		}
 		const head = text.slice(0, text.length - trailing.length);
+		// A newline that lands inside the window right after a burst paste ends that paste: releasing it
+		// as Enter would submit the block, which the same text in one read never does.
+		const endsPaste =
+			this.lastBurstPasteAt !== undefined &&
+			this.lastInputAt !== undefined &&
+			this.lastInputAt - this.lastBurstPasteAt < this.burstWindowMs;
+		// A read of bare line breaks is a keystroke unless it closes a paste, so it is forwarded at once.
+		if (head.length === 0 && !endsPaste) {
+			return false;
+		}
 		for (const chunk of head) {
 			this.emitDataSequence(chunk);
 		}
 		this.buffer = "";
-		this.holdTrailingNewline(trailing);
+		this.holdTrailingNewline(trailing, endsPaste);
 		return true;
 	}
 
-	private holdTrailingNewline(run: string): void {
+	private holdTrailingNewline(run: string, endsPaste: boolean): void {
 		this.heldNewline = run;
+		this.heldNewlineEndsPaste = endsPaste;
 		if (this.burstTimer) {
 			clearTimeout(this.burstTimer);
 		}
@@ -513,7 +530,13 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return;
 		}
 		const held = this.heldNewline;
+		const endsPaste = this.heldNewlineEndsPaste;
 		this.heldNewline = "";
+		this.heldNewlineEndsPaste = false;
+		if (endsPaste) {
+			this.emit("paste", held);
+			return;
+		}
 		for (const chunk of held) {
 			this.emitDataSequence(chunk);
 		}
@@ -573,6 +596,8 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.burstTimer = null;
 		}
 		this.heldNewline = "";
+		this.heldNewlineEndsPaste = false;
+		this.lastBurstPasteAt = undefined;
 		this.buffer = "";
 		this.pasteMode = false;
 		this.pasteBuffer = "";
