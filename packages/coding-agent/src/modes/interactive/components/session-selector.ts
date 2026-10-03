@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
+import { removeToolMedia, toolMediaScopeOfSessionFile } from "../../rpc/tool-media-store.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
@@ -569,6 +570,16 @@ type SessionsLoader = (onProgress?: SessionListProgress, signal?: AbortSignal) =
 async function deleteSessionFile(
 	sessionPath: string,
 ): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
+	// The header is read before the file goes: the media directory is named after the session id.
+	const mediaScope = await toolMediaScopeOfSessionFile(sessionPath);
+	const removeMedia = () => {
+		if (mediaScope === undefined) return;
+		try {
+			removeToolMedia(mediaScope);
+		} catch {
+			return;
+		}
+	};
 	// Try `trash` first (if installed)
 	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
 	const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
@@ -588,12 +599,14 @@ async function deleteSessionFile(
 
 	// If trash reports success, or the file is gone afterwards, treat it as successful
 	if (trashResult.status === 0 || !existsSync(sessionPath)) {
+		removeMedia();
 		return { ok: true, method: "trash" };
 	}
 
 	// Fallback to permanent deletion
 	try {
 		await unlink(sessionPath);
+		removeMedia();
 		return { ok: true, method: "unlink" };
 	} catch (err) {
 		const unlinkError = err instanceof Error ? err.message : String(err);

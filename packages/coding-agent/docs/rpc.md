@@ -87,6 +87,23 @@ snapshot replay) with an `image_ref` placeholder:
 [`get_media`](#get_media) using the `ref`. User-authored images (`prompt`/`steer`/`follow_up`
 `images`) are never replaced.
 
+A multi-session host also keeps each tool-result image on disk, so a client can render it from a
+path without a round trip. The bytes are written atomically BEFORE the placeholder is emitted, and the
+placeholder gains one of two fields:
+
+```json
+{"type": "image_ref", "mimeType": "image/png", "byteLength": 553000,
+ "ref": {"toolCallId": "call_abc123", "contentIndex": 1},
+ "path": "/home/me/.senpi/agent/sessions/--proj--/media/<durableSessionId>/<sha256(toolCallId)>/1-<sha256(bytes)>.png"}
+```
+
+`unavailableReason` replaces `path` when the image was not kept: `image_too_large` (over 20 MiB),
+`session_limit` (the durable session already holds 256 MiB of images; new images are refused and
+stored ones are never evicted) or `storage_error` (the write failed, or the format is not PNG, JPEG,
+GIF or WebP). A session with no session file has neither field. Files are immutable and private, live next to the session files and never under the
+project, outlive disconnects, idle shutdown and generation handover, and are deleted with the session
+(from the interactive session selector). `get_media` keeps working for every placeholder.
+
 A connection that does not advertise the capability receives byte-identical output to before. The
 capability is advertised by the host in `get_protocol_info.capabilities` in both classic and
 multi-session mode, but the transform itself is applied only by the multi-session host: classic
