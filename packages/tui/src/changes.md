@@ -1,5 +1,24 @@
 # TUI delta rendering fork changes
 
+## 2026-10-03 - Coalesce marker-free paste bursts into one paste event (senpi#2600)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `StdinBuffer` now treats a newline-bearing stdin burst that carries no ESC bytes and no bracketed-paste markers as an unbracketed paste. A batch with two or more line breaks (`\n`, `\r\n`, `\r`) plus pasted text emits one `paste` event instead of per-character `data` events; a single trailing newline that arrives inside `burstWindowMs` (default 20ms) of the previous input is held briefly and released on flush or timeout, so a burst split across stdin reads still lands as one block. Keystroke-paced input (gap above the window, first-ever input, ESC-bearing sequences, bracketed pastes) flows through the previous paths byte-identically. New options `burstWindowMs` and `now` (clock injection for tests) join the existing `timeout`/`escapeTimeout` tuning surface.
+
+### Why
+
+- Terminals that do not send bracketed-paste markers deliver a multiline paste as plain text with newline bytes, so every line submitted as its own prompt: a 50-line paste became about 50 messages and the agent answered the last line (reported downstream in code-yeongyu/oh-my-openagent#9463).
+
+### Why an extension could not handle it
+
+- By the time an `input` event reaches an extension the host has already admitted one message per line: `agent-session.ts` awaits `emitInput` per message, so a later fragment is never dispatched until the earlier one resolves, and `InputEventResult` (`continue` | `transform` | `handled`) can only pass, rewrite, or consume that single event. Only stdin framing sees the burst before it becomes messages.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: the `process` framing tail around `extractCompleteSequences`, the `pasteMode` marker block, `flush`/`clear`.
+- `packages/tui/test/stdin-buffer.test.ts`: the `StdinBuffer unbracketed paste bursts` block.
+
 ## 2026-10-01 - Bound the line normalization memo (senpi#2508)
 
 ### What changed
@@ -564,6 +583,7 @@ Every path listed above conflicts again where upstream edits the hunks named in 
 - LOW: `packages/tui/src/terminal.ts` at `forwardInputSequence()` and its normalization helpers,
   `packages/tui/src/mux.ts` at shared multiplexer detection, and `packages/tui/test/terminal.test.ts`
   beside the existing native Shift+Enter normalization coverage.
+
 ## 2026-08-27 - Preserve Windows Terminal scrollback during resize redraws
 
 ### What changed

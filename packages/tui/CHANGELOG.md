@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A multiline paste that arrives without bracketed-paste markers no longer submits one prompt per line: newline-bearing stdin bursts coalesce into a single `paste` event, so the editor receives one block ([#2600](https://github.com/code-yeongyu/senpi/issues/2600)).
+
 ### Removed
 
 ## [2026.10.2] - 2026-10-02
@@ -1187,6 +1189,7 @@
   the errno only inside the message text with no `code` or `errno` property. Dead-terminal detection now also
   reads that message form for `EIO` and `EPIPE` while unrelated raw-mode failures keep propagating.
 - A vanished or re-backgrounded controlling terminal no longer kills the agent process: the next stdin read fails with EIO, and `process.stdin` had no `"error"` listener, so the EventEmitter rethrew it as an uncaught exception. `ProcessTerminal` now arms a stdin error guard from `start()` until a 250ms grace window after `stop()`, swallowing EIO (Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5`) while every other stdin error keeps its default EventEmitter propagation.
+
 ### Removed
 
 ## [2026.8.26] - 2026-08-26
@@ -1214,6 +1217,7 @@
 - Fixed duplicate fullscreen right-click paste in VS Code-based terminals on Windows ([#8186](https://github.com/earendil-works/pi/issues/8186)).
 - Fixed padded text exceeding narrow terminal widths ([#8252](https://github.com/earendil-works/pi/issues/8252)).
 - Fixed wrapped Markdown table links leaking color into borders and neighboring cells, including tables inside blockquotes ([#8335](https://github.com/earendil-works/pi/issues/8335)).
+
 ### Removed
 
 ## [2026.8.24] - 2026-08-24
@@ -2687,7 +2691,6 @@
 - Fixed slash-command Tab completion from immediately chaining into argument autocomplete after completing the command name, restoring flows like `/model` that submit into a selector dialog ([#2577](https://github.com/badlogic/pi-mono/issues/2577))
 - Fixed stale content and incorrect viewport tracking after TUI content shrinks or transient components inflate the working area ([#2126](https://github.com/badlogic/pi-mono/pull/2126) by [@Perlence](https://github.com/Perlence))
 - Fixed `@` autocomplete to debounce editor-triggered searches, cancel in-flight `fd` lookups cleanly, and keep suggestions visible while results refresh ([#1278](https://github.com/badlogic/pi-mono/issues/1278))
-
 
 ## [0.62.0] - 2026-03-23
 
