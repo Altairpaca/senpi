@@ -1,4 +1,3 @@
-import { dirname } from "node:path";
 import { VERSION } from "../../config.ts";
 import { ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY } from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
@@ -41,7 +40,7 @@ import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
-import { toolMediaPersister } from "./tool-media-store.ts";
+import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
@@ -629,14 +628,7 @@ export class SessionCommandRouter {
 			this.writer.setSessionKind(openedSession.sessionId, entry.kind);
 			this.writer.setSessionMedia(
 				openedSession.sessionId,
-				toolMediaPersister(() => {
-					const manager = entry.runtime?.session.sessionManager;
-					const sessionPath = manager?.getSessionFile() ?? entry.sessionPath;
-					const durableSessionId = manager?.getSessionId() ?? entry.durableSessionId;
-					return sessionPath === undefined || durableSessionId === undefined
-						? undefined
-						: { sessionDir: dirname(sessionPath), durableSessionId };
-				}),
+				toolMediaPersister(() => liveToolMediaScope(entry)),
 			);
 			if (owner !== undefined) {
 				if (!this.writer.hasRegisteredConnectionCapabilities(owner))

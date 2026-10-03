@@ -99,8 +99,8 @@ placeholder gains one of two fields:
 
 `unavailableReason` replaces `path` when the image was not kept: `image_too_large` (over 20 MiB),
 `session_limit` (the durable session already holds 256 MiB of images; new images are refused and
-stored ones are never evicted) or `storage_error` (the write failed, or the format is not PNG, JPEG,
-GIF or WebP). A session with no session file has neither field. Files are immutable and private, live next to the session files and never under the
+stored ones are never evicted) or `storage_error` (the write failed, the format is not PNG, JPEG,
+GIF or WebP, or the bytes are not the format the tool claimed). A session with no session file has neither field. Files are immutable and private, live next to the session files and never under the
 project, outlive disconnects, idle shutdown and generation handover, and are deleted with the session
 (from the interactive session selector). `get_media` keeps working for every placeholder.
 

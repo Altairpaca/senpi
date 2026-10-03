@@ -1,5 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { assertValidSessionId } from "../../core/session-manager.ts";
@@ -39,8 +49,48 @@ const EXTENSIONS: Readonly<Record<string, string>> = {
 
 /** Bytes already stored per media root: the reservation every concurrent write is checked against. */
 const reserved = new Map<string, number>();
+
+const SIGNATURES: Readonly<Record<string, (bytes: Buffer) => boolean>> = {
+	"image/png": (bytes) => bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+	"image/jpeg": (bytes) => bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])),
+	"image/gif": (bytes) => bytes.subarray(0, 4).toString("latin1") === "GIF8",
+	"image/webp": (bytes) =>
+		bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP",
+};
+
+function assertRealDirectoryChain(root: string): void {
+	for (const path of [dirname(root), root]) {
+		let stat: import("node:fs").Stats | undefined;
+		try {
+			stat = lstatSync(path);
+		} catch {
+			continue;
+		}
+		if (!stat.isDirectory()) throw new Error(`not a real directory: ${path}`);
+	}
+}
 /** Outcomes per live image block, so re-emitting a record (`get_messages`, `turn_end`) never rehashes it. */
 const outcomes = new WeakMap<object, PersistedMedia>();
+
+export interface LiveSessionSource {
+	readonly runtime?: {
+		readonly session: {
+			readonly sessionManager: { getSessionFile(): string | undefined; getSessionId(): string };
+		};
+	};
+	readonly worker?: {
+		readonly snapshot?: { readonly state: { readonly sessionFile?: string; readonly sessionId: string } };
+	};
+}
+
+export function liveToolMediaScope(entry: LiveSessionSource): ToolMediaScope | undefined {
+	const manager = entry.runtime?.session.sessionManager;
+	const sessionFile = manager?.getSessionFile() ?? entry.worker?.snapshot?.state.sessionFile;
+	const durableSessionId = manager?.getSessionId() ?? entry.worker?.snapshot?.state.sessionId;
+	return sessionFile === undefined || durableSessionId === undefined
+		? undefined
+		: { sessionDir: dirname(sessionFile), durableSessionId };
+}
 
 export function toolMediaRoot(scope: ToolMediaScope): string {
 	assertValidSessionId(scope.durableSessionId);
@@ -68,8 +118,9 @@ const unavailable = (reason: "image_too_large" | "session_limit" | "storage_erro
 	unavailableReason: reason,
 });
 
-function writeImage(path: string, bytes: Buffer): void {
+function writeImage(root: string, path: string, bytes: Buffer): void {
 	mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
+	assertRealDirectoryChain(root);
 	const staging = `${path}.${randomBytes(6).toString("hex")}.tmp`;
 	try {
 		writeFileSync(staging, bytes, { mode: 0o600, flag: "wx" });
@@ -112,8 +163,10 @@ function store(
 	if (base64ByteLength(block.data) > limits.perImage) return unavailable("image_too_large");
 	const bytes = Buffer.from(block.data, "base64");
 	if (bytes.length > limits.perImage) return unavailable("image_too_large");
+	if (SIGNATURES[(block.mimeType ?? "").toLowerCase()]?.(bytes) !== true) return unavailable("storage_error");
 	try {
 		const root = toolMediaRoot(scope);
+		assertRealDirectoryChain(root);
 		const callDirectory = createHash("sha256").update(ref.toolCallId).digest("hex");
 		const digest = createHash("sha256").update(bytes).digest("hex");
 		const path = resolve(root, callDirectory, `${ref.contentIndex}-${digest}.${extension}`);
@@ -122,7 +175,7 @@ function store(
 		if (used + bytes.length > limits.perSession) return unavailable("session_limit");
 		reserved.set(root, used + bytes.length);
 		try {
-			writeImage(path, bytes);
+			writeImage(root, path, bytes);
 		} catch (cause) {
 			reserved.set(root, storedBytes(root) - bytes.length);
 			throw cause;
@@ -143,7 +196,26 @@ export function toolMediaPersister(scope: () => ToolMediaScope | undefined): Med
 export function removeToolMedia(scope: ToolMediaScope): void {
 	const root = toolMediaRoot(scope);
 	reserved.delete(root);
+	makeTreeWritable(root);
 	rmSync(root, { recursive: true, force: true });
+}
+
+function makeTreeWritable(path: string): void {
+	let entries: import("node:fs").Dirent[];
+	try {
+		chmodSync(path, 0o700);
+		entries = readdirSync(path, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		const child = join(path, entry.name);
+		if (entry.isDirectory()) makeTreeWritable(child);
+		else
+			try {
+				chmodSync(child, 0o600);
+			} catch {}
+	}
 }
 
 /** The media scope of the session stored in `sessionFile`; a file with no readable header has none. */

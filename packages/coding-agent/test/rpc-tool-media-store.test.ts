@@ -7,6 +7,7 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,6 +42,7 @@ const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
 
 function png(seed: number, size = 64): { bytes: Buffer; block: { data: string; mimeType: string } } {
 	const bytes = Buffer.alloc(size, seed);
+	Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
 	return { bytes, block: { data: bytes.toString("base64"), mimeType: "image/png" } };
 }
 
@@ -233,5 +235,51 @@ describe("tool image persistence", () => {
 		const [placeholder] = placeholders(capable);
 		expect(sha256(readFileSync(placeholder?.path ?? ""))).toBe(sha256(bytes));
 		expect(plain.result.content[1]?.data).toBe(block.data);
+	});
+
+	it("refuses bytes that are not the image format the tool claimed, instead of filing HTML as a png", () => {
+		const html = Buffer.from("<html><script>alert(1)</script></html>").toString("base64");
+
+		const outcome = persistToolImage(
+			scope,
+			{ toolCallId: "call_html", contentIndex: 0 },
+			{ data: html, mimeType: "image/png" },
+		);
+
+		expect(outcome).toEqual({ unavailableReason: "storage_error" });
+		expect(existsSync(join(sessionDir, "media"))).toBe(false);
+	});
+
+	it("stores each supported format that carries its own signature", () => {
+		const formats = [
+			["image/png", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])],
+			["image/jpeg", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])],
+			["image/gif", Buffer.from("GIF89a-----")],
+			["image/webp", Buffer.concat([Buffer.from("RIFF"), Buffer.from([4, 0, 0, 0]), Buffer.from("WEBPVP8 ")])],
+		] as const;
+
+		for (const [mimeType, bytes] of formats) {
+			const outcome = persistToolImage(
+				scope,
+				{ toolCallId: `call_${mimeType}`, contentIndex: 0 },
+				{ data: bytes.toString("base64"), mimeType },
+			);
+			expect("path" in outcome && readFileSync(outcome.path).equals(bytes)).toBe(true);
+		}
+	});
+
+	it("never follows a symlink planted where the session's media directory goes", () => {
+		const outside = mkdtempSync(join(tmpdir(), "senpi-outside-"));
+		try {
+			mkdirSync(join(sessionDir, "media"));
+			symlinkSync(outside, join(sessionDir, "media", SESSION_ID));
+
+			const outcome = persistToolImage(scope, { toolCallId: "call_link", contentIndex: 0 }, png(1).block);
+
+			expect(outcome).toEqual({ unavailableReason: "storage_error" });
+			expect(readdirSync(outside)).toEqual([]);
+		} finally {
+			rmSync(outside, { recursive: true, force: true });
+		}
 	});
 });
