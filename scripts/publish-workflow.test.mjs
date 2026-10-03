@@ -60,10 +60,8 @@ describe("publish-only workflow", () => {
 		assert.match(stagingStep, /if: inputs\.publish-only == true/);
 		assert.match(stagingStep, /"\$\{artifacts\}"\/native\/prebuilds\/\*\/senpi_pty\.\*\.node/);
 		assert.match(stagingStep, /packages\/pty\/native\/prebuilds\/\$\{target\}\/senpi_pty\.\$\{target\}\.node/);
-
-		// Then: a staged linux-x64 artifact lands exactly where the pty loader resolves it.
-		const staged = "packages/pty/native/prebuilds/linux-x64/senpi_pty.linux-x64.node";
-		assert.equal(staged, `packages/pty/native/prebuilds/${"linux-x64"}/senpi_pty.${"linux-x64"}.node`);
+		// The producer and consumer blocks are executed with distinct addon bytes in
+		// native-prebuild-staging.test.mjs; this test only pins the workflow wiring.
 	});
 
 	it("reuses the release validation instead of rerunning the full suite", () => {
