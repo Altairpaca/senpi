@@ -136,9 +136,7 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 	it("surfaces a provider error on the continued turn like any other turn", async () => {
 		const { harness } = await conversation("anthropic-messages");
 		const callsBefore = harness.faux.state.callCount;
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_api_key" }),
-		]);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_api_key" })]);
 
 		await harness.session.continueFromLeaf();
 		await harness.session.agent.waitForIdle();
@@ -147,7 +145,9 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 		const errored = harness
 			.eventsOfType("message_end")
 			.map((event) => event.message)
-			.filter((message): message is AssistantMessage => message.role === "assistant" && message.stopReason === "error");
+			.filter(
+				(message): message is AssistantMessage => message.role === "assistant" && message.stopReason === "error",
+			);
 		expect(errored.map((message) => message.errorMessage)).toEqual(["invalid_api_key"]);
 		// The conversation before the failed turn is kept, so the user can retry from it.
 		const answers = harness.session.agent.state.messages

@@ -24,12 +24,12 @@ import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
+import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
 	removeCredentialAccount,
 } from "../../core/credential-accounts.ts";
-import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
@@ -64,8 +64,8 @@ import { ClientMessageEvents } from "./client-message-events.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
-	CONTINUE_FROM_LEAF_CAPABILITY,
 	buildCustomUnsupportedRequest,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,

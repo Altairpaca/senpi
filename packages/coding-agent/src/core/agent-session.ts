@@ -124,6 +124,11 @@ import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from ".
 import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import type { CompactionModelSelector } from "./compaction-settings-access.ts";
+import {
+	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+	CONTINUE_FROM_LEAF_DIRECTIVE,
+	ContinueFromLeafError,
+} from "./continue-from-leaf.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -239,11 +244,6 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
-import {
-	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
-	CONTINUE_FROM_LEAF_DIRECTIVE,
-	ContinueFromLeafError,
-} from "./continue-from-leaf.ts";
 import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,

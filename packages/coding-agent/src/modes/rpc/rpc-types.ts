@@ -796,9 +796,7 @@ export type RpcResponse =
 			command: "get_available_models";
 			success: true;
 			data: {
-				models: Array<
-					Model<any> & { supportedThinkingLevels: ThinkingLevel[]; supportsAssistantPrefill: boolean }
-				>;
+				models: Array<Model<any> & { supportedThinkingLevels: ThinkingLevel[]; supportsAssistantPrefill: boolean }>;
 			};
 	  }
 
