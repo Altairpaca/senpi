@@ -41,6 +41,7 @@ import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
@@ -627,6 +628,10 @@ export class SessionCommandRouter {
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
 			this.writer.setSessionKind(openedSession.sessionId, entry.kind);
+			this.writer.setSessionMedia(
+				openedSession.sessionId,
+				toolMediaPersister(() => liveToolMediaScope(entry)),
+			);
 			if (owner !== undefined) {
 				if (!this.writer.hasRegisteredConnectionCapabilities(owner))
 					this.writer.setConnectionCapabilities(
