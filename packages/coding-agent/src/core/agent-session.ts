@@ -100,6 +100,12 @@ import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import {
+	type ClientMessageIdentity,
+	clientMessageIdentity,
+	type PreparedClientInput,
+	readClientMessageIdentity,
+} from "./client-message-identity.ts";
+import {
 	type CacheFriendlySummaryOptions,
 	type CompactionPreparation,
 	type CompactionResult,
@@ -248,6 +254,7 @@ import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
+import { checkSessionReloadVeto } from "./reload-veto.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
@@ -287,12 +294,12 @@ import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle }
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
 	DEFAULT_STREAM_START_TIMEOUT_MS,
+	DEFAULT_TOOL_NAMES,
 	type SettingsManager,
 	type SettingsSourceSelection,
 } from "./settings-manager.ts";
 import {
 	formatSkillInvocationPrompt,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
 	parseSkillInvocationTokens,
 	removeSkillInvocationTokens,
 	type SkillInvocationPromptSkill,
@@ -418,7 +425,7 @@ export type AgentSessionEvent =
 			type: "queue_update";
 			steering: readonly string[];
 			followUp: readonly string[];
-			ordered: readonly { text: string; mode: "steer" | "followUp"; enqueueOrder: number }[];
+			ordered: readonly QueuedInput[];
 	  }
 	| { type: "compaction_start"; reason: CompactionReason; requestId?: string }
 	| {
@@ -630,6 +637,11 @@ export interface AgentSessionConfig {
 	initialActiveToolNames?: string[];
 	/** Configured built-in defaults; fork-native builtin extension tools outside this set are omitted. */
 	defaultToolNames?: string[];
+	/**
+	 * Whether the initial tools come from the `defaultTools` setting. When true, reload activates
+	 * tools newly added to the setting. Tools removed from it stay active.
+	 */
+	usesDefaultTools?: boolean;
 	/** Tool names that remain executable only through the registered eval tool. */
 	evalOnlyToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
@@ -834,7 +846,7 @@ export type QueuedInputDisposition = "handled" | "queued";
 /** Options for AgentSession.prompt() */
 export type PromptDisposition = QueuedInputDisposition | "started";
 
-export type QueuedInput = {
+export type QueuedInput = ClientMessageIdentity & {
 	readonly text: string;
 	readonly mode: "steer" | "followUp";
 	readonly enqueueOrder: number;
@@ -848,7 +860,7 @@ export type ClearedQueue = {
 };
 
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
-export interface QueuedInputOptions {
+export interface QueuedInputOptions extends ClientMessageIdentity {
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
 	 * messages with their original order so the queue is rebuilt as the user typed it.
@@ -856,9 +868,11 @@ export interface QueuedInputOptions {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
+	/** Persist the prepared queue record before publishing or enqueuing it. */
+	onQueuedInput?: (input: PreparedClientInput) => void;
 }
 
-export interface PromptOptions {
+export interface PromptOptions extends ClientMessageIdentity {
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
@@ -883,6 +897,7 @@ export interface PromptOptions {
 	/** Internal callback used by fire-and-forget extension input to retain session-work ownership after its barrier wait. */
 	onSessionWorkReady?: () => void;
 	sessionTitlePrompt?: string | false;
+	onQueuedInput?: (input: PreparedClientInput) => void;
 }
 
 /** Result from cycleModel() */
@@ -1151,6 +1166,7 @@ export class AgentSession {
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
+	private _usesDefaultTools = false;
 	private _evalOnlyToolNames?: ReadonlySet<string>;
 	/** Explicit config override; when supplied it wins over the fixed and declared policy across reloads. */
 	private readonly _evalOnlyToolNamesOverride?: ReadonlySet<string>;
@@ -1315,6 +1331,7 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._defaultToolNames = config.defaultToolNames ? new Set(config.defaultToolNames) : undefined;
+		this._usesDefaultTools = config.usesDefaultTools ?? false;
 		this._evalOnlyToolNamesOverride = config.evalOnlyToolNames ? new Set(config.evalOnlyToolNames) : undefined;
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
@@ -2064,7 +2081,12 @@ export class AgentSession {
 		drafts: SessionBoundaryDraft[],
 		boundary: "turn_end" | "agent_before_settle",
 	): BoundaryContextPreview {
-		const projection = this._createBoundaryPreviewManager(drafts).buildSessionProjection();
+		// With no drafts the preview is the session itself; cloning the branch into a new manager
+		// re-indexed and re-copied every entry twice per turn.
+		const projection =
+			drafts.length === 0
+				? this.sessionManager.buildSessionProjection()
+				: this._createBoundaryPreviewManager(drafts).buildSessionProjection();
 		const pendingMessages = this._getPendingBoundaryMessages();
 		const llmMessages = convertToLlm(projection.messages);
 		const finalRole = llmMessages[llmMessages.length - 1]?.role;
@@ -2460,17 +2482,16 @@ export class AgentSession {
 		});
 	}
 
-	private async _emitAgentIdleAfterDeferredTurns(
-		settlementEpoch: number,
-		deferredTurnClaims: DeferredTurnClaim[],
-	): Promise<void> {
-		const dispositions = await Promise.all(deferredTurnClaims.map((claim) => claim.disposition));
-		if (dispositions.includes("started")) return;
-		if (dispositions.includes("delegated") || this._sessionWorkBarrier.hasActiveWork) {
-			await this._waitForSettledSessionWork();
-		}
-		if (settlementEpoch !== this._settlementEpoch) return;
+	/**
+	 * Release the memoized session views and tokenize the runtime messages while nothing runs.
+	 * Called when a run settles idle and after a resumed session's first render, which builds the
+	 * views without any run settling afterwards.
+	 */
+	releaseSettledSessionMemory(): void {
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		// A trimmed mirror bounds memory to the kept tail; a full-history view held across idle
+		// would pin every entry of the file again, so it goes at idle like the views below.
+		if (this.sessionManager.holdsMaterializedHistory()) this.sessionManager.dropMaterializedCaches();
 		// Releasing frees memory only for strings the store already spilled to its blob
 		// backing: a resident string is shared with the store, so tokenizing it hands
 		// back nothing while costing every settled-time reader a re-materialization.
@@ -2485,12 +2506,27 @@ export class AgentSession {
 			this.sessionManager.getResidentStore().externalizeInPlace(this.agent.state.messages);
 			this._runtimeMessagesTokenized = true;
 		}
+	}
+
+	private async _emitAgentIdleAfterDeferredTurns(
+		settlementEpoch: number,
+		deferredTurnClaims: DeferredTurnClaim[],
+	): Promise<void> {
+		const dispositions = await Promise.all(deferredTurnClaims.map((claim) => claim.disposition));
+		if (dispositions.includes("started")) return;
+		if (dispositions.includes("delegated") || this._sessionWorkBarrier.hasActiveWork) {
+			await this._waitForSettledSessionWork();
+		}
+		if (settlementEpoch !== this._settlementEpoch) return;
+		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		this.releaseSettledSessionMemory();
 		this._emit({ type: "agent_idle" });
 	}
 
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
 		deferredTurnClaim?: DeferredTurnClaim,
+		onQueuedInput?: (input: PreparedClientInput) => void,
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
@@ -2536,12 +2572,27 @@ export class AgentSession {
 					"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion."
 			) {
 				const queuedMessages = Array.isArray(messages) ? messages : [messages];
-				for (const message of queuedMessages) this.agent.steer(message);
 				const userMessage = queuedMessages.find((message) => message.role === "user");
-				if (userMessage?.role === "user") {
-					const text = this._extractUserMessageText(userMessage.content);
-					this._steeringMessages.push(text);
-					this._recordQueuedInput(text, "steer");
+				// The caller was already told this input started; it now waits in the queue, so persist
+				// it as queued input before it is enqueued, exactly like the regular queue path.
+				const prepared =
+					userMessage?.role === "user"
+						? {
+								...readClientMessageIdentity(userMessage),
+								text: this._extractUserMessageText(userMessage.content),
+								images:
+									typeof userMessage.content === "string"
+										? undefined
+										: userMessage.content.filter((part) => part.type === "image"),
+								mode: "steer" as const,
+								enqueueOrder: this.reserveQueuedInputOrder(),
+							}
+						: undefined;
+				if (prepared) onQueuedInput?.(prepared);
+				for (const message of queuedMessages) this.agent.steer(message);
+				if (prepared) {
+					this._steeringMessages.push(prepared.text);
+					this._recordQueuedInput(prepared.text, "steer", prepared);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -2951,18 +3002,29 @@ export class AgentSession {
 			this._retryFallback.resetTurn();
 			const messageText = contentText(event.message.content, "");
 			if (messageText) {
+				const { clientMessageId } = readClientMessageIdentity(event.message);
+				const queued =
+					clientMessageId === undefined
+						? undefined
+						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId);
 				// Check steering queue first
-				const steeringIndex = this._steeringMessages.indexOf(messageText);
+				const steeringIndex =
+					clientMessageId === undefined || queued?.mode === "steer"
+						? this._steeringMessages.indexOf(messageText)
+						: -1;
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
-					this._removeQueuedInput(messageText, "steer");
+					this._removeQueuedInput(messageText, "steer", clientMessageId);
 					this._emitQueueUpdate();
 				} else {
 					// Check follow-up queue
-					const followUpIndex = this._followUpMessages.indexOf(messageText);
+					const followUpIndex =
+						clientMessageId === undefined || queued?.mode === "followUp"
+							? this._followUpMessages.indexOf(messageText)
+							: -1;
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
-						this._removeQueuedInput(messageText, "followUp");
+						this._removeQueuedInput(messageText, "followUp", clientMessageId);
 						this._emitQueueUpdate();
 					}
 				}
@@ -3837,7 +3899,7 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
-	/** Whether the session has no active agent run, retry, auto-compaction, or queued continuation. */
+	/** Whether the session has no active agent run, retry, or queued continuation. */
 	get isIdle(): boolean {
 		return !this._isAgentRunActive;
 	}
@@ -4744,9 +4806,9 @@ export class AgentSession {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4763,9 +4825,9 @@ export class AgentSession {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
 				if (options?.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4783,9 +4845,9 @@ export class AgentSession {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
 				if (options?.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4812,9 +4874,9 @@ export class AgentSession {
 						);
 					}
 					if (options?.streamingBehavior === "followUp") {
-						await this._queueFollowUp(expandedText, currentImages);
+						await this._queueFollowUp(expandedText, currentImages, options);
 					} else {
-						await this._queueSteer(expandedText, currentImages);
+						await this._queueSteer(expandedText, currentImages, options);
 					}
 					emitPendingCommandInvocation();
 					await emitInputDisposition("queued");
@@ -4836,9 +4898,9 @@ export class AgentSession {
 						this._compactionLifecycle.state.status === "aborted"))
 			) {
 				if (options?.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options);
 				}
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
@@ -4887,6 +4949,7 @@ export class AgentSession {
 				role: "user",
 				content: userContent,
 				timestamp: Date.now(),
+				...clientMessageIdentity(options),
 			});
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -4936,7 +4999,7 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(messages);
+		await this._promptAgent(messages, undefined, options?.onQueuedInput);
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -5049,6 +5112,7 @@ export class AgentSession {
 			knownSkillNames: new Set(skills.map((skill) => skill.name)),
 		});
 		if (invocationTokens.length === 0) return text;
+		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
 
 		const expandedSkillNames = new Set<string>();
 		const skillBlocks: SkillInvocationPromptSkill[] = [];
@@ -5058,6 +5122,8 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
+		const unloadedTokens = new Set<SkillInvocationToken>();
+		const skippedSkillNames: string[] = [];
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -5066,17 +5132,10 @@ export class AgentSession {
 				continue;
 			}
 
-			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
-				this._extensionRunner.emitError({
-					extensionPath: "skill:expansion",
-					event: "skill_expansion",
-					error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
-				});
-				break;
-			}
-
-			removedTokens.push(token);
+			// A repeat of an already expanded skill adds no context, so it never counts
+			// against the cap and keeps its positional marker.
 			if (expandedSkillNames.has(skill.name)) {
+				removedTokens.push(token);
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -5084,6 +5143,15 @@ export class AgentSession {
 				});
 				continue;
 			}
+
+			if (skillBlocks.length >= maxExpansions) {
+				removedTokens.push(token);
+				unloadedTokens.add(token);
+				if (!skippedSkillNames.includes(skill.name)) skippedSkillNames.push(skill.name);
+				continue;
+			}
+
+			removedTokens.push(token);
 
 			try {
 				const content = readFileSync(skill.filePath, "utf-8");
@@ -5110,8 +5178,16 @@ export class AgentSession {
 			}
 		}
 
+		if (skippedSkillNames.length > 0) {
+			const count = skippedSkillNames.length;
+			this._extensionRunner.emitError({
+				extensionPath: "skill:expansion",
+				event: "skill_expansion",
+				error: `Skipped ${count} skill${count === 1 ? "" : "s"} (${skippedSkillNames.join(", ")}): at most ${maxExpansions} skills load per prompt. Raise maxSkillExpansionsPerPrompt to load more.`,
+			});
+		}
 		if (skillBlocks.length === 0) return text;
-		const userRequest = removeSkillInvocationTokens(text, removedTokens);
+		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });
 		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}
@@ -5145,9 +5221,9 @@ export class AgentSession {
 		expandedText = templateExpansion.text;
 
 		if (behavior === "steer") {
-			await this._queueSteer(expandedText, processedInput.images, options?.enqueueOrder);
+			await this._queueSteer(expandedText, processedInput.images, options);
 		} else {
-			await this._queueFollowUp(expandedText, processedInput.images, options?.enqueueOrder);
+			await this._queueFollowUp(expandedText, processedInput.images, options);
 		}
 		await this._emitInputDisposition(processedInput.inputId, "queued");
 		if (templateExpansion.template) {
@@ -5271,55 +5347,63 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[], enqueueOrder?: number): Promise<void> {
-		this._steeringMessages.push(text);
-		this._recordQueuedInput(text, "steer", enqueueOrder);
-		this._sessionLogger.debug("queue_enqueue", {
-			mode: "steer",
-			count: this._steeringMessages.length,
-		});
-		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
-		}
-		const message: AgentMessage = {
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		};
-		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
-			this._postCompactionDeferredSteeringMessages.push(message);
-			return;
-		}
-		this.agent.steer(message);
+	private async _queueSteer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[], enqueueOrder?: number): Promise<void> {
-		this._followUpMessages.push(text);
-		this._recordQueuedInput(text, "followUp", enqueueOrder);
+	private async _queueFollowUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
+	}
+
+	/** Restore accepted input without re-running input transforms or changing its enqueue order. */
+	async restoreQueuedInput(input: PreparedClientInput): Promise<void> {
+		this._enqueuePreparedInput(input);
+	}
+
+	private _enqueuePreparedInput(input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder">): void {
+		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
+		const prepared = {
+			...clientMessageIdentity(input),
+			text: input.text,
+			images: input.images,
+			mode: input.mode,
+			enqueueOrder,
+		};
+		input.onQueuedInput?.(prepared);
+		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
+		queue.push(input.text);
+		this._recordQueuedInput(input.text, input.mode, prepared);
 		this._sessionLogger.debug("queue_enqueue", {
-			mode: "followUp",
-			count: this._followUpMessages.length,
+			mode: input.mode,
+			count: queue.length,
 		});
 		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
-		}
+		const content: (TextContent | ImageContent)[] = [{ type: "text", text: input.text }, ...(input.images ?? [])];
 		const message: AgentMessage = {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			...clientMessageIdentity(input),
 		};
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
-			this._postCompactionDeferredFollowUpMessages.push(message);
+			const deferred =
+				input.mode === "steer"
+					? this._postCompactionDeferredSteeringMessages
+					: this._postCompactionDeferredFollowUpMessages;
+			deferred.push(message);
 			return;
 		}
-		this.agent.followUp(message);
+		switch (input.mode) {
+			case "steer":
+				this.agent.steer(message);
+				break;
+			case "followUp":
+				this.agent.followUp(message);
+				break;
+		}
 	}
 
 	private _flushPostCompactionDeferredMessages(): void {
@@ -5610,14 +5694,18 @@ export class AgentSession {
 		return this._nextQueuedInputOrder;
 	}
 
-	private _recordQueuedInput(text: string, mode: QueuedInput["mode"], enqueueOrder?: number): void {
-		const order = enqueueOrder ?? this.reserveQueuedInputOrder();
+	private _recordQueuedInput(text: string, mode: QueuedInput["mode"], options?: QueuedInputOptions): void {
+		const order = options?.enqueueOrder ?? this.reserveQueuedInputOrder();
 		this._nextQueuedInputOrder = Math.max(this._nextQueuedInputOrder, order);
-		this._queuedInputOrder.push({ text, mode, enqueueOrder: order });
+		this._queuedInputOrder.push({ text, mode, enqueueOrder: order, ...clientMessageIdentity(options) });
 	}
 
-	private _removeQueuedInput(text: string, mode: QueuedInput["mode"]): void {
-		const index = this._queuedInputOrder.findIndex((message) => message.mode === mode && message.text === text);
+	private _removeQueuedInput(text: string, mode: QueuedInput["mode"], clientMessageId?: string): void {
+		const index = this._queuedInputOrder.findIndex((message) =>
+			clientMessageId === undefined
+				? message.mode === mode && message.text === text
+				: message.clientMessageId === clientMessageId,
+		);
 		if (index !== -1) this._queuedInputOrder.splice(index, 1);
 	}
 
@@ -5665,6 +5753,10 @@ export class AgentSession {
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
 		return this._followUpMessages;
+	}
+
+	getQueuedInputs(): readonly QueuedInput[] {
+		return [...this._queuedInputOrder].sort((left, right) => left.enqueueOrder - right.enqueueOrder);
 	}
 
 	get resourceLoader(): ResourceLoader {
@@ -5913,6 +6005,33 @@ export class AgentSession {
 			allowDeferral: false,
 		});
 		return true;
+	}
+
+	/** Whether a recorded resume requirement still blocks: the current context does not fit the current model. */
+	private _resumeRequirementStillBlocks(
+		model: Model<any>,
+		settings: ReturnType<SettingsManager["getCompactionSettings"]>,
+	): boolean {
+		const currentContext = estimateContextTokens(
+			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+		).tokens;
+		return !projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens: currentContext,
+			compaction: settings,
+			includeSpeculationLead: false,
+			admission: "resume",
+		}).usable;
+	}
+
+	/** Any committed compaction, manual /compact included, retires a resume requirement the context now satisfies. */
+	private _clearResumeCompactionRequirementIfFits(): void {
+		const model = this.model;
+		if (this._resumeCompactionRequirement === undefined || !model) return;
+		if (!this._resumeRequirementStillBlocks(model, this._getCompactionSettings(model)))
+			this._resumeCompactionRequirement = undefined;
 	}
 
 	admitResumeCompactionRequired(projection: ModelUsabilityBudgetProjection): void {
@@ -6892,6 +7011,7 @@ export class AgentSession {
 				throw new CompactionRejectedError(execution.rejectionCause);
 			}
 			outcome = "completed";
+			this._clearResumeCompactionRequirementIfFits();
 			return execution.result;
 		} catch (error) {
 			outcome = isCompactionExecutionAborted(error) ? "aborted" : "failed";
@@ -6978,6 +7098,7 @@ export class AgentSession {
 			if (!execution.accepted) {
 				return { applied: false, reason: "rejected" };
 			}
+			this._clearResumeCompactionRequirementIfFits();
 			this._resumeQueuedMessagesAfterCompaction();
 			return { applied: true, reason: "ok" };
 		} catch (error) {
@@ -7555,23 +7676,18 @@ export class AgentSession {
 		}
 		if (this._resumeCompactionRequirement !== undefined) {
 			if (!model) throw new RequiredCompactionError();
-			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
-			if (!compacted) throw new RequiredCompactionError();
-			const currentContext = estimateContextTokens(
-				filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-			).tokens;
-			const remainingProjection = projectModelUsabilityBudget({
-				model,
-				systemPrompt: this.agent.state.systemPrompt,
-				tools: this.agent.state.tools,
-				liveContextTokens: currentContext,
-				compaction: settings,
-				includeSpeculationLead: false,
-				admission: "resume",
-			});
-			if (!remainingProjection.usable) throw new RequiredCompactionError();
+			// The requirement was projected at resume, possibly on another model or before a manual
+			// /compact (#2589, #2488). It only blocks while the CURRENT context still does not fit the
+			// CURRENT model; otherwise the normal threshold path below decides, so a provider lane that
+			// owns compaction (#1174) is never asked to compact a context that already fits.
+			if (this._resumeRequirementStillBlocks(model, settings)) {
+				const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
+				if (!compacted) throw new RequiredCompactionError();
+				if (this._resumeRequirementStillBlocks(model, settings)) throw new RequiredCompactionError();
+				this._resumeCompactionRequirement = undefined;
+				return true;
+			}
 			this._resumeCompactionRequirement = undefined;
-			return true;
 		}
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
@@ -8867,6 +8983,8 @@ export class AgentSession {
 		activeToolNames?: string[];
 		includeAllExtensionTools?: boolean;
 		previousActiveToolRegistrationIds?: ReadonlyMap<string, string>;
+		/** Tools to activate that were not active before, such as tools newly added to `defaultTools`. */
+		addedToolNames?: readonly string[];
 	}): void {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
 		const previousActiveToolNames = this.getActiveToolNames();
@@ -8965,6 +9083,10 @@ export class AgentSession {
 				previousRegistrationIds.get(name) === deriveExtensionRegistrationId(current.sourceInfo, name)
 			);
 		});
+		// Newly added tools had no previous registration to match, so they skip the identity check.
+		for (const name of options?.addedToolNames ?? []) {
+			if (isAllowedTool(name)) nextActiveToolNames.push(name);
+		}
 
 		if (allowedToolNames) {
 			for (const toolName of this._toolRegistry.keys()) {
@@ -9013,6 +9135,7 @@ export class AgentSession {
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
 		previousActiveToolRegistrationIds?: ReadonlyMap<string, string>;
+		addedToolNames?: readonly string[];
 	}): void {
 		this._delegatedCompactionKey = undefined;
 		this._lazyToolActivation.reset();
@@ -9072,6 +9195,7 @@ export class AgentSession {
 			activeToolNames: baseActiveToolNames,
 			includeAllExtensionTools: options.includeAllExtensionTools,
 			previousActiveToolRegistrationIds: options.previousActiveToolRegistrationIds,
+			addedToolNames: options.addedToolNames,
 		});
 	}
 
@@ -9083,6 +9207,19 @@ export class AgentSession {
 		if (veto.cancelled) {
 			return veto;
 		}
+		if (this._promptStartPending) return this.checkReloadVeto();
+		// Prompts admitted from here on wait for the rebuilt runtime instead of starting on the retiring one.
+		const finishReloadWork = this._sessionWorkBarrier.begin();
+		try {
+			return await this._rebuildRuntimeForReload(options);
+		} finally {
+			finishReloadWork();
+		}
+	}
+
+	private async _rebuildRuntimeForReload(options?: {
+		beforeSessionStart?: () => void | Promise<void>;
+	}): Promise<{ cancelled: false }> {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
@@ -9099,8 +9236,21 @@ export class AgentSession {
 			reason: "reload",
 		});
 		time("shutdown", "reload");
+		const previousDefaultTools = new Set(
+			this._usesDefaultTools ? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES) : [],
+		);
 		await this.settingsManager.reload();
 		this._delegatedCompactionKey = undefined;
+		// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
+		// during the session stay disabled unless the setting newly adds them.
+		const currentDefaultTools = this._usesDefaultTools
+			? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES)
+			: [];
+		const addedDefaultTools = currentDefaultTools.filter((name) => !previousDefaultTools.has(name));
+		// Builtin extension tools are registered only when configured; a newly added one must pass that filter.
+		if (this._defaultToolNames && addedDefaultTools.length > 0) {
+			this._defaultToolNames = new Set([...this._defaultToolNames, ...addedDefaultTools]);
+		}
 		// Capture the unfiltered request BEFORE the rebuild reassigns it, so a policy that
 		// disarms during this reload can still restore its withheld eval-only tools.
 		const requestedActiveToolNamesBeforeRebuild = [...(this._requestedActiveToolNames ?? this.getActiveToolNames())];
@@ -9139,6 +9289,7 @@ export class AgentSession {
 				flagValues: previousFlagValues,
 				includeAllExtensionTools: true,
 				previousActiveToolRegistrationIds,
+				addedToolNames: addedDefaultTools,
 			});
 		} finally {
 			// An extension removed by this reload must be told even if the rebuild throws
@@ -9195,16 +9346,7 @@ export class AgentSession {
 	 * without starting their reload UI.
 	 */
 	async checkReloadVeto(): Promise<{ cancelled: boolean; reason?: string }> {
-		if (!this._extensionRunner.hasHandlers("session_before_reload")) {
-			return { cancelled: false };
-		}
-		const result = await this._extensionRunner.emit({
-			type: "session_before_reload",
-		});
-		if (result?.cancel !== true) {
-			return { cancelled: false };
-		}
-		return result.reason === undefined ? { cancelled: true } : { cancelled: true, reason: result.reason };
+		return checkSessionReloadVeto(this._extensionRunner, () => this._promptStartPending);
 	}
 
 	// =========================================================================
@@ -10565,8 +10707,55 @@ export class AgentSession {
 		else process.env[PROMPT_CACHE_SAFE_WAIT_ENV] = String(budget);
 	}
 
+	/**
+	 * Context usage is shown on every frame (footer), but it only changes when a message is appended or
+	 * replaced, the branch moves, or the model changes. Messages are appended in place, so the key is the
+	 * array, its length and last message (with a fingerprint of its content and usage, in case it grows
+	 * in place), plus the leaf and the model's window.
+	 */
 	getContextUsage(): ContextUsage | undefined {
 		const model = this._limitsModel();
+		const runtimeMessages = this.messages;
+		const key = {
+			messages: runtimeMessages,
+			length: runtimeMessages.length,
+			last: runtimeMessages.at(-1),
+			lastFingerprint: messageFingerprint(runtimeMessages.at(-1)),
+			leafId: this.sessionManager.getLeafId(),
+			contextWindow: model?.contextWindow,
+		};
+		const cached = this._contextUsageCache;
+		if (
+			cached !== undefined &&
+			cached.key.messages === key.messages &&
+			cached.key.length === key.length &&
+			cached.key.last === key.last &&
+			cached.key.lastFingerprint === key.lastFingerprint &&
+			cached.key.leafId === key.leafId &&
+			cached.key.contextWindow === key.contextWindow
+		) {
+			return cached.usage;
+		}
+		const usage = this._computeContextUsage(model);
+		this._contextUsageCache = { key, usage };
+		return usage;
+	}
+
+	private _contextUsageCache:
+		| {
+				readonly key: {
+					readonly messages: AgentMessage[];
+					readonly length: number;
+					readonly last: AgentMessage | undefined;
+					readonly lastFingerprint: string;
+					readonly leafId: string | null;
+					readonly contextWindow: number | undefined;
+				};
+				readonly usage: ContextUsage | undefined;
+		  }
+		| undefined;
+
+	private _computeContextUsage(model: Model<any> | undefined): ContextUsage | undefined {
 		if (!model) return undefined;
 
 		const contextWindow = model.contextWindow ?? 0;
@@ -10746,4 +10935,21 @@ export class AgentSession {
 	get extensionRunner(): ExtensionRunner {
 		return this._extensionRunner;
 	}
+}
+
+/** Changes whenever a message's content grows or its usage is filled in, without walking other messages. */
+function messageFingerprint(message: AgentMessage | undefined): string {
+	if (message === undefined) return "";
+	const content = (message as { content?: unknown }).content;
+	let size = 0;
+	if (typeof content === "string") size = content.length;
+	else if (Array.isArray(content)) {
+		for (const part of content as Array<{ text?: unknown; thinking?: unknown; arguments?: unknown }>) {
+			size += 1;
+			if (typeof part.text === "string") size += part.text.length;
+			if (typeof part.thinking === "string") size += part.thinking.length;
+		}
+	}
+	const usage = (message as { usage?: { input?: number; output?: number; totalTokens?: number } }).usage;
+	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}`;
 }

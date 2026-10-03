@@ -1,5 +1,84 @@
 # senpi-codemode fork changes
 
+
+## 2026-10-02 - Display images are validated before they are kept (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/image.ts`: an image `display()` payload is kept only when it is valid base64 with a PNG, JPEG (not JPEG-LS), GIF or WebP signature; line breaks are dropped, the detected type replaces the declared one, and invalid data is dropped with a `[display: image dropped — <reason>]` line in the output.
+
+### Why
+
+Upstream fixed the same defect in its codemode `image()` helper (d2931ad3d): providers reject a whole request on a bad image, and a kept image block is resent on every later turn, so one corrupted image broke the session. Providers also reject a declared type that does not match the bytes.
+
+### Why an extension could not handle it
+
+This is the eval extension's own output collector.
+
+### Expected merge conflict zones
+
+None from upstream (fork-only package).
+
+## 2026-09-30 - Self-contained eval action schemas (senpi#2240)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/types.ts`: each action branch declares its own properties. Runs require `language`, `code`, and `summary`, including when `action` is omitted. `list` requires only its action; `peek` and `stop` require `cell_id`.
+- `packages/senpi-codemode/test/eval-schema-required-fields.test.ts`: covers missing run fields, implicit runs, enabled languages, control calls, branch-local field declarations, provider schema conversions, and OpenAI strict-mode fallback.
+- `packages/senpi-codemode/scripts/qa-e2e-eval.ts`: expects incomplete runs to fail schema validation before execution. The README describes the action-specific requirements.
+
+### Why
+
+- With the issue's forced `tool_choice: "any"`, Mistral-hosted GLM 5.3 returned only `{"action":"run"}` with the constraint-only branches. Adding `required` without declaring the fields inside the branch still failed in a live reproduction. Self-contained branches let the provider generate complete calls.
+
+### Why an extension could not handle it
+
+- This package is the extension that owns the eval schema.
+
+### Expected merge conflict zones
+
+- LOW: `createEvalInputSchema` in `packages/senpi-codemode/src/tool/types.ts`.
+## 2026-10-02 - Detached-cell footer ticker retires on a stale context (senpi#2549)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/stale-context.ts` (new): `isStaleExtensionContextError` matches the two messages the host retires a context with (replacement prefix and reload message), mirroring the host's `builtin/goal/stale-context.ts`. The host keeps that module internal to its builtins (the `@code-yeongyu/senpi` package does not export it) and older host versions predate the reload message, so codemode carries the two messages locally for compatibility.
+- `packages/senpi-codemode/src/extension/eval-status-ticker.ts`: `tick()` catches that error, stops the ticker and returns `false`; `sync()` does not re-arm after a stale immediate render; the next live `sync()` re-arms. Other render errors are rethrown.
+- Tests: `test/eval-status-ticker-stale-context.test.ts` (retire on both messages, re-arm, no re-arm on a stale first render, non-stale error surfaces) and `test/eval-status-wiring-stale-context.test.ts` (a reload, new session and switch while a detached cell ticks: no throw, and the next session's cell renders and advances).
+
+### Why
+
+- The render reads the captured `activeContext`, whose `ui` getter throws once its session is retired, from inside the 1 s interval callback, which ended the process (senpi#2549).
+
+### Why an extension could not handle it
+
+- The ticker is codemode's own footer wiring.
+
+### Expected merge conflict zones
+
+- `eval-status-ticker.ts` `sync()`/`tick()`. Fork-only surface.
+## 2026-10-01 - Explicit state-loss notice for Stop during a native shell wait (senpi#2453)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js` and `packages/senpi-codemode/src/kernels/js/worker-shell-capture.d.ts` track active native promise waits without starting lazy commands.
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js` and `packages/senpi-codemode/src/kernels/js/worker-core.js` report shell-wait changes through the existing acknowledgement while interruption is in flight, including waits entered during cooperative grace.
+- `packages/senpi-codemode/src/kernels/js/run-queue.ts`, `packages/senpi-codemode/src/kernels/js/context-manager.ts`, and `packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts` retain the cell-fenced shell-wait state and report cleared variables with Bun.spawn/bash guidance only on a forced restart.
+- Cooperative interrupts, successful cells, native shell interpretation, and the default eval prompt are unchanged.
+- Event-ordered real-kernel tests observe command connection and exit, cleared globals, retained non-shell globals, and successful native read paths.
+
+### Why
+
+- Lead decision A keeps native shell behavior while making forced-restart state loss explicit. Thanks to floweredao's investigation in senpi#2475. Native cancellation remains tracked in oven-sh/bun#11868.
+
+### Why an extension could not handle it
+
+- The kernel owns shell capture and the forced-restart outcome.
+
+### Expected merge conflict zones
+
+- JS shell capture, interrupt acknowledgements, and run settlement.
+
 ## 2026-10-01 - Event-driven Python bootstrap with stage-specific hang detection (senpi#2452)
 
 ### What changed

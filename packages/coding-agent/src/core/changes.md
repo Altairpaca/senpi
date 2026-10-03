@@ -1,3 +1,244 @@
+## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, a new skill is not expanded and is replaced in place by `[skill not loaded: name]` (leading or inline); scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt. Skills skipped by the per-prompt cap (the effective `maxSkillExpansionsPerPrompt` value) are reported once, after the scan, in one warning that names them.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `removeSkillInvocationTokens()` takes an optional `unloaded` token set and renders those tokens as `[skill not loaded: name]`.
+
+### Why
+
+- After the cap, a later line re-using a loaded skill (`... $review` on line 3) produced a false cap warning and left bare `$review` in the request, so the model could not tell that line referred to the loaded skill.
+- A skill skipped by the cap reached the model as the bare command; only the user saw the warning, so the model could guess at the skill's content. The marker states that the skill was not loaded, at the line where it was requested.
+
+### Why an extension could not handle it
+
+Skill commands are resource-loader entries expanded inside the private `AgentSession` prompt and queue boundary before the outbound user message is assembled; no extension hook sees the tokens or the cap.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` loop if upstream revises skill-command parsing.
+
+## 2026-10-02 - Configurable skill expansion cap
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: new optional `maxSkillExpansionsPerPrompt` setting with `getMaxSkillExpansionsPerPrompt()`, which returns the configured positive integer or `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5) for a missing or invalid value.
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` reads the cap from `getMaxSkillExpansionsPerPrompt()` instead of the constant, so both the limit and its `Expanded at most N skills` warning follow the setting.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `MAX_SKILL_EXPANSIONS_PER_PROMPT` stays 5 and is now documented as the default.
+
+### Why
+
+- Prompts that pair a process skill with its helpers name six or more skills, and the sixth silently stayed literal. The cap from #365 bounds worst-case context, so it stays 5 by default and is raised only by users who opt in.
+
+### Why an extension could not handle it
+
+Skill commands are resource-loader entries expanded inside the private `AgentSession` prompt and queue boundary before the outbound user message is assembled; no extension hook sees the tokens or the cap.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` if upstream revises skill-command parsing.
+- LOW: `settings-manager.ts` `Settings` interface and the skill-command getters.
+
+## 2026-10-02 - Model-scoped usage limits in the credential pool (senpi#2555)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts` (new): `rateLimitModelFamily` reads the family a limit text binds ("Fable limit", "Opus limit", "Sonnet limit", with an optional version or window word); `modelBlockKey`, `activeModelBlockUntil`, `pruneModelBlocks`, `withModelBlock` and `describeModelBlocks` manage `{ [family or model id]: { blockedUntil } }` maps.
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: a `rate_limit` block carries `modelFamily` when the text names one.
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`: slot state gains optional `modelBlocks`. Files written before parse unchanged; their `blockedUntil`/`blockReason` keep meaning "slot blocked".
+- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts` (new, split out of `rotation-stream.ts`): slot listing and sidecar overlay. `listRotationSlots` takes `modelId`; a live block on that model makes the slot unavailable to that request only, and such a slot never takes the half-open probe lease.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `streamWithCredentialRotation` takes `modelId`. A family-scoped rate limit writes a model block and keeps the slot's own health (releasing a probe lease it held); an account-level block keeps live model blocks; a success lifts only the blocks on the model that served. Re-exports `listRotationSlots` and the slot types from `rotation-slots.ts`.
+- `packages/coding-agent/src/core/model-runtime.ts`: both `streamWithCredentialRotation` calls pass `modelId: model.id`.
+- `packages/coding-agent/src/core/credential-accounts.ts`: summaries carry `blockedModels` (live model blocks from the sidecar and from a stored slot's own `modelBlocks`); `builtin/account/index.ts` prints them as "blocked for <model> until <iso>".
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: `usageLimitScope` reports `model` for a text naming a family, so Claude Code's "You've reached your Fable limit. Switch to another model to continue." moves only that model and leaves the provider eligible.
+
+### Why
+
+- The unified rate-limit headers name the exceeded window, and Claude Code renders it into the failure text: "session limit"/"weekly limit" bind the account, "Opus limit"/"Sonnet limit"/"Fable limit" one family. The pool blocked the whole slot for any rate limit, so one exhausted family made every other model on that account unusable until the block expired (oh-my-openagent#9421). Limits that name no family stay account-wide.
+
+### Why an extension could not handle it
+
+- Slot selection, the persisted sidecar and the fallback scope classifier run inside the model runtime and session core; no extension hook sees a slot's block state.
+
+### Expected merge conflict zones
+
+- LOW: the two `streamWithCredentialRotation` calls in `model-runtime.ts`; the rest is fork-only (`credential-pool/`, `credential-accounts.ts`, `retry-fallback/`).
+
+
+## 2026-10-03 - A stale resume compaction requirement no longer blocks prompts that fit (#2589, #2488)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: while a resume compaction requirement is recorded, the pre-provider check first re-projects the CURRENT context against the CURRENT model. If it now fits, the requirement is retired and the normal threshold path decides; only a requirement that still blocks runs the pre-prompt compaction and refuses with `RequiredCompactionError` when that does not land. A committed compaction, manual `/compact` (`compact()`) or `applyCompaction()`, also retires a requirement the context now satisfies.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` ran the pre-prompt compaction before it re-checked the context, and cleared the requirement only after that compaction landed. On a provider lane that owns compaction (the resident `anthropic-subscription` SDK lane refuses it as `external-owner`, #1174) the compaction never lands, so a requirement projected at resume, on a fallback model (#2488) or before a committed manual `/compact` (#2589), refused every prompt until the process restarted, even with the context at a few percent of the window.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the requirement and the pre-provider admission; an extension can neither see nor retire `_resumeCompactionRequirement`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the resume-requirement branch of `_enforceCompactionBeforeProvider`, the success return of `compact()` and `applyCompaction()`, and two private helpers beside `admitResumeCompactionRequired()`. The sticky delegated-compaction key (`_delegatedCompactionKey`) is not changed.
+
+## 2026-10-02 - Durable RPC input metadata (desktop#1325, senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt and queued-input options carry client identity; prepared queue insertion has a write-before-enqueue callback; native user messages and ordered queue records preserve identity; restored accepted input bypasses input transforms. Queue consumption uses client identity when present. A started prompt that a concurrently started run displaces into the steering queue reports its prepared input through the same callback before it is enqueued.
+- `packages/coding-agent/src/core/client-message-identity.ts`: bounded identity parsing and shared prepared-input metadata.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` previously discarded client identity before native queue insertion and matched consumed input only by text. Replayed deliveries and equal-text messages could not be distinguished. The displaced-prompt fallback queued input only in memory after the caller had been told it started, so a crash before delivery lost it.
+- `packages/coding-agent/src/core/client-message-identity.ts` keeps the metadata shared by RPC admission, native messages, and queue restoration.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns native queue mutation and prompt construction; only that boundary can persist prepared input before acknowledging or enqueuing it.
+- `packages/coding-agent/src/core/client-message-identity.ts` defines transport-to-core metadata that must survive extension replacement.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: input option types, prepared user-message construction, queue insertion and consumption. Extension loading and permission hooks are not changed.
+- `packages/coding-agent/src/core/client-message-identity.ts`: new module.
+
+## 2026-10-02 - Accept Ctrl+V in direct Warp-on-WSL sessions
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: `app.clipboard.pasteImage` defaults to both `ctrl+v` and `alt+v` in direct Warp-on-WSL sessions, using the existing hardened TUI session detector. Other terminal defaults and explicit user overrides are unchanged.
+
+### Why
+
+- WSL selected only the Windows `alt+v` binding, so a delivered Ctrl+V byte never reached clipboard handling even when the Windows clipboard image could be read successfully.
+
+### Why an extension could not handle it
+
+- The app binding table controls clipboard dispatch and its displayed hints. An optional extension shortcut cannot repair the shared default for every composer.
+
+### Expected merge conflict zones
+
+- LOW: the TUI import and `app.clipboard.pasteImage` row in `packages/coding-agent/src/core/keybindings.ts`.
+
+## 2026-10-01 - Queued settings saves no longer block the UI on a held lock (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `FileSettingsStorage` gains `tryWithLock` (write only when the lock is free right now) and `withLockAsync` (the same locked read-merge-publish, waiting with timers). A queued save writes synchronously when the lock is free, as before, and otherwise waits for it asynchronously.
+
+### Why
+
+Saving the tip history on a turn waited for a held settings lock with `Atomics.wait` on the UI thread: up to 2.9 s of frozen typing whenever another senpi process held the lock, which is normal with several sessions running.
+
+### Why an extension could not handle it
+
+The settings store's write path is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `SettingsStorage`, `FileSettingsStorage.withLock` and the lock helpers beside it, `enqueueWrite`, `persistScopedSettings`, `save`, `saveProjectSettings`.
+
+## 2026-10-01 - One materialized copy of the session, released at idle (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: `externalize` remembers values that came out without resident tokens, and `materialize` returns those as is instead of deep-copying them.
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch` reuses the compact view's materialized entries (`_fromCompactView`), and `holdsMaterializedHistory()` reports a held full-history view of a trimmed mirror.
+- `packages/coding-agent/src/core/agent-session.ts`: the idle release moves into the public `releaseSettledSessionMemory()`, which also drops the views when a full-history view is held.
+
+### Why
+
+Every view deep-copied each entry, the branch copied the session a second time, and a trimmed mirror's full-history view pinned the whole file's entries across idle. At 50,000 entries that held about 60 MB more than at 10,000 (1.6x); after this the ratio is 1.04x, and context builds no longer copy entries that carry no resident strings.
+
+### Why an extension could not handle it
+
+The resident store, the session views and the idle settlement are core internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: `externalize`, `materialize`.
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch`, `_extendBranchCache`, `dropMaterializedCaches`, the fields beside `historyView`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_emitAgentIdleAfterDeferredTurns`, `releaseSettledSessionMemory`.
+
+## 2026-10-01 - Entry ids stay unique after a compaction trim; duplicated ids no longer hang open or /tree (senpi#2508, senpi#1247)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the ids of entries a compaction trims from the resident mirror stay reserved (`trimmedIds`), and every `generateId` call checks them along with the mirror's index. The leaf-path walks (`buildSessionPath`, `getBranch`, `hasBranchEntry`) stop at the first revisited entry, and `getTree()` attaches each node once.
+
+### Why
+
+`generateId` only checked the trimmed mirror, so a later entry could reuse the id of an entry that was trimmed from memory but is still in the file. On the next resume the reused id closed the parent chain into a cycle and `buildSessionPath` never returned, so the TUI stayed on "opening session" (seen with a 50,000-entry compacted session). Files that already contain duplicated ids (#1247) also froze `/tree` because `getTree()` attached the same node repeatedly.
+
+### Why an extension could not handle it
+
+Id generation and the path/tree walks are the session store itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `generateId` call sites, `_trimMirrorAfterCompaction`, `buildSessionPath`, `getBranch`, `hasBranchEntry`, `getTree`, and the fields beside `mirrorTrimmed`.
+
+## 2026-10-01 - Per-turn session reads extend instead of re-copying the session (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the compact mirror view, the full-history view of a trimmed mirror, the leaf branch and the current projection are materialized once and then extended by the entries appended since (keyed by the mirror array identity and length; anything that rebuilds the mirror assigns a new array and invalidates them). A trimmed mirror no longer re-reads and re-parses the session file for `getEntries()`; `projectSession` builds the leaf path once.
+- `packages/coding-agent/src/core/agent-session.ts`: a turn-end boundary with no drafts projects the session itself instead of cloning the branch into an in-memory manager.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: one canonicalization pass asks each provider's fallback eligibility once, and `rankFamilyModels` filters by family before asking.
+
+### Why
+
+Every background-triggered turn copied the whole session several times (context checks, hook previews, stop-hook history scans, footer usage) and re-parsed the skill MCP declaration files, and the first fallback check re-read provider settings per model; each copy blocked input for tens to hundreds of milliseconds in a 10k-entry session.
+
+### Why an extension could not handle it
+
+These are the session store and the turn-preparation paths in the core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `getBranch`, `getEntries`, `_getCompactEntries`, `buildSessionProjection`, `buildSessionContext`, `projectSession`, `buildContextEntries`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_buildBoundaryContext`.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: `authTiers`.
+
+## 2026-10-01 - Context usage is computed once per message change (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage()` memoizes its result on the runtime message array, its length and last message, the branch leaf and the model window; the computation moved unchanged to `_computeContextUsage()`.
+
+### Why
+
+The footer calls it on every frame; after a compaction it re-estimated tokens over every message (19% of each frame in a 50k-entry session).
+
+### Why an extension could not handle it
+
+The footer reads the session's own usage API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getContextUsage`.
+
+## 2026-10-01 - Share shipped package resolution with read permissions (#2513)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: bundled extension definitions and package resolution move into `packages/coding-agent/src/core/bundled-resources.ts`, with the source-module identity guard generalized for its new location. The shared resolver also locates shipped payload roots for permission classification; development runs trust declared asset directories rather than the whole source checkout.
+
+### Why
+
+- The loader and permissions must agree on the actual installed, snapshot, packaged or compiled sidecar package, instead of trusting a hardcoded application path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` resolves the engine-owned packages before their extensions can contribute resources.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/resource-loader.ts`: the bundled package resolver and its imports.
+
 ## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
 
 ### What changed
@@ -15,6 +256,26 @@
 ### Expected merge conflict zones
 
 - `agent-session.ts`: the tool-search service field and lookups, `dispose()`, and the line after `new ExtensionRunner` in `_buildRuntime`.
+
+## 2026-10-01 - Veto configuration reload during prompt admission
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the existing reload veto checks the prompt-admission hold before and after asynchronous extension gates, and reload rechecks admission immediately before teardown. The shared `isIdle` behavior remains unchanged.
+- `packages/coding-agent/src/core/reload-veto.ts`: owns the extracted reload decision and preserves extension cancellation reasons.
+- `packages/coding-agent/src/core/agent-session.ts`: once the veto passes, `reload` holds the session work barrier until the rebuilt runtime is bound, so a prompt submitted during teardown starts on the new generation instead of the retiring one.
+
+### Why
+
+- A watched configuration change could request a reload during the first request's admission, retiring extension APIs that the request was still using. This complements the lazy-activation generation reset in senpi#2506 and covers the first-message failure reported in oh-my-openagent#9365.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the synchronous admission hold. Changing shared idleness also changes hook submission and queued continuation behavior, so admission is checked only at the reload boundary.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `reload` and `checkReloadVeto`.
 
 ## 2026-10-01 - Skill catalog: read a skill when it would change the work, not on a loose match (senpi#2505)
 
@@ -7116,7 +7377,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 ### What changed
 
 - `agent-session.ts`: `/skill:<name>` now accepts a leading whitespace-separated run of loaded skills, expanding each unique skill in written order before appending the remaining prompt text. Repeated skills expand only once, unknown skills stop the run and remain literal, and slash text outside that leading run is never interpreted as a skill command.
-- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
+- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5) by default; since 2026-10-02 the `maxSkillExpansionsPerPrompt` setting can raise it (see that entry). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
 - The shared expansion seam is called by `prompt()`, `steer()`, and `followUp()`, so queued and non-TUI/RPC prompt paths receive identical behavior.
 
 ### Why extension system couldn't handle this alone
@@ -8475,3 +8736,27 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - `packages/coding-agent/src/core/session-write-reservation.ts`: new `hasOtherLiveSessionWriter(path, self)` answers whether another live persisted writer still owns a session file, pruning collected refs like `liveSessionWritePaths()` does.
 - `packages/coding-agent/src/core/session-manager.ts`: both blob-directory releases (the stale clear in `_setSessionFile` and `dispose()`) go through `_releaseBlobsDirUnlessShared()`, which keeps the directory while another live manager owns the same session file. The app-server loads a thread that is already open (`modes/app-server/threads/registry.ts` disposes the duplicate `AgentSession`), and without this the duplicate's teardown took the live manager's cache, costing it a full JSONL recovery per evicted string.
+
+## Adopted upstream v1.0.0 core session, runtime and settings (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`
+- `packages/coding-agent/src/core/model-runtime.ts`
+- `packages/coding-agent/src/core/remote-catalog-provider.ts`
+- `packages/coding-agent/src/core/sdk.ts`
+- `packages/coding-agent/src/core/settings-manager.ts`
+
+Upstream session/runtime/settings changes are kept with fork behaviour preserved: `quietStartup: "header"` (D-6), `/reload` enables tools newly added to defaultTools, and the absorbed main's runtime catalog work.
+
+### Why
+
+Each is an upstream improvement that does not break a fork behaviour; fork alternatives stay in place and are tested.
+
+### Why an extension could not handle it
+
+Session runtime, model runtime, remote catalog and settings own these paths below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to core session/settings/runtime paths at the next sync.

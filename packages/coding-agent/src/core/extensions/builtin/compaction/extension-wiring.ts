@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ContextUsage, ExtensionContext, MessageEndEvent, SessionBeforeCompactEvent } from "../../types.ts";
+import type {
+	ContextUsage,
+	ExtensionContext,
+	MessageEndEvent,
+	SessionBeforeCompactEvent,
+	UpdateCompactionOptions,
+} from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
+import { formatRemoteCompactionTimeoutNotice, type RemoteCompactionTimeout } from "./openai-remote-timeout.ts";
 import { resolveEffectiveReserveTokens } from "./policy.ts";
 import type { SpeculativeCompactionResult, SpeculativeCompactionSnapshot } from "./speculative.ts";
 
@@ -86,6 +93,23 @@ export function endCompactionFeedback(
 				: `Compaction did not apply: ${parts.join("; local fallback ")}`;
 		ctx.endCompaction?.({ reason: "extension", signal, aborted: signal?.aborted, errorMessage });
 	}
+}
+
+/**
+ * A remote attempt that ran out of its budget is never silent (senpi#2434): the TUI gets a warning
+ * and the compaction status event (what RPC clients such as the desktop render) carries the same
+ * text, naming the wait, the context size, and the step that runs next.
+ */
+export function reportRemoteCompactionTimeout(
+	ctx: ExtensionContext,
+	reason: UpdateCompactionOptions["reason"],
+	signal: AbortSignal | undefined,
+	event: { action: string; timeout?: RemoteCompactionTimeout },
+): void {
+	if (!event.timeout) return;
+	const notice = formatRemoteCompactionTimeoutNotice(event.timeout);
+	ctx.ui.notify(notice, "warning");
+	ctx.updateCompaction?.({ reason, signal, text: notice });
 }
 
 export function linkAbortSignal(source: AbortSignal | undefined, target: AbortController): () => void {

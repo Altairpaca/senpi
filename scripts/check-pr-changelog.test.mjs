@@ -131,6 +131,49 @@ describe("check-pr-changelog gate", () => {
 	});
 });
 
+// A released history past spawnSync's default 1 MiB buffer must not fail every PR with ENOBUFS.
+it("gates a PR whose changelog has grown past one mebibyte", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "changelog-gate-large-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const env = { ...process.env, GIT_CONFIG_GLOBAL: join(root, "gitconfig"), GIT_CONFIG_NOSYSTEM: "1" };
+	writeFileSync(env.GIT_CONFIG_GLOBAL, "");
+	const git = (...args) => {
+		const result = spawnSync("git", args, { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+		assert.equal(result.status, 0, result.stderr);
+		return result.stdout.trim();
+	};
+	git("init", "-q");
+	git("config", "user.name", "Fixture");
+	git("config", "user.email", "fixture@example.invalid");
+	const file = "packages/coding-agent/CHANGELOG.md";
+	const released = Array.from({ length: 20_000 }, (_, i) => `- published fix ${i} with enough words to look like a real entry.\n`).join("");
+	const original = `# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n## [2026.9.20] - 2026-09-20\n\n### Fixed\n\n${released}`;
+	assert.ok(Buffer.byteLength(original) > 1024 * 1024);
+	mkdirSync(dirname(join(root, file)), { recursive: true });
+	writeFileSync(join(root, file), original);
+	git("add", file);
+	git("commit", "-qm", "upstream fixture");
+	mkdirSync(join(root, ".github"));
+	writeFileSync(join(root, ".github/upstream.json"), JSON.stringify({ sha: git("rev-parse", "HEAD") }));
+	git("add", ".github/upstream.json");
+	git("commit", "-qm", "base fixture");
+	const base = git("rev-parse", "HEAD");
+	const cli = fileURLToPath(new URL("./check-pr-changelog.mjs", import.meta.url));
+	const gate = (text) => {
+		writeFileSync(join(root, file), text);
+		git("add", file);
+		git("commit", "--allow-empty", "-qm", "scenario fixture");
+		return spawnSync(process.execPath, [cli, "--base", base, "--labels", ""], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+	};
+
+	const accepted = gate(original.replace("### Fixed\n\n## [2026.9.20]", "### Fixed\n\n- new entry\n\n## [2026.9.20]"));
+	assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+
+	const rejected = gate(original.replace("- published fix 19999", "- edited fix 19999"));
+	assert.equal(rejected.status, 1, rejected.stdout + rejected.stderr);
+	assert.match(rejected.stdout + rejected.stderr, /packages\/coding-agent\/CHANGELOG\.md:\d+.*2026\.9\.20/);
+});
+
 // #1884: drive the real CLI over committed diffs, including the actual release transformation.
 it("keeps released changelog sections immutable through the PR gate CLI", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "changelog-gate-1884-"));

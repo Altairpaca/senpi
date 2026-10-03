@@ -1,3 +1,27 @@
+## 2026-10-02 - A one-model usage limit blocks only that model on the account (senpi#2555)
+
+### What changed
+
+- `errors.ts`: `classifySdkError` sets `modelFamily` on a `rate_limit` whose text names the family it binds (`rateLimitModelFamily` in `core/credential-pool/model-scope.ts`: "Fable limit", "Fable 5 limit", "Fable weekly limit", "Opus limit", "Sonnet limit").
+- `accounts.ts`: `AccountSlot` and env `SlotState` carry optional `modelBlocks` (`{ [family or model id]: { blockedUntil } }`); `upsertAccount` (re-login) clears them with the other block stamps.
+- `failover.ts`: `runFailover` takes the requested `model`. A family-scoped rate limit writes a model block that lasts until the reset Claude Code states (`usageLimitResetMs`, capped at 48 h; the exponential default when no reset is given) instead of `blockedUntil`/`blockReason` on the account; `persistBlock` stores it on the stored slot or the env `slotState`.
+- `affinity.ts`: `selectAccount` takes `model`; an account blocked only for another model stays eligible (`isBlockedFor`). `clearExpiredBlocks` also drops expired model blocks. When every account is out for the requested model and at least one of them only for that model, `AllAccountsBlockedError` says "have hit the usage limit for model <id> until <iso>" (and carries `limitedModel`), which the fallback chain reads as a model-scoped limit.
+- `auth-lane.ts`: `queryWithAuthLane` takes `model` and passes it to selection and failover; `stream.ts` and `session-stream.ts` pass `model.id`.
+- `account-command.ts`: `/claude-account list` shows "blocked for fable until <iso>" for a model block.
+
+### Why
+
+- The unified rate-limit headers name the exceeded window: `five_hour`/`seven_day` bind the account, `seven_day_opus`/`seven_day_sonnet`/`seven_day_overage_included` one family, and Claude Code renders that into "session limit" / "weekly limit" vs "Opus limit" / "Sonnet limit" / "Fable limit". Every rate limit was stamped on the account, so an exhausted Fable quota made Opus and Sonnet on the same account unusable until the block expired (oh-my-openagent#9421). Account-wide windows, auth failures and disabled accounts keep blocking the account.
+
+### Why an extension could not handle it
+
+- Account selection, failover and the stored block state are private to this builtin provider.
+
+### Expected merge conflict zones
+
+- LOW: `blockedAccount`/`persistBlock`/`usable` in `failover.ts`, `selectUnblocked`/`clearExpiredBlocks`/`AllAccountsBlockedError` in `affinity.ts`, the `selectAccount`/`runFailover` call in `queryWithAuthLane`, `slotStatus` in `account-command.ts`.
+- All production paths are fork-only.
+
 ## 2026-10-01 - Cold seed replays tool-read images as tool output, deduplicated and capped (senpi#2490)
 
 ### What changed
@@ -1676,3 +1700,24 @@ LOW in `oauth-login.ts` (added `check` to the returned shape + optional `readSet
   affinity, mandatory stream-safe failover, `/claude-account` + `--claude-account`, RPC/app-server
   account events, and auth guidance. See `packages/coding-agent/docs/providers.md` (Claude SDK OAuth)
   and `.omo/plans/claude-sdk-oauth-provider.md`.
+
+
+## 2026-10-02 - Relay the login method selector through the subscription adapter
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`
+
+The upstream v1.0.0 Anthropic OAuth flow opens with a mandatory `select` prompt (browser default vs copy-code). This adapter has no select callback, so it answered `""` for every select prompt and the flow threw `Unknown Anthropic login method: `, breaking `/claude-account add` and `/login` on the subscription provider. The adapter now returns the option the flow marks `(default)` (the browser login), else the first option, for any select prompt.
+
+### Why
+
+The fork's subscription login path delegates to `createOAuthConfig` here, not to `anthropicOAuth` directly, so the upstream selector tests do not cover it. Defaulting to the flow-declared default preserves the pre-selector browser-login behaviour for this adapter.
+
+### Why an extension could not handle it
+
+The prompt adapter is the fork's OAuth interaction shim for the subscription provider; there is no higher-level extension hook between it and the ai-package flow.
+
+### Expected merge conflict zones
+
+Upstream edits to the Anthropic subscription login adapter at the next sync.
