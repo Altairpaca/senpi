@@ -1,3 +1,23 @@
+## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, a new skill is not expanded and is replaced in place by `[skill not loaded: name]` (leading or inline); scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `removeSkillInvocationTokens()` takes an optional `unloaded` token set and renders those tokens as `[skill not loaded: name]`.
+
+### Why
+
+- After the cap, a later line re-using a loaded skill (`... $review` on line 3) produced a false cap warning and left bare `$review` in the request, so the model could not tell that line referred to the loaded skill.
+- A skill skipped by the cap reached the model as the bare command; only the user saw the warning, so the model could guess at the skill's content. The marker states that the skill was not loaded, at the line where it was requested.
+
+### Why an extension could not handle it
+
+Skill commands are resource-loader entries expanded inside the private `AgentSession` prompt and queue boundary before the outbound user message is assembled; no extension hook sees the tokens or the cap.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` loop if upstream revises skill-command parsing.
+
 ## 2026-10-02 - Model-scoped usage limits in the credential pool (senpi#2555)
 
 ### What changed

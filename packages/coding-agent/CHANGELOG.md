@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- Re-using an already loaded skill on a later line of the same prompt (for example `$review` on line 3 after the per-prompt skill cap was reached) no longer triggers the cap warning or stays as bare text: it keeps its `[skill: review]` marker where it was written.
+- Skills skipped by the per-prompt skill cap no longer reach the model as bare `$name` / `/skill:name` text: they become `[skill not loaded: name]` where they were written, so the model knows it does not have them. The cap warning is shown once per prompt.
+
 ### Removed
 
 ## [2026.10.2] - 2026-10-02

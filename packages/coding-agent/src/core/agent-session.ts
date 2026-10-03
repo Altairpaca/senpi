@@ -5122,6 +5122,8 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
+		const unloadedTokens = new Set<SkillInvocationToken>();
+		let capReported = false;
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -5130,17 +5132,10 @@ export class AgentSession {
 				continue;
 			}
 
-			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
-				this._extensionRunner.emitError({
-					extensionPath: "skill:expansion",
-					event: "skill_expansion",
-					error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
-				});
-				break;
-			}
-
-			removedTokens.push(token);
+			// A repeat of an already expanded skill adds no context, so it never counts
+			// against the cap and keeps its positional marker.
 			if (expandedSkillNames.has(skill.name)) {
+				removedTokens.push(token);
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -5148,6 +5143,22 @@ export class AgentSession {
 				});
 				continue;
 			}
+
+			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
+				if (!capReported) {
+					this._extensionRunner.emitError({
+						extensionPath: "skill:expansion",
+						event: "skill_expansion",
+						error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; the remaining skills were not loaded and are marked [skill not loaded: <name>] in the prompt.`,
+					});
+					capReported = true;
+				}
+				removedTokens.push(token);
+				unloadedTokens.add(token);
+				continue;
+			}
+
+			removedTokens.push(token);
 
 			try {
 				const content = readFileSync(skill.filePath, "utf-8");
@@ -5175,7 +5186,7 @@ export class AgentSession {
 		}
 
 		if (skillBlocks.length === 0) return text;
-		const userRequest = removeSkillInvocationTokens(text, removedTokens);
+		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });
 		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}

@@ -345,7 +345,39 @@ describe("#308 skill composition", () => {
 		);
 	});
 
-	it("caps expansion, leaves the remaining skill tokens literal, and emits a visible warning", async () => {
+	it("keeps a repeated skill's marker on later lines once the cap is reached", async () => {
+		const definitions = Array.from({ length: MAX_SKILL_EXPANSIONS_PER_PROMPT + 1 }, (_, index) => ({
+			name: `skill-${index + 1}`,
+			body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
+		}));
+		const { resourceLoader, skills, tempDir } = createFixtures(definitions);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		const errors: string[] = [];
+		const unsubscribe = harness.getExtensionRunner().onError((error) => {
+			if (error.event === "skill_expansion") errors.push(error.error);
+		});
+		const loaded = skills.slice(0, MAX_SKILL_EXPANSIONS_PER_PROMPT);
+		const overCap = skills[MAX_SKILL_EXPANSIONS_PER_PROMPT]!;
+
+		const actual = await promptAndCapture(
+			harness,
+			`${loaded.map((skill) => `/skill:${skill.name}`).join(" ")} first line\nsecond line $${overCap.name} then $${skills[0]!.name} again`,
+		);
+		unsubscribe();
+
+		expect(actual).toBe(
+			`${loaded.map((skill) => skillBlock(skill, tempDir)).join("\n\n")}\n\n${userRequest(
+				`first line\nsecond line [skill not loaded: ${overCap.name}] then [skill: ${skills[0]!.name}] again`,
+			)}`,
+		);
+		expect(errors).toEqual([
+			`Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; the remaining skills were not loaded and are marked [skill not loaded: <name>] in the prompt.`,
+			`Skipped duplicate skill invocation: ${skills[0]!.name}`,
+		]);
+	});
+
+	it("caps expansion, marks the remaining skills as not loaded, and emits a visible warning", async () => {
 		const definitions = Array.from({ length: MAX_SKILL_EXPANSIONS_PER_PROMPT + 2 }, (_, index) => ({
 			name: `skill-${index + 1}`,
 			body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
@@ -367,11 +399,11 @@ describe("#308 skill composition", () => {
 				.slice(0, MAX_SKILL_EXPANSIONS_PER_PROMPT)
 				.map((skill) => skillBlock(skill, tempDir))
 				.join("\n\n")}\n\n${userRequest(
-				`/skill:${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT]!.name} /skill:${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT + 1]!.name} compose within the cap`,
+				`[skill not loaded: ${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT]!.name}] [skill not loaded: ${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT + 1]!.name}] compose within the cap`,
 			)}`,
 		);
 		expect(errors).toEqual([
-			`Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
+			`Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; the remaining skills were not loaded and are marked [skill not loaded: <name>] in the prompt.`,
 		]);
 	});
 
