@@ -135,17 +135,22 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 
 	it("surfaces a provider error on the continued turn like any other turn", async () => {
 		const { harness } = await conversation("anthropic-messages");
+		const callsBefore = harness.faux.state.callCount;
 		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "Upstream overloaded (529)" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_api_key" }),
 		]);
 
 		await harness.session.continueFromLeaf();
 		await harness.session.agent.waitForIdle();
 
-		const last = harness.session.agent.state.messages.at(-1);
-		expect(last?.role).toBe("assistant");
-		expect((last as AssistantMessage).stopReason).toBe("error");
-		expect((last as AssistantMessage).errorMessage).toContain("Upstream overloaded");
+		expect(harness.faux.state.callCount).toBe(callsBefore + 1);
+		const errored = harness
+			.eventsOfType("message_end")
+			.map((event) => event.message)
+			.filter((message): message is AssistantMessage => message.role === "assistant" && message.stopReason === "error");
+		expect(errored.map((message) => message.errorMessage)).toEqual(["invalid_api_key"]);
+		// The edited conversation is still there to retry from.
+		expect(lastAssistantText(harness)).toBe("The capital of France is Lyon.");
 	});
 });
 
