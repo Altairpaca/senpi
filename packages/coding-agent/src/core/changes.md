@@ -1,3 +1,24 @@
+## 2026-10-02 - Skill expansion cap 10 and repeated invocations
+
+### What changed
+
+- `packages/coding-agent/src/core/skill-invocation.ts`: `MAX_SKILL_EXPANSIONS_PER_PROMPT` is 10 (was 5).
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, only new skills stay literal; scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt.
+
+### Why
+
+- Workflow prompts now chain six to ten skills (a process skill plus its helpers), and the sixth onward silently stayed literal.
+- After the cap, a later line re-using a loaded skill (`... $review` on line 3) produced a false cap warning and left bare `$review` in the request, so the model could not tell that line referred to the loaded skill.
+
+### Why an extension could not handle it
+
+Skill commands are resource-loader entries expanded inside the private `AgentSession` prompt and queue boundary before the outbound user message is assembled; no extension hook sees the tokens or the cap.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` loop if upstream revises skill-command parsing.
+- LOW: `skill-invocation.ts` cap constant.
+
 ## 2026-10-02 - Model-scoped usage limits in the credential pool (senpi#2555)
 
 ### What changed
@@ -7317,7 +7338,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 ### What changed
 
 - `agent-session.ts`: `/skill:<name>` now accepts a leading whitespace-separated run of loaded skills, expanding each unique skill in written order before appending the remaining prompt text. Repeated skills expand only once, unknown skills stop the run and remain literal, and slash text outside that leading run is never interpreted as a skill command.
-- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (10; raised from 5 on 2026-10-02 so workflow prompts that chain six to ten skills, such as a review or cleanup pass plus its helpers, expand fully). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
+- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (10; raised from 5 on 2026-10-02, see that entry). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
 - The shared expansion seam is called by `prompt()`, `steer()`, and `followUp()`, so queued and non-TUI/RPC prompt paths receive identical behavior.
 
 ### Why extension system couldn't handle this alone

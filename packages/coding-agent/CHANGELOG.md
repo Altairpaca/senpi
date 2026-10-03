@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Re-using an already loaded skill on a later line of the same prompt (for example `$review` on line 3 after ten skills were invoked) no longer triggers the cap warning or stays as bare text: it keeps its `[skill: review]` marker where it was written. Past the cap only new skills stay literal, and the warning is shown once.
+
 ### Removed
 
 ## [2026.10.2] - 2026-10-02

@@ -5122,6 +5122,7 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
+		let capReported = false;
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -5130,17 +5131,10 @@ export class AgentSession {
 				continue;
 			}
 
-			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
-				this._extensionRunner.emitError({
-					extensionPath: "skill:expansion",
-					event: "skill_expansion",
-					error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
-				});
-				break;
-			}
-
-			removedTokens.push(token);
+			// A repeat of an already expanded skill adds no context, so it never counts
+			// against the cap and keeps its positional marker.
 			if (expandedSkillNames.has(skill.name)) {
+				removedTokens.push(token);
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -5148,6 +5142,20 @@ export class AgentSession {
 				});
 				continue;
 			}
+
+			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
+				if (!capReported) {
+					this._extensionRunner.emitError({
+						extensionPath: "skill:expansion",
+						event: "skill_expansion",
+						error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
+					});
+					capReported = true;
+				}
+				continue;
+			}
+
+			removedTokens.push(token);
 
 			try {
 				const content = readFileSync(skill.filePath, "utf-8");
