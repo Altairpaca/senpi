@@ -1,5 +1,5 @@
-import { normalizePatchText, stripHeredoc } from "./text.ts";
 import type { ContextLineIndex } from "./line-endings.ts";
+import { normalizePatchText, stripHeredoc } from "./text.ts";
 import type { ParsedPatch, PatchChunk } from "./types.ts";
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";

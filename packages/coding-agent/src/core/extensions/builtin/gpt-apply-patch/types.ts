@@ -1,6 +1,6 @@
-import type { ContextLineIndex } from "./line-endings.ts";
 import type { ExtensionAPI, ToolDefinition } from "../../types.ts";
 import type { APPLY_PATCH_PARAMS } from "./constants.ts";
+import type { ContextLineIndex } from "./line-endings.ts";
 
 export type ParsedPatch =
 	| { type: "add"; filePath: string; content: string }
