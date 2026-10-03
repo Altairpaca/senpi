@@ -7,6 +7,7 @@
 ### Added
 
 - A `media_placeholders` client now gets an `image_ref` placeholder whose `path` names the stored image (written before the placeholder is emitted under the session's `media/<durableSessionId>/` directory, private and read-only, deleted with the session), or an `unavailableReason` of `image_too_large`, `session_limit` or `storage_error`, so tool images other than `read` can be rendered from disk.
+- An edited assistant response can be continued with no new prompt: the RPC `continue_from_leaf` command (advertised as the `continue_from_leaf` capability) starts a turn from the session leaf through a hidden nudge the transcript never shows, refusing with `streaming`, `nothing_to_continue`, or `leaf_not_assistant` (the conversation ends on a user message). `get_available_models` rows report `supportsAssistantPrefill` (false for every model today) ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
 
 ### Changed
 
