@@ -18,6 +18,7 @@
 
 - A client attaching to a host built from the same plugin set installed under a different directory no longer logs a profile mismatch on every ensure, and a build that loads a proper superset of the host's extensions can take over from it: host launch profiles now compare the plugin's extensions by role instead of by absolute path.
 - `logs/session.log` lines written by a session now carry its `sessionId` and the active `provider` and `model`, and `provider_error` names the provider and model of the failing response, so lines from parent and child sessions sharing one agent dir can be told apart ([#2541](https://github.com/code-yeongyu/senpi/issues/2541))
+- `RpcClient.closeSession` now rejects with `RpcCommandError` when the host refuses `close_session` (`success: false`), instead of resolving as if the session had closed. A gone transport still counts as closed ([#2572](https://github.com/code-yeongyu/senpi/issues/2572))
 
 ### Removed
 
