@@ -13,7 +13,7 @@ import { RubyKernel } from "../kernels/rb/kernel.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
 import { marshalToolResult } from "../tool/image.ts";
-import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from "../tool/types.ts";
+import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import {
 	javaScriptKernelMemory,
 	registerKernel,
