@@ -1,3 +1,28 @@
+## 2026-10-03 - `continue_from_leaf` command and model prefill capability (senpi#1930)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "continue_from_leaf" }` and its response. `get_available_models` rows gain `supportsAssistantPrefill: boolean`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: handles `continue_from_leaf` through `session.continueFromLeaf()`, refusing with `errorCode` `streaming` or `nothing_to_continue`. Each `get_available_models` row reports `modelSupportsAssistantPrefill(model, { thinkingEnabled })` for the session's current thinking level. Classic `get_protocol_info` advertises `continue_from_leaf`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the multi-session `get_protocol_info` advertises `continue_from_leaf`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `CONTINUE_FROM_LEAF_CAPABILITY`.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `continue_from_leaf` is new model work for the idle-handover gate.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `continueFromLeaf()`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: #1930. The desktop's "edit an answer, then Retry" needs a promptless turn it can detect by capability. The prefill flag lets a client switch to true prefill per model once a live probe proves a model supports it; today it is false everywhere.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: commands and `get_protocol_info` capabilities are owned by the RPC dispatch, not the extension API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the command union beside `send_custom_message` and the `get_available_models` response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `send_custom_message` case neighbourhood and the `get_protocol_info` capability list.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the capability set.
+
 ## 2026-10-03 - A refused close_session rejects instead of reporting a confirmed close (senpi#2572)
 
 ### What changed

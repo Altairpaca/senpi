@@ -5,6 +5,7 @@
 ### Breaking Changes
 
 ### Added
+- Models can declare `supportsAssistantPrefill`, and `modelSupportsAssistantPrefill(model, { thinkingEnabled })` reports whether a request may end with an assistant message the model continues (never with extended thinking on the Anthropic Messages API); no built-in model declares it yet ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
 
 ### Changed
 - The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.288.
