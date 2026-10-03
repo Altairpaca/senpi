@@ -17,7 +17,7 @@
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { type ImageContent, modelSupportsAssistantPrefill } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
@@ -29,6 +29,7 @@ import {
 	pinCredentialAccount,
 	removeCredentialAccount,
 } from "../../core/credential-accounts.ts";
+import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
@@ -63,6 +64,7 @@ import { ClientMessageEvents } from "./client-message-events.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	buildCustomUnsupportedRequest,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EXTENSION_EVENTS_CAPABILITY,
@@ -926,6 +928,7 @@ export function createRpcConnectionHandler(
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+								CONTINUE_FROM_LEAF_CAPABILITY,
 								...(options.capabilities ?? []),
 							]),
 						],
@@ -961,6 +964,16 @@ export function createRpcConnectionHandler(
 			case "append_session_entry": {
 				session.appendSessionEntry(command.entry);
 				return success(id, "append_session_entry");
+			}
+
+			case "continue_from_leaf": {
+				try {
+					await session.continueFromLeaf();
+					return success(id, "continue_from_leaf");
+				} catch (err) {
+					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
+					throw err;
+				}
 			}
 
 			case "send_custom_message": {
@@ -1095,6 +1108,9 @@ export function createRpcConnectionHandler(
 					models: models.map((model) => ({
 						...model,
 						supportedThinkingLevels: getSupportedThinkingLevels(model),
+						supportsAssistantPrefill: modelSupportsAssistantPrefill(model, {
+							thinkingEnabled: session.thinkingLevel !== "off",
+						}),
 					})),
 				});
 			}

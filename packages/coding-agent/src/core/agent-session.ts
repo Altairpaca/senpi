@@ -239,6 +239,11 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
+import {
+	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+	CONTINUE_FROM_LEAF_DIRECTIVE,
+	ContinueFromLeafError,
+} from "./continue-from-leaf.ts";
 import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,
@@ -10333,6 +10338,25 @@ export class AgentSession {
 		summaryEntry?: BranchSummaryEntry;
 	}> {
 		return this._navigateTree(targetId, options);
+	}
+
+	/**
+	 * Start a turn from the current leaf with no new user prompt (senpi #1930): after an edited
+	 * assistant response becomes the leaf, the model continues from its edited text. Delivered as a
+	 * hidden custom message, never as a trailing assistant message (see continue-from-leaf.ts).
+	 * Refuses while streaming and on a session with no messages; resolves once the turn starts.
+	 */
+	async continueFromLeaf(): Promise<void> {
+		if (this.isStreaming) throw new ContinueFromLeafError("streaming");
+		if (this.agent.state.messages.length === 0) throw new ContinueFromLeafError("nothing_to_continue");
+		await this.sendCustomMessage(
+			{
+				customType: CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+				content: CONTINUE_FROM_LEAF_DIRECTIVE,
+				display: false,
+			},
+			{ triggerTurn: true },
+		);
 	}
 
 	/**
