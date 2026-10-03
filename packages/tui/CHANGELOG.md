@@ -6,6 +6,8 @@
 
 ### Added
 
+- `PI_TUI_BURST_WINDOW_MS` sets how long a line break ending a read with text is held in case the rest of a paste follows, when the terminal sends no bracketed-paste markers. It defaults to `100` ms over SSH and `20` ms otherwise, and `0` never holds a line break ([#2622](https://github.com/code-yeongyu/senpi/issues/2622), reported by [@Bearmancer](https://github.com/Bearmancer)).
+
 ### Changed
 
 ### Fixed
