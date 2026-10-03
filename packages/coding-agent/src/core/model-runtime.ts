@@ -488,6 +488,7 @@ export class ModelRuntime implements Models {
 	}
 
 	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<void> {
+		const busyReadsBefore = this.credentials.busyReadCount();
 		const providers = this.models.getProviders();
 		const [available, checks, credentials] = await Promise.all([
 			this.models.getAvailable(undefined, { signal }),
@@ -502,6 +503,7 @@ export class ModelRuntime implements Models {
 			this.credentials.list({ signal }),
 		]);
 		if (seq !== this.availabilityRefreshSeq) return;
+		if (this.answeredFromBusyStore(busyReadsBefore, errorSeq)) return;
 		const auth = new Map(checks);
 		const configuredProviders = new Set(
 			checks
@@ -540,6 +542,7 @@ export class ModelRuntime implements Models {
 		const providerSeq = (this.providerAvailabilitySeq.get(providerId) ?? 0) + 1;
 		this.providerAvailabilitySeq.set(providerId, providerSeq);
 		const errorSeq = ++this.availabilityErrorSeq;
+		const busyReadsBefore = this.credentials.busyReadCount();
 		try {
 			const [available, auth, credential] = await Promise.all([
 				this.models.getAvailable(providerId, { signal }),
@@ -548,6 +551,7 @@ export class ModelRuntime implements Models {
 			]);
 			signal.throwIfAborted();
 			if (this.providerAvailabilitySeq.get(providerId) !== providerSeq) return;
+			if (this.answeredFromBusyStore(busyReadsBefore, errorSeq)) return;
 			const configuredProviders = new Set(this.snapshot.configuredProviders);
 			const storedProviders = new Set(this.snapshot.storedProviders);
 			const authByProvider = new Map(this.snapshot.auth);
@@ -585,6 +589,19 @@ export class ModelRuntime implements Models {
 			}
 			throw error;
 		}
+	}
+
+	/**
+	 * A pass whose credential reads hit a locked store saw the cached snapshot (empty in a
+	 * fresh process), not the store. Such a pass must not publish availability or mark it
+	 * initialized; it records the contention so the next refresh re-reads the store.
+	 */
+	private answeredFromBusyStore(busyReadsBefore: number, errorSeq: number): boolean {
+		if (this.credentials.busyReadCount() === busyReadsBefore) return false;
+		if (errorSeq === this.availabilityErrorSeq) {
+			this.availabilityError = "Credential store was busy; availability will be re-read on the next refresh";
+		}
+		return true;
 	}
 
 	getProviders(): readonly Provider[] {
@@ -994,6 +1011,7 @@ export class ModelRuntime implements Models {
 				const { rotation } = await this.loadCredentialPool();
 				return rotation.streamWithCredentialRotation({
 					sources,
+					modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 					...(streamOptions?.affinityKey !== undefined
 						? { affinityKey: streamOptions.affinityKey }
 						: streamOptions?.sessionId !== undefined
@@ -1100,6 +1118,7 @@ export class ModelRuntime implements Models {
 				const { rotation } = await this.loadCredentialPool();
 				return rotation.streamWithCredentialRotation({
 					sources,
+					modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 					...(streamOptions?.sessionId === undefined ? {} : { affinityKey: streamOptions.sessionId }),
 					runAttempt: (slot) =>
 						this.attemptWithTokenRecovery(
@@ -1324,10 +1343,38 @@ export class ModelRuntime implements Models {
 		if (composedOAuth) this.credentials.registerOAuthProvider(provider.id, composedOAuth);
 		else this.credentials.unregisterOAuthProvider(provider.id);
 		this.updateModelSnapshot();
+		this.markProvisionallyConfigured(
+			provider.id,
+			configuredRequestAuthStatus(this.config.getProvider(provider.id), undefined),
+			provider.auth.oauth && !provider.auth.apiKey ? "oauth" : "api_key",
+		);
 		if (alreadyFresh || options?.refresh === false) {
 			return Promise.resolve({ aborted: false, errors: new Map() });
 		}
 		return this.refreshAfterRegistration();
+	}
+
+	/**
+	 * Mark a newly registered provider as configured when it has a stored credential or a configured
+	 * API key. Availability checks run asynchronously, and callers such as initial model selection
+	 * read the snapshot before they finish. The next availability pass replaces this entry.
+	 */
+	private markProvisionallyConfigured(
+		providerId: string,
+		configuredStatus: AuthStatus | undefined,
+		type: AuthType,
+	): void {
+		if (!this.snapshot.storedProviders.has(providerId) && !configuredStatus?.configured) return;
+		const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
+		const auth = new Map(this.snapshot.auth);
+		// Never clobber a real check result.
+		if (!auth.get(providerId)) auth.set(providerId, { type, source: "configured provider" });
+		this.snapshot = {
+			...this.snapshot,
+			auth,
+			configuredProviders,
+			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+		};
 	}
 
 	registerProvider(
@@ -1353,26 +1400,11 @@ export class ModelRuntime implements Models {
 		if (composedOAuth) this.credentials.registerOAuthProvider(providerId, composedOAuth);
 		else this.credentials.unregisterOAuthProvider(providerId);
 		this.updateModelSnapshot();
-		if (
-			this.snapshot.storedProviders.has(providerId) ||
-			configuredRequestAuthStatus(this.config.getProvider(providerId), effective)?.configured
-		) {
-			const configuredProviders = new Set(this.snapshot.configuredProviders).add(providerId);
-			const auth = new Map(this.snapshot.auth);
-			// Provisional entry until the async refresh lands; never clobber a real check result.
-			if (!auth.get(providerId)) {
-				auth.set(providerId, {
-					type: effective.oauth && !effective.apiKey ? "oauth" : "api_key",
-					source: "configured provider",
-				});
-			}
-			this.snapshot = {
-				...this.snapshot,
-				auth,
-				configuredProviders,
-				available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
-			};
-		}
+		this.markProvisionallyConfigured(
+			providerId,
+			configuredRequestAuthStatus(this.config.getProvider(providerId), effective),
+			effective.oauth && !effective.apiKey ? "oauth" : "api_key",
+		);
 		if (alreadyFresh || options?.refresh === false) {
 			return Promise.resolve({ aborted: false, errors: new Map() });
 		}

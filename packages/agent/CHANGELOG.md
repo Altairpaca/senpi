@@ -4,6 +4,56 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In `one-at-a-time` follow-up and steering modes, consecutive queued non-user messages (custom notices) are delivered together in one turn; user messages are still delivered one per turn and in order ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Removed the inherited `AgentOptions.shouldStopAfterTurn` and `AgentLoopConfig.shouldStopAfterTurn`. Use `finishTurn` and return `{ action: "end" }` to stop after the completed turn. `finishTurn` runs after the assistant message and every tool result are finalized and before `turn_end`, and its decision applies after `turn_end`. It also runs for error and aborted responses, which stay hard exits, so guard them to keep the old normal-response-only behavior:
 
   ```ts

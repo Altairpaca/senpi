@@ -1,3 +1,57 @@
+## 2026-10-01 - Session gateway Windows parity suites run, by name, in `rpc-windows` (senpi#2328)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`rpc-windows`): every vitest step runs with `--reporter=verbose`, and two steps are added: `test/suite/rpc-endpoint-registry.test.ts` (endpoint.json `registry_version`/`endpoint_kind` read back on Windows paths) and `test/suite/interactive-session-control-win32.test.ts` (an interactive TUI on win32 starts, its endpoint request answers `unsupported_platform`, and nothing is registered). The socket-transport and win32 TUI steps also write a JSON report, and a final step fails the job unless both files executed with every test passed, so the win32-only named-pipe wrong-secret case and the TUI suite cannot pass by being skipped.
+
+### Why
+
+- The session gateway is POSIX-only, so its Windows contract is refusal plus registry compatibility. Those suites never ran on Windows, and the default dot reporter printed only per-file counts, so a Windows-only case could not be shown to have run rather than been counted.
+
+### Why an extension could not handle it
+
+- Which suites the Windows runner executes, and how it reports them, belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `rpc-windows` step list.
+
+## 2026-10-01 - Windows Python bootstrap is a required CI gate (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml` adds the `python-kernel-windows` job with slow/hung startup regressions and a compiled Python host exercising cold and warm cells on `windows-latest`. The `Check and test` fan-in requires that job and includes its result in the workflow summary.
+
+### Why
+
+- A healthy cold packaged interpreter can exceed the previous five-second readiness deadline. Linux-only runtime coverage cannot detect Windows bootstrap and sidecar failures.
+
+### Why an extension could not handle it
+
+- Required Windows runner coverage and the repository's CI fan-in belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the Python bootstrap job near `webview-kernel` and the `Check and test` needs list.
+
+## 2026-10-01 - CI fails when the build rewrites a committed dist file (senpi#2484)
+
+### What changed
+
+- `.github/workflows/ci.yml` (Static checks): after `npm run build`, `git diff --exit-code` over every tracked `packages/*/dist/*` file.
+
+### Why
+
+- `packages/ai/dist/cli.js` and `packages/coding-agent/dist/cli.js` are committed bin stubs that the build overwrites. The upstream sync changed `packages/ai/src/cli.ts` without refreshing its stub, and the publish workflow's release step then aborted on the dirty tree. The new step reports that drift on the PR instead.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the Static checks job steps after `Build workspace package entries`.
+
 ## 2026-09-30 - Drop the duplicate Rust manual PTY QA step (senpi#2447)
 
 ### What changed
@@ -69,6 +123,24 @@ Workspace manifests, tsconfig and build/check scripts are repository build infra
 ### Expected merge conflict zones
 
 Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Codemode behavior regression gate (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml`: add the `codemode-gate` job with all five required runtime legs, a frozen behavior baseline, package contracts, harness typechecking, and a JSON report artifact. Its build wrapper records input hashes, including the source file set, so a deleted source cannot be measured against stale workspace output.
+
+### Why
+
+- Codemode changes need exact checks for legacy prompt, schema, helper, lifecycle, and import behavior without relying on wall-clock timings. The import census is scoped through measured parent edges and the loader's virtual module tables; host-only imports do not turn the codemode job red.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the new `codemode-gate` job in `ci.yml`.
 
 ## 2026-09-29 - Model catalog publish runs only in the upstream repository (senpi#1522)
 

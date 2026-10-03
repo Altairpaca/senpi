@@ -131,7 +131,7 @@ import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
-import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
+import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -209,7 +209,11 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
-import { DEFAULT_TAIL_BUDGET, DEFAULT_WARM_CHUNK_SIZE } from "./components/progressive-transcript-container.ts";
+import {
+	DEFAULT_TAIL_BUDGET,
+	DEFAULT_WARM_CHUNK_SIZE,
+	defaultHistoryMarker,
+} from "./components/progressive-transcript-container.ts";
 import { builtInMessageRenderer } from "./components/remote-delivery-message.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
@@ -597,6 +601,16 @@ type LoginProviderCompletionOption = {
 	authTypes: AuthSelectorProvider["authType"][];
 };
 
+/** Startup header (logo, version, key hints): hidden only by quietStartup: true, unless verbose. */
+export function showsStartupHeader(verbose: boolean | undefined, quietStartup: QuietStartup): boolean {
+	return verbose === true || quietStartup !== true;
+}
+
+/** Startup details (model scope, loaded resources): hidden by quietStartup: true or "header", unless verbose. */
+export function showsStartupDetails(verbose: boolean | undefined, quietStartup: QuietStartup): boolean {
+	return verbose === true || quietStartup === false;
+}
+
 const AUTH_TYPE_ORDER = { oauth: 0, api_key: 1 } satisfies Record<AuthSelectorProvider["authType"], number>;
 
 function createFuzzyAutocompleteItems<T>(
@@ -640,7 +654,7 @@ function getLoginProviderSearchText(provider: LoginProviderCompletionOption): st
 }
 
 function formatLoginProviderCompletionDescription(provider: LoginProviderCompletionOption): string {
-	const authTypes = provider.authTypes.map(formatAuthSelectorProviderType).join("/");
+	const authTypes = provider.authTypes.map((authType) => formatAuthSelectorProviderType(authType)).join("/");
 	return provider.name === provider.id ? authTypes : `${provider.name} · ${authTypes}`;
 }
 
@@ -1172,6 +1186,7 @@ export class InteractiveMode {
 			tailBudget: DEFAULT_TAIL_BUDGET,
 			warmChunkSize: DEFAULT_WARM_CHUNK_SIZE,
 			requestRender: () => this.ui.requestRender(),
+			historyMarker: (hidden) => theme.fg("muted", ` ${defaultHistoryMarker(hidden)}`),
 		});
 		this.documentContainer = new Container();
 		this.documentContainer.addChild(this.headerContainer);
@@ -1280,6 +1295,7 @@ export class InteractiveMode {
 			name: command.name,
 			description: command.description,
 			...(command.argumentHint && { argumentHint: command.argumentHint }),
+			...(command.requiresArguments !== undefined && { requiresArguments: command.requiresArguments }),
 		}));
 
 		const modelCommand = slashCommands.find((command) => command.name === "model");
@@ -1338,6 +1354,7 @@ export class InteractiveMode {
 			name: cmd.name,
 			description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
 			...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
+			...(cmd.requiresArguments !== undefined && { requiresArguments: cmd.requiresArguments }),
 		}));
 
 		// Convert extension commands to SlashCommand format
@@ -1349,6 +1366,7 @@ export class InteractiveMode {
 				name: cmd.invocationName,
 				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
 				...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
+				...(cmd.requiresArguments !== undefined && { requiresArguments: cmd.requiresArguments }),
 				getArgumentCompletions: cmd.getArgumentCompletions,
 			}));
 
@@ -1363,6 +1381,7 @@ export class InteractiveMode {
 					name: commandName,
 					description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
 					...(skill.argumentHint && { argumentHint: skill.argumentHint }),
+					...(skill.requiresArguments !== undefined && { requiresArguments: skill.requiresArguments }),
 				});
 			}
 		}
@@ -1548,7 +1567,10 @@ export class InteractiveMode {
 		this.changelogMarkdown = this.getChangelogForDisplay();
 		time("changelog", "tui");
 
-		if (this.session.scopedModels.length > 0 && (this.options.verbose || !this.settingsManager.getQuietStartup())) {
+		if (
+			this.session.scopedModels.length > 0 &&
+			showsStartupDetails(this.options.verbose, this.settingsManager.getQuietStartup())
+		) {
 			const modelList = this.session.scopedModels
 				.map((sm) => {
 					const thinkingStr = sm.thinkingLevel ? `:${sm.thinkingLevel}` : "";
@@ -1629,7 +1651,8 @@ export class InteractiveMode {
 			this.headerContainer.addChild(new Spacer(1));
 			this.headerContainer.addChild(this.builtInHeader);
 			this.headerContainer.addChild(new Spacer(1));
-		} else if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
+		} else if (showsStartupHeader(this.options.verbose, this.settingsManager.getQuietStartup())) {
+			const showDetails = showsStartupDetails(this.options.verbose, this.settingsManager.getQuietStartup());
 			// Built on demand so the header follows theme changes (the system theme recolors once the
 			// terminal reports its colors).
 			const logo = () =>
@@ -1672,10 +1695,14 @@ export class InteractiveMode {
 					hint("app.tools.expand", "more"),
 				].join(theme.fg("muted", " · "));
 			const compactOnboarding = () =>
-				theme.fg("dim", `Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`);
+				theme.fg(
+					"dim",
+					`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
+				);
 			const startupTip = resolveStartupTipLine({
 				tipsEnabled: this.settingsManager.getTipsEnabled(),
-				quietStartup: this.settingsManager.getQuietStartup(),
+				// Header-only quiet startup keeps the header but not the startup details, tips included.
+				quietStartup: this.settingsManager.getQuietStartup() !== false,
 				history: this.settingsManager.getTipsHistory(),
 				now: Date.now(),
 				definitions: TIP_DEFINITIONS,
@@ -1727,6 +1754,7 @@ export class InteractiveMode {
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
+		this.session.releaseSettledSessionMemory();
 		time("renderInitial", "tui");
 
 		// Set up theme file watcher
@@ -2397,7 +2425,8 @@ export class InteractiveMode {
 		// Resource rendering is idempotent; chat clears no longer clear this separate container.
 		this.loadedResourcesContainer.clear();
 
-		const showListing = options?.force || this.options.verbose || !this.settingsManager.getQuietStartup();
+		const showListing =
+			options?.force || showsStartupDetails(this.options.verbose, this.settingsManager.getQuietStartup());
 		const showDiagnostics = showListing || options?.showDiagnosticsWhenQuiet === true;
 		if (!showListing && !showDiagnostics) {
 			return;
@@ -7652,8 +7681,8 @@ export class InteractiveMode {
 					onEnableInstallTelemetryChange: (enabled) => {
 						this.settingsManager.setEnableInstallTelemetry(enabled);
 					},
-					onQuietStartupChange: (enabled) => {
-						this.settingsManager.setQuietStartup(enabled);
+					onQuietStartupChange: (quiet) => {
+						this.settingsManager.setQuietStartup(quiet);
 					},
 					onDefaultProjectTrustChange: (defaultProjectTrust) => {
 						this.settingsManager.setDefaultProjectTrust(defaultProjectTrust);

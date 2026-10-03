@@ -257,7 +257,7 @@ export interface AutocompleteItem {
 	label: string;
 	description?: string;
 	/**
-	 * The command declares an argument hint: confirming the row completes `/name ` and waits for
+	 * The command requires arguments: confirming the row completes `/name ` and waits for
 	 * arguments instead of submitting.
 	 */
 	awaitsArguments?: boolean;
@@ -269,6 +269,8 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
+	/** Whether picker Enter must wait for arguments. Omitted means: wait only when `argumentHint` is set. */
+	requiresArguments?: boolean;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;
@@ -376,18 +378,19 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
-			const spaceIndex = textBeforeCursor.indexOf(" ");
+		const commandText = textBeforeCursor.trimStart();
+		if (!options.force && commandText.startsWith("/")) {
+			const spaceIndex = commandText.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const prefix = textBeforeCursor.slice(1);
+				const prefix = commandText.slice(1);
 				const filtered = getSlashCommandSuggestions(this.commands, prefix);
 
 				if (filtered.length === 0) return null;
 
 				return {
 					items: filtered,
-					prefix: textBeforeCursor,
+					prefix: commandText,
 				};
 			}
 
@@ -411,8 +414,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				};
 			}
 
-			const commandName = textBeforeCursor.slice(1, spaceIndex);
-			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
+			const commandName = commandText.slice(1, spaceIndex);
+			const argumentText = commandText.slice(spaceIndex + 1);
 
 			const command = this.commands.find((cmd) => {
 				const name = "name" in cmd ? cmd.name : cmd.value;

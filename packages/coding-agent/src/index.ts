@@ -353,6 +353,7 @@ export {
 	type FullscreenExitOutput,
 	type ImageSettings,
 	type PackageSource,
+	type QuietStartup,
 	type RetrySettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,
@@ -596,11 +597,12 @@ export {
 } from "./modes/interactive/theme/theme.ts";
 // Exact-pid collection of children whose owning thread is gone (#1962)
 export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
+// Shell utilities
+export { withBundledBunCommands } from "./utils/bundled-bun.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";
 export { convertToPng } from "./utils/image-convert.ts";
 export { formatDimensionNote, type ResizedImage, resizeImage } from "./utils/image-resize.ts";
 export { detectSupportedImageMimeTypeFromFile } from "./utils/mime.ts";
-// Shell utilities
 export { getPowerShellConfig, getShellConfig } from "./utils/shell.ts";

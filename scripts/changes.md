@@ -1,3 +1,42 @@
+## 2026-10-01 - Changelog gate reads changelogs larger than one mebibyte
+
+### What changed
+
+- `scripts/changes-md-git.mjs`: `runGit` gives git an explicit 64 MiB output budget and names that budget if output ever exceeds it.
+
+### Why
+
+- The 2026.10.1-3 release grew `packages/coding-agent/CHANGELOG.md` past spawnSync's 1 MiB default buffer, so the PR gate's `git show HEAD:<changelog>` failed with ENOBUFS on every PR that touched that changelog.
+
+### Why an extension could not handle it
+
+- Repository tooling, not runtime behavior; no extension surface reaches the changelog gate.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/changes-md-git.mjs`, `runGit`.
+
+## 2026-10-01 - Preserve sidecar dependency resolution and staging ownership (senpi#2452)
+
+### What changed
+
+- `scripts/copy-codemode-sidecar.mjs` mirrors source package nesting, audits every staged dependency edge, follows present optional dependencies, and tracks staged package paths rather than clearing the entire output install. Before removing or writing anything it refuses a symlinked segment on any owned path (including `node_modules` itself), and it removes `node_modules/@code-yeongyu/senpi-codemode` only when the ownership journal lists it or, with no journal, when it is the earlier copier's layout (a codemode manifest with `@babel/parser` nested inside); any other existing codemode package is refused.
+- `scripts/copy-codemode-sidecar.test.mjs` and `scripts/copy-codemode-sidecar-closure.test.mjs` cover nested shadowing, workspace resolution, selected-file links, diagnostics, optional payloads, owned cleanup, store-linked dependencies that the edge audit must reject, diamond graphs that share one staged package, host virtual packages reached transitively, and tampered ownership journals. `scripts/copy-codemode-sidecar-ownership.test.mjs` covers a symlinked output `node_modules`, an unowned codemode package with no journal, and replacement of the earlier journal-less layout.
+- The ownership journal `.codemode-sidecar.json` (a JSON list of relative `node_modules` paths) is written next to the staged `node_modules`, so it now ships in `packages/coding-agent/dist` and in every release platform directory. This is intended: a rerun into the same output, including an extracted or reused release directory, removes only the paths it staged before and never touches packages it did not stage.
+- `scripts/build-binaries.sh` copies the archive manifest after guarded sidecar staging. `scripts/build-binaries-staging.test.mjs` executes that staging block against an isolated filesystem fixture.
+
+### Why
+
+- Traversal-order hoisting could silently change a descendant's resolved version; whole-install cleanup could delete unrelated output packages.
+
+### Why an extension could not handle it
+
+- Release asset staging runs before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The dependency traversal and sidecar cleanup in `scripts/copy-codemode-sidecar.mjs`.
+
 ## 2026-10-01 - Release path stops running the removed image-model generator (senpi#2484)
 
 ### What changed
@@ -332,6 +371,24 @@ The bundle script runs at build time, outside the extension runtime entirely.
 ### Expected merge conflict zones
 
 - The assertion block at the end of `compiledLoaderProbeSource`, whenever upstream changes loader caching.
+
+## 2026-09-21 - Reject changes to released changelog sections (#1884)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs` compares committed CHANGELOG sections against the PR merge base, rejecting released additions, edits and deletions with their path, line and section.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs` previously accepted any changed changelog filename, including entries that could never appear in a future release. Only the existing Unreleased block's release stamp may introduce a new released section.
+
+### Why an extension could not handle it
+
+- `scripts/check-pr-changelog.mjs` runs in CI, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs` fact collection and verdict composition.
 
 ## 2026-09-21 - run-workspaces gains --parallel with prefixed lanes and shared signal forwarding (senpi#1895)
 
@@ -1656,3 +1713,62 @@ pid), stop -> `stopped` (socket removed).
 ### Expected merge conflict zones
 
 - NONE: fork-only scripts.
+
+## 2026-10-02 - Fork budget for the lightweight models entry (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the upstream `packages/ai` `./models` entry budget is kept with its forbid list, and its `maxFiles` is set to 21 instead of upstream's 15.
+
+### Why
+
+The fork's `packages/ai/src/models.ts` also carries credential-pool slots, the models store, the catalog max lookup and credential refresh, so the entry reaches 21 files. The forbid list still holds (no providers, generated catalog, index, validation or TypeBox helpers) and the lightweight entry still runs a faux completion without TypeBox, catalogs or SDKs. The budget stops further growth.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository check script, not runtime behaviour.
+
+### Expected merge conflict zones
+
+The `BUDGETS["packages/ai"]["./models"]` object when upstream retunes its budget.
+
+## 2026-10-02 - Fork browser smoke entry kept; codemode binary smoke not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/browser-smoke-entry.ts`
+- `scripts/smoke-test-codemode-binary.mjs`
+
+`browser-smoke-entry.ts` stays as in the fork (upstream added durable entries to it). `smoke-test-codemode-binary.mjs` smoke-tests upstream's codemode package, which the fork excludes, and is not added.
+
+### Why
+
+The fork's browser smoke covers the fork's packages; upstream's codemode package is replaced by the fork's own eval extension.
+
+### Why an extension could not handle it
+
+These are repository check scripts, not runtime behaviour.
+
+### Expected merge conflict zones
+
+Upstream edits to the browser smoke entry list; keep the fork's entries.
+
+## 2026-10-02 - Adopted upstream binary build script (upstream v1.0.0 sync)
+
+### What changed
+
+- `scripts/build-binaries.sh`
+
+The upstream build script change is kept.
+
+### Why
+
+Repository build tooling from upstream; the fork does not modify it.
+
+### Why an extension could not handle it
+
+Build tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream edits to scripts/build-binaries.sh at the next sync.

@@ -40,6 +40,7 @@ export type ResolvedRequestAuth =
 			upstreamModelId?: string;
 			serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 			env?: Record<string, string>;
+			ambient?: true;
 	  }
 	| { ok: false; error: string };
 export { clearApiKeyCache } from "./provider-composer.ts";
@@ -92,6 +93,7 @@ export class ModelRegistry {
 		if (this.runtime.hasAvailabilitySnapshot()) {
 			return [...this.runtime.getAvailableSnapshot()];
 		}
+		this.retryBusyCredentialRead();
 		return this.runtime.getProviders().flatMap((provider) => {
 			if (!this.authStorage.hasAuth(provider.id) && !this.runtime.getProviderAuthStatus(provider.id).configured) {
 				return [];
@@ -115,7 +117,17 @@ export class ModelRegistry {
 	}
 
 	hasConfiguredAuth(model: Model<Api>): boolean {
+		this.retryBusyCredentialRead();
 		return this.authStorage.hasAuth(model.provider) || this.runtime.getProviderAuthStatus(model.provider).configured;
+	}
+
+	/**
+	 * The live auth check reads the in-memory credentials. When the last read found the store
+	 * locked they were never loaded, so re-read now (bounded by the sync lock budget) instead
+	 * of answering from the empty fallback for the rest of the process.
+	 */
+	private retryBusyCredentialRead(): void {
+		if (this.authStorage.isCredentialStoreBusy()) this.authStorage.reload();
 	}
 
 	getUpstreamModelId(model: Model<Api>): string | undefined {
@@ -146,6 +158,7 @@ export class ModelRegistry {
 				upstreamModelId: compatibility.upstreamModelId,
 				serviceTier: compatibility.serviceTier,
 				env: resolution.env,
+				...(resolution.ambient ? { ambient: true } : {}),
 			};
 		} catch (error) {
 			const cause = error instanceof Error ? error.cause : undefined;

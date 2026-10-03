@@ -18,7 +18,6 @@ import {
 	matchesOpenAiRemoteCompactionIdentity,
 	openAiRemoteCompactionOrigin,
 } from "../../../src/core/extensions/builtin/compaction/openai-remote-model.ts";
-import { CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS } from "../../../src/core/extensions/builtin/compaction/openai-remote-timeout.ts";
 import type { SessionBeforeCompactEvent } from "../../../src/core/extensions/types.ts";
 import { convertToLlm } from "../../../src/core/messages.ts";
 import { buildSessionContext, type SessionEntry } from "../../../src/core/session-manager.ts";
@@ -300,7 +299,7 @@ describe("issue #2378: ChatGPT subscription remote compaction", () => {
 		);
 
 		const pending = run();
-		await vi.advanceTimersByTimeAsync(CHATGPT_SUBSCRIPTION_REMOTE_COMPACTION_TIMEOUT_MS + 1);
+		await vi.runAllTimersAsync();
 		const result = await pending;
 		release?.();
 

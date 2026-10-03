@@ -36,6 +36,7 @@ import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
 	cachedExtensionFactory,
 	type ExtensionModuleImporter,
@@ -469,6 +470,14 @@ function createExtensionAPI(
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			assertActive();
+			if (typeof name !== "string" || name.length === 0) {
+				throw new Error(
+					`Command registered by extension "${extension.path}" must have a non-empty string name. Use pi.registerCommand("name", { description, handler }).`,
+				);
+			}
+			if (typeof options?.handler !== "function") {
+				throw new Error(`Command "/${name}" registered by extension "${extension.path}" must define handler().`);
+			}
 			extension.commands.set(name, {
 				name,
 				sourceInfo: extension.sourceInfo,
@@ -744,6 +753,7 @@ function createExtensionAPI(
 			},
 		},
 	} as ExtensionAPI;
+	recordExtensionLoadKey(api, runtime);
 
 	return {
 		api,

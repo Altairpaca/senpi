@@ -20,9 +20,15 @@ export function validateGitRevision(value) {
 	return value;
 }
 
+// Released changelogs only grow; packages/coding-agent/CHANGELOG.md passed spawnSync's 1 MiB default in 2026.10.1-3.
+const GIT_OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024;
+
 /** Runs git; throws on failure so callers fail closed. */
 export function runGit(args, what) {
-	const result = spawnSync("git", args, { encoding: "utf8" });
+	const result = spawnSync("git", args, { encoding: "utf8", maxBuffer: GIT_OUTPUT_LIMIT_BYTES });
+	if (result.error?.code === "ENOBUFS") {
+		throw new Error(`${what} produced more than ${GIT_OUTPUT_LIMIT_BYTES} bytes of git output`);
+	}
 	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error(`${what} failed:\n${(result.stderr ?? "").trim()}`);
 	return result.stdout;

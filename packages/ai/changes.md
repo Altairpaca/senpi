@@ -1,3 +1,61 @@
+## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the OpenAI input/output split (`applyOpenAiInputCap`) moved to `src/utils/openai-input-cap.ts` unchanged, so the OpenGateway runtime refresh caps a newly served GPT-5.x/GPT-6 row the same way the generator caps shipped rows. The generator imports it instead of keeping a private copy.
+
+### Why
+
+The runtime refresh adds models the shipped catalog lacks; without the shared cap a new GPT row would advertise the raw 1,050,000-token window and over-budget prompts would be rejected upstream (#1422).
+
+### Why an extension could not handle it
+
+The generator and the built-in OpenGateway provider both live in the AI package and must share one input-budget rule.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the import block and the OpenAI context-window constants next to `OPENAI_MAX_CONTEXT_INPUT_CAP`; an upstream edit to the removed helper belongs in `src/utils/openai-input-cap.ts`.
+
+## 2026-09-30 - Scope model data generation to selected providers (senpi#1431)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts` accepts `--providers <comma-separated IDs>` for strict, provider-scoped data regeneration. It preserves every unselected data file byte-for-byte, rebuilds the manifest over the mixed staged set, validates the complete catalog atomically, and leaves generated TypeScript shards untouched. `--generated-at` pins a reproducible manifest timestamp for scoped runs.
+- `packages/ai/test/generate-models-strict.test.ts` exercises the real generator CLI with fixture HTTP responses, byte-stable repeat output, full manifest validation, and rejected missing or inherited provider selectors.
+
+### Why
+
+- A capability-only catalog correction must not pick up unrelated live-provider price, context, or inventory churn from full regeneration.
+
+### Why an extension could not handle it
+
+- Model-data generation and manifest integrity run at build time before extensions load.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/ai/scripts/generate-models.ts` option parsing and staged data writer.
+
+## 2026-09-30 - Toggle-only thinking maps for generated catalog rows (senpi#891)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: normalize reasoning support for eligible toggle-only provider formats into the on/off thinking-level map while preserving explicit effort maps and unsupported-model metadata.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerated catalog shards carry the normalized capability map.
+- `packages/ai/test/issue-891-thinking-capabilities.test.ts` and `packages/ai/test/generate-models-strict.test.ts`: pin the GLM 4.7, Qwen, explicit-effort, preview, and transport boundaries.
+
+### Why
+
+Toggle-only reasoning providers must expose a selectable enabled state without advertising unsupported effort levels; otherwise clients either cannot enable thinking or send invalid effort values.
+
+### Why an extension could not handle it
+
+The generator and its committed catalog shards ship inside the AI package, so runtime extensions cannot change the selected thinking capabilities.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: metadata normalization order and format predicates.
+- `packages/ai/src/providers/data/*.json` + `.manifest.json`: regenerate rather than hand-merge.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): renamed ChatGPT subscription tests
 
 ### What changed
@@ -1728,3 +1786,21 @@ These failures are in upstream `packages/ai` live integration tests, not in the 
 
 - HIGH: `packages/ai/scripts/generate-models.ts` provider blocks (OpenAI, xAI, Fireworks, Mistral, OpenRouter) whenever upstream reshapes a provider's metadata.
 - MEDIUM: `packages/ai/package.json` `dependencies` and `exports` on every upstream dependency bump.
+
+## Adopted upstream v1.0.0 ai package manifest (2026-10-02)
+
+### What changed
+
+- `packages/ai/package.json` — the upstream v1.0.0 manifest is kept, including the lightweight `./models` subpath export and its export map.
+
+### Why
+
+The fork adopted upstream's ai package layout (D-12) on top of its kept provider/auth behaviour; every recorded pin stays.
+
+### Why an extension could not handle it
+
+The package manifest and its export map are not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream manifest edits at the next sync.

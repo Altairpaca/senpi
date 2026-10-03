@@ -4,6 +4,64 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+- Exported `isWarpWslSession()` so clipboard handling can reuse the hardened direct-local Warp-on-WSL predicate without duplicating terminal detection; existing Shift+Enter normalization remains unchanged ([#2538](https://github.com/code-yeongyu/senpi/pull/2538) by [@deopa0402](https://github.com/deopa0402)).
+
+### Changed
+
+### Fixed
+
+- Frames over long output no longer re-scan every line: a frame whose line count changed reuses the unchanged normalized prefix, image presence is measured once per frame, and the main-screen renderer no longer walks the whole component tree and copies every line on each frame. Components can report `getRenderRevision()`, a change signal that containers caching their children's output use to tell when a child must render again ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+- Fixed inherited color bleeding past mouse selections and search highlights in fullscreen mode when a styled token ends at the highlight boundary ([#10169](https://github.com/earendil-works/pi/issues/10169)).
+
+- Fixed inherited memory retained per rendered message: `Markdown` holds its parsed tokens weakly, and `Markdown`, `Text`, and `Box` flatten their cached lines. A long assistant message keeps about a fifth of the heap it kept before.
+
+- Fixed inherited slash command autocompletion not triggering when the input starts with whitespace ([#10218](https://github.com/earendil-works/pi/pull/10218) by [@haoqixu](https://github.com/haoqixu)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
 - Replaced the inherited `TUI.queryTerminalColorScheme()` and `TUI.queryTerminalBackgroundColor()` with `TUI.queryTerminalColors()`, which reads the default foreground, background and 16 ANSI colors (OSC 10, 11 and 4) in one round trip and returns `TerminalColors`. `parseOsc11BackgroundColor()` is removed.
 
 ### Added
@@ -21,6 +79,8 @@
 - Reduced inherited fuzzy search latency for long texts by using native substring search ([#9267](https://github.com/earendil-works/pi/issues/9267)).
 
 ### Fixed
+
+- Fixed optional-argument command picker rows requiring two Enter presses. A command that declares `requiresArguments: false` submits on the first Enter; a row with an argument hint and no explicit flag still completes and waits ([#2479](https://github.com/code-yeongyu/senpi/issues/2479)).
 
 - Fixed inherited `/skill` autocomplete appearing empty when loaded skill names did not contain the letters in `skill` ([#9944](https://github.com/earendil-works/pi/issues/9944)), and skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
 

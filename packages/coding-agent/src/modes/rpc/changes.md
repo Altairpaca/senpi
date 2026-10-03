@@ -20,6 +20,128 @@ The launch commands in `packages/coding-agent/src/modes/rpc/host-launch.ts` and 
 - `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `resolveHostChildLaunch` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
 - `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` is a new fork-only module.
 
+## 2026-10-02 - A taken-over generation leaves the successor's registration alone (senpi#2536)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` takes `superseded`; a superseded generation removes only its own generation directory and never reads or removes the pointer or `settings.json`.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor records a `replaced` supersession loss and releases as superseded on shutdown. An `absent` loss, an idle exit and a drain-stop release exactly as before.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: test-only `_test.beforeRegistration` hook between the successor's answer and the pointer move.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: a predecessor that noticed the successor's rename before the handoff moved the pointer read "the pointer is mine" and removed it and `settings.json` (already the successor's). Landing just after the handoff's pointer move, that removal left the successor serving with no registration, and an ensure reused it reporting `pid: 0`. The check-then-remove crosses processes and cannot be made atomic, so the replaced generation must not touch state that belongs to its replacer (I3).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the supervisor's shutdown and the handoff's registration run in the host process lifecycle, before and outside any extension runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` signature and its early return.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the drain state declarations, the supersession watch callback and `performShutdown`'s release call.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `_test` options and the line before `writeHostRegistration`.
+
+## 2026-10-02 - Prompt acknowledgements wait through observed compaction
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: tracks session-scoped compaction events and adjusts only prompt acknowledgement deadlines. Each pending request retains its original wire session; a new lease's events cannot change older prompts' deadlines. Pending prompts and prompts submitted during observed compaction wait for their real response; matching terminal events restore the ordinary deadline. Duplicate starts and stale terminal events do not reset an operation's budget. Compactions are tracked per operation id; an unpaired start stops counting after the compaction budget, and every prompt also has a hard cap (`PROMPT_ACK_MAX_WAIT_MS`) measured from when it was sent. Transport failure retains immediate rejection and timer cleanup.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: derives the bounded compaction wait from the remote compaction total budget, the maximum local-summary override, and the normal response allowance.
+- `packages/coding-agent/docs/rpc.md`: documents admission waiting without synthetic success or automatic replay.
+- `packages/coding-agent/test/suite/rpc-client-compaction-deadline.test.ts`: real socket regressions for delayed admission, legacy events, stale operation IDs, ordinary deadlines, bounded waiting, disconnect cleanup, and outstanding requests across lease changes.
+
+### Why
+
+Prompt preflight can compact a large conversation before admitting the input. The fixed 30-second deadline in `packages/coding-agent/src/modes/rpc/rpc-client.ts`, budgeted by `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`, expired while that valid work was still running, even though the host could admit and execute the same request later. A caller retrying the apparent failure could duplicate the input.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/rpc-client.ts` owns client-side request correlation and timers; `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts` owns their budgets. Agent extensions cannot adjust another process's pending acknowledgement deadlines.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: pending-request callbacks, constructor event subscription, transport/session resets, and `send`.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`: deadline constants and imports.
+
+## 2026-10-02 - Question answer provenance (senpi#2533)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `question_resolved` gains optional `resolvedBy`.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the winning connection response passes its surface into response construction and broadcasts it; timeout and cancellation do not.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a mirrored question needs the answering surface, not just its outcome.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the connection bridge owns response admission and wire frames.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: RpcQuestionResolvedEvent.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: response construction and the sequential dialog fallback.
+
+## 2026-10-02 - Durable client message admissions (desktop#1325, senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: extracted prompt/steer/follow-up dispatch into the durable admission path, restores accepted queues on bind, and correlates events.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive client IDs, admission responses, and typed ordered queue metadata.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: forwards prompt and queue identity and preserves typed refusal codes.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: refuses malformed client IDs and a non-numeric `enqueueOrder` before dispatch.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: advertises `durable_client_message_id` on multi-session hosts.
+- New `client-admission-record.ts`, `client-admissions.ts`, `client-input-handler.ts`, and `client-message-events.ts` own the transcript ledger, duplicate/conflict handling, prepared queue recovery, and event correlation. The ledger skips transcript entries that do not parse as admissions, admits new deliveries only after restoring the queue, and a custom-message trigger turn does not inherit the previous client identity.
+- Protocol reference: `docs/rpc.md` ("Durable client identity"); tests `test/suite/rpc-client-message-identity.test.ts`, `test/suite/rpc-client-message-recovery.test.ts`, `test/suite/rpc-client-message-running-queue.test.ts`, `test/suite/rpc-client-message-ledger.test.ts`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` previously admitted each transport retry independently, so a lost acknowledgment could cause a second answer.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-client.ts` need identities independent of routing handles and transport request IDs.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts` bounds the persisted identity and keeps a malformed recovery order from being written into a record that would later fail to reopen.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` lets clients negotiate safe replay before using it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, and `packages/coding-agent/src/modes/rpc/session-command-router.ts` own wire admission, responses, and host capabilities outside extension control.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: prompt dispatch, session subscriptions, queue reads, protocol capabilities.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: input, response and queue types.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: prompt options and queue sends.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: input payload validation.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: capability list only; host lifecycle is unchanged.
+
+## 2026-10-02 - Runtime identity in host status and a conditional idle handover (desktop #1364, #1055)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/runtime-build-id.ts` (new): `computeRuntimeBuildId` digests the loaded runtime (flavour, platform/arch, engine build text, sorted runtime-file digests, one digest per launch-profile extension, `multi_session`/`session_runtime`) into `sha256:<64 hex>`; no absolute path, dot-entry, nested `node_modules`, `.d.ts`/`.map` or build/snapshot manifest enters it. `RUNTIME_IDENTITY_HANDOVER_CAPABILITY`.
+- `host-idle-handover.ts` (new): `HostIdleHandover`, the host-owned operation: generation check, admission gate on new work, deadline-free wait for the next safe idle point, successor start, `handover_blocked` reopening admission; a repeated `operationId` answers with the existing operation.
+- `host-handover-wire.ts` (new): `begin_handover` parse/answer, the `handover_pending` refusal, `get_protocol_info` identity fields, `isHostIdle` (drain verdicts over the registry plus in-flight requests), `performIdleHandover` (generation handoff launched from the caller's runtime with its exact daemon environment).
+- `host-core-gate.ts` (new): `HostCoreGate` between a parsed command and the router: intercepts `begin_handover`, gates new work, counts in-flight requests, adds `runtimeBuildId`/`handover` to `get_protocol_info`.
+- `host-handover-request.ts` (new): the CLI half (`idleHandoverOutcome`): target must be the CLI's own `clientRuntimeBuildId`, the socket must be served by the named generation, lost replies are reconciled against the socket.
+- `host-outcome.ts` (new): exit codes, `identityPayload` (now with `runtimeBuildId`), `refusal`, `decisionClient` moved out of `host-runner.ts`; `clientRuntimeBuildId(spec)`.
+- `host-runner.ts`: the `handoff` request takes optional idle-handover terms; `ensure`/`handoff` payloads carry `clientRuntimeBuildId`.
+- `host-handoff.ts`, `host-successor.ts`: `HandoffHostOptions.launch` (a successor launched from another runtime than this process).
+- `host-protocol-info.ts`, `host-status.ts`: `runtimeBuildId` and `handover` parsed and reported.
+- `multi-session-host.ts`: the host computes its id before serving, advertises `runtime_identity_handover` on POSIX socket hosts that have one, and routes every command through `HostCoreGate`.
+- `docs/rpc.md` ("Runtime identity and the conditional idle handover"); tests `test/rpc-runtime-build-id.test.ts`, `test/rpc-host-idle-handover.test.ts`, `test/rpc-host-idle-handover-refusals.test.ts`.
+
+### Why
+
+The desktop could not tell whether the host serving its socket ran the runtime it shipped: a host left behind by the previous app version speaks the same protocol from a replaced bundle (desktop #1364), and an operator shell can start a development engine of the same version (desktop #1055). Replacing such a host had to wait for its idle exit or end running work; it now hands over at its next idle point, exactly once per operation, and never aborts a turn for it.
+
+### Why an extension could not handle it
+
+Host identity, admission and generation handoff are core RPC host lifecycle; an extension cannot gate the host router or start a successor generation.
+
+### Expected merge conflict zones
+
+- Fork-only files. `createHostCore` and the socket host's capability list and `createHostCore` call in `multi-session-host.ts`; `identityPayload`/`refusal` moving to `host-outcome.ts` from `host-runner.ts`; the `launch` line in `startSuccessor`.
 ## 2026-09-30 - An updated client retires a live pre-layout-2 host with no session (senpi#2423)
 
 ### What changed
@@ -4612,3 +4734,21 @@ The host capability probe runs before any session extension loads. This is only 
 ### Expected merge conflict zones
 
 The additive host capability list and its RPC test expectation.
+
+## 2026-10-02 - RpcClient forwards --provider only with --model (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `start()` passes `--provider` to the spawned host only when `--model` is also set. A client created with a provider and no model now spawns the host on its default model, which is what the host did before.
+
+### Why
+
+Upstream v1.0.0 (0c453048b) made the CLI reject a lone `--provider`, because the flag was silently ignored and another provider's default model ran. The fork adopts that CLI error, but existing SDK callers that construct `RpcClient({ provider })` without a model must keep working exactly as before the merge.
+
+### Why an extension could not handle it
+
+`RpcClient` builds the child process argv before any extension or session exists; the argument list is owned by the client class.
+
+### Expected merge conflict zones
+
+The provider/model argument block in `RpcClient.start()` if upstream changes how the client spawns the host.
