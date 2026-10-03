@@ -345,6 +345,31 @@ describe("#308 skill composition", () => {
 		);
 	});
 
+	it("expands ten distinct leading skills without a cap warning", async () => {
+		const definitions = Array.from({ length: 10 }, (_, index) => ({
+			name: `skill-${index + 1}`,
+			body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
+		}));
+		const { resourceLoader, skills, tempDir } = createFixtures(definitions);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		const errors: string[] = [];
+		const unsubscribe = harness.getExtensionRunner().onError((error) => {
+			if (error.event === "skill_expansion") errors.push(error.error);
+		});
+
+		const actual = await promptAndCapture(
+			harness,
+			`${skills.map((skill) => `/skill:${skill.name}`).join(" ")} compose ten`,
+		);
+		unsubscribe();
+
+		expect(actual).toBe(
+			`${skills.map((skill) => skillBlock(skill, tempDir)).join("\n\n")}\n\n${userRequest("compose ten")}`,
+		);
+		expect(errors).toEqual([]);
+	});
+
 	it("caps expansion, leaves the remaining skill tokens literal, and emits a visible warning", async () => {
 		const definitions = Array.from({ length: MAX_SKILL_EXPANSIONS_PER_PROMPT + 2 }, (_, index) => ({
 			name: `skill-${index + 1}`,

@@ -194,4 +194,4 @@ export function removeSkillInvocationTokens(text: string, tokens: readonly Skill
 }
 
 /** Caps explicit skill expansion so one prompt cannot consume unbounded context. */
-export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 5;
+export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 10;

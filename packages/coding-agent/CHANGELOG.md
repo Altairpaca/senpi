@@ -8,6 +8,8 @@
 
 ### Changed
 
+- One prompt can now expand up to 10 explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`), up from 5. Skill commands past the tenth still stay literal and show the existing `Expanded at most 10 skills` warning.
+
 ### Fixed
 
 ### Removed
