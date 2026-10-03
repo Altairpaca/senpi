@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import {
 	type BridgeConnectionConfig,
 	decodeBridgeFrame,
@@ -8,7 +9,9 @@ import {
 	isKernelToHostMessage,
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
-import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
+import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
+import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
 	hardKill,
@@ -18,9 +21,10 @@ import {
 	numberOrNull,
 	signalOrNull,
 	splitCommand,
+	sweepProcessGroup,
 	waitForExit,
-	withTimeout,
 } from "./process.ts";
+import { PythonStartup, type PythonStartupStage } from "./startup.ts";
 
 export type PythonTransportResult = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -28,6 +32,7 @@ export interface PythonTransportRunInput {
 	readonly cellId: string;
 	readonly code: string;
 	readonly timeoutMs?: number;
+	readonly preludePlan?: KernelPreludePlan;
 }
 
 export interface PythonTransportOptions {
@@ -36,14 +41,22 @@ export interface PythonTransportOptions {
 	readonly cwd: string;
 	readonly connection: BridgeConnectionConfig;
 	readonly env?: NodeJS.ProcessEnv;
+	/** Per-session PI_* values merged into the interpreter environment at spawn. */
+	readonly sessionEnv?: SessionEnvironment;
 	readonly startupTimeoutMs: number;
+	readonly onStartupProgress?: (stage: PythonStartupStage) => void;
+	readonly memory?: KernelMemoryThresholds;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	readonly spawnProcess?: KernelSpawnProcess;
 	readonly isOwned: () => boolean;
 	readonly onRetirementFailure: (transport: PythonKernelTransport, error: Error) => void;
 	readonly onResult: (transport: PythonKernelTransport, result: PythonTransportResult) => void;
 	readonly onError: (transport: PythonKernelTransport, error: Error) => void;
-	readonly onExit: (transport: PythonKernelTransport, error: Error) => void;
+	readonly onExit: (
+		transport: PythonKernelTransport,
+		error: Error,
+		exit: { readonly code: number | null; readonly signal: string | null },
+	) => void;
 }
 
 const hardKillWaitMs = 500;
@@ -53,7 +66,7 @@ export interface PythonPreludePathOptions extends CodemodeRuntimeAssetEnvironmen
 }
 
 export function resolvePythonPreludePath(options: PythonPreludePathOptions = {}): string {
-	return resolveCodemodeRuntimeAsset(
+	return requireCodemodeRuntimeAsset(
 		options.localPath ?? join(dirname(fileURLToPath(import.meta.url)), "prelude.py"),
 		join("kernels", "py", "prelude.py"),
 		options,
@@ -65,15 +78,32 @@ export class PythonKernelTransport {
 	readonly #child: KernelChild;
 	#stdoutBuffer = "";
 	#stderrTail = "";
-	#settleReady: ((error?: Error) => void) | null = null;
+	#startup: PythonStartup | null = null;
 	#detachChildListeners: (() => void) | null = null;
 	#active = true;
 	#exited = false;
 	#retirement: Promise<void> | null = null;
+	#gone: Promise<void> | null = null;
+	#isGone = false;
 
 	private constructor(options: PythonTransportOptions, child: KernelChild) {
 		this.#options = options;
 		this.#child = child;
+	}
+
+	/**
+	 * A retirement that timed out is confirmed only by this: the process really exited after all. The
+	 * watch is attached on demand, so a transport nobody asks this of leaves no listener on its child.
+	 */
+	whenGone(): Promise<void> {
+		if (this.#exited || this.#isGone) return Promise.resolve();
+		this.#gone ??= new Promise<void>((resolve) => {
+			this.#child.once("exit", () => {
+				this.#isGone = true;
+				resolve();
+			});
+		});
+		return this.#gone;
 	}
 
 	static async start(options: PythonTransportOptions): Promise<PythonKernelTransport> {
@@ -83,7 +113,12 @@ export class PythonKernelTransport {
 			command: invocation.command,
 			args: [...invocation.args, "-u", scriptPath],
 			cwd: options.cwd,
-			env: { ...process.env, ...options.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8" },
+			env: {
+				...applySessionEnvironment(process.env, options.sessionEnv),
+				...options.env,
+				PYTHONUNBUFFERED: "1",
+				PYTHONIOENCODING: "utf-8",
+			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);
 		const transport = new PythonKernelTransport(options, child);
@@ -106,7 +141,11 @@ export class PythonKernelTransport {
 	}
 
 	run(input: PythonTransportRunInput): void {
-		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs });
+		const preludes = input.preludePlan && {
+			install: input.preludePlan.install.map(({ exports, python }) => ({ exports: [...exports], python })),
+			remove: [...input.preludePlan.remove],
+		};
+		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs, preludes });
 	}
 
 	interrupt(reason: string): void {
@@ -121,7 +160,7 @@ export class PythonKernelTransport {
 	}
 
 	async close(): Promise<void> {
-		if (this.#exited) return;
+		if (this.#exited || this.#isGone) return;
 		if (this.#retirement) {
 			await this.#retirement;
 			return;
@@ -137,11 +176,14 @@ export class PythonKernelTransport {
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 		}
-		if (!(await exited)) await hardKill(this.#child, hardKillWaitMs);
+		// hardKill kills the whole group; a graceful leader exit does not, so sweep it
+		// to retire any subprocess the cell left running in the kernel's process group.
+		if (await exited) sweepProcessGroup(this.#child);
+		else await hardKill(this.#child, hardKillWaitMs);
 	}
 
 	retire(): Promise<void> {
-		if (this.#exited) return Promise.resolve();
+		if (this.#exited || this.#isGone) return Promise.resolve();
 		if (this.#retirement) return this.#retirement;
 		this.#active = false;
 		const retirement = hardKill(this.#child, hardKillWaitMs).finally(() => {
@@ -153,9 +195,8 @@ export class PythonKernelTransport {
 	}
 
 	async #initialize(): Promise<void> {
-		const ready = new Promise<void>((resolve, reject) => {
-			this.#settleReady = (error) => (error ? reject(error) : resolve());
-		});
+		const startup = new PythonStartup(this.#options.startupTimeoutMs, () => this.#stderrTail);
+		this.#startup = startup;
 		const onStdout = (chunk: unknown) => this.#onStdout(String(chunk));
 		const onStderr = (chunk: unknown) => this.#onStderr(String(chunk));
 		const onError = (error: unknown) => this.#onError(error instanceof Error ? error : new Error(String(error)));
@@ -170,8 +211,9 @@ export class PythonKernelTransport {
 		this.#child.stderr.on("data", onStderr);
 		this.#child.on("error", onError);
 		this.#child.on("exit", onExit);
-		this.#write({ type: "init", sessionId: this.#options.sessionId, connection: this.#options.connection });
-		await withTimeout(ready, this.#options.startupTimeoutMs, "Python kernel did not become ready");
+		const { sessionId, connection, memory } = this.#options;
+		this.#write({ type: "init", sessionId, connection, ...(memory === undefined ? {} : { memory }) });
+		await startup.ready;
 	}
 
 	#write(message: HostToKernelMessage): void {
@@ -204,6 +246,11 @@ export class PythonKernelTransport {
 		}
 		if (!isKernelToHostMessage(decoded.message)) return;
 		const message = decoded.message;
+		if (message.type === "status" && message.event.op === "kernel-startup") {
+			const stage = this.#startup?.progress(message);
+			if (stage !== undefined) this.#options.onStartupProgress?.(stage);
+			return;
+		}
 		if (message.type === "ready") this.#settleStartup();
 		else if (message.type === "init-failed") this.#settleStartup(new Error(message.error.message));
 		else if (message.type === "result") this.#options.onResult(this, message);
@@ -218,7 +265,7 @@ export class PythonKernelTransport {
 		const error = new Error(this.#stderrTail.trim() || `Python kernel exited (${code ?? signal ?? "unknown"})`);
 		this.#detachListeners();
 		if (!active) return;
-		if (!this.#settleStartup(error)) this.#options.onExit(this, error);
+		if (!this.#settleStartup(error)) this.#options.onExit(this, error, { code, signal });
 	}
 
 	#onError(error: Error): void {
@@ -237,11 +284,7 @@ export class PythonKernelTransport {
 	}
 
 	#settleStartup(error?: Error): boolean {
-		const settle = this.#settleReady;
-		if (!settle) return false;
-		this.#settleReady = null;
-		settle(error);
-		return true;
+		return this.#startup?.settle(error) ?? false;
 	}
 }
 

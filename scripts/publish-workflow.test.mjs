@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 const nativePrebuildWorkflow = readFileSync(new URL("../.github/workflows/native-prebuilds.yml", import.meta.url), "utf8");
@@ -37,28 +39,53 @@ describe("publish-only workflow", () => {
 		assert.match(nativeDownload, /merge-multiple: true/);
 	});
 
-	it("places the Linux x64 prebuild from the upload root in the pty package", () => {
+	it("stages every target's PTY prebuild from the artifact tree into the pty package", () => {
 		// Given: the producer's upload root and the consumer's download destination.
-		const relativePrebuild = "native/prebuilds/linux-x64/senpi_pty.linux-x64.node";
 		const nativeDownload = workflow.match(/- name: Download native prebuilds[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
 		assert.ok(nativeDownload, "expected native prebuild download before workspace builds");
 		assert.match(nativePrebuildWorkflow, /prebuild_dir="\$\{artifact_dir\}\/native\/prebuilds\/\$\{host\}"/);
-		assert.match(nativePrebuildWorkflow, /cp "\$\{node_files\[0\]\}" "\$\{prebuild_dir\}\/senpi_pty\.\$\{host\}\.node"/);
-		assert.match(nativeDownload, /path: packages\/pty/);
+		// The stage step copies the explicitly selected PTY addon into the loader layout;
+		// index-based copies would mislabel the sorted-first grep addon as PTY.
+		assert.match(nativePrebuildWorkflow, /cp "\$\{pty_file\}" "\$\{prebuild_dir\}\/senpi_pty\.\$\{host\}\.node"/);
+		assert.doesNotMatch(nativePrebuildWorkflow, /node_files\[0\]/);
+		// The grep addon stays in the artifact for its own consumers.
+		assert.match(nativePrebuildWorkflow, /cp "\$\{grep_file\}" "\$\{artifact_dir\}\/"/);
+		// The download goes to an untracked scratch root, never straight into the package.
+		assert.match(nativeDownload, /path: packages\/pty\/\.native-prebuild-artifacts/);
+		assert.match(nativeDownload, /merge-multiple: true/);
 
-		// When: the artifact downloader merges the producer's root into packages/pty.
-		const downloadedPrebuild = `packages/pty/${relativePrebuild}`;
+		// When: the staging step copies each target's PTY addon into the loader tree.
+		const stagingStep = workflow.match(/- name: Stage PTY prebuilds into the pty package[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
+		assert.ok(stagingStep, "expected the PTY prebuild staging step before workspace builds");
+		assert.match(stagingStep, /if: inputs\.publish-only == true/);
+		assert.match(stagingStep, /"\$\{artifacts\}"\/native\/prebuilds\/\*\/senpi_pty\.\*\.node/);
+		assert.match(stagingStep, /packages\/pty\/native\/prebuilds\/\$\{target\}\/senpi_pty\.\$\{target\}\.node/);
 
-		// Then: the packaged PTY loader sees the exact Linux x64 prebuild path.
-		assert.equal(downloadedPrebuild, "packages/pty/native/prebuilds/linux-x64/senpi_pty.linux-x64.node");
+		// Then: a staged linux-x64 artifact lands exactly where the pty loader resolves it.
+		const staged = "packages/pty/native/prebuilds/linux-x64/senpi_pty.linux-x64.node";
+		assert.equal(staged, `packages/pty/native/prebuilds/${"linux-x64"}/senpi_pty.${"linux-x64"}.node`);
 	});
 
 	it("reuses the release validation instead of rerunning the full suite", () => {
 		const publishStep = workflow.match(/- name: Publish prepared version[\s\S]*?(?=\n      - name: Workflow summary)/)?.[0];
 		assert.ok(publishStep, "expected publish-only step");
 		assert.match(publishStep, /node scripts\/publish\.mjs/);
-		assert.match(publishStep, /--require-native-prebuild=linux-x64/);
+		// Every non-best-effort target is required; win32-arm64 stays best-effort.
+		assert.match(publishStep, /--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64/);
+		assert.doesNotMatch(publishStep, /win32-arm64/);
 		assert.doesNotMatch(publishStep, /npm run check|npm test/);
+	});
+
+	it("resets only tracked files, so the reset step cannot fail on a removed or untracked path", () => {
+		const resetStep = workflow.match(/- name: Reset auto-generated and npm-install drift files[\s\S]*?run: git checkout -- ([^\n]+)/);
+		assert.ok(resetStep, "expected the reset step");
+		const paths = resetStep[1].trim().split(/\s+/).filter(Boolean);
+		assert.ok(paths.length > 0, "expected reset paths");
+		const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+		for (const path of paths) {
+			const tracked = spawnSync("git", ["ls-files", "--error-unmatch", "--", path], { cwd: repoRoot });
+			assert.equal(tracked.status, 0, `reset path ${path} is not a tracked file`);
+		}
 	});
 
 	it("keeps binary package scripts shell-executable", () => {

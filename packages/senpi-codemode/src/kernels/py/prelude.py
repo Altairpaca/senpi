@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 # noqa: SIZE_OK — this dependency-free subprocess prelude must ship as one file.
+import sys
+
+# Emit before importing the stdlib graph: a cold interpreter can still be making
+# progress after the former five-second total startup deadline.
+sys.__stdout__.write('{"type":"status","event":{"op":"kernel-startup","stage":"stdlib-imports"}}\n')
+sys.__stdout__.flush()
+
 import ast
 import asyncio  # noqa: ANYIO_OK — stdlib-only embedded kernel runner.
 import base64
 import codecs
 import contextlib
+import gc
 import inspect
 import io
 import json
@@ -14,20 +22,22 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import time
 import traceback
+import types
 import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from threading import Lock
-from typing import Any, Callable
+from threading import Lock, Thread
+from typing import Any, Callable, Union
 from urllib.parse import unquote
 
-SESSION_ID = ""
+sys.__stdout__.write('{"type":"status","event":{"op":"kernel-startup","stage":"runtime-init"}}\n')
+sys.__stdout__.flush()
+
 CONNECTION: dict[str, Any] = {}
 USER_NS: dict[str, Any] = {"__name__": "__main__", "__doc__": None, "__builtins__": __builtins__}
 LOOP = asyncio.new_event_loop()
@@ -43,7 +53,11 @@ TIMEOUT_RESUME_OP = "timeout-resume"
 
 
 class PreludeRuntimeError(RuntimeError):
-    """Host bridge or magic execution failed."""
+    """Host bridge or magic execution failed, retaining its machine code."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class PreludeValueError(ValueError):
@@ -89,6 +103,68 @@ def text(stream: str, data: str) -> None:
 
 def b64_text(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+_IMAGE_SIGNATURES: tuple[tuple[str, int, bytes], ...] = (
+    ("image/png", 0, b"\x89PNG\r\n\x1a\n"),
+    ("image/jpeg", 0, b"\xff\xd8\xff"),
+    ("image/gif", 0, b"GIF8"),
+    ("image/webp", 8, b"WEBP"),
+    ("image/bmp", 0, b"BM"),
+)
+_DATA_URL_RE = re.compile(r"^data:([^;,]+)(?:;[^,]*)?;base64,(.*)$", re.DOTALL)
+
+
+def _sniff_image_mime_type(data: bytes) -> str | None:
+    for mime_type, offset, magic in _IMAGE_SIGNATURES:
+        if data[offset : offset + len(magic)] == magic:
+            return mime_type
+    return None
+
+
+def _image_base64(data: Any) -> tuple[str, str | None] | None:
+    if isinstance(data, (bytes, bytearray)):
+        raw = bytes(data)
+        return base64.b64encode(raw).decode("ascii"), _sniff_image_mime_type(raw)
+    if not isinstance(data, str):
+        return None
+    declared: str | None = None
+    match = _DATA_URL_RE.match(data)
+    if match:
+        declared, data = match.group(1), match.group(2)
+    compact = re.sub(r"\s+", "", data).replace("-", "+").replace("_", "/")
+    compact += "=" * (-len(compact) % 4)
+    try:
+        base64.b64decode(compact, validate=True)
+    except (ValueError, TypeError):
+        return None
+    return (compact, declared) if compact else None
+
+
+def _display_image_dict(value: dict[str, Any]) -> bool:
+    mime_type = value.get("mimeType")
+    payload = value.get("dataBase64") if "dataBase64" in value else value.get("data")
+    if not isinstance(mime_type, str) or not mime_type.startswith("image/") or payload is None:
+        return False
+    encoded = _image_base64(payload)
+    if encoded is None:
+        print(f"[display: image dropped \u2014 `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
+        return True
+    emit({"type": "display", "mimeType": mime_type, "dataBase64": encoded[0]})
+    return True
+
+
+def _display_tool_result(value: dict[str, Any]) -> bool:
+    text, images = value.get("text"), value.get("images")
+    if not isinstance(text, str) or not isinstance(images, list):
+        return False
+    if not all(isinstance(image, dict) and isinstance(image.get("mimeType"), str) and isinstance(image.get("dataBase64"), str) for image in images):
+        return False
+    if text:
+        print(text)
+    for image in images:
+        emit({"type": "display", "mimeType": image["mimeType"], "dataBase64": image["dataBase64"]})
+    return True
 
 
 def _emit_display(mime_type: str, data: Any) -> None:
@@ -188,11 +264,14 @@ def _rich_bundle(value: Any) -> dict[str, Any]:
 
 
 def display(value: Any) -> None:
+    if isinstance(value, dict) and (_display_tool_result(value) or _display_image_dict(value)):
+        return
     if isinstance(value, (dict, list, tuple)):
         _emit_display("application/json", value)
         return
     if isinstance(value, (bytes, bytearray)):
-        _emit_display("application/octet-stream", bytes(value))
+        raw = bytes(value)
+        _emit_display(_sniff_image_mime_type(raw) or "application/octet-stream", raw)
         return
     bundle = _rich_bundle(value)
     if bundle and _display_bundle(bundle):
@@ -305,7 +384,7 @@ def bridge_post(path: str, payload: dict[str, Any]) -> Any:
         return body.get("value")
     error = body.get("error") if isinstance(body, dict) else body
     if isinstance(error, dict):
-        raise PreludeRuntimeError(str(error.get("message", error)))
+        raise PreludeRuntimeError(str(error.get("message", error)), error.get("code"))
     raise PreludeRuntimeError(str(error))
 
 
@@ -350,6 +429,54 @@ class ToolProxy:
 
 
 tool = ToolProxy()
+
+JsonValue = Union[str, int, float, bool, None, list["JsonValue"], dict[str, "JsonValue"]]
+
+
+def _workpool_call(args: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    try:
+        return tool.workpool(args)
+    except PreludeRuntimeError as error:
+        if error.code in ("unknown_tool", "inactive_tool"):
+            raise PreludeRuntimeError("No active host workpool tool", "workpool_unavailable") from error
+        raise
+
+
+class Workpool:
+    """An opaque host identity, not a worker queue."""
+
+    __slots__ = ("pool_id",)
+
+    def __init__(self, pool_id: str) -> None:
+        self.pool_id = pool_id
+
+    def push(self, items: list[JsonValue]) -> dict[str, JsonValue]:
+        return _workpool_call({"op": "push", "pool_id": self.pool_id, "items": items})
+
+    def close(self) -> dict[str, JsonValue]:
+        return _workpool_call({"op": "close", "pool_id": self.pool_id})
+
+    def inspect(self) -> dict[str, JsonValue]:
+        return _workpool_call({"op": "inspect", "pool_id": self.pool_id})
+
+    def cancel(self) -> dict[str, JsonValue]:
+        return _workpool_call({"op": "cancel", "pool_id": self.pool_id})
+
+
+def workpool(agent: dict[str, JsonValue], name: str, *, mode: str | None = None) -> Workpool:
+    args: dict[str, JsonValue] = {"op": "create", "agent": agent, "name": name}
+    if mode is not None:
+        args["mode"] = mode
+    result = _workpool_call(args)
+    details = result.get("details")
+    if isinstance(details, dict):
+        error = details.get("error")
+        if isinstance(error, dict):
+            raise PreludeRuntimeError(str(error["message"]), str(error["code"]))
+        pool_id = details.get("pool_id")
+        if not result.get("hasError") and isinstance(pool_id, str) and re.fullmatch(r"wp_[0-9a-f]{32}", pool_id):
+            return Workpool(pool_id)
+    raise PreludeRuntimeError("Host did not return a workpool identity", "workpool_unavailable")
 
 
 def completion(
@@ -413,9 +540,15 @@ def agent(
     schema: dict[str, Any] | None = None,
     isolated: bool | None = None,
     apply: bool | None = None,
-    merge: bool | None = None,
+    merge: bool | str | None = None,
     handle: bool = False,
 ) -> Any:
+    """Delegate work; isolated/apply/merge need a host that supports isolation, otherwise a warning.
+
+    merge accepts "patch"/"branch" or False/True respectively. Unapplied foreground
+    changes raise an error with recovery instructions. A handle returns immediately;
+    await the completion notification or read task_output for the isolation result.
+    """
     args: dict[str, Any] = {"prompt": prompt}
     if agent is not None:
         args["agent"] = agent
@@ -430,7 +563,7 @@ def agent(
     if apply is not None:
         args["apply"] = bool(apply)
     if merge is not None:
-        args["merge"] = bool(merge)
+        args["merge"] = merge
     if handle:
         args["handle"] = True
 
@@ -457,10 +590,14 @@ def agent(
         "output": text_value,
         "handle": handle_value,
         "id": agent_id,
+        "run_epoch": response_record.get("run_epoch"),
         "agent": response_record.get("agent", agent),
     }
     if schema is not None:
         node["data"] = parsed
+    details = response_record.get("details")
+    if isinstance(details, dict) and "isolation" in details:
+        node["details"] = {"isolation": details["isolation"]}
     for key in (
         "isolated",
         "patch_path",
@@ -852,6 +989,7 @@ USER_NS.update(
         "tool": tool,
         "completion": completion,
         "agent": agent,
+        "workpool": workpool,
         "output": output,
         "tool_schema": tool_schema,
         "__senpi_magic": _magic,
@@ -859,6 +997,313 @@ USER_NS.update(
         "__senpi_shell": _shell,
     }
 )
+
+# Kernel memory (mirrors src/kernels/js/worker-memory.js; thresholds arrive on `init`, the host applies the
+# notice/ceiling policy in src/kernels/shared/kernel-memory.ts). Names present right after prelude install
+# are never reported as user globals.
+_MEMORY_BASELINE = frozenset(USER_NS)
+_MIB = 1024 * 1024
+_MEMORY_MIN_GROWTH = 64 * _MIB
+_MEMORY_GROWTH_RATIO = 0.25
+_MEMORY_NOTICE_GROWTH_RATIO = 1.25
+# A collection costs at most 1/20 of the time since the previous one.
+_MEMORY_COLLECT_RATE_FLOOR = 20
+_MEMORY_REPORTED_GLOBALS = 5
+_MEMORY_MIN_REPORTED_BYTES = _MIB
+_SIZER_SAMPLED = 1_000
+_SIZER_NODE_BUDGET = 200_000
+_SIZER_MAX_DEPTH = 64
+_SIZER_POINTER = 8
+_SIZER_LEAF_TYPES = (str, bytes, bytearray, int, float, complex, bool, type(None), range, memoryview)
+_SIZER_OPAQUE_TYPES = (types.ModuleType, type, types.FunctionType, types.BuiltinFunctionType, types.MethodType)
+
+
+class _KernelMemory:
+    """Post-cell footprint measurement, collection, and largest-globals attribution for this process."""
+
+    def __init__(self) -> None:
+        self.thresholds: dict[str, int] | None = None
+        self.last_live = 0
+        self.notice_ref = 0
+        self.collect_end = float("-inf")
+        self.collect_seconds = 0.0
+        self._reader: Callable[[], tuple[int, bool] | None] | None = None
+        self._trim: Callable[[], None] | None = None
+        self._resolved = False
+
+    def configure(self, thresholds: Any) -> None:
+        if not isinstance(thresholds, dict):
+            return
+        keys = ("gcWatermarkBytes", "noticeBytes", "ceilingBytes")
+        if all(isinstance(thresholds.get(key), int) for key in keys):
+            self.thresholds = {key: int(thresholds[key]) for key in keys}
+
+    def after_cell(self) -> dict[str, Any] | None:
+        if self.thresholds is None:
+            return None
+        reading = self._footprint()
+        if reading is None:
+            return None
+        live, approximate = reading
+        gc_ran = self._needs_collection(live)
+        if gc_ran:
+            live = self._collect(live)
+        notice = self.thresholds["noticeBytes"]
+        if gc_ran and notice > 0 and live >= notice:
+            if self.notice_ref == 0 or live >= self.notice_ref * _MEMORY_NOTICE_GROWTH_RATIO:
+                self.notice_ref = live
+        self.last_live = live
+        report: dict[str, Any] = {"liveBytes": live, "measure": "footprint"}
+        if gc_ran:
+            report["gcRan"] = True
+        if approximate:
+            report["approximate"] = True
+        if gc_ran and self._worth_naming(live):
+            named = _largest_globals(_MEMORY_REPORTED_GLOBALS)
+            if named:
+                report["globals"] = named
+        return report
+
+    def _needs_collection(self, estimate: int) -> bool:
+        assert self.thresholds is not None
+        watermark = self.thresholds["gcWatermarkBytes"]
+        notice = self.thresholds["noticeBytes"]
+        ceiling = self.thresholds["ceilingBytes"]
+        if ceiling > 0 and estimate >= ceiling:
+            return True
+        if watermark > 0 and estimate >= watermark:
+            if estimate > self.last_live + max(_MEMORY_MIN_GROWTH, self.last_live * _MEMORY_GROWTH_RATIO):
+                return True
+        if notice > 0 and estimate >= notice:
+            if self.last_live < notice or self.notice_ref == 0 or estimate >= self.notice_ref * _MEMORY_NOTICE_GROWTH_RATIO:
+                return True
+        # The JS worker's idle collection, run synchronously: a cell that only drops a global allocates
+        # nothing, so cyclic garbage and malloc's free lists would otherwise stay until the next growth.
+        if watermark == 0 or self.last_live < watermark:
+            return False
+        return time.monotonic() - self.collect_end >= _MEMORY_COLLECT_RATE_FLOOR * self.collect_seconds
+
+    def _worth_naming(self, live: int) -> bool:
+        assert self.thresholds is not None
+        notice = self.thresholds["noticeBytes"]
+        ceiling = self.thresholds["ceilingBytes"]
+        return (notice > 0 and live >= notice) or (ceiling > 0 and live >= ceiling)
+
+    def _collect(self, before: int) -> int:
+        started = time.monotonic()
+        gc.collect()
+        if self._trim is not None:
+            self._trim()
+        self.collect_end = time.monotonic()
+        self.collect_seconds = self.collect_end - started
+        reading = self._footprint()
+        live = before if reading is None else reading[0]
+        if self.thresholds is not None and live < self.thresholds["noticeBytes"] / 2:
+            self.notice_ref = 0
+        return live
+
+    def _footprint(self) -> tuple[int, bool] | None:
+        if not self._resolved:
+            self._resolved = True
+            self._reader = _footprint_reader()
+            self._trim = _malloc_trim()
+        return None if self._reader is None else self._reader()
+
+
+def _footprint_reader() -> Callable[[], tuple[int, bool]] | None:
+    """This process's footprint as src/core/process-footprint.ts reads it, or peak RSS (approximate)."""
+    import ctypes
+
+    if sys.platform == "darwin":
+        with contextlib.suppress(OSError, AttributeError):
+            libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+            rusage = libsystem.proc_pid_rusage
+            rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+            rusage.restype = ctypes.c_int
+            buffer = (ctypes.c_uint64 * 32)()
+            pid = os.getpid()
+
+            def darwin() -> tuple[int, bool] | None:
+                # RUSAGE_INFO_V2; ri_phys_footprint is the u64 at index 9 (byte offset 72).
+                return (int(buffer[9]), False) if rusage(pid, 2, ctypes.byref(buffer)) == 0 else None
+
+            if darwin() is not None:
+                return darwin
+    if sys.platform.startswith("linux") and os.path.exists("/proc/self/status"):
+
+        def linux() -> tuple[int, bool] | None:
+            with open("/proc/self/status", encoding="ascii", errors="replace") as status:
+                for line in status:
+                    if line.startswith("RssAnon:"):
+                        return int(line.split()[1]) * 1024, False
+            return None
+
+        if linux() is not None:
+            return linux
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError, AttributeError):
+            return _windows_private_usage_reader(ctypes)
+    with contextlib.suppress(ImportError):
+        import resource
+
+        # ru_maxrss is a peak (kilobytes on Linux, bytes on macOS): flagged approximate.
+        scale = 1 if sys.platform == "darwin" else 1024
+        return lambda: (int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * scale, True)
+    return None
+
+
+def _windows_private_usage_reader(ctypes: Any) -> Callable[[], tuple[int, bool]] | None:
+    size_t = ctypes.c_size_t
+
+    class Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", ctypes.c_uint32),
+            ("PageFaultCount", ctypes.c_uint32),
+            *((name, size_t) for name in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage")),
+            *((name, size_t) for name in ("QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage")),
+            *((name, size_t) for name in ("QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")),
+            ("PrivateUsage", size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    current = kernel32.GetCurrentProcess
+    current.restype = ctypes.c_void_p
+    query = kernel32.K32GetProcessMemoryInfo
+    query.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32]
+    query.restype = ctypes.c_int
+    counters = Counters()
+    counters.cb = ctypes.sizeof(Counters)
+
+    def windows() -> tuple[int, bool] | None:
+        if query(current(), ctypes.byref(counters), counters.cb) == 0:
+            return None
+        return int(counters.PrivateUsage), False
+
+    return windows if windows() is not None else None
+
+
+def _malloc_trim() -> Callable[[], None] | None:
+    """glibc's malloc_trim(0) returns freed heap pages to the OS; other C libraries have no equivalent."""
+    if not sys.platform.startswith("linux"):
+        return None
+    import ctypes
+
+    with contextlib.suppress(OSError, AttributeError):
+        trim = ctypes.CDLL("libc.so.6").malloc_trim
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+
+        def trim_heap() -> None:
+            trim(0)
+
+        return trim_heap
+    return None
+
+
+def _largest_globals(limit: int) -> list[dict[str, Any]]:
+    sizer = _GlobalSizer()
+    sized: list[dict[str, Any]] = []
+    for name, value in list(USER_NS.items()):
+        if name in _MEMORY_BASELINE or name.startswith("__") or isinstance(value, _SIZER_OPAQUE_TYPES):
+            continue
+        measured = sizer.measure(value)
+        if measured is None or measured[0] < _MEMORY_MIN_REPORTED_BYTES:
+            continue
+        entry: dict[str, Any] = {"name": name, "bytes": measured[0]}
+        if measured[1]:
+            entry["approximate"] = True
+        sized.append(entry)
+    sized.sort(key=lambda entry: entry["bytes"], reverse=True)
+    return sized[:limit]
+
+
+class _GlobalSizer:
+    """Estimated retained size of user globals: array/frame buffers from numpy and pandas, containers from
+    their length and up to 1,000 sampled elements, one shared visited set and node budget for the walk."""
+
+    def __init__(self) -> None:
+        self.seen: set[int] = set()
+        self.nodes = 0
+        self.approximate = False
+
+    def measure(self, value: Any) -> tuple[int, bool] | None:
+        self.approximate = False
+        try:
+            return int(self.size(value, 0)), self.approximate
+        except Exception:  # noqa: BROAD_EXCEPT_OK — an exotic user value (a raising __len__/__iter__) stays unsized.
+            return None
+
+    def size(self, value: Any, depth: int) -> float:
+        if id(value) in self.seen:
+            return 0
+        if depth >= _SIZER_MAX_DEPTH or self.nodes >= _SIZER_NODE_BUDGET:
+            self.approximate = True
+            return 0
+        self.seen.add(id(value))
+        self.nodes += 1
+        buffer = _buffer_bytes(value)
+        if buffer is not None:
+            return buffer
+        own = sys.getsizeof(value)
+        if isinstance(value, _SIZER_LEAF_TYPES) or isinstance(value, _SIZER_OPAQUE_TYPES):
+            return own
+        if isinstance(value, dict):
+            return own + self.sampled(len(value), iter(value.items()), depth, pairs=True)
+        if isinstance(value, (list, tuple)):
+            return own + self.spaced(value, depth)
+        if isinstance(value, (set, frozenset)) or type(value).__module__ == "collections":
+            return own + self.sampled(len(value), iter(value), depth, pairs=False)
+        attributes = _instance_dict(value)
+        return own if attributes is None else own + self.size(attributes, depth + 1)
+
+    def spaced(self, items: Any, depth: int) -> float:
+        count = len(items)
+        if count <= _SIZER_SAMPLED:
+            return sum(self.size(item, depth + 1) for item in items)
+        self.approximate = True
+        step = count / _SIZER_SAMPLED
+        total = sum(self.size(items[int(index * step)], depth + 1) for index in range(_SIZER_SAMPLED))
+        return total / _SIZER_SAMPLED * count
+
+    def sampled(self, count: int, entries: Any, depth: int, *, pairs: bool) -> float:
+        taken = []
+        for entry in entries:
+            taken.append(entry)
+            if len(taken) >= _SIZER_SAMPLED:
+                break
+        if not taken:
+            return 0
+        if len(taken) < count:
+            self.approximate = True
+        total = 0.0
+        for entry in taken:
+            if pairs:
+                total += self.size(entry[0], depth + 1) + self.size(entry[1], depth + 1)
+            else:
+                total += self.size(entry, depth + 1)
+        return total * count / len(taken)
+
+
+def _buffer_bytes(value: Any) -> int | None:
+    root = type(value).__module__.split(".", 1)[0]
+    if root == "numpy" and isinstance(getattr(value, "nbytes", None), int):
+        return int(value.nbytes)
+    if root == "pandas" and callable(getattr(value, "memory_usage", None)):
+        usage = value.memory_usage(deep=True)
+        return int(usage.sum()) if hasattr(usage, "sum") else int(usage)
+    return None
+
+
+def _instance_dict(value: Any) -> dict[str, Any] | None:
+    # object.__getattribute__ never falls back to a user __getattr__.
+    try:
+        attributes = object.__getattribute__(value, "__dict__")
+    except AttributeError:
+        return None
+    return attributes if isinstance(attributes, dict) else None
+
+
+KERNEL_MEMORY = _KernelMemory()
 
 TLA_FLAG = getattr(ast, "PyCF_ALLOW_TOP_LEVEL_AWAIT", 0x2000)
 
@@ -893,21 +1338,35 @@ async def run_code(code: Any, want_value: bool) -> Any:
     return None
 
 
-def run_cell(cell_id: str, code: str) -> None:
+def apply_preludes(preludes: Any) -> None:
+    # Host-computed per cell: globals of tools deactivated since the last cell are dropped,
+    # and an active tool's snippet runs only while one of its exports is missing.
+    if not isinstance(preludes, dict):
+        return
+    for name in preludes.get("remove", []):
+        USER_NS.pop(name, None)
+    for contribution in preludes.get("install", []):
+        if any(name not in USER_NS for name in contribution.get("exports", [])):
+            exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
+
+
+def run_cell(cell_id: str, code: str, preludes: Any = None) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
     stderr = io.StringIO()
     # SIGINT must interrupt user code here; the idle baseline (set between
     # cells) ignores it so a late signal cannot kill the stdin-read loop.
     signal.signal(signal.SIGINT, signal.default_int_handler)
+    result: dict[str, Any]
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            apply_preludes(preludes)
             body, expression = compile_cell(code)
             LOOP.run_until_complete(run_code(body, False))
             value = LOOP.run_until_complete(run_code(expression, True))
         text("stdout", stdout.getvalue())
         text("stderr", stderr.getvalue())
-        result: dict[str, Any] = {
+        result = {
             "type": "result",
             "cellId": cell_id,
             "ok": True,
@@ -915,21 +1374,26 @@ def run_cell(cell_id: str, code: str) -> None:
         }
         if value is not None:
             result["valueRepr"] = repr(value)
-        emit(result)
     except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — cell boundary serializes user errors and interrupts.
         text("stdout", stdout.getvalue())
         text("stderr", stderr.getvalue())
-        emit(
-            {
-                "type": "result",
-                "cellId": cell_id,
-                "ok": False,
-                "error": bridge_error(exc),
-                "durationMs": elapsed(start),
-            }
-        )
+        result = {
+            "type": "result",
+            "cellId": cell_id,
+            "ok": False,
+            "error": bridge_error(exc),
+            "durationMs": elapsed(start),
+        }
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        memory = KERNEL_MEMORY.after_cell()
+    except Exception as exc:  # noqa: BROAD_EXCEPT_OK — a measurement failure must not cost the cell its result.
+        memory = None
+        text("stderr", f"[senpi] kernel memory measurement failed: {exc}\n")
+    if memory is not None:
+        result["memory"] = memory
+    emit(result)
 
 
 def elapsed(start: float) -> int:
@@ -937,19 +1401,19 @@ def elapsed(start: float) -> int:
 
 
 def handle(message: dict[str, Any]) -> bool:
-    global SESSION_ID, CONNECTION
+    global CONNECTION
     message_type = message.get("type")
     if message_type == "init":
-        SESSION_ID = str(message.get("sessionId", ""))
         connection = message.get("connection")
         if not isinstance(connection, dict):
             emit({"type": "init-failed", "error": {"message": "missing bridge connection"}})
             return True
         CONNECTION = connection
+        KERNEL_MEMORY.configure(message.get("memory"))
         emit({"type": "ready"})
         return True
     if message_type == "run":
-        run_cell(str(message.get("cellId", "")), str(message.get("code", "")))
+        run_cell(str(message.get("cellId", "")), str(message.get("code", "")), message.get("preludes"))
         return True
     if message_type == "close":
         emit({"type": "closed"})
@@ -957,14 +1421,72 @@ def handle(message: dict[str, Any]) -> bool:
     return True
 
 
+def _terminate_process_group() -> None:
+    # The kernel is spawned into its own session (setsid), so its pid is its process
+    # group id and a cell's subprocesses inherit that group. Killing the group takes
+    # those children down with the kernel instead of orphaning them to init.
+    if os.name != "posix":
+        return
+    with contextlib.suppress(OSError):
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+
+
+def _watch_parent(initial_ppid: int) -> None:
+    # A cell blocked in the main thread (for example a multiprocessing pool) never
+    # returns to the stdin loop, so it cannot notice the host closing its pipe. This
+    # daemon thread notices the reparenting instead and takes the whole group down.
+    while True:
+        time.sleep(1.0)
+        if os.getppid() != initial_ppid:
+            _terminate_process_group()
+            return
+
+
+def _watch_named_parent(parent_pid: int) -> None:
+    # The ppid watch above can only observe a change from the ppid captured at boot. A
+    # host that died before the interpreter reached that capture is already replaced in
+    # getppid() by the posthumous value, so no transition ever fires. The host passes its
+    # own pid at spawn (SENPI_PY_KERNEL_PARENT_PID) precisely so this loss is detectable:
+    # poll the named pid instead of the ppid and take the whole group down once it is gone.
+    while True:
+        time.sleep(0.5)
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            _terminate_process_group()
+            return
+
+
+def _start_parent_watch() -> None:
+    if os.name != "posix":
+        return
+    Thread(target=_watch_parent, args=(os.getppid(),), name="senpi-parent-watch", daemon=True).start()
+    named_parent = os.environ.get("SENPI_PY_KERNEL_PARENT_PID")
+    if named_parent and named_parent.isdigit():
+        Thread(
+            target=_watch_named_parent,
+            args=(int(named_parent),),
+            name="senpi-named-parent-watch",
+            daemon=True,
+        ).start()
+
+
 def main() -> None:
+    emit_status("kernel-startup", force=True, stage="host-init")
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    _start_parent_watch()
+    host_closed = False
     for raw in sys.stdin:
         try:
             if not handle(json.loads(raw)):
+                host_closed = True
                 break
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — process boundary serializes malformed input and interrupts.
             emit({"type": "init-failed", "error": bridge_error(exc)})
+    # Reaching here without a close frame means the host's pipe hit EOF: it is gone,
+    # so retire any subprocess the last cell left running before the interpreter exits.
+    if not host_closed:
+        _terminate_process_group()
 
 
 if __name__ == "__main__":

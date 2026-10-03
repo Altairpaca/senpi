@@ -1,6 +1,11 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
-import type { KernelInterruptHandle } from "../../tool/types.ts";
+import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
+import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
+import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
+import { applySessionEnvironment } from "../session-env.ts";
+import { describeExit } from "./kernel-death.ts";
+import { KernelMemoryHost } from "./kernel-memory-host.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
 import { SubprocessRunQueue } from "./subprocess-queue.ts";
@@ -15,16 +20,24 @@ import {
 	KernelRetirementError,
 	KernelStartupError,
 	type PendingRun,
+	settlePendingRun,
 	timeoutResult,
 } from "./subprocess-run.ts";
 
-export type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
+export type {
+	KernelResult,
+	KernelRunInput,
+	SubprocessKernelMemory,
+	SubprocessKernelOptions,
+	ToolCallMessage,
+} from "./subprocess-contract.ts";
 export type { SubprocessLike, SubprocessSpawn };
 
 export class SubprocessKernel {
 	private readonly options: SubprocessKernelOptions;
 	private readonly onMessage?: (message: KernelToHostMessage) => void;
 	private readonly runs = new SubprocessRunQueue();
+	private readonly memory: KernelMemoryHost | null;
 	private process: SubprocessProcess | null = null;
 	private processReady = false;
 	private retirementPromise: Promise<void> | null = null;
@@ -32,11 +45,22 @@ export class SubprocessKernel {
 	private retirementFailure: Error | null = null;
 	private failure: Error | null = null;
 	private closed = false;
+	private dead = false;
 
 	constructor(options: SubprocessKernelOptions) {
 		this.options = options;
 		this.onMessage = options.onMessage;
+		const memory = options.memory;
+		this.memory = memory ? new KernelMemoryHost(memory.language, memory.thresholds, memory) : null;
 		this.spawnProcess();
+	}
+
+	isAlive(): boolean {
+		return !this.dead;
+	}
+
+	drainPending(): readonly PendingCell[] {
+		return this.runs.drain().map((run) => ({ input: run.input, settle: (result) => settlePendingRun(run, result) }));
 	}
 
 	run(input: KernelRunInput): Promise<KernelResult> {
@@ -46,12 +70,22 @@ export class SubprocessKernel {
 		return run;
 	}
 
-	async interrupt(reason = "interrupted"): Promise<KernelInterruptHandle> {
+	cancelQueued(cellId: string, reason: string): boolean {
+		return this.runs.remove(cellId, reason);
+	}
+
+	queueSnapshot(): { activeCellId: string | null; queuedCellIds: readonly string[] } {
+		return this.runs.snapshot();
+	}
+
+	async interrupt(reason = "interrupted", cellId?: string): Promise<KernelInterruptHandle> {
+		if (cellId !== undefined && this.runs.active?.input.cellId !== cellId) {
+			const cancelled = this.cancelQueued(cellId, reason);
+			return { stateRetained: Promise.resolve(true), ...(cancelled ? {} : { note: "cell not found" }) };
+		}
 		if (this.closed) return { stateRetained: Promise.resolve(true) };
 		if (!this.runs.active) {
-			if (!this.retirementPromise) return { stateRetained: Promise.resolve(true) };
-			const queued = this.runs.takeWaiting();
-			if (queued) this.runs.settle(queued, failureResult(queued, new CellInterruptedError(reason)));
+			this.runs.settleAll(new CellInterruptedError(reason));
 			return { stateRetained: Promise.resolve(true) };
 		}
 		const process = this.process;
@@ -66,6 +100,18 @@ export class SubprocessKernel {
 		if (this.failure) throw this.failure;
 		// Restart always spawns a fresh interpreter, so no user global survives.
 		return { stateRetained: Promise.resolve(false) };
+	}
+
+	listKernelToolNames(): readonly string[] {
+		return [];
+	}
+
+	describeKernelTools(_names: readonly string[]): Promise<never> {
+		return rejectKernelToolsUnavailable();
+	}
+
+	invokeKernelTool(_request: unknown, _options?: AbortSignal | KernelToolsInvokeOptions): Promise<never> {
+		return rejectKernelToolsUnavailable();
 	}
 
 	nextToolCall(): Promise<ToolCallMessage> {
@@ -133,7 +179,14 @@ export class SubprocessKernel {
 	}
 
 	private spawnProcess(): void {
-		const child = spawnSubprocess(this.options.spawn, this.options);
+		const child = spawnSubprocess(this.options.spawn, {
+			...this.options,
+			env:
+				this.options.env ??
+				(this.options.sessionEnv
+					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
+					: undefined),
+		});
 		const process = new SubprocessProcess(child, {
 			onLine: (source, line) => this.handleLine(source, line),
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),
@@ -144,6 +197,7 @@ export class SubprocessKernel {
 		});
 		this.process = process;
 		this.processReady = false;
+		this.memory?.processReplaced();
 		try {
 			process.send(
 				encodeBridgeFrame({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection }),
@@ -178,7 +232,17 @@ export class SubprocessKernel {
 			this.failClosed(new KernelStartupError(message.error.message));
 			return;
 		}
-		if (this.runs.handleMessage(message, this.onMessage)) this.pumpRuns();
+		const ownResult = message.type === "result" && this.runs.active?.input.cellId === message.cellId;
+		const settled = ownResult && this.memory ? this.memory.annotate(message, process.child.pid) : message;
+		if (!this.runs.handleMessage(settled, this.onMessage)) return;
+		this.pumpRuns();
+		this.recycleOverCeilingWhenIdle();
+	}
+
+	/** An over-ceiling interpreter restarts only once no cell is running or queued on it. */
+	private recycleOverCeilingWhenIdle(): void {
+		const idle = this.runs.active === null && this.runs.snapshot().queuedCellIds.length === 0;
+		if (this.memory?.claimRecycle(idle)) void this.restartProcess(this.process);
 	}
 
 	private handleExit(process: SubprocessProcess, code: number | null, signal: NodeJS.Signals | null): void {
@@ -190,7 +254,27 @@ export class SubprocessKernel {
 		}
 		this.process = null;
 		this.processReady = false;
-		this.failClosed(new KernelExitedError(signal ?? code ?? "unknown"));
+		const error = new KernelExitedError(signal ?? code ?? "unknown");
+		if (this.options.onDeath) this.die(error, describeExit(code, signal), this.options.onDeath);
+		else this.failClosed(error);
+	}
+
+	/**
+	 * The interpreter exited on its own and is gone: the running cell fails once (its side effects may
+	 * already have happened), the cells that never started stay queued for `drainPending`, and the owner
+	 * replaces this instance. `run()` is never reached on it again.
+	 */
+	private die(error: Error, reason: string, onDeath: (reason: string) => void): void {
+		this.failure = error;
+		this.closed = true;
+		this.dead = true;
+		this.runs.clearToolCalls();
+		const active = this.runs.active;
+		if (active) {
+			this.runs.releaseActive(active);
+			this.runs.settle(active, failureResult(active, new Error(`${error.message}; every global is lost`)));
+		}
+		onDeath(reason);
 	}
 
 	private accepts(process: SubprocessProcess): boolean {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import { type CodemodeMemorySettings, memorySettingsSchema, validatedMemorySettings } from "./memory-settings.ts";
 
 export const codemodeSettingsSchema = Type.Object(
 	{
@@ -19,7 +20,10 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		cellTimeoutSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		foregroundWindowSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		runBudgetSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		hardLimitSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		maxDetachedCells: Type.Optional(Type.Number({ minimum: 1 })),
 		parallelPoolWidth: Type.Optional(Type.Number({ minimum: 1 })),
 		taskTools: Type.Optional(
 			Type.Object(
@@ -40,6 +44,7 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		statusEvents: Type.Optional(Type.Boolean()),
+		memory: Type.Optional(memorySettingsSchema),
 	},
 	{ additionalProperties: false },
 );
@@ -63,19 +68,36 @@ export interface CodemodeSettings {
 		readonly rb: boolean;
 		readonly jl: boolean;
 	};
+	/** Idle time an interactive call blocks the turn before the cell detaches; capped by the foreground window. */
 	readonly cellTimeoutSeconds: number;
-	/** Wall-clock kill deadline for a single cell; bounds detached cells too. */
+	/**
+	 * Longest an interactive eval call blocks the agent loop before the cell detaches, capping
+	 * `cellTimeoutSeconds` and the bridge-parked grace. A still-running cell keeps living up to its
+	 * run budget and the hard limit; this only frees the turn. Print/json calls never detach.
+	 */
+	readonly foregroundWindowSeconds: number;
+	/**
+	 * Kill deadline for a cell's own execution time — child processes, network, timers, CPU — with
+	 * time parked on host tool calls excluded. A per-call `timeout` replaces it for that cell.
+	 */
+	readonly runBudgetSeconds: number;
+	/** Wall-clock kill deadline for a single cell; bounds detached and bridge-parked cells too. */
 	readonly hardLimitSeconds: number;
+	/** Maximum detached cells across all language kernels. */
+	readonly maxDetachedCells?: number;
 	readonly parallelPoolWidth: number;
 	readonly taskTools?: CodemodeTaskTools;
 	readonly outputSink?: CodemodeOutputSink;
 	readonly statusEvents?: boolean;
+	readonly memory?: CodemodeMemorySettings;
 }
 
 export type ResolvedCodemodeSettings = CodemodeSettings & {
+	readonly maxDetachedCells: number;
 	readonly taskTools: CodemodeTaskTools;
 	readonly outputSink: CodemodeOutputSink;
 	readonly statusEvents: boolean;
+	readonly memory: CodemodeMemorySettings;
 };
 
 export interface LoadCodemodeSettingsOptions {
@@ -98,6 +120,28 @@ export const DEFAULT_HARD_LIMIT_SECONDS = 1800;
 
 export const HARD_LIMIT_ENVIRONMENT_FLAG = "SENPI_CODEMODE_HARD_LIMIT_SECONDS";
 
+/**
+ * Bash parity: `terminal/tools/foreground-window.ts` auto-detaches a still-running bash command to a
+ * background session at 60s regardless of its `timeout` kill deadline. An eval cell gets the same
+ * default foreground window so a large `timeout` extends the cell's lifetime without holding the turn
+ * hostage for hours.
+ */
+export const DEFAULT_FOREGROUND_WINDOW_SECONDS = 60;
+
+export const FOREGROUND_WINDOW_ENVIRONMENT_FLAG = "SENPI_CODEMODE_FOREGROUND_SECONDS";
+
+/**
+ * One language kernel runs one cell at a time and a killed JavaScript cell that cannot settle
+ * cooperatively restarts its worker, so a runaway cell costs far more than a runaway bash command:
+ * five minutes of own execution time is the default before the cell is killed.
+ */
+export const DEFAULT_RUN_BUDGET_SECONDS = 300;
+
+export const DEFAULT_MAX_DETACHED_CELLS = 15;
+
+export const RUN_BUDGET_ENVIRONMENT_FLAG = "SENPI_CODEMODE_RUN_BUDGET_SECONDS";
+export const MAX_DETACHED_CELLS_ENVIRONMENT_FLAG = "SENPI_CODEMODE_MAX_DETACHED_CELLS";
+
 // OMP settings-schema.ts:3211-3299 has language/path settings only; eval.ts:427
 // defaults timeout to 30s, and codemode pins concurrency-bridge.ts:30 width to 4.
 export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
@@ -108,7 +152,10 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		jl: false,
 	},
 	cellTimeoutSeconds: 30,
+	foregroundWindowSeconds: DEFAULT_FOREGROUND_WINDOW_SECONDS,
+	runBudgetSeconds: DEFAULT_RUN_BUDGET_SECONDS,
 	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
+	maxDetachedCells: DEFAULT_MAX_DETACHED_CELLS,
 	parallelPoolWidth: 4,
 	taskTools: {
 		task: "task",
@@ -119,6 +166,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		maxColumns: 768,
 	},
 	statusEvents: true,
+	memory: validatedMemorySettings(undefined).settings,
 };
 
 const languageEnvironmentFlags = {
@@ -128,7 +176,7 @@ const languageEnvironmentFlags = {
 	jl: "SENPI_CODEMODE_JL",
 } as const;
 
-type Environment = Readonly<Record<string, string | undefined>>;
+export type Environment = Readonly<Record<string, string | undefined>>;
 
 export async function loadCodemodeSettings(options: LoadCodemodeSettingsOptions = {}): Promise<LoadedCodemodeSettings> {
 	const cwd = options.cwd ?? process.cwd();
@@ -159,11 +207,32 @@ export function resolveEnabledLanguages(
 
 /** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
 export function resolveHardLimitSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
-	const override = env[HARD_LIMIT_ENVIRONMENT_FLAG];
-	if (override === undefined) return settings.hardLimitSeconds;
-	const parsed = Number.parseInt(override, 10);
-	if (!Number.isFinite(parsed) || parsed <= 0) return settings.hardLimitSeconds;
-	return parsed;
+	return positiveSecondsOverride(env[HARD_LIMIT_ENVIRONMENT_FLAG]) ?? settings.hardLimitSeconds;
+}
+
+/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
+export function resolveForegroundWindowSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
+	return positiveSecondsOverride(env[FOREGROUND_WINDOW_ENVIRONMENT_FLAG]) ?? settings.foregroundWindowSeconds;
+}
+
+/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
+export function resolveRunBudgetSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
+	return positiveSecondsOverride(env[RUN_BUDGET_ENVIRONMENT_FLAG]) ?? settings.runBudgetSeconds;
+}
+
+/** Uses the same positive-integer environment parsing as the run budget. */
+export function resolveMaxDetachedCells(settings: CodemodeSettings, env: Environment = process.env): number {
+	return (
+		positiveSecondsOverride(env[MAX_DETACHED_CELLS_ENVIRONMENT_FLAG]) ??
+		settings.maxDetachedCells ??
+		DEFAULT_MAX_DETACHED_CELLS
+	);
+}
+
+function positiveSecondsOverride(value: string | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	const parsed = Number.parseInt(value, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
@@ -188,7 +257,7 @@ async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
 		};
 	}
 
-	return { settings: mergeSettings(parsed), source: path, warnings: [] };
+	return { settings: mergeSettings(parsed), source: path, warnings: validatedMemorySettings(parsed.memory).warnings };
 }
 
 function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
@@ -200,7 +269,10 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			jl: input.languages?.jl ?? defaultCodemodeSettings.languages.jl,
 		},
 		cellTimeoutSeconds: input.cellTimeoutSeconds ?? defaultCodemodeSettings.cellTimeoutSeconds,
+		foregroundWindowSeconds: input.foregroundWindowSeconds ?? defaultCodemodeSettings.foregroundWindowSeconds,
+		runBudgetSeconds: input.runBudgetSeconds ?? defaultCodemodeSettings.runBudgetSeconds,
 		hardLimitSeconds: input.hardLimitSeconds ?? defaultCodemodeSettings.hardLimitSeconds,
+		maxDetachedCells: input.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS,
 		parallelPoolWidth: input.parallelPoolWidth ?? defaultCodemodeSettings.parallelPoolWidth,
 		taskTools: {
 			task: input.taskTools?.task ?? defaultCodemodeSettings.taskTools.task,
@@ -211,6 +283,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			maxColumns: input.outputSink?.maxColumns ?? defaultCodemodeSettings.outputSink.maxColumns,
 		},
 		statusEvents: input.statusEvents ?? defaultCodemodeSettings.statusEvents,
+		memory: validatedMemorySettings(input.memory).settings,
 	};
 }
 

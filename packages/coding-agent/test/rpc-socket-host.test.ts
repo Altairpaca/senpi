@@ -124,7 +124,7 @@ function scratch(label: string): {
 function spawnRpc(
 	args: string[],
 	qa: ReturnType<typeof scratch>,
-	capabilities = "extension_events,custom_unsupported,rendered_components",
+	capabilities = "extension_events,custom_unsupported",
 ): ChildProcessWithoutNullStreams {
 	const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), ...args], {
 		cwd: qa.cwd,
@@ -303,131 +303,7 @@ describe("JSONL peer waiter lifecycle", () => {
 });
 
 describe("RPC Unix-socket multi-connection host", () => {
-	it("renders factory widgets while preserving array widgets", async () => {
-		const qa = scratch("widget-factory");
-		const fake = await startFakeModelServer();
-		writeRpcModelsJson(qa.agentDir, fake.origin);
-		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
-		writeFileSync(
-			join(qa.agentDir, "extensions", "widget-factory.ts"),
-			`export default function (pi) {
-				pi.on("session_start", (_event, ctx) => {
-					ctx.ui.setWidget("array-widget", ["array widget"]);
-					ctx.ui.setWidget("factory-widget", () => ({ render: (width) => [\`w:\${width}\`] }));
-					ctx.ui.setHeader(() => ({ render: () => ["factory header"] }));
-					ctx.ui.setFooter((_tui, _theme, footerData) => ({ render: () => [footerData.getGitBranch() ?? "factory footer"] }));
-				});
-			}\n`,
-		);
-		const child = spawnRpc(
-			[
-				"--mode",
-				"rpc",
-				"--listen",
-				`unix://${qa.socketPath}`,
-				"--provider",
-				MOCK_PROVIDER,
-				"--model",
-				MOCK_MODEL,
-				"--extension",
-				join(qa.agentDir, "extensions", "widget-factory.ts"),
-			],
-			qa,
-		);
-		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
-		const peer = await connectPeer(qa.socketPath);
-		try {
-			// Armed before open_session so neither request can be missed, but left on
-			// the default timeout: both only arrive after the session spawns and loads
-			// its extensions, which outruns a 1s budget on a loaded CI shard. A short
-			// deadline here rejected both waiters and surfaced as two unhandled
-			// rejections attributed to whichever test ran next.
-			const arrayWidget = peer.peer.waitFor(
-				(value) =>
-					value.type === "extension_ui_request" &&
-					value.method === "setWidget" &&
-					value.widgetKey === "array-widget",
-			);
-			const factoryWidget = peer.peer.waitFor(
-				(value) =>
-					value.type === "extension_ui_request" &&
-					value.method === "setWidget" &&
-					value.widgetKey === "factory-widget",
-			);
-			const factoryHeader = peer.peer.waitFor(
-				(value) =>
-					value.type === "extension_ui_request" &&
-					value.method === "setHeader" &&
-					Array.isArray(value.widgetLines),
-			);
-			const factoryFooter = peer.peer.waitFor(
-				(value) =>
-					value.type === "extension_ui_request" &&
-					value.method === "setFooter" &&
-					Array.isArray(value.widgetLines),
-			);
-			await expect(
-				peer.peer.request({ id: "client-info", type: "set_client_info", width: 80, capabilities: ["rendered_components"] }),
-			).resolves.toMatchObject({ type: "response", command: "set_client_info", success: true });
-			const opened = await peer.peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
-			const sessionId = openedSessionId(opened);
-			expect(await arrayWidget).toMatchObject({
-				type: "extension_ui_request",
-				method: "setWidget",
-				widgetKey: "array-widget",
-				widgetLines: ["array widget"],
-			});
-			expect(await factoryWidget).toMatchObject({
-				type: "extension_ui_request",
-				method: "setWidget",
-				widgetKey: "factory-widget",
-				widgetLines: ["w:80"],
-				sessionId,
-			});
-			const resizedWidget = peer.peer.waitFor(
-				(value) =>
-					value.type === "extension_ui_request" &&
-					value.method === "setWidget" &&
-					value.widgetKey === "factory-widget" &&
-					JSON.stringify(value.widgetLines) === JSON.stringify(["w:120"]),
-			);
-			await expect(
-				peer.peer.request({ id: "set-width", type: "set_client_info", width: 120, sessionId }),
-			).resolves.toMatchObject({
-				type: "response",
-				command: "set_client_info",
-				success: true,
-				sessionId,
-			});
-			expect(await resizedWidget).toMatchObject({
-				type: "extension_ui_request",
-				method: "setWidget",
-				widgetKey: "factory-widget",
-				widgetLines: ["w:120"],
-				sessionId,
-			});
-			expect(await factoryHeader).toMatchObject({
-				type: "extension_ui_request",
-				method: "setHeader",
-				widgetLines: ["factory header"],
-				sessionId,
-			});
-			expect(await factoryFooter).toMatchObject({
-				type: "extension_ui_request",
-				method: "setFooter",
-				widgetLines: ["factory footer"],
-				sessionId,
-			});
-			expect(peer.peer.messages.some((value) => value.method === "custom_unsupported")).toBe(false);
-		} finally {
-			peer.peer.close();
-			peer.socket.destroy();
-			await fake.close();
-			await stopChild(child);
-		}
-	});
-
-	it("keeps factory UI silent for a default client while preserving array widgets", async () => {
+	it("keeps factory UI off the wire while preserving array widgets", async () => {
 		const qa = scratch("widget-default");
 		const fake = await startFakeModelServer();
 		writeRpcModelsJson(qa.agentDir, fake.origin);
@@ -457,7 +333,6 @@ describe("RPC Unix-socket multi-connection host", () => {
 				join(qa.agentDir, "extensions", "widget-factory.ts"),
 			],
 			qa,
-			"rendered_components",
 		);
 		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
 		const peer = await connectPeer(qa.socketPath);
@@ -484,116 +359,6 @@ describe("RPC Unix-socket multi-connection host", () => {
 		} finally {
 			peer.peer.close();
 			peer.socket.destroy();
-			await fake.close();
-			await stopChild(child);
-		}
-	});
-
-	it("preserves registered capabilities when one socket opens a second session", async () => {
-		const qa = scratch("cap-second");
-		const fake = await startFakeModelServer();
-		writeRpcModelsJson(qa.agentDir, fake.origin);
-		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
-		writeFileSync(
-			join(qa.agentDir, "extensions", "widget-factory.ts"),
-			`export default function (pi) { pi.on("session_start", (_event, ctx) => ctx.ui.setWidget("factory", () => ({ render: (width) => [String(width)] }))); }`,
-		);
-		const child = spawnRpc(
-			["--mode", "rpc", "--listen", `unix://${qa.socketPath}`, "--provider", MOCK_PROVIDER, "--model", MOCK_MODEL, "--extension", join(qa.agentDir, "extensions", "widget-factory.ts")],
-			qa,
-			"rendered_components",
-		);
-		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
-		const peer = await connectPeer(qa.socketPath);
-		try {
-			const first = await peer.peer.request({ id: "open-a", type: "open_session", cwd: qa.cwd });
-			const sessionA = openedSessionId(first);
-			await peer.peer.request({ id: "info-a", type: "set_client_info", sessionId: sessionA, width: 80, capabilities: ["rendered_components"] });
-			await peer.peer.request({ id: "open-b", type: "open_session", cwd: qa.cwd });
-			const factoryAfterSecondOpen = peer.peer.waitFor(
-				(value) => value.type === "extension_ui_request" && value.widgetKey === "factory" && JSON.stringify(value.widgetLines) === JSON.stringify(["81"]),
-			);
-			await peer.peer.request({ id: "info-a-again", type: "set_client_info", sessionId: sessionA, width: 81 });
-			expect(await factoryAfterSecondOpen).toMatchObject({ sessionId: sessionA, widgetKey: "factory", widgetLines: ["81"] });
-		} finally {
-			peer.peer.close();
-			peer.socket.destroy();
-			await fake.close();
-			await stopChild(child);
-		}
-	});
-
-	it("uses the minimum reported width across attached peers and drops leavers", async () => {
-		const qa = scratch("widget-width-peers");
-		const fake = await startFakeModelServer();
-		writeRpcModelsJson(qa.agentDir, fake.origin);
-		mkdirSync(join(qa.agentDir, "extensions"), { recursive: true });
-		writeFileSync(
-			join(qa.agentDir, "extensions", "widget-factory.ts"),
-			`export default function (pi) { pi.on("session_start", (_event, ctx) => ctx.ui.setWidget("factory-widget", () => ({ render: (width) => [String(width)] }))); }`,
-		);
-		const child = spawnRpc(
-			[
-				"--mode",
-				"rpc",
-				"--listen",
-				`unix://${qa.socketPath}`,
-				"--provider",
-				MOCK_PROVIDER,
-				"--model",
-				MOCK_MODEL,
-				"--extension",
-				join(qa.agentDir, "extensions", "widget-factory.ts"),
-			],
-			qa,
-		);
-		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
-		const a = await connectPeer(qa.socketPath);
-		const b = await connectPeer(qa.socketPath);
-		try {
-			const path = join(qa.sessionDir, "width.jsonl");
-			const opened = await a.peer.request({ id: "open", type: "open_session", cwd: qa.cwd, sessionPath: path });
-			const sessionId = openedSessionId(opened);
-			await b.peer.request({ id: "attach", type: "open_session", cwd: qa.cwd, sessionPath: path });
-			await a.peer.request({
-				id: "a-width",
-				type: "set_client_info",
-				width: 120,
-				capabilities: ["rendered_components"],
-				sessionId,
-			});
-			const min60 = a.peer.waitFor(
-				(v) =>
-					v.type === "extension_ui_request" &&
-					v.widgetKey === "factory-widget" &&
-					JSON.stringify(v.widgetLines) === JSON.stringify(["60"]),
-			);
-			await b.peer.request({
-				id: "b-width",
-				type: "set_client_info",
-				width: 60,
-				capabilities: ["rendered_components"],
-				sessionId,
-			});
-			await expect(min60).resolves.toBeDefined();
-			expect(
-				b.peer.messages.some(
-					(v) => v.widgetKey === "factory-widget" && JSON.stringify(v.widgetLines) === JSON.stringify(["60"]),
-				),
-			).toBe(true);
-			const bClose = a.peer.waitFor(
-				(v) =>
-					v.type === "extension_ui_request" &&
-					v.widgetKey === "factory-widget" &&
-					JSON.stringify(v.widgetLines) === JSON.stringify(["120"]),
-			);
-			await b.peer.request({ id: "b-close", type: "close_session", sessionId });
-			await expect(bClose).resolves.toBeDefined();
-		} finally {
-			a.peer.close();
-			a.socket.destroy();
-			b.peer.close();
-			b.socket.destroy();
 			await fake.close();
 			await stopChild(child);
 		}
@@ -684,7 +449,7 @@ describe("RPC Unix-socket multi-connection host", () => {
 		});
 	});
 
-	it("delivers foreign commands, broadcasts tagged events, survives malformed frames, and reconnects", async () => {
+	it("delivers foreign commands only after attachment, survives malformed frames, and reconnects", async () => {
 		const qa = scratch("semantics");
 		const fake = await startFakeModelServer();
 		writeRpcModelsJson(qa.agentDir, fake.origin);
@@ -716,7 +481,6 @@ describe("RPC Unix-socket multi-connection host", () => {
 			const sessionId = openedSessionId(opened);
 
 			const settledA = a.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
-			const settledB = b.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
 			await expect(
 				b.peer.request({
 					id: "foreign-prompt",
@@ -725,7 +489,10 @@ describe("RPC Unix-socket multi-connection host", () => {
 					message: "unique-424242",
 				}),
 			).resolves.toMatchObject({ success: true, sessionId });
-			await Promise.all([settledA, settledB]);
+			await settledA;
+			expect(b.peer.messages.some((value) => value.type === "agent_settled" && value.sessionId === sessionId)).toBe(
+				false,
+			);
 
 			const transcript = await b.peer.request({
 				id: "foreign-transcript",
@@ -760,6 +527,59 @@ describe("RPC Unix-socket multi-connection host", () => {
 		} finally {
 			a.peer.close();
 			a.socket.destroy();
+			b.socket.destroy();
+			await fake.close();
+		}
+	});
+
+	it("isolates a mid-turn session from attached and unattached raw sockets", async () => {
+		const qa = scratch("mid-turn-isolation");
+		const secondCwd = join(qa.root, "second-work");
+		mkdirSync(secondCwd, { recursive: true });
+		const fake = await startFakeModelServer();
+		writeRpcModelsJson(qa.agentDir, fake.origin);
+		const child = spawnRpc(
+			["--mode", "rpc", "--listen", `unix://${qa.socketPath}`, "--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
+			qa,
+		);
+		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
+		const a = await connectPeer(qa.socketPath);
+		const b = await connectPeer(qa.socketPath);
+		try {
+			const openedA = await a.peer.request({ id: "open-p1", type: "open_session", cwd: qa.cwd });
+			const openedB = await b.peer.request({ id: "open-p2", type: "open_session", cwd: secondCwd });
+			const sessionB = openedSessionId(openedB);
+			const turnStarted = b.peer.waitFor((value) => value.type === "message_start" && value.sessionId === sessionB);
+			const turn = b.peer.request({
+				id: "prompt-p2",
+				type: "prompt",
+				sessionId: sessionB,
+				message: "isolation-turn",
+			});
+			await turnStarted;
+			const third = await connectPeer(qa.socketPath);
+			try {
+				await turn;
+				const lifecycle = new Set([
+					"agent_start",
+					"agent_settled",
+					"agent_idle",
+					"session_opened",
+					"session_closed",
+				]);
+				const foreign = (value: RecordValue) =>
+					value.sessionId === sessionB && typeof value.type === "string" && !lifecycle.has(value.type);
+				expect(a.peer.messages.some(foreign)).toBe(false);
+				expect(third.peer.messages.some(foreign)).toBe(false);
+			} finally {
+				third.peer.close();
+				third.socket.destroy();
+			}
+			expect(openedSessionId(openedA)).not.toBe(sessionB);
+		} finally {
+			a.peer.close();
+			a.socket.destroy();
+			b.peer.close();
 			b.socket.destroy();
 			await fake.close();
 		}

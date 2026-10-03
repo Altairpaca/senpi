@@ -1,4 +1,10 @@
-import { type AgentToolResult, type ExtensionContext, sanitizeTerminalLabel } from "@code-yeongyu/senpi";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+	type AgentToolResult,
+	type ExtensionContext,
+	kernelToolsStorage,
+	sanitizeTerminalLabel,
+} from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { RESERVED_SCHEMA_TOOL } from "../bridge/reserved.ts";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
@@ -8,6 +14,7 @@ import { appendSchemaHint } from "../bridges/schema-hint.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import {
 	boundToolCallArgs,
 	capCodePoints,
@@ -39,6 +46,8 @@ export interface CellBridgeRuntime {
 	readonly ctx: ExtensionContext;
 	readonly artifactPath?: string;
 	readonly imageResizer?: EvalImageResizer;
+	/** This cell's live kernel-tool capability; only a JS kernel has one (#1754). */
+	readonly kernelTools?: KernelToolsCapability;
 }
 
 export class CellHandler {
@@ -46,11 +55,18 @@ export class CellHandler {
 	readonly #state: CellState;
 	readonly #runtime: CellBridgeRuntime;
 	readonly #resultBuilder: CellResultBuilder;
+	readonly #dispatchContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
 		this.#state = state;
 		this.#runtime = runtime;
+		// Construct in the submitting cell's host context; worker callbacks cannot supply it (#2512).
+		// Bind this cell's capability once; undefined clears any enclosing JS grant for non-JS cells.
+		this.#dispatchContext =
+			runtime.kernelTools === undefined
+				? kernelToolsStorage.exit(() => AsyncLocalStorage.snapshot())
+				: kernelToolsStorage.run(runtime.kernelTools, () => AsyncLocalStorage.snapshot());
 		const settings = runtime.settings.outputSink;
 		this.#resultBuilder = new CellResultBuilder({
 			state,
@@ -81,7 +97,8 @@ export class CellHandler {
 				this.#resultBuilder.display(message);
 				return;
 			case "tool-call": {
-				const pending = this.#handleToolCall(message);
+				// A retained worker carries its creation context, not this cell's RPC connection.
+				const pending = this.#dispatchContext(() => this.#handleToolCall(message));
 				this.#state.pendingBridgeCalls.push(pending);
 				await pending;
 				return;
@@ -90,6 +107,8 @@ export class CellHandler {
 			case "init-failed":
 			case "result":
 			case "closed":
+			case "kernel-tool-describe-reply":
+			case "kernel-tool-invoke-reply":
 				return;
 			default:
 				throw new TypeError(`Unhandled kernel message: ${String(message)}`);
@@ -223,7 +242,12 @@ export class CellHandler {
 				type: "tool-reply",
 				callId: message.callId,
 				ok: false,
-				error: { message: text },
+				error: {
+					message: text,
+					...(error instanceof Error && "code" in error && typeof error.code === "string"
+						? { code: error.code }
+						: {}),
+				},
 			});
 		}
 		this.#resultBuilder.emitUpdate(false);

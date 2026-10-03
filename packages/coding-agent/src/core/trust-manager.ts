@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
-import { canonicalizePath, resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 
 export type ProjectTrustDecision = boolean | null;
@@ -29,6 +29,7 @@ type TrustFile = Record<string, boolean | null | undefined>;
 
 const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 	"settings.json",
+	"mcp.json",
 	"extensions",
 	"skills",
 	"prompts",
@@ -37,8 +38,20 @@ const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 	"APPEND_SYSTEM.md",
 ] as const;
 
+const LEGACY_PROJECT_CONFIG_DIR_NAME = ".pi";
+
 function normalizeCwd(cwd: string): string {
-	return canonicalizePath(resolvePath(cwd));
+	const resolved = resolvePath(cwd);
+	try {
+		return canonicalizePathStrict(resolved);
+	} catch {
+		// A workspace path the filesystem will not confirm must not be keyed by its raw
+		// spelling: that is how a decision recorded for one directory leaks to another
+		// that merely writes the same way. Returning the resolved-but-unconfirmed path
+		// keeps the lookup total, and because no stored key can match a location the
+		// kernel does not agree on, the effect is "ask again" rather than "inherit".
+		return resolved;
+	}
 }
 
 function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreEntry | null {
@@ -177,7 +190,8 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 
 /**
  * Returns true when cwd has project-local resources that must be gated by
- * project trust: trust-requiring entries under cwd/.pi, or .agents/skills in
+ * project trust: trust-requiring entries under the project config dir or the
+ * legacy cwd/.pi dir (whose resources are also discovered), or .agents/skills in
  * cwd or one of its ancestors. Returns false when no such project resources
  * exist. The user/global ~/.agents/skills directory is always treated as a
  * trusted user resource and is ignored here, even when cwd is $HOME.
@@ -187,8 +201,12 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
 	let currentDir = canonicalizePath(resolvePath(cwd));
 
-	const configDir = join(currentDir, CONFIG_DIR_NAME);
-	if (TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)))) {
+	const configDirs = [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)];
+	if (
+		configDirs.some((configDir) =>
+			TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry))),
+		)
+	) {
 		return true;
 	}
 

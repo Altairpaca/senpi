@@ -4,6 +4,7 @@ import {
 	type CursorExecResolvedCarrier,
 	isClassifierRefusal,
 	isCursorExecResolved,
+	readProviderDiagnostic,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { AgentLoopConfig } from "./types.ts";
@@ -27,6 +28,26 @@ export class ProviderRetryWatchdogAbortError extends Error {
 		this.providerCause = providerCause;
 		this.name = "ProviderRetryWatchdogAbortError";
 	}
+}
+
+/**
+ * Marks a terminal message whose `toolUse` stop reason was demoted because the provider sent no
+ * tool call. Demotion rewrites the stop reason, so this diagnostic is the only surviving evidence
+ * that the turn was malformed rather than a clean stop; downstream recovery keys on it.
+ */
+export const EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC = "empty_tool_use_terminal_state";
+
+export function demoteToolUseWithoutToolCalls(message: AssistantMessage): AssistantMessage {
+	// Count raw blocks: cursor-resolved calls are legitimate completed tool calls and must not be demoted.
+	if (message.stopReason !== "toolUse" || message.content.some((block) => block.type === "toolCall")) return message;
+	return {
+		...message,
+		stopReason: "stop",
+		diagnostics: [
+			...(message.diagnostics ?? []),
+			{ type: EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, timestamp: Date.now(), details: {} },
+		],
+	};
 }
 
 export function promoteStopWithPendingToolCalls(message: AssistantMessage): AssistantMessage {
@@ -65,6 +86,7 @@ export function createTerminalFailureAssistantMessage(
 	partialMessage: AssistantMessage | null,
 ): AssistantMessage {
 	const errorMessage = error instanceof Error ? error.message : String(error);
+	const providerDiagnostic = reason === "error" ? readProviderDiagnostic(error) : undefined;
 	return {
 		role: "assistant",
 		content: partialMessage?.content ?? [{ type: "text", text: "" }],
@@ -77,6 +99,7 @@ export function createTerminalFailureAssistantMessage(
 		usage: partialMessage?.usage ?? EMPTY_USAGE,
 		stopReason: reason,
 		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),
+		...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 		...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 		timestamp: partialMessage?.timestamp ?? Date.now(),
 	};

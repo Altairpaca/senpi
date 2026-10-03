@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -13,6 +13,7 @@ import {
 	getInterpreterAvailability,
 	type InterpreterAvailability,
 } from "../interpreters/detect.ts";
+import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
 import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
@@ -66,11 +67,14 @@ export async function createRuntime(
 	const executeTool = createExecuteTool(pi, activeTools);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
+	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...bundledBunPathEntry() };
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const manager = await create({
 		sessionId,
+		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
+		sessionEnv,
 		settings,
 		availability,
 		artifactsDir: artifacts.dir,
@@ -100,6 +104,17 @@ export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: Readonly
 	return Object.assign(executeTool, {
 		isToolAvailable: (name: string): boolean => activeTools?.has(name) ?? pi.getActiveTools().includes(name),
 	});
+}
+
+// In a compiled executable, Bun Shell runs `bun` as this executable unless PATH has one, which booted
+// a second agent from `bun test` in a cell (omo#9362). Kernel children get the same bundled `bun`
+// directory the bash tool's PATH carries.
+function bundledBunPathEntry(): Record<string, string> {
+	const env = withBundledBunCommands(process.env);
+	if (env === process.env) return {};
+	const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+	const value = env[pathKey];
+	return value === undefined ? {} : { [pathKey]: value };
 }
 
 function sessionIdFrom(event: unknown): string {

@@ -26,6 +26,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			sessionManager: options.sessionManager,
 			agentDir: options.agentDir,
 			isFastModeActive: () => false,
+			agent: { state: {} },
 			isStreaming: false,
 			// The shared state builder projects open_session through the full session
 			getContextUsage: () => undefined,
@@ -97,6 +98,35 @@ describe("RPC attachment edge regressions", () => {
 		await recordingWriter.flush();
 		expect(registry.list()).toHaveLength(1);
 		await attachedRouter.releaseConnection("connection");
+		expect(registry.list()).toEqual([]);
+	});
+
+	test("cancels pending UI requests only when the last attachment releases the session", async () => {
+		const { dir, registry } = await setup();
+		const writer = new SessionEventWriter(() => {});
+		for (const connection of ["owner", "peer"])
+			writer.registerConnection(connection, { writeRaw: () => {}, waitForBackpressure: async () => {} });
+		let cancellations = 0;
+		const router = new SessionCommandRouter(registry, writer, { cwd: dir }, async () => ({
+			handle: async () => {},
+			cancelPendingExtensionUiRequests: () => {
+				cancellations += 1;
+			},
+			dispose: async () => {},
+		}));
+		const path = join(dir, "shared-question.jsonl");
+		await writer.withConnection("owner", () => router.handle(open(dir, path)));
+		await writer.withConnection("peer", () => router.handle(open(dir, path)));
+		expect(registry.list()).toHaveLength(1);
+
+		// The session-opening connection drops while another attachment survives:
+		// a pending question is session-owned and must stay answerable.
+		await router.releaseConnection("owner");
+		expect(cancellations).toBe(0);
+		expect(registry.list()[0]?.status).toBe("open");
+
+		await router.releaseConnection("peer");
+		expect(cancellations).toBe(1);
 		expect(registry.list()).toEqual([]);
 	});
 

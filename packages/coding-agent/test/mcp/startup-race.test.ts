@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { ConnectError, ToolExecError } from "../../src/core/extensions/builtin/mcp/errors.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	capturingPi,
 	registeredTool,
@@ -86,7 +87,13 @@ describe("MCP startup race", () => {
 
 		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		const tool = registeredTool(pi, "mcp_fx_tool_2");
-		const result = await tool.execute("tc-hot-swap", { value: "late" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-hot-swap",
+			{ value: "late" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 		expect(textContent(result)).toBe("fixture tool_2 value=late mode=alpha");
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((item) => item.name)).toEqual(["tool_1", "tool_2"]);
@@ -119,7 +126,13 @@ describe("MCP startup race", () => {
 		const attachElapsedMs = await timedAttach(root, pi);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const callStartedAt = performance.now();
-		const call = tool.execute("tc-wedge", { value: "wedge" }, undefined, undefined, testContext());
+		const call = tool.execute(
+			"tc-wedge",
+			{ value: "wedge" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 
 		await expect(call).rejects.toSatisfy((error: unknown) => {
 			return error instanceof ToolExecError && getErrorCause(error) instanceof ConnectError;
@@ -136,7 +149,7 @@ describe("MCP startup race", () => {
 		// --slow-start 800 clears the 250ms startup race window (so attach cannot
 		// settle synchronously) while staying inside connectTimeoutMs, so the
 		// background connect still completes and surfaces tools. This is the cold
-		// lazy analogue of the wedged codegraph server that used to gate the UI.
+		// lazy analogue of a wedged MCP server that used to gate the UI.
 		setConfig(root, {
 			fx: { ...stdioServer(["--tools", "2", "--slow-start", "800"]), lifecycle: "lazy", connectTimeoutMs: 5000 },
 		});
