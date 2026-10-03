@@ -217,12 +217,14 @@ describe("#1873 deferred model switch", () => {
 
 		// when a model that fits right now is chosen afterwards
 		await harness.session.setModel(roomy);
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 		harness.setResponses([fauxAssistantMessage("answered on the roomy model")]);
 		await harness.session.prompt("continue");
 
 		// then the newer choice stands; the stale hold must not reclaim the session
 		expect(harness.session.model?.id).toBe("900k");
 		expect(harness.session.pendingModelSwitch).toBeUndefined();
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 		expect(
 			harness.sessionManager
 				.getEntries()
@@ -260,6 +262,7 @@ describe("#1873 deferred model switch", () => {
 		// then the cycle supersedes the hold; the older choice must not reclaim the send
 		expect(harness.session.model?.id).toBe("900k");
 		expect(harness.session.pendingModelSwitch).toBeUndefined();
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 		expect(
 			harness.faux
 				.getCallLog()
