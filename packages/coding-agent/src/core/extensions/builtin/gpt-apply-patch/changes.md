@@ -1,5 +1,25 @@
 # changes
 
+## 2026-10-03 - Reject stray lines between file sections; shared header parsing (#2636)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/text.ts`: adds `parseFileHeader` (trim, then match the Add/Delete/Update marker) and `parseMoveTo` (trim end, as Codex does). `extractPatchedPaths` now lists paths through those two functions instead of its own regex.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/parser.ts`: reads file headers through `parseFileHeader`/`parseMoveTo`, skips blank lines between sections, and rejects any other line there with `is not a valid hunk header` instead of skipping it.
+
+### Why
+
+- An indented file header was skipped together with its hunk lines while the patch reported success, so the model believed an edit happened that never did (Codex scenario `017_whitespace_padded_hunk_header` failed).
+- The permission system takes per-file approval paths from `extractPatchedPaths`. Sharing one header parser keeps the approved paths equal to the written paths for any whitespace padding.
+
+### Why an extension could not handle it
+
+- The parser and the path extractor are this builtin's own grammar; nothing outside it can change how a patch is read.
+
+### Expected merge conflict zones
+
+- LOW: `parser.ts` top-level section loop and `parseAddHunk`/`parseUpdateHunk` signatures; `text.ts` `extractPatchedPaths`.
+
 ## 2026-09-24 - Pin pi-apply-patch 0.1.3, no port needed (senpi#2079)
 
 Every `src/index.ts` change between 0.1.2 and 0.1.3 is already in senpi's multi-file port: custom Responses API gating (`extension.ts`, broader than upstream's provider list), paths outside cwd (`workspace.ts`), final diff preview in result details (`tool.ts`), per-file mutation queues (`apply.ts`), and failure codes with `failedFiles` / reread classification (`recovery.ts`, `types.ts`). The sync report's single hunk is the whole upstream monolith against senpi's barrel `index.ts`. Only `external-versions.json` changes.
