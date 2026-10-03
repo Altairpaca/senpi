@@ -6,6 +6,7 @@
 
 ### Added
 
+- A running session can report where its memory goes, on demand and only when started with `SENPI_MEMORY_REPORT=1`: `SIGUSR2` (POSIX; reports every session registered in the signalled process, so a worker-runtime multi-session host's sessions answer only over RPC) or the RPC `memory_report` request writes `<session>-artifacts/memory/<iso>.json` with the main thread's heap and footprint, every live eval kernel's last-known heap (marked stale while a cell runs), the resident session-string store, the terminal tool-card render cache, and figures extensions add through `pi.registerMemoryReporter(name, reporter)`. `SENPI_MEMORY_REPORT_SNAPSHOT=1` adds a heap snapshot. Without the flag nothing is installed and `SIGUSR2` keeps its default behaviour ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
 - RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host.
 
 ### Changed
