@@ -11,6 +11,7 @@
 ### Fixed
 
 - `nvidia` starts on a model its catalog still has: the v2026.10.4 catalog no longer lists `nvidia/nemotron-3-super-120b-a12b`, so an NVIDIA-only user without a saved model silently started on the catalog's first entry (`deepseek-ai/deepseek-v4.1-flash`) instead of the provider default. The default is now `nvidia/nemotron-3-ultra-550b-a55b`, and a release now stops when a catalog regeneration drops any bundled provider's default ([#2645](https://github.com/code-yeongyu/senpi/issues/2645)).
+- `apply_patch` no longer drops a file section whose header is indented while reporting success: indented headers apply as in Codex, any other line between file sections rejects the patch before anything changes, and the permission system's per-file approval lists exactly the files the patch writes ([#2636](https://github.com/code-yeongyu/senpi/issues/2636)).
 
 ### Removed
 
