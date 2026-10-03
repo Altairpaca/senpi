@@ -1,28 +1,11 @@
-## Publish-only releases ship the full native PTY prebuild matrix (senpi#1193)
+## Publish-only releases ship the full native PTY prebuild matrix (2026-10-03)
 
 ### What changed
 
-- `.github/workflows/native-prebuilds.yml`: the Stage step selects each addon by
-  name (`senpi_pty.*` / `senpi_grep.*`) instead of copying the first sorted
-  `.node` file, and stages the PTY addon at the loader-relative
-  `native/prebuilds/<host>/senpi_pty.<host>.node` inside the artifact while the
-  grep addon stays flat for its own consumers.
-- `.github/workflows/publish-npm.yml`: the publish-only job downloads the
-  same-commit native matrix into an untracked scratch root, then a new staging
-  step copies every target's PTY addon into
-  `packages/pty/native/prebuilds/<target>/` before packing, and passes
-  `--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64`
-  to the publish script.
-- `scripts/publish.mjs`: accepts `--require-native-prebuilds=<target>[,...]` and
-  forwards the required set to the published-workspace pack check; unknown
-  arguments are still rejected.
-- `scripts/senpi-publish-pack-checks.mjs`:
-  `assertPublishedWorkspacePackFiles` takes an optional
-  `requiredNativePrebuildTargets` list and throws, naming the missing
-  `native/prebuilds/<target>/senpi_pty.<target>.node`, when a required target is
-  absent from the `@earendil-works/pi-pty` tarball. Targets outside the list
-  keep the warn-only pipe-fallback behavior, so the best-effort win32-arm64 row
-  never fails a publish.
+- `.github/workflows/native-prebuilds.yml`: the Stage step selects each addon by name (`senpi_pty.*` / `senpi_grep.*`) instead of copying the first sorted `.node` file, and stages the PTY addon at the loader-relative `native/prebuilds/<host>/senpi_pty.<host>.node` inside the artifact while the grep addon stays flat for its own consumers.
+- `.github/workflows/publish-npm.yml`: the publish-only job downloads the same-commit native matrix into an untracked scratch root, then a new staging step copies every target's PTY addon into `packages/pty/native/prebuilds/<target>/` before packing, and passes `--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64` to the publish script.
+- `scripts/publish.mjs`: accepts `--require-native-prebuilds=<target>[,...]` and forwards the required set to the published-workspace pack check; unknown arguments are still rejected.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertPublishedWorkspacePackFiles` takes an optional `requiredNativePrebuildTargets` list and throws, naming the missing `native/prebuilds/<target>/senpi_pty.<target>.node`, when a required target is absent from the `@earendil-works/pi-pty` tarball. Targets outside the list keep the warn-only pipe-fallback behavior, so the best-effort win32-arm64 row never fails a publish.
 
 ### Why
 
