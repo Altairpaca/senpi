@@ -92,13 +92,15 @@ do not become skill invocations.
 
 After resolving the explicit tokens, Senpi removes only those tokens and wraps the remaining text once
 as the user request. Unknown tokens stay literal, duplicates are skipped, and at most five distinct
-skills expand per prompt.
+skills expand per prompt. Raise that limit with `maxSkillExpansionsPerPrompt` in `settings.json`
+when you deliberately compose more skills.
 
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 
 ```json
 {
-  "enableSkillCommands": true
+  "enableSkillCommands": true,
+  "maxSkillExpansionsPerPrompt": 5
 }
 ```
 

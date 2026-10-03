@@ -12,6 +12,7 @@ import {
 	type PromptOptions,
 	parseSkillInvocationTokens,
 } from "../../../src/core/agent-session.ts";
+import type { Settings } from "../../../src/core/settings-manager.ts";
 import { createSyntheticSourceInfo } from "../../../src/core/source-info.ts";
 import { UnknownCommandError } from "../../../src/core/unknown-command.ts";
 import type { ResourceLoader } from "../../../src/index.ts";
@@ -343,6 +344,63 @@ describe("#308 skill composition", () => {
 		expect(await promptAndCapture(harness, "/skill:first /skill:first compose once")).toBe(
 			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("compose once")}`,
 		);
+	});
+
+	describe("maxSkillExpansionsPerPrompt setting", () => {
+		async function expandWithSettings(skillCount: number, settings: Partial<Settings>) {
+			const definitions = Array.from({ length: skillCount }, (_, index) => ({
+				name: `skill-${index + 1}`,
+				body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
+			}));
+			const { resourceLoader, skills, tempDir } = createFixtures(definitions);
+			const harness = await createHarness({ resourceLoader, settings });
+			harnesses.push(harness);
+			const errors: string[] = [];
+			const unsubscribe = harness.getExtensionRunner().onError((error) => {
+				if (error.event === "skill_expansion") errors.push(error.error);
+			});
+			const actual = await promptAndCapture(
+				harness,
+				`${skills.map((skill) => `/skill:${skill.name}`).join(" ")} compose`,
+			);
+			unsubscribe();
+			return { actual, errors, skills, tempDir };
+		}
+
+		const expected = (skills: SkillFixture[], tempDir: string, cap: number): string =>
+			`${skills
+				.slice(0, cap)
+				.map((skill) => skillBlock(skill, tempDir))
+				.join("\n\n")}\n\n${userRequest(
+				`${skills
+					.slice(cap)
+					.map((skill) => `/skill:${skill.name}`)
+					.join(" ")} compose`,
+			)}`;
+		const capWarning = (cap: number): string =>
+			`Expanded at most ${cap} skills; remaining skill commands were left as literal text.`;
+
+		it("keeps the default cap at five", async () => {
+			const { actual, errors, skills, tempDir } = await expandWithSettings(6, {});
+
+			expect(MAX_SKILL_EXPANSIONS_PER_PROMPT).toBe(5);
+			expect(actual).toBe(expected(skills, tempDir, 5));
+			expect(errors).toEqual([capWarning(5)]);
+		});
+
+		it("expands up to a configured higher cap", async () => {
+			const { actual, errors, skills, tempDir } = await expandWithSettings(11, { maxSkillExpansionsPerPrompt: 10 });
+
+			expect(actual).toBe(expected(skills, tempDir, 10));
+			expect(errors).toEqual([capWarning(10)]);
+		});
+
+		it("falls back to the default for an invalid configured cap", async () => {
+			const { actual, errors, skills, tempDir } = await expandWithSettings(6, { maxSkillExpansionsPerPrompt: 0 });
+
+			expect(actual).toBe(expected(skills, tempDir, 5));
+			expect(errors).toEqual([capWarning(5)]);
+		});
 	});
 
 	it("caps expansion, leaves the remaining skill tokens literal, and emits a visible warning", async () => {

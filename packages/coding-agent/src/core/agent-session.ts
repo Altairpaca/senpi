@@ -300,7 +300,6 @@ import {
 } from "./settings-manager.ts";
 import {
 	formatSkillInvocationPrompt,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
 	parseSkillInvocationTokens,
 	removeSkillInvocationTokens,
 	type SkillInvocationPromptSkill,
@@ -5113,6 +5112,7 @@ export class AgentSession {
 			knownSkillNames: new Set(skills.map((skill) => skill.name)),
 		});
 		if (invocationTokens.length === 0) return text;
+		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
 
 		const expandedSkillNames = new Set<string>();
 		const skillBlocks: SkillInvocationPromptSkill[] = [];
@@ -5130,11 +5130,11 @@ export class AgentSession {
 				continue;
 			}
 
-			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
+			if (skillBlocks.length >= maxExpansions) {
 				this._extensionRunner.emitError({
 					extensionPath: "skill:expansion",
 					event: "skill_expansion",
-					error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
+					error: `Expanded at most ${maxExpansions} skills; remaining skill commands were left as literal text.`,
 				});
 				break;
 			}
