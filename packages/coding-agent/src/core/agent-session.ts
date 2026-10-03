@@ -5122,6 +5122,7 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
+		const unloadedTokens = new Set<SkillInvocationToken>();
 		let capReported = false;
 
 		for (const token of invocationTokens) {
@@ -5148,10 +5149,12 @@ export class AgentSession {
 					this._extensionRunner.emitError({
 						extensionPath: "skill:expansion",
 						event: "skill_expansion",
-						error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
+						error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; the remaining skills were not loaded and are marked [skill not loaded: <name>] in the prompt.`,
 					});
 					capReported = true;
 				}
+				removedTokens.push(token);
+				unloadedTokens.add(token);
 				continue;
 			}
 
@@ -5183,7 +5186,7 @@ export class AgentSession {
 		}
 
 		if (skillBlocks.length === 0) return text;
-		const userRequest = removeSkillInvocationTokens(text, removedTokens);
+		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });
 		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}

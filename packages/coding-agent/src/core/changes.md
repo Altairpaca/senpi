@@ -3,12 +3,14 @@
 ### What changed
 
 - `packages/coding-agent/src/core/skill-invocation.ts`: `MAX_SKILL_EXPANSIONS_PER_PROMPT` is 10 (was 5).
-- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, only new skills stay literal; scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt.
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, a new skill is not expanded and is replaced in place by `[skill not loaded: name]` (leading or inline); scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `removeSkillInvocationTokens()` takes an optional `unloaded` token set and renders those tokens as `[skill not loaded: name]`.
 
 ### Why
 
 - Workflow prompts now chain six to ten skills (a process skill plus its helpers), and the sixth onward silently stayed literal.
 - After the cap, a later line re-using a loaded skill (`... $review` on line 3) produced a false cap warning and left bare `$review` in the request, so the model could not tell that line referred to the loaded skill.
+- A skill skipped by the cap used to reach the model as a bare `$name` / `/skill:name`, so only the user saw the warning and the model could guess at the skill's content. The marker states that the skill was not loaded, at the line where it was requested.
 
 ### Why an extension could not handle it
 
