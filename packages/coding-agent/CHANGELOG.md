@@ -6,9 +6,9 @@
 
 ### Added
 
-### Changed
+- `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning.
 
-- One prompt can now expand up to 10 explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`), up from 5. Skill commands past the tenth still stay literal and show the existing `Expanded at most 10 skills` warning.
+### Changed
 
 ### Fixed
 
