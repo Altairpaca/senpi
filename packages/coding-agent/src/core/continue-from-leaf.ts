@@ -18,17 +18,20 @@ Your last reply may have been edited by the user; treat its current text as your
 Carry on from it without repeating it, apologizing for it, or commenting on the edit.
 </system-notice>`;
 
-export type ContinueFromLeafCode = "streaming" | "nothing_to_continue";
+export type ContinueFromLeafCode = "streaming" | "nothing_to_continue" | "leaf_not_assistant";
+
+const CONTINUE_FROM_LEAF_MESSAGES: Record<ContinueFromLeafCode, string> = {
+	streaming: "Wait for the current response to finish before continuing.",
+	nothing_to_continue: "There is nothing to continue: the session has no messages yet.",
+	leaf_not_assistant:
+		"There is no answer to continue: the conversation ends on a user message. Send it, or retry it, instead.",
+};
 
 export class ContinueFromLeafError extends Error {
 	readonly code: ContinueFromLeafCode;
 
 	constructor(code: ContinueFromLeafCode) {
-		super(
-			code === "streaming"
-				? "Wait for the current response to finish before continuing."
-				: "There is nothing to continue: the session has no messages yet.",
-		);
+		super(CONTINUE_FROM_LEAF_MESSAGES[code]);
 		this.name = "ContinueFromLeafError";
 		this.code = code;
 	}

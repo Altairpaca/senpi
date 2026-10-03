@@ -10349,6 +10349,9 @@ export class AgentSession {
 	async continueFromLeaf(): Promise<void> {
 		if (this.isStreaming) throw new ContinueFromLeafError("streaming");
 		if (this.agent.state.messages.length === 0) throw new ContinueFromLeafError("nothing_to_continue");
+		// Only an answer can be continued; a prompt left as the leaf (an edited one) is retried, not continued.
+		const leaf = this.agent.state.messages[this.agent.state.messages.length - 1];
+		if (leaf?.role !== "assistant") throw new ContinueFromLeafError("leaf_not_assistant");
 		await this.sendCustomMessage(
 			{
 				customType: CONTINUE_FROM_LEAF_CUSTOM_TYPE,

@@ -2470,6 +2470,7 @@ Failures carry a typed `errorCode`:
 |-------------|---------|
 | `streaming` | A response is in flight; retry once the turn ends |
 | `nothing_to_continue` | The session has no messages yet |
+| `leaf_not_assistant` | The conversation ends on a user message (for example an edited prompt): there is no answer to continue. Send or retry it instead |
 
 A provider error during the continued turn is reported through the usual turn events, as for a prompt.
 

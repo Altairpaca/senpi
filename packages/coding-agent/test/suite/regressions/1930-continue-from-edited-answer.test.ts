@@ -98,6 +98,28 @@ describe("continue from an edited answer with no new prompt (#1930)", () => {
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
+	it("refuses with leaf_not_assistant when the conversation ends on a user message, and sends nothing", async () => {
+		const { harness } = await conversation("anthropic-messages");
+		const question = harness.sessionManager
+			.getEntries()
+			.find((entry): entry is SessionMessageEntry => entry.type === "message" && entry.message.role === "user");
+		if (!question) throw new Error("expected the question");
+		// Editing a prompt leaves it as the new leaf without starting a turn; that is a Retry, not a continuation.
+		await harness.session.editUserMessage(question.id, "What is the capital of Italy?", { summarize: false });
+		const callsBefore = harness.faux.state.callCount;
+
+		const error = await rejectionOf(harness.session.continueFromLeaf());
+
+		expect(error).toBeInstanceOf(ContinueFromLeafError);
+		expect((error as ContinueFromLeafError).code).toBe("leaf_not_assistant");
+		expect(harness.faux.state.callCount).toBe(callsBefore);
+		expect(
+			harness.session.agent.state.messages.some(
+				(message) => message.role === "custom" && message.customType === CONTINUE_FROM_LEAF_CUSTOM_TYPE,
+			),
+		).toBe(false);
+	});
+
 	it("refuses with streaming while a response is running, and leaves that response untouched", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
