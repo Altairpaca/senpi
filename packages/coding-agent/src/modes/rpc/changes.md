@@ -1,3 +1,50 @@
+## 2026-10-03 - Expose held model switches through RPC session state
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: every `RpcSessionState` projection now includes
+  `pendingModelSwitch`, either the held model's `{ provider, id }` or `null`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declares the always-present, nullable wire field.
+- `packages/coding-agent/docs/rpc.md` and
+  `packages/coding-agent/test/suite/regressions/1873-deferred-model-switch.test.ts`: document and cover the
+  null-versus-held contract through the real compaction admission path.
+
+### Why
+
+RPC clients could see the old active model after `set_model` but could not tell whether the requested model was held
+for compaction or replaced by a later selection. `null` distinguishes no hold on a host that supports this field from
+an older host that omits it.
+
+### Why an extension could not handle it
+
+`RpcSessionState` is the fixed transport projection shared by RPC, worker snapshots, and the TUI control endpoint;
+extensions cannot add fields to that wire contract.
+
+### Expected merge conflict zones
+
+- LOW: `RpcSessionState` in `rpc-types.ts` and the state literal in `rpc-session-state.ts`.
+
+## 2026-09-30 - Do not replay eval callers when spawning RPC hosts
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts`: shared `rpcHostExecArgv` removes eval/print expressions, input-type, and interactive mode while preserving runtime options and order. Under Bun it also removes every other `-e…`/`-p…` token (Bun reads `-eCODE`, `-e=CODE`, `-pCODE` and even `-expose-gc` as glued code) and always drops the token after `-e`/`--eval`/`-p`/`--print`/`-pe`; under Node, single-dash V8 options such as `-expose-gc` are kept.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: both non-compiled supervisor routes use the filtered arguments.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the default non-compiled host child uses the same filter; explicit child commands and compiled launches are unchanged.
+- `test/suite/rpc-host-exec-argv.test.ts` covers argument forms and bounded real Node children; `docs/rpc.md` documents embedding from eval callers.
+
+### Why
+
+An embedding caller launched with `node -e` or `bun -e` (including Bun's glued `bun -eCODE` / `bun -pCODE`) passes its own code in `process.execArgv`. Copying it before the host script executes the caller again, potentially spawning hosts recursively. `--input-type` also prevents a script entry from running.
+
+### Why an extension could not handle it
+
+The launch commands in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` are constructed before extensions load. `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` centralizes that process-launch policy.
+
+### Expected merge conflict zones
+
+- `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `resolveHostChildLaunch` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` is a new fork-only module.
 ## 2026-10-02 - A taken-over generation leaves the successor's registration alone (senpi#2536)
 
 ### What changed
@@ -140,7 +187,6 @@ Host identity, admission and generation handoff are core RPC host lifecycle; an 
 ### Expected merge conflict zones
 
 - Fork-only files. `createHostCore` and the socket host's capability list and `createHostCore` call in `multi-session-host.ts`; `identityPayload`/`refusal` moving to `host-outcome.ts` from `host-runner.ts`; the `launch` line in `startSuccessor`.
-
 ## 2026-09-30 - An updated client retires a live pre-layout-2 host with no session (senpi#2423)
 
 ### What changed
