@@ -1,3 +1,23 @@
+## 2026-10-03 - session.log lines name their session, provider and model (senpi#2541)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-log.ts`: `provider` and `model` join the content-free field allowlist, and `createSessionLogger` takes an optional `context` callback whose fields (same allowlist) are stamped on every line at write time; an event's own fields win over the context.
+- `packages/coding-agent/src/core/agent-session.ts`: the session's logger context is its current `sessionId` plus the active model's `provider` and `model`, so every line the session writes (compaction, provider errors, prompt rejections, queue and resume events) is attributable. `provider_error` also passes the failing message's own `provider` and `model`.
+
+### Why
+
+- `packages/coding-agent/src/core/session-log.ts`, `packages/coding-agent/src/core/agent-session.ts`: every session in an agent dir appends to one `logs/session.log`, so with a parent and its task children (or several TUIs) running, a `provider_error` such as a billing 400 could not be traced to the session or provider that hit it. `sessionId` was allowlisted but never passed, and `provider`/`model` were stripped.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-log.ts`, `packages/coding-agent/src/core/agent-session.ts`: the session writes these lines from its own event path with its private logger; extensions never see or wrap it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-log.ts`: `ALLOWED_DATA_KEY`, `SessionLoggerOptions` and the `formatLine` call in `log`.
+- `packages/coding-agent/src/core/agent-session.ts`: the `createSessionLogger` call in the constructor and the `provider_error` branch of `_logSessionEvent`.
+
 ## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
 
 ### What changed
