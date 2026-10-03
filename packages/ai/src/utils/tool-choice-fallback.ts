@@ -96,7 +96,10 @@ function escapeRegExp(text: string): string {
  * way (senpi#2648); the same request without the forced choice is accepted. A 400 that names
  * no tool, or another one, is not this refusal.
  */
-export function refusalNamesForcedTool(error: unknown, params: { readonly tool_choice?: unknown; readonly tools?: unknown }): boolean {
+export function refusalNamesForcedTool(
+	error: unknown,
+	params: { readonly tool_choice?: unknown; readonly tools?: unknown },
+): boolean {
 	if (extractHttpStatus(error) !== 400) return false;
 	const name = forcedToolName(params.tool_choice);
 	if (name === undefined) return false;
@@ -152,7 +155,11 @@ export async function sendWithForcedToolChoiceFallback<TParams extends { tool_ch
 	try {
 		return { params: request.params, result: await request.send(request.params) };
 	} catch (error) {
-		if (!isForcedToolChoiceUnsupportedError(error, forced) && !(forced && refusalNamesForcedTool(error, request.params))) throw error;
+		if (
+			!isForcedToolChoiceUnsupportedError(error, forced) &&
+			!(forced && refusalNamesForcedTool(error, request.params))
+		)
+			throw error;
 		const params = omitToolChoiceParam(request.params);
 		const result = await request.send(params);
 		// A refusal that names thinking depends on the request's thinking setting, not on the model alone.

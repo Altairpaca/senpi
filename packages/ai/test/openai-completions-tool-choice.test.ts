@@ -225,7 +225,11 @@ function streamTodoBehindPing(model: Model<"openai-completions">, toolChoice?: u
 }
 
 describe("openai-completions refusal that names the forced tool (senpi#2648)", () => {
-	const gateway: Model<"openai-completions"> = { ...localOpenAICompletionsModel, id: "group/auto-claude", name: "Gateway group" };
+	const gateway: Model<"openai-completions"> = {
+		...localOpenAICompletionsModel,
+		id: "group/auto-claude",
+		name: "Gateway group",
+	};
 
 	beforeEach(() => {
 		clearForcedToolChoiceRefusals();
@@ -240,11 +244,16 @@ describe("openai-completions refusal that names the forced tool (senpi#2648)", (
 		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
 
 		expect(response.stopReason).toBe("stop");
-		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([FORCED_TODO, undefined]);
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+		]);
 	});
 
 	it("retries once when the 400 names the forced tool by its quoted name", async () => {
-		mockState.createErrors.push(new HttpStatusError(400, "400 Invalid schema for function 'todo': object properties must be closed"));
+		mockState.createErrors.push(
+			new HttpStatusError(400, "400 Invalid schema for function 'todo': object properties must be closed"),
+		);
 
 		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
 
@@ -253,7 +262,12 @@ describe("openai-completions refusal that names the forced tool (senpi#2648)", (
 	});
 
 	it("does not retry a 400 that names a different tool", async () => {
-		mockState.createErrors.push(new HttpStatusError(400, "400 tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false"));
+		mockState.createErrors.push(
+			new HttpStatusError(
+				400,
+				"400 tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
+			),
+		);
 
 		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
 
