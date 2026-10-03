@@ -1,3 +1,21 @@
+## 2026-10-03 - Per-session memory split on the host pressure record (senpi#1960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcHostMemoryPressureEvent` gains optional `main` (`{ heapBytes }`, the main-thread heap) and `kernels` (`RpcHostKernelMemory[]`: every live kernel's `sessionId`, `language`, `liveBytes` and `measure`), the shape the host reports on the pressure event and the session listing.
+
+### Why
+
+- A shared host's memory pressure says which session's kernel holds the memory, not just the process total.
+
+### Why an extension could not handle it
+
+- The RPC host's event and listing types are core protocol.
+
+### Expected merge conflict zones
+
+- LOW: `RpcHostMemoryPressureEvent` in `rpc-types.ts`.
+
 ## 2026-10-03 - Expose held model switches through RPC session state
 
 ### What changed
