@@ -23,6 +23,10 @@
 
 - `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning. Thanks to @trac3r00. ([#2588](https://github.com/code-yeongyu/senpi/pull/2588))
 
+- Shared RPC hosts now report the per-session memory split: the `host_memory_pressure` record carries `main` (the main-thread heap) and `kernels` (every live eval kernel's heap by session), and `list_sessions` rows carry `memory` (`main_heap_bytes`, `kernel_heap_bytes`, `kernel_count`), surfaced on `host status --all --include-workers --json` as `{ main_heap_mb, kernel_heap_mb, kernel_count }`. The terminal tool-card render cache and the TUI frame are now measurable too: the memory report's `tuiRenderCache` gains `finishedCards`, exact `cachedLinesBytes` and `resultBytes`, and a new `tui.previousLinesBytes` reports the frame's line bytes, so a later bound is designed from the measurement ([#1960](https://github.com/code-yeongyu/senpi/issues/1960)).
+
+- A running session can report where its memory goes, on demand and only when started with `SENPI_MEMORY_REPORT=1`: `SIGUSR2` (POSIX) or the RPC `memory_report` request writes `<session>-artifacts/memory/<iso>.json` with the main thread's heap and footprint, every live eval kernel's last-known heap (marked stale while a cell runs), the resident session-string store, the terminal tool-card render cache, and figures extensions add through `pi.registerMemoryReporter(name, reporter)`. `SENPI_MEMORY_REPORT_SNAPSHOT=1` adds a heap snapshot. Without the flag nothing is installed and `SIGUSR2` keeps its default behaviour ([#2561](https://github.com/code-yeongyu/senpi/issues/2561)).
+
 ### Changed
 
 ### Fixed
