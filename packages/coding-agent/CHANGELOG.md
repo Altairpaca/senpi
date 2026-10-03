@@ -6,6 +6,8 @@
 
 ### Added
 
+- RPC session state now reports a model switch that is held until the next compaction: `pendingModelSwitch` is the held model's `{ provider, id }`, or `null` when nothing is held, so a client can tell a held switch from one a later selection superseded. The key is always present on current hosts, so a missing key identifies an older host.
+
 ### Changed
 
 ### Fixed
