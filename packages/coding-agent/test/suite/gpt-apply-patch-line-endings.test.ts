@@ -99,3 +99,34 @@ describe("gpt-apply-patch line endings", () => {
 		expect(await readFile(file, "utf8")).toBe("keep\r\nafter\r\nkeep too\r\n");
 	});
 });
+
+// Both apply_patch fixes on one patch: the header rules of #2636 and the line endings of #2638 meet in the parser.
+describe("gpt-apply-patch line endings with file-header rules", () => {
+	it("applies a CRLF patch whose update header is indented, keeping the CRLF file's endings", async () => {
+		const { cwd, file } = await workspaceWith("lines.txt", "one\r\ntwo\r\n");
+		await writeFile(path.join(cwd, "old.txt"), "x\r\n");
+
+		const result = await applyPatchDetailed(
+			cwd,
+			"*** Begin Patch\r\n*** Delete File: old.txt\r\n  *** Update File: lines.txt\r\n@@\r\n-one\r\n+ONE\r\n two\r\n*** End Patch\r\n",
+		);
+
+		expect(result.failures).toEqual([]);
+		expect(result.appliedFiles).toEqual(["old.txt", "lines.txt"]);
+		expect(await readFile(file, "utf8")).toBe("ONE\r\ntwo\r\n");
+	});
+
+	it("still rejects a CRLF patch with a stray line between file sections, changing nothing", async () => {
+		const { cwd, file } = await workspaceWith("lines.txt", "one\r\ntwo\r\n");
+		await writeFile(path.join(cwd, "old.txt"), "x\r\n");
+
+		await expect(
+			applyPatchDetailed(
+				cwd,
+				"*** Begin Patch\r\n*** Delete File: old.txt\r\nnow update lines\r\n@@\r\n-one\r\n+ONE\r\n*** End Patch\r\n",
+			),
+		).rejects.toThrow("'now update lines' is not a valid hunk header");
+		expect(await readFile(path.join(cwd, "old.txt"), "utf8")).toBe("x\r\n");
+		expect(await readFile(file, "utf8")).toBe("one\r\ntwo\r\n");
+	});
+});
