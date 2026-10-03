@@ -69,7 +69,9 @@ describe("#1511 oversized resume admission", () => {
 		const model = harness.getModel();
 		harness.sessionManager.appendMessage({
 			role: "user",
-			content: [{ type: "text", text: "restored context ".repeat(16_000) }],
+			// Genuinely over the resume budget (about 89K tokens in a 100K window): a requirement that the
+			// live context already satisfies is retired without compacting (#2589).
+			content: [{ type: "text", text: "restored context ".repeat(21_000) }],
 			timestamp: 1,
 		});
 		harness.sessionManager.appendMessage({

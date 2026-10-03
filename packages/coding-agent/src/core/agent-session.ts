@@ -6006,6 +6006,33 @@ export class AgentSession {
 		return true;
 	}
 
+	/** Whether a recorded resume requirement still blocks: the current context does not fit the current model. */
+	private _resumeRequirementStillBlocks(
+		model: Model<any>,
+		settings: ReturnType<SettingsManager["getCompactionSettings"]>,
+	): boolean {
+		const currentContext = estimateContextTokens(
+			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+		).tokens;
+		return !projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens: currentContext,
+			compaction: settings,
+			includeSpeculationLead: false,
+			admission: "resume",
+		}).usable;
+	}
+
+	/** Any committed compaction, manual /compact included, retires a resume requirement the context now satisfies. */
+	private _clearResumeCompactionRequirementIfFits(): void {
+		const model = this.model;
+		if (this._resumeCompactionRequirement === undefined || !model) return;
+		if (!this._resumeRequirementStillBlocks(model, this._getCompactionSettings(model)))
+			this._resumeCompactionRequirement = undefined;
+	}
+
 	admitResumeCompactionRequired(projection: ModelUsabilityBudgetProjection): void {
 		this._resumeCompactionRequirement = createResumeCompactionRequirement(projection);
 	}
@@ -6983,6 +7010,7 @@ export class AgentSession {
 				throw new CompactionRejectedError(execution.rejectionCause);
 			}
 			outcome = "completed";
+			this._clearResumeCompactionRequirementIfFits();
 			return execution.result;
 		} catch (error) {
 			outcome = isCompactionExecutionAborted(error) ? "aborted" : "failed";
@@ -7069,6 +7097,7 @@ export class AgentSession {
 			if (!execution.accepted) {
 				return { applied: false, reason: "rejected" };
 			}
+			this._clearResumeCompactionRequirementIfFits();
 			this._resumeQueuedMessagesAfterCompaction();
 			return { applied: true, reason: "ok" };
 		} catch (error) {
@@ -7646,23 +7675,18 @@ export class AgentSession {
 		}
 		if (this._resumeCompactionRequirement !== undefined) {
 			if (!model) throw new RequiredCompactionError();
-			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
-			if (!compacted) throw new RequiredCompactionError();
-			const currentContext = estimateContextTokens(
-				filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-			).tokens;
-			const remainingProjection = projectModelUsabilityBudget({
-				model,
-				systemPrompt: this.agent.state.systemPrompt,
-				tools: this.agent.state.tools,
-				liveContextTokens: currentContext,
-				compaction: settings,
-				includeSpeculationLead: false,
-				admission: "resume",
-			});
-			if (!remainingProjection.usable) throw new RequiredCompactionError();
+			// The requirement was projected at resume, possibly on another model or before a manual
+			// /compact (#2589, #2488). It only blocks while the CURRENT context still does not fit the
+			// CURRENT model; otherwise the normal threshold path below decides, so a provider lane that
+			// owns compaction (#1174) is never asked to compact a context that already fits.
+			if (this._resumeRequirementStillBlocks(model, settings)) {
+				const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
+				if (!compacted) throw new RequiredCompactionError();
+				if (this._resumeRequirementStillBlocks(model, settings)) throw new RequiredCompactionError();
+				this._resumeCompactionRequirement = undefined;
+				return true;
+			}
 			this._resumeCompactionRequirement = undefined;
-			return true;
 		}
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
