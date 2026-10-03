@@ -155,6 +155,14 @@
 				"legacyContracts/test/upstream-v1-codemode-parity.test.ts/collapsed preview counts wrapped lines one long JSON line does not fill the screen when collapsed"
 			],
 			"reason": "senpi#2557 (upstream v1.0.0 sync), lead+release-senpi approved: new tests from the sync only. The eval display-image validation tests cover the ported upstream fix d2931ad3d (invalid base64 dropped, detected type kept); the parity tests cover upstream v1.0.0 behaviours the fork already has (Windows Bun worker path, wrapped-line preview). No prompt, schema, invariant, census or import change, and no existing contract changed."
+		},
+		"senpi#2611": {
+			"additions": [
+				"legacyContracts/test/js-kernel-session-env.test.ts/JavaScriptKernel session environment shows each kernel only its own browser engine, and none to a session that chose nothing, even when the host process has one",
+				"legacyContracts/test/session-env.test.ts/session environment contract carries the browser engine only for a session that chose one",
+				"legacyContracts/test/session-env.test.ts/session environment contract replaces an inherited browser engine with the session's own and clears it for a session with none"
+			],
+			"reason": "senpi#2611: OMO_BROWSER_ENGINE joins the per-session eval kernel environment keys; these witnesses prove each kernel sees only its own session's engine and that a host-process value never reaches a session that chose none. No prompt, schema, helper or invariant cell changes."
 		}
 	}
 }
