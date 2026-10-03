@@ -474,13 +474,32 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # senpi#2353: a hung suite fails this step (not the whole job), so its log and the readiness log survive.
+      # senpi#2353: a hung suite must not run into the job timeout: GitHub discards a cancelled job's
+      # log, and a runner that stops answering never enforces a step timeout either. The step watches
+      # the suite itself and, after 9 minutes (a normal Windows run takes about 3), prints what it has,
+      # the processes still running, and the readiness log, then fails.
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
         timeout-minutes: 12
         env:
           SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
-        run: bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=default --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json
+        run: |
+          out="$RUNNER_TEMP/vitest-webview.txt"
+          bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=verbose --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json > "$out" 2>&1 &
+          suite=$!
+          for _ in $(seq 1 540); do kill -0 "$suite" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$suite" 2>/dev/null; then
+            cat "$out"
+            echo "::error::WebView suites still running after 9 minutes; the last finished test is above"
+            if command -v tasklist >/dev/null; then tasklist //FO CSV | grep -iE 'chrome|bun|node|powershell|tasklist|taskkill' || true; else ps -axo pid,ppid,etime,command | grep -iE 'chrom|bun|node' || true; fi
+            cat "$SENPI_WEBVIEW_READINESS_LOG" 2>/dev/null || true
+            kill "$suite" 2>/dev/null || true
+            exit 1
+          fi
+          wait "$suite"
+          status=$?
+          cat "$out"
+          exit "$status"
         working-directory: packages/senpi-codemode
 
       # senpi#2353: one line per Chrome launch (time to attach, or the stalled phase and the retirement).
