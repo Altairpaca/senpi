@@ -35,6 +35,7 @@ import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
 	runClaudeCodeModelSupportReport,
 	runGenerateModels,
+	runProviderDefaultsCheck,
 	runInstallLock,
 	runPackageLockRefresh,
 } from "./release-artifacts.mjs";
@@ -311,6 +312,7 @@ function main() {
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
+	runProviderDefaultsCheck(args.dryRun, runCommand, log, dryRunLog);
 	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
