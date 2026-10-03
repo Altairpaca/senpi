@@ -3,18 +3,24 @@
  * Forwarding eval/print code can execute the embedding caller again and recursively
  * spawn hosts; input-type is only valid for eval/stdin, and interactive keeps a REPL alive.
  */
-export function rpcHostExecArgv(execArgv: readonly string[] = process.execArgv): string[] {
+export function rpcHostExecArgv(
+	execArgv: readonly string[] = process.execArgv,
+	bun: boolean = process.versions.bun !== undefined,
+): string[] {
 	const args: string[] = [];
 	for (let index = 0; index < execArgv.length; index++) {
 		const arg = execArgv[index];
-		if (
-			arg === "-e" ||
-			arg === "--eval" ||
-			arg === "-pe" ||
-			arg === "-ep" ||
-			arg === "--input-type" ||
-			arg === "--input_type"
-		) {
+		if (bun) {
+			// Bun always takes the next token as the code, even when it starts with "-".
+			if (arg === "-e" || arg === "--eval" || arg === "-p" || arg === "--print" || arg === "-pe") {
+				index++;
+				continue;
+			}
+			// Bun reads any other -e…/-p… token as code glued to the flag: -eCODE, -e=CODE, -pCODE,
+			// and even -expose-gc (code "xpose-gc"). Node rejects these forms, so this is Bun-only.
+			if (arg.startsWith("-e") || arg.startsWith("-p")) continue;
+		}
+		if (arg === "-e" || arg === "--eval" || arg === "-pe" || arg === "--input-type" || arg === "--input_type") {
 			index++;
 			continue;
 		}
@@ -34,7 +40,7 @@ export function rpcHostExecArgv(execArgv: readonly string[] = process.execArgv):
 		) {
 			continue;
 		}
-		// Do not match arbitrary -e/-p prefixes: V8 accepts -expose-gc and -predictable.
+		// Under Node, do not match arbitrary -e/-p prefixes: V8 accepts -expose-gc and -predictable.
 		args.push(arg);
 	}
 	return args;

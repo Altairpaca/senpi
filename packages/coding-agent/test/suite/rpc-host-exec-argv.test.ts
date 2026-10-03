@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { rpcHostExecArgv } from "../../src/modes/rpc/host-exec-argv.ts";
 import { defaultHostLaunch } from "../../src/modes/rpc/host-launch.ts";
 import { INTERNAL_SUPERVISOR_FLAG, resolveHostChildLaunch } from "../../src/modes/rpc/host-lifecycle.ts";
 
+const bunAvailable = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 const originalExecArgv = process.execArgv;
 afterEach(() => {
 	process.execArgv = originalExecArgv;
@@ -20,7 +22,6 @@ const cases: { name: string; input: string[]; expected: string[] }[] = [
 	{ name: "long print", input: ["--print", "startHost()"], expected: [] },
 	{ name: "equals print", input: ["--print=startHost()"], expected: [] },
 	{ name: "print eval", input: ["-pe", "startHost()"], expected: [] },
-	{ name: "eval print", input: ["-ep", "startHost()"], expected: [] },
 	{ name: "separate print eval", input: ["-p", "-e", "startHost()"], expected: [] },
 	{ name: "print without expression", input: ["--print", "--trace-warnings"], expected: ["--trace-warnings"] },
 	{ name: "module input", input: ["--input-type", "module", "-e", "startHost()"], expected: [] },
@@ -43,6 +44,26 @@ const cases: { name: string; input: string[]; expected: string[] }[] = [
 		name: "print before runtime flag and equals eval",
 		input: ["--print", "--trace-warnings", "--eval=startHost()"],
 		expected: ["--trace-warnings"],
+	},
+];
+
+// Bun 1.4 reads any -e…/-p… token as code glued to the flag and always takes the next token
+// after -e/--eval/-p/--print/-pe as code, even when it starts with "-".
+const bunCases: { name: string; input: string[]; expected: string[] }[] = [
+	{ name: "glued eval", input: ["-estartHost()"], expected: [] },
+	{ name: "glued print", input: ["-pstartHost()"], expected: [] },
+	{ name: "short equals eval", input: ["-e=startHost()"], expected: [] },
+	{ name: "short equals print", input: ["-p=startHost()"], expected: [] },
+	{ name: "long equals forms", input: ["--eval=startHost()", "--print=startHost()"], expected: [] },
+	{ name: "separate eval", input: ["-e", "startHost()", "--smol"], expected: ["--smol"] },
+	{ name: "print takes dash code", input: ["-p", "-1", "--smol"], expected: ["--smol"] },
+	{ name: "print eval", input: ["-pe", "startHost()"], expected: [] },
+	{ name: "-ep is glued code p", input: ["-ep", "--smol"], expected: ["--smol"] },
+	{ name: "V8-looking flag is glued code", input: ["-expose-gc"], expected: [] },
+	{
+		name: "preloads and runtime flags",
+		input: ["--smol", "--preload", "./p.ts", "-r", "./q.ts", "-estartHost()"],
+		expected: ["--smol", "--preload", "./p.ts", "-r", "./q.ts"],
 	},
 ];
 
@@ -70,6 +91,18 @@ describe("RPC host runtime arguments", () => {
 			...host.hostArgs,
 		]);
 		expect(process.execArgv).toEqual(input);
+	});
+
+	it.each(bunCases)("filters Bun $name", ({ input, expected }) => {
+		expect(rpcHostExecArgv(input, true)).toEqual(expected);
+	});
+
+	it("keeps single-dash V8 flags and glued-looking tokens under Node", () => {
+		expect(rpcHostExecArgv(["-expose-gc", "-predictable", "-ep", "--eval", "startHost()"], false)).toEqual([
+			"-expose-gc",
+			"-predictable",
+			"-ep",
+		]);
 	});
 
 	it("leaves compiled and explicit command launches unchanged", () => {
@@ -126,6 +159,48 @@ if (process.env.SENPI_EXEC_ARGV_CHILD === '1') {
   process.exitCode = child.status ?? 1;
 }`;
 				const result = spawnSync(process.execPath, ["--import", "tsx", flag, ...(isModule ? ["-e"] : []), code], {
+					encoding: "utf8",
+					timeout: 15_000,
+					env: { ...process.env, SENPI_CODING_AGENT_DIR: dir },
+				});
+				expect(result.error).toBeUndefined();
+				expect(result.status, result.stderr).toBe(0);
+				expect(result.stdout).toContain("HOST_ENTRY_REACHED");
+				expect(result.stdout).not.toContain("CALLER_REPLAYED");
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		},
+	);
+});
+
+describe.skipIf(!bunAvailable)("real Bun eval callers", () => {
+	it.each(["-e", "-e=", "-e glued", "-p glued", "--eval=", "-p"])(
+		"executes the child entry instead of replaying %s",
+		(form) => {
+			const dir = mkdtempSync(join(tmpdir(), "senpi-exec-argv-bun-"));
+			try {
+				const entry = join(dir, "entry.mjs");
+				writeFileSync(entry, 'console.log("HOST_ENTRY_REACHED")');
+				const launchModule = fileURLToPath(new URL("../../src/modes/rpc/host-launch.ts", import.meta.url));
+				const code = `
+if (process.env.SENPI_EXEC_ARGV_CHILD === '1') {
+  console.log('CALLER_REPLAYED');
+} else {
+  const { defaultHostLaunch } = require(${JSON.stringify(launchModule)});
+  const { spawnSync } = require('node:child_process');
+  const launch = defaultHostLaunch([], false, ${JSON.stringify(entry)});
+  const child = spawnSync(launch.command, launch.args, {
+    encoding: 'utf8', timeout: 10000,
+    env: { ...process.env, SENPI_EXEC_ARGV_CHILD: '1' }
+  });
+  process.stdout.write(child.stdout || '');
+  process.stderr.write(child.stderr || '');
+  process.exitCode = child.status ?? 1;
+}`;
+				const flag = form.replace(" glued", "");
+				const args = form.endsWith(" glued") || form.endsWith("=") ? [`${flag}${code}`] : [flag, code];
+				const result = spawnSync("bun", args, {
 					encoding: "utf8",
 					timeout: 15_000,
 					env: { ...process.env, SENPI_CODING_AGENT_DIR: dir },

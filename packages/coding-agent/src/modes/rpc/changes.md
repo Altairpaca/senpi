@@ -2,14 +2,14 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts`: shared `rpcHostExecArgv` removes eval/print expressions, input-type, and interactive mode while preserving runtime options and order.
+- `packages/coding-agent/src/modes/rpc/host-exec-argv.ts`: shared `rpcHostExecArgv` removes eval/print expressions, input-type, and interactive mode while preserving runtime options and order. Under Bun it also removes every other `-e…`/`-p…` token (Bun reads `-eCODE`, `-e=CODE`, `-pCODE` and even `-expose-gc` as glued code) and always drops the token after `-e`/`--eval`/`-p`/`--print`/`-pe`; under Node, single-dash V8 options such as `-expose-gc` are kept.
 - `packages/coding-agent/src/modes/rpc/host-launch.ts`: both non-compiled supervisor routes use the filtered arguments.
 - `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the default non-compiled host child uses the same filter; explicit child commands and compiled launches are unchanged.
 - `test/suite/rpc-host-exec-argv.test.ts` covers argument forms and bounded real Node children; `docs/rpc.md` documents embedding from eval callers.
 
 ### Why
 
-An embedding caller launched with `node -e` passes its own code in `process.execArgv`. Copying it before the host script executes the caller again, potentially spawning hosts recursively. `--input-type` also prevents a script entry from running.
+An embedding caller launched with `node -e` or `bun -e` (including Bun's glued `bun -eCODE` / `bun -pCODE`) passes its own code in `process.execArgv`. Copying it before the host script executes the caller again, potentially spawning hosts recursively. `--input-type` also prevents a script entry from running.
 
 ### Why an extension could not handle it
 
