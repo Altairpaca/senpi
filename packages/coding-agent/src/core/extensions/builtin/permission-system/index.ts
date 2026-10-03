@@ -77,16 +77,17 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		setupError = null;
 		try {
-			startPermissionSession(ctx.cwd);
+			loadPermissionRules(ctx.cwd);
 		} catch (error) {
-			// The runner reports a throwing handler and keeps the session running, so a setup
+			// The runner reports a throwing handler and keeps the session running, so a rules
 			// failure must block tool calls itself instead of leaving them unchecked (#2617).
 			setupError = getReason(error);
 			throw error;
 		}
+		applyToolDenials();
 	});
 
-	const startPermissionSession = (cwd: string): void => {
+	const loadPermissionRules = (cwd: string): void => {
 		const settingsManager = SettingsManager.create(cwd);
 		const permissionFlag = pi.getFlag("permission");
 		const permissionPresetFlag = pi.getFlag("permission-preset");
@@ -106,7 +107,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		parserRegistry = createBuiltinParserRegistry();
 		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
 		initialApprovedCount = approved.length;
+	};
 
+	const applyToolDenials = (): void => {
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
 		const activeTools = pi

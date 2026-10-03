@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `session_start` runs the setup inside a try/catch. When it throws (unknown `--permission-preset` or RPC `permissionPreset`, unknown or non-string settings `permissionPreset`), the error is recorded and rethrown as before, and `tool_call` refuses every call with `Permission setup failed: <reason>` until a later `session_start` succeeds.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `session_start` loads the permission rules (`loadPermissionRules`) inside a try/catch. When that throws (unknown `--permission-preset` or RPC `permissionPreset`, unknown or non-string settings `permissionPreset`), the error is recorded and rethrown as before, and `tool_call` refuses every call with `Permission setup failed: <reason>` until a later `session_start` succeeds. Applying deny rules to the active tool list (`applyToolDenials`) runs after and outside that guard: it calls extension action methods, which throw while the extension runtime is still starting, and that must not lock a session whose rules loaded fine.
 
 ### Why
 

@@ -1,5 +1,14 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import permissionSystemExtension from "../../../src/core/extensions/builtin/permission-system/index.ts";
+import { ExtensionRunner } from "../../../src/core/extensions/runner.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { createInMemoryModelRegistry } from "../../model-runtime-test-utils.ts";
+import { createTestExtensionsResult } from "../../utilities.ts";
 import { createPermissionP0Host } from "./permission-p0-host.ts";
 
 const disposers: Array<() => Promise<void>> = [];
@@ -17,7 +26,45 @@ async function overwriteOutside(setup: Setup, preset: string | undefined) {
 	return { result, original, after: await readFile(host.outsidePath, "utf8") };
 }
 
+// A runner whose extension runtime is not initialized yet: tool listing and filtering throw,
+// which is not a permission-rules failure and must not lock the session.
+async function bashUnderUninitializedRuntime(preset: string) {
+	const dir = mkdtempSync(join(tmpdir(), "pi-perm-2617-runtime-"));
+	disposers.push(async () => rmSync(dir, { recursive: true, force: true }));
+	const extensions = await createTestExtensionsResult([permissionSystemExtension], dir);
+	const runner = new ExtensionRunner(
+		extensions.extensions,
+		extensions.runtime,
+		dir,
+		SessionManager.create(dir),
+		await createInMemoryModelRegistry(AuthStorage.inMemory()),
+		extensions.eventBus,
+	);
+	runner.setFlagValue("permission-preset", preset);
+	await runner.emit({ type: "session_start", reason: "startup" });
+	return runner.emitToolCall({
+		type: "tool_call",
+		toolName: "bash",
+		input: { command: "echo hello" },
+		toolCallId: "call-1",
+	});
+}
+
 describe("a broken permission setup fails closed (#2617)", () => {
+	it("lets a valid full-access preset run tools while the extension runtime is still starting", async () => {
+		// Given a valid preset and a runtime that cannot filter tools yet.
+		// When the agent runs a command.
+		const result = await bashUnderUninitializedRuntime("full-access");
+		// Then the rules still decide: no refusal.
+		expect(result).toBeUndefined();
+	});
+
+	it("refuses tools for a misspelled preset while the extension runtime is still starting", async () => {
+		const result = await bashUnderUninitializedRuntime("full-acess");
+		expect(result).toMatchObject({ block: true });
+		expect(JSON.stringify(result)).toContain("Permission setup failed");
+	});
+
 	it.each([
 		["a misspelled preset in the global settings", { globalSettings: { permissionPreset: "workspce" } }, "ask"],
 		["a non-string preset in the global settings", { globalSettings: { permissionPreset: 5 } }, "ask"],
