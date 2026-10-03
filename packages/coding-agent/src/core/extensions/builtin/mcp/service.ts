@@ -18,6 +18,7 @@ import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
 import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
+import { createMcpLogger } from "./log.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
@@ -51,6 +52,7 @@ import {
 	resolveMcpStartupTimeoutMs,
 	shouldRaceMcpStartup,
 } from "./startup-race.ts";
+import { safeTimer } from "./wrap.ts";
 
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
@@ -100,6 +102,8 @@ export class McpService {
 	// Sessions that quit while their own attach was still queued: the attach must not bind them (#2524 review).
 	readonly #releasedSessions = new WeakSet<object>();
 	#deferredDisposeReason: McpDisposeReason | undefined;
+	// Releases waiting for the attaches that deferred their dispose: they settle once the last one does.
+	readonly #deferredDisposeWaiters: Array<() => void> = [];
 	#sessionOptions: McpSessionOptions = {};
 	readonly #skillServerWarnings = new Set<string>();
 	#attachQueue: Promise<void> = Promise.resolve();
@@ -181,9 +185,11 @@ export class McpService {
 	/** A release that found attaches still pending leaves the dispose to the last of them, once no session is bound. */
 	async #disposeIfDeferredAndIdle(): Promise<void> {
 		const reason = this.#deferredDisposeReason;
-		if (reason === undefined || this.#pendingAttaches > 0 || this.#liveBindings().length > 0) return;
+		if (reason === undefined || this.#pendingAttaches > 0) return;
 		this.#deferredDisposeReason = undefined;
-		await this.dispose(reason);
+		// A session that attached meanwhile keeps the service; otherwise the deferred dispose runs now.
+		if (this.#liveBindings().length === 0) await this.dispose(reason);
+		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
 	}
 
 	#bind(pi: McpToolRegistrar, ctx: McpSessionContext): McpSessionBinding {
@@ -260,8 +266,35 @@ export class McpService {
 		}
 		// A session whose attach is still queued has not bound yet but will use this service.
 		if (disposeReason === undefined) return;
-		if (this.#pendingAttaches === 0) await this.dispose(disposeReason);
-		else this.#deferredDisposeReason = disposeReason;
+		if (this.#pendingAttaches === 0) {
+			await this.dispose(disposeReason);
+			return;
+		}
+		// The release settles only once the pending attaches have, so a caller that awaits it
+		// (session shutdown, builtin removal) sees the service disposed, not a dispose scheduled later.
+		this.#deferredDisposeReason = disposeReason;
+		const settled = new Promise<"settled">((settle) => this.#deferredDisposeWaiters.push(() => settle("settled")));
+		const deadlineMs = resolveMcpDeferredDisposeTimeoutMs();
+		let timer: NodeJS.Timeout | undefined;
+		const outcome = await Promise.race([
+			settled,
+			new Promise<"timeout">((expire) => {
+				timer = safeTimer("deferred-dispose", deadlineMs, () => expire("timeout"), {
+					logger: createMcpLogger("service"),
+				});
+			}),
+		]);
+		clearTimeout(timer);
+		if (outcome === "settled" || this.#deferredDisposeReason === undefined) return;
+		// A hung attach must not hold a reload or a quit forever: dispose anyway once the
+		// deadline passes, unless a session bound in the meantime, and say so.
+		this.#deferredDisposeReason = undefined;
+		createMcpLogger("service").warn("MCP attach still pending at the dispose deadline; disposing anyway", {
+			timeoutMs: deadlineMs,
+			reason: disposeReason,
+		});
+		if (this.#liveBindings().length === 0) await this.dispose(disposeReason);
+		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
 	}
 
 	/**
@@ -893,4 +926,17 @@ export function shouldDisposeMcpService(reason: SessionShutdownEvent["reason"]):
 export function resetMcpServiceForTests(): void {
 	service = null;
 	resetToolSearchServiceForTests();
+}
+
+export const MCP_DEFERRED_DISPOSE_TIMEOUT_ENV = "SENPI_MCP_DEFERRED_DISPOSE_TIMEOUT_MS";
+const MCP_DEFERRED_DISPOSE_TIMEOUT_MS = 15_000;
+
+/** How long a release waits for pending attaches before it disposes anyway. */
+function resolveMcpDeferredDisposeTimeoutMs(): number {
+	const raw = process.env[MCP_DEFERRED_DISPOSE_TIMEOUT_ENV]?.trim();
+	if (raw !== undefined && raw.length > 0) {
+		const value = Number(raw);
+		if (Number.isFinite(value) && value >= 0) return value;
+	}
+	return MCP_DEFERRED_DISPOSE_TIMEOUT_MS;
 }

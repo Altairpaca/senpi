@@ -1,3 +1,21 @@
+## 2026-10-03 - A deferred MCP dispose settles before its release returns
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: when `releaseSession()` has to defer the dispose behind pending attaches, it now waits for them, then disposes (or settles without disposing if a live session bound meanwhile). The wait is bounded by `SENPI_MCP_DEFERRED_DISPOSE_TIMEOUT_MS` (default 15 s); past it the service disposes anyway and logs a warning.
+
+### Why
+
+- `session_start` starts the attach without awaiting it. Removing the MCP builtin during a reload while that attach was in flight returned with the service and its servers still alive and disposed them only later, so `test/mcp/extension-load.test.ts` ("disposes the preserved classic singleton...") failed nondeterministically (17 of 50 local runs). A caller awaiting a release now sees the servers gone.
+
+### Why an extension could not handle it
+
+- The disposal order lives inside the builtin MCP service; no extension hook can wait on its attach queue.
+
+### Expected merge conflict zones
+
+- LOW: `releaseSession()` and `#disposeIfDeferredAndIdle()` in `service.ts`.
+
 # mcp Extension Changes
 
 ## 2026-10-01 - Give each session its own binding to the shared MCP service (senpi#2514)
