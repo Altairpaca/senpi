@@ -1273,7 +1273,13 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
 		this._agentDir = config.agentDir ?? getAgentDir();
 		const fallbackLogger = createFallbackLogger(this._agentDir);
-		this._sessionLogger = createSessionLogger(this._agentDir);
+		this._sessionLogger = createSessionLogger(this._agentDir, {
+			context: () => ({
+				sessionId: this.sessionManager.getSessionId(),
+				provider: this.model?.provider,
+				model: this.model?.id,
+			}),
+		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
 			this._modelRegistry,
@@ -2277,6 +2283,8 @@ export class AgentSession {
 			this._sessionLogger.warn("provider_error", {
 				kind,
 				error: message.errorMessage,
+				provider: message.provider,
+				model: message.model,
 			});
 		}
 	}
