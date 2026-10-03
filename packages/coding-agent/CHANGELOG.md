@@ -9,7 +9,7 @@
 - `maxSkillExpansionsPerPrompt` setting (default `5`) controls how many distinct explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`) one prompt may expand. Raise it in `settings.json` to compose more skills in one prompt; skill commands past the limit still stay literal and show the `Expanded at most N skills` warning.
 
 ### Changed
-- The bundled Claude Agent SDK is updated to 0.3.288 (from 0.3.286), so the Anthropic subscription lane runs the newest Claude Code release and the models it knows.
+- The bundled Claude Agent SDK is updated to 0.3.288 (from 0.3.286), so the Anthropic subscription lane runs Claude Code 2.1.288 and the models it knows.
 
 ### Fixed
 
