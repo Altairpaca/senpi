@@ -8,11 +8,9 @@
 
 ### Changed
 
-- One prompt can now expand up to 10 explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`), up from 5. Skills past the tenth are not loaded; they show the `Expanded at most 10 skills` warning and reach the model as `[skill not loaded: name]` where they were written, so the model knows it does not have them.
+- One prompt can now expand up to 10 explicitly invoked skills (`/skill:a /skill:b ...` or `$a $b ...`), up from 5. Skill commands past the tenth still stay literal and show the existing `Expanded at most 10 skills` warning.
 
 ### Fixed
-
-- Re-using an already loaded skill on a later line of the same prompt (for example `$review` on line 3 after ten skills were invoked) no longer triggers the cap warning or stays as bare text: it keeps its `[skill: review]` marker where it was written. The cap warning is shown once per prompt.
 
 ### Removed
 
