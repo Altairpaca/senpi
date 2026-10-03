@@ -28,8 +28,12 @@ const SUPERVISOR_FORBIDDEN = [
  * answers `get_protocol_info` with (`engine-build-identity.js`); nothing else under `core/` belongs.
  */
 const SUPERVISOR_CORE_ALLOWLIST = new Set(["brand.js", "process-crash-record.js", "engine-build-identity.js"]);
-/** The measured module count of the supervisor graph when this budget was set; it may only shrink. */
-const SUPERVISOR_MODULE_CEILING = 35;
+/**
+ * The measured module count of the supervisor graph when this budget was set; it may only shrink. 35 was
+ * measured before main's #2460 added `modes/rpc/host-exec-argv.ts` (the launch's forwarded-argv filter) to
+ * the graph; 36 is the count on that base.
+ */
+const SUPERVISOR_MODULE_CEILING = 36;
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
