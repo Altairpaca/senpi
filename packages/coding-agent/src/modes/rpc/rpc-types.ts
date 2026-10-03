@@ -171,6 +171,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
+	| { id?: string; type: "memory_report" }
 	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string; cwdOverride?: string }
@@ -534,6 +535,11 @@ export interface RpcSessionModelEntry {
 
 export interface RpcSessionState {
 	model?: Model<any>;
+	/**
+	 * Model switch held until the next compaction, or `null` when no switch is held.
+	 * This key is always present so clients can distinguish no hold from an older host.
+	 */
+	pendingModelSwitch: { provider: string; id: string } | null;
 	thinkingLevel: ThinkingLevel;
 	/**
 	 * Explicit selector provenance for `thinkingLevel`, absent for SDK-defaulted
@@ -854,6 +860,13 @@ export type RpcResponse =
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
+	| {
+			id?: string;
+			type: "response";
+			command: "memory_report";
+			success: true;
+			data: { path: string; heapSnapshot?: string };
+	  }
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "export_jsonl"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
@@ -1361,6 +1374,27 @@ export interface RpcHostMemoryPressureEvent {
 	measure?: ProcessFootprintMeasure;
 	/** Live sessions the host is holding, including ones opening or closing. */
 	sessions: number;
+	/**
+	 * Main-thread heap in bytes (senpi#1960): `bun:jsc heapSize()` when the runtime offers it, else
+	 * `process.memoryUsage().heapUsed` - which on Bun counts the main thread only, never a kernel
+	 * worker's heap (the loop-lag watchdog's `heapDeltaMb` reads the same main-thread number).
+	 */
+	main?: { readonly heapBytes: number };
+	/**
+	 * Every live kernel, mapped to its session: a JS kernel's own heap estimate, an interpreter's
+	 * process footprint otherwise. A kernel without a reading yet reports `liveBytes: 0`; one that
+	 * crashed between samples is absent, never repeated with a stale number.
+	 */
+	kernels?: readonly RpcHostKernelMemory[];
+}
+
+/** One kernel's memory as the host reports it on the pressure event and the session listing. */
+export interface RpcHostKernelMemory {
+	readonly sessionId: string;
+	readonly language: string;
+	readonly liveBytes: number;
+	/** `"heap"` for a JS worker's own estimate; `"footprint"` for an interpreter process. */
+	readonly measure: string;
 }
 
 /** Emitted when the SDK failover engine advances to a different account slot. */
