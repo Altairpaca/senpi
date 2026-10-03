@@ -239,6 +239,7 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
+import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -300,7 +301,6 @@ import {
 } from "./settings-manager.ts";
 import {
 	formatSkillInvocationPrompt,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
 	parseSkillInvocationTokens,
 	removeSkillInvocationTokens,
 	type SkillInvocationPromptSkill,
@@ -998,6 +998,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
+	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _agentEventQueue: Promise<void> = Promise.resolve();
 	/**
@@ -1371,6 +1372,13 @@ export class AgentSession {
 			this._releaseToolSearchService("session construction failed");
 			throw error;
 		}
+		// A no-op unless SENPI_MEMORY_REPORT=1: the report reads these only when it is requested.
+		this._unregisterMemoryReport = registerMemoryReportSession(this, {
+			sessionId: () => this.sessionId,
+			sessionFile: () => this.sessionManager.getSessionFile(),
+			residentStore: () => this.sessionManager.getResidentStore().size(),
+			reporters: () => this._extensionRunner.getMemoryReporters(),
+		});
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -3743,6 +3751,7 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
+		this._unregisterMemoryReport();
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];
@@ -5113,6 +5122,7 @@ export class AgentSession {
 			knownSkillNames: new Set(skills.map((skill) => skill.name)),
 		});
 		if (invocationTokens.length === 0) return text;
+		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
 
 		const expandedSkillNames = new Set<string>();
 		const skillBlocks: SkillInvocationPromptSkill[] = [];
@@ -5122,6 +5132,8 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
+		const unloadedTokens = new Set<SkillInvocationToken>();
+		const skippedSkillNames: string[] = [];
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -5130,17 +5142,10 @@ export class AgentSession {
 				continue;
 			}
 
-			if (skillBlocks.length >= MAX_SKILL_EXPANSIONS_PER_PROMPT) {
-				this._extensionRunner.emitError({
-					extensionPath: "skill:expansion",
-					event: "skill_expansion",
-					error: `Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
-				});
-				break;
-			}
-
-			removedTokens.push(token);
+			// A repeat of an already expanded skill adds no context, so it never counts
+			// against the cap and keeps its positional marker.
 			if (expandedSkillNames.has(skill.name)) {
+				removedTokens.push(token);
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -5148,6 +5153,15 @@ export class AgentSession {
 				});
 				continue;
 			}
+
+			if (skillBlocks.length >= maxExpansions) {
+				removedTokens.push(token);
+				unloadedTokens.add(token);
+				if (!skippedSkillNames.includes(skill.name)) skippedSkillNames.push(skill.name);
+				continue;
+			}
+
+			removedTokens.push(token);
 
 			try {
 				const content = readFileSync(skill.filePath, "utf-8");
@@ -5174,8 +5188,16 @@ export class AgentSession {
 			}
 		}
 
+		if (skippedSkillNames.length > 0) {
+			const count = skippedSkillNames.length;
+			this._extensionRunner.emitError({
+				extensionPath: "skill:expansion",
+				event: "skill_expansion",
+				error: `Skipped ${count} skill${count === 1 ? "" : "s"} (${skippedSkillNames.join(", ")}): at most ${maxExpansions} skills load per prompt. Raise maxSkillExpansionsPerPrompt to load more.`,
+			});
+		}
 		if (skillBlocks.length === 0) return text;
-		const userRequest = removeSkillInvocationTokens(text, removedTokens);
+		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });
 		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}
@@ -5993,6 +6015,33 @@ export class AgentSession {
 			allowDeferral: false,
 		});
 		return true;
+	}
+
+	/** Whether a recorded resume requirement still blocks: the current context does not fit the current model. */
+	private _resumeRequirementStillBlocks(
+		model: Model<any>,
+		settings: ReturnType<SettingsManager["getCompactionSettings"]>,
+	): boolean {
+		const currentContext = estimateContextTokens(
+			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+		).tokens;
+		return !projectModelUsabilityBudget({
+			model,
+			systemPrompt: this.agent.state.systemPrompt,
+			tools: this.agent.state.tools,
+			liveContextTokens: currentContext,
+			compaction: settings,
+			includeSpeculationLead: false,
+			admission: "resume",
+		}).usable;
+	}
+
+	/** Any committed compaction, manual /compact included, retires a resume requirement the context now satisfies. */
+	private _clearResumeCompactionRequirementIfFits(): void {
+		const model = this.model;
+		if (this._resumeCompactionRequirement === undefined || !model) return;
+		if (!this._resumeRequirementStillBlocks(model, this._getCompactionSettings(model)))
+			this._resumeCompactionRequirement = undefined;
 	}
 
 	admitResumeCompactionRequired(projection: ModelUsabilityBudgetProjection): void {
@@ -6972,6 +7021,7 @@ export class AgentSession {
 				throw new CompactionRejectedError(execution.rejectionCause);
 			}
 			outcome = "completed";
+			this._clearResumeCompactionRequirementIfFits();
 			return execution.result;
 		} catch (error) {
 			outcome = isCompactionExecutionAborted(error) ? "aborted" : "failed";
@@ -7058,6 +7108,7 @@ export class AgentSession {
 			if (!execution.accepted) {
 				return { applied: false, reason: "rejected" };
 			}
+			this._clearResumeCompactionRequirementIfFits();
 			this._resumeQueuedMessagesAfterCompaction();
 			return { applied: true, reason: "ok" };
 		} catch (error) {
@@ -7635,23 +7686,18 @@ export class AgentSession {
 		}
 		if (this._resumeCompactionRequirement !== undefined) {
 			if (!model) throw new RequiredCompactionError();
-			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
-			if (!compacted) throw new RequiredCompactionError();
-			const currentContext = estimateContextTokens(
-				filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-			).tokens;
-			const remainingProjection = projectModelUsabilityBudget({
-				model,
-				systemPrompt: this.agent.state.systemPrompt,
-				tools: this.agent.state.tools,
-				liveContextTokens: currentContext,
-				compaction: settings,
-				includeSpeculationLead: false,
-				admission: "resume",
-			});
-			if (!remainingProjection.usable) throw new RequiredCompactionError();
+			// The requirement was projected at resume, possibly on another model or before a manual
+			// /compact (#2589, #2488). It only blocks while the CURRENT context still does not fit the
+			// CURRENT model; otherwise the normal threshold path below decides, so a provider lane that
+			// owns compaction (#1174) is never asked to compact a context that already fits.
+			if (this._resumeRequirementStillBlocks(model, settings)) {
+				const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
+				if (!compacted) throw new RequiredCompactionError();
+				if (this._resumeRequirementStillBlocks(model, settings)) throw new RequiredCompactionError();
+				this._resumeCompactionRequirement = undefined;
+				return true;
+			}
 			this._resumeCompactionRequirement = undefined;
-			return true;
 		}
 		const contextTokens = estimateContextTokens(
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),

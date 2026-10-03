@@ -385,6 +385,8 @@ export class SessionEventWriter {
 					...(record.footprintMb !== undefined ? { footprintMb: record.footprintMb } : {}),
 					...(record.measure !== undefined ? { measure: record.measure } : {}),
 					sessions: record.sessions,
+					...(record.main !== undefined ? { main: record.main } : {}),
+					...(record.kernels !== undefined ? { kernels: record.kernels } : {}),
 				};
 				break;
 			case "host_trimmed":

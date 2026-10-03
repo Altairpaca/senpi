@@ -26,6 +26,7 @@ export type { SessionContext, SessionKind } from "../../core/extensions/types.ts
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
 export type {
+	RpcHostKernelMemory,
 	RpcHostLifecycleEvent,
 	RpcHostMemoryPressureEvent,
 	RpcHostStalledEvent,
@@ -177,6 +178,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
+	| { id?: string; type: "memory_report" }
 	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string; cwdOverride?: string }
@@ -540,6 +542,11 @@ export interface RpcSessionModelEntry {
 
 export interface RpcSessionState {
 	model?: Model<any>;
+	/**
+	 * Model switch held until the next compaction, or `null` when no switch is held.
+	 * This key is always present so clients can distinguish no hold from an older host.
+	 */
+	pendingModelSwitch: { provider: string; id: string } | null;
 	thinkingLevel: ThinkingLevel;
 	/**
 	 * Explicit selector provenance for `thinkingLevel`, absent for SDK-defaulted
@@ -860,6 +867,13 @@ export type RpcResponse =
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
+	| {
+			id?: string;
+			type: "response";
+			command: "memory_report";
+			success: true;
+			data: { path: string; heapSnapshot?: string };
+	  }
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "export_jsonl"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }

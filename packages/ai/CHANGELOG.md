@@ -6,6 +6,31 @@
 
 ### Added
 
+### Changed
+- The advertised Claude Code fingerprint floor follows the bundled Claude Agent SDK to Claude Code 2.1.288.
+
+### Fixed
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
 - Added the inherited lightweight `@earendil-works/pi-ai/models` entry point for model collections and provider construction without loading TypeBox, built-in catalogs, or provider SDKs.
 
 - Added inherited Anthropic workload identity federation from the Anthropic SDK environment variables `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` (plus optional `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`). API keys and `ANTHROPIC_AUTH_TOKEN` take precedence ([#10177](https://github.com/earendil-works/pi/issues/10177), [#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo)).

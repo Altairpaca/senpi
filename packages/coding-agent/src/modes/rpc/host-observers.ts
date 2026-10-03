@@ -1,3 +1,4 @@
+import { readCodemodeKernelRows, readMainThreadHeapBytes } from "../../core/memory-report/kernel-registry-read.ts";
 import { type HostMemoryReading, HostMemorySampler } from "./host-memory-sampler.ts";
 import { ZeroSessionTrimmer } from "./host-zero-session-trim.ts";
 import { LoopLagWatchdog } from "./loop-lag-watchdog.ts";
@@ -16,11 +17,17 @@ export function startHostObservers(
 	options: { readonly trim: ZeroSessionTrimmer; readonly onIdlePressure?: (reading: HostMemoryReading) => void },
 ): { stop: () => void } {
 	const loopLag = new LoopLagWatchdog({ emit: (record) => writer.broadcastHostRecord(record) });
+	const kernels = readCodemodeKernelRows;
 	const memory = new HostMemorySampler({
 		emit: (record) => writer.broadcastHostRecord(record),
 		sessions: () => router.sessionCount,
 		onPressure: (pressure) => router.setMemoryPressure(pressure),
+		readKernels: kernels,
 		...(options.onIdlePressure ? { onIdlePressure: options.onIdlePressure } : {}),
+	});
+	router.setHostMemoryView({
+		mainHeapBytes: readMainThreadHeapBytes,
+		kernels,
 	});
 	const { trim } = options;
 	loopLag.start();

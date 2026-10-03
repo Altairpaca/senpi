@@ -1,3 +1,64 @@
+## 2026-10-02 - On-demand memory report (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/core/memory-report/` (new): `memory-report-registry.ts` (flag readers for `SENPI_MEMORY_REPORT` / `SENPI_MEMORY_REPORT_SNAPSHOT`, a process-global map of live sessions, the TUI render-cache source, reserved report keys), `kernel-registry-read.ts` (the one structural reader of the codemode kernel registry's process-global listing and of the `bun:jsc` main-heap figure; the RPC host and the report both consume it), `memory-report-build.ts` (report sections: main-thread heap and footprint, the codemode kernel registry listing, resident store, extension reporters), `memory-report-write.ts` (writes `<session>-artifacts/memory/<iso>.json` — unsaved sessions fall back to `<tmpdir>/senpi-memory-report-<pid>-<sessionId>/` so same-process sessions never overwrite each other — the optional heap snapshot, and installs the `SIGUSR2` trigger only under the flag).
+- `packages/coding-agent/src/core/agent-session.ts`: the constructor registers the session for reports (a no-op without the flag); `dispose()` removes it.
+- `packages/coding-agent/src/core/session-resident-store.ts`: `size()` returns `{ entries, approxBytes }` from incremental byte accounting; the accounting moved to `session-resident-store-size.ts` and the JSON copy helper to `session-resident-json.ts` (behaviour unchanged).
+
+### Why
+
+- Long sessions held 0.5-3.8 GiB with no way to tell which layer from the shipped binary; diagnosis needs a per-layer reading taken on demand without rebuilding.
+
+### Why an extension could not handle it
+
+- The report reads the session's resident store, every extension's reporters, and the main thread's heap; it must exist in every mode before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `AgentSession` constructor and `dispose()`; `session-resident-store.ts` (fork-only).
+
+## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` handles a repeat of an already expanded skill before the cap check, so a repeat never consumes the cap and keeps its `[skill: name]` marker where it was written. Once the cap is reached, a new skill is not expanded and is replaced in place by `[skill not loaded: name]` (leading or inline); scanning continues so later repeats still get markers, and the cap warning is emitted once per prompt. Skills skipped by the per-prompt cap (the effective `maxSkillExpansionsPerPrompt` value) are reported once, after the scan, in one warning that names them.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `removeSkillInvocationTokens()` takes an optional `unloaded` token set and renders those tokens as `[skill not loaded: name]`.
+
+### Why
+
+- After the cap, a later line re-using a loaded skill (`... $review` on line 3) produced a false cap warning and left bare `$review` in the request, so the model could not tell that line referred to the loaded skill.
+- A skill skipped by the cap reached the model as the bare command; only the user saw the warning, so the model could guess at the skill's content. The marker states that the skill was not loaded, at the line where it was requested.
+
+### Why an extension could not handle it
+
+Skill commands are resource-loader entries expanded inside the private `AgentSession` prompt and queue boundary before the outbound user message is assembled; no extension hook sees the tokens or the cap.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` loop if upstream revises skill-command parsing.
+
+## 2026-10-02 - Configurable skill expansion cap
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: new optional `maxSkillExpansionsPerPrompt` setting with `getMaxSkillExpansionsPerPrompt()`, which returns the configured positive integer or `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5) for a missing or invalid value.
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand()` reads the cap from `getMaxSkillExpansionsPerPrompt()` instead of the constant, so both the limit and its `Expanded at most N skills` warning follow the setting.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `MAX_SKILL_EXPANSIONS_PER_PROMPT` stays 5 and is now documented as the default.
+
+### Why
+
+- Prompts that pair a process skill with its helpers name six or more skills, and the sixth silently stayed literal. The cap from #365 bounds worst-case context, so it stays 5 by default and is raised only by users who opt in.
+
+### Why an extension could not handle it
+
+Skill commands are resource-loader entries expanded inside the private `AgentSession` prompt and queue boundary before the outbound user message is assembled; no extension hook sees the tokens or the cap.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_expandSkillCommand()` if upstream revises skill-command parsing.
+- LOW: `settings-manager.ts` `Settings` interface and the skill-command getters.
+
 ## 2026-10-02 - Model-scoped usage limits in the credential pool (senpi#2555)
 
 ### What changed
@@ -22,6 +83,25 @@
 ### Expected merge conflict zones
 
 - LOW: the two `streamWithCredentialRotation` calls in `model-runtime.ts`; the rest is fork-only (`credential-pool/`, `credential-accounts.ts`, `retry-fallback/`).
+
+
+## 2026-10-03 - A stale resume compaction requirement no longer blocks prompts that fit (#2589, #2488)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: while a resume compaction requirement is recorded, the pre-provider check first re-projects the CURRENT context against the CURRENT model. If it now fits, the requirement is retired and the normal threshold path decides; only a requirement that still blocks runs the pre-prompt compaction and refuses with `RequiredCompactionError` when that does not land. A committed compaction, manual `/compact` (`compact()`) or `applyCompaction()`, also retires a requirement the context now satisfies.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` ran the pre-prompt compaction before it re-checked the context, and cleared the requirement only after that compaction landed. On a provider lane that owns compaction (the resident `anthropic-subscription` SDK lane refuses it as `external-owner`, #1174) the compaction never lands, so a requirement projected at resume, on a fallback model (#2488) or before a committed manual `/compact` (#2589), refused every prompt until the process restarted, even with the context at a few percent of the window.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the requirement and the pre-provider admission; an extension can neither see nor retire `_resumeCompactionRequirement`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the resume-requirement branch of `_enforceCompactionBeforeProvider`, the success return of `compact()` and `applyCompaction()`, and two private helpers beside `admitResumeCompactionRequired()`. The sticky delegated-compaction key (`_delegatedCompactionKey`) is not changed.
 
 ## 2026-10-02 - Durable RPC input metadata (desktop#1325, senpi#1971)
 
@@ -7317,7 +7397,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 ### What changed
 
 - `agent-session.ts`: `/skill:<name>` now accepts a leading whitespace-separated run of loaded skills, expanding each unique skill in written order before appending the remaining prompt text. Repeated skills expand only once, unknown skills stop the run and remain literal, and slash text outside that leading run is never interpreted as a skill command.
-- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
+- Explicit expansion is capped at `MAX_SKILL_EXPANSIONS_PER_PROMPT` (5) by default; since 2026-10-02 the `maxSkillExpansionsPerPrompt` setting can raise it (see that entry). Commands beyond the cap remain literal and emit an existing `skill_expansion` error-channel notification, preventing a composed prompt from growing context without bound.
 - The shared expansion seam is called by `prompt()`, `steer()`, and `followUp()`, so queued and non-TUI/RPC prompt paths receive identical behavior.
 
 ### Why extension system couldn't handle this alone

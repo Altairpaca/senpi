@@ -1,3 +1,21 @@
+## 2026-10-02 - Memory report trigger at startup (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: calls `installMemoryReportSignal()` before the multi-session branch and the mode dispatch, so TUI, print, RPC and multi-session hosts all install the `SIGUSR2` memory report when `SENPI_MEMORY_REPORT=1`; without the flag it installs nothing.
+
+### Why
+
+- The on-demand memory report must be reachable from every mode of a running session process.
+
+### Why an extension could not handle it
+
+- Extensions load per session, after mode selection; a multi-session host has none until a session opens, and the signal handler is process-wide.
+
+### Expected merge conflict zones
+
+- `main.ts`: the line before `if (appMode === "rpc" && parsed.multiSession)` and the import block.
+
 ## 2026-10-01 - Package directory lookup is resolved once (senpi#2508)
 
 ### What changed
@@ -498,6 +516,7 @@ Extensions are what gets loaded; the loading itself is the CLI runtime factory's
 
 - `packages/coding-agent/src/index.ts`: exports `connectWebViewService` and the `WebViewServiceConnection` type from the fork-only `src/core/webview/webview-broker.ts`.
 - Fork-only `src/core/webview/`: `WebViewService` serves Chrome-backed `Bun.WebView`s on the process main thread to eval kernels in worker threads. Each kernel gets its own client (a private `MessagePort` and the views created through it); only the owner that connected a client can release it, a closed port releases it too, and Bun's Chrome is retired once no proxied view is left (`closeAll()` off macOS, a kill of Bun's own Chrome child on macOS, where `closeAll()` would also kill the shared WebKit host of native worker views).
+- Fork-only `src/core/webview/webview-readiness.ts` (senpi#2353): the service answers a `create` only after the new view's readiness navigation to `about:blank` settled. A launch still pending at the bound (`cdp-target-attach`) is closed, its Chrome retired unless another view holds it, and relaunched once (not for a released client) before the create fails with `ERR_WEBVIEW_NOT_READY`.
 
 ### Why
 
