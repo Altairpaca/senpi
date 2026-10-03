@@ -1,3 +1,21 @@
+## 2026-10-03 - A refused close_session rejects instead of reporting a confirmed close (senpi#2572)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `closeSession` passes the `close_session` response through `getData`, like `openSession`. A response with `success: false` rejects with `RpcCommandError` carrying the host's error text and code, and the client keeps its session handle. A gone transport is still treated as closed, and a successful close behaves as before.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the response was never checked, so a host that refused the close (for example `unknown_session` for a handle this connection never attached to) was indistinguishable from a confirmed close. Callers that only finish a cancellation or delete a record once the close is confirmed could leave a running session with nothing pointing at it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the client's request/response handling runs in the embedder's process, outside any agent extension runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `send` call in `closeSession`.
+
 ## 2026-10-03 - Per-session memory split on the host pressure record (senpi#1960)
 
 ### What changed
