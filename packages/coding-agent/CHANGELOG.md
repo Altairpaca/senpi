@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- A client attaching to a host built from the same plugin set installed under a different directory no longer logs a profile mismatch on every ensure, and a build that loads a proper superset of the host's extensions can take over from it: host launch profiles now compare the plugin's extensions by role instead of by absolute path.
+
 ### Removed
 
 ## [2026.10.3] - 2026-10-03
