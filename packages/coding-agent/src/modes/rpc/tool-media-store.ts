@@ -58,8 +58,8 @@ const SIGNATURES: Readonly<Record<string, (bytes: Buffer) => boolean>> = {
 		bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP",
 };
 
-function assertRealDirectoryChain(root: string): void {
-	for (const path of [dirname(root), root]) {
+function assertRealDirectoryChain(root: string, callDirectory: string): void {
+	for (const path of [dirname(root), root, callDirectory]) {
 		let stat: import("node:fs").Stats | undefined;
 		try {
 			stat = lstatSync(path);
@@ -119,8 +119,9 @@ const unavailable = (reason: "image_too_large" | "session_limit" | "storage_erro
 });
 
 function writeImage(root: string, path: string, bytes: Buffer): void {
-	mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
-	assertRealDirectoryChain(root);
+	const callDirectory = dirname(path);
+	mkdirSync(callDirectory, { recursive: true, mode: 0o700 });
+	assertRealDirectoryChain(root, callDirectory);
 	const staging = `${path}.${randomBytes(6).toString("hex")}.tmp`;
 	try {
 		writeFileSync(staging, bytes, { mode: 0o600, flag: "wx" });
@@ -166,10 +167,10 @@ function store(
 	if (SIGNATURES[(block.mimeType ?? "").toLowerCase()]?.(bytes) !== true) return unavailable("storage_error");
 	try {
 		const root = toolMediaRoot(scope);
-		assertRealDirectoryChain(root);
 		const callDirectory = createHash("sha256").update(ref.toolCallId).digest("hex");
 		const digest = createHash("sha256").update(bytes).digest("hex");
 		const path = resolve(root, callDirectory, `${ref.contentIndex}-${digest}.${extension}`);
+		assertRealDirectoryChain(root, dirname(path));
 		if (existsSync(path)) return { path };
 		const used = storedBytes(root);
 		if (used + bytes.length > limits.perSession) return unavailable("session_limit");

@@ -269,6 +269,22 @@ describe("tool image persistence", () => {
 		}
 	});
 
+	it("never follows a symlink planted where one tool call's images go, inside an otherwise real media folder", () => {
+		const outside = mkdtempSync(join(tmpdir(), "senpi-outside-"));
+		try {
+			persistToolImage(scope, { toolCallId: "call_first", contentIndex: 0 }, png(1).block);
+			const callFolder = createHash("sha256").update("call_planted").digest("hex");
+			symlinkSync(outside, join(sessionDir, "media", SESSION_ID, callFolder));
+
+			const outcome = persistToolImage(scope, { toolCallId: "call_planted", contentIndex: 0 }, png(2).block);
+
+			expect(outcome).toEqual({ unavailableReason: "storage_error" });
+			expect(readdirSync(outside)).toEqual([]);
+		} finally {
+			rmSync(outside, { recursive: true, force: true });
+		}
+	});
+
 	it("never follows a symlink planted where the session's media directory goes", () => {
 		const outside = mkdtempSync(join(tmpdir(), "senpi-outside-"));
 		try {
