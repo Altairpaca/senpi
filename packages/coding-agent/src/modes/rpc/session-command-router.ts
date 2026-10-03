@@ -6,6 +6,7 @@ import {
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	BROWSER_ENGINE_CAPABILITY,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
@@ -312,6 +313,7 @@ export class SessionCommandRouter {
 				AUTO_TITLE_SESSIONS_CAPABILITY,
 				MEDIA_PLACEHOLDERS_CAPABILITY,
 				DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+				CONTINUE_FROM_LEAF_CAPABILITY,
 				// Host capabilities, not client opt-ins: only a multi-session host owns the
 				// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 				// per-session launch profile `context`/`auto_title` travel on, and the session

@@ -6,6 +6,7 @@
 
 ### Added
 
+- An edited assistant response can be continued with no new prompt: the RPC `continue_from_leaf` command (advertised as the `continue_from_leaf` capability) starts a turn from the session leaf through a hidden nudge the transcript never shows, refusing with `streaming`, `nothing_to_continue`, or `leaf_not_assistant` (the conversation ends on a user message). `get_available_models` rows report `supportsAssistantPrefill` (false for every model today) ([#1930](https://github.com/code-yeongyu/senpi/issues/1930)).
 - `open_session` accepts `browserEngine` (`connected`, `builtin` or `none`) and hosts advertise the `browser_engine` capability: the choice is per session, so that session's tool subprocesses and eval kernels see `OMO_BROWSER_ENGINE` and no other session does, a reattach moves or keeps it, and `BSK_HOME` / `BSK_BIN` pass through unchanged ([#2611](https://github.com/code-yeongyu/senpi/issues/2611)).
 
 ### Changed
