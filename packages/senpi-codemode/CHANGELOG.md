@@ -12,7 +12,7 @@
 
 - Added an interleaved eval timing benchmark that judges each runtime, workload and metric on adjacent base/head pairs against its own A/A-calibrated threshold (capped at 5%, or one shared band with `--band-scope global`), with process CPU accounting across interpreter crashes, a per-row minimum detectable effect, and explicit inconclusive results for incomplete, host-contaminated or noise-limited comparisons. ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 
-- A Python, Ruby, or Julia eval kernel whose interpreter dies is now replaced once and keeps its queued cells: the session holds one replaceable kernel per language, so a cell that kept a reference to the dead kernel survives the death, a queued cell is never silently cancelled or started twice, and a second death back to back fails the queue cleanly instead of hanging. JavaScript kernels are unchanged (they already heal their own worker). ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
+- A Python, Ruby, or Julia eval kernel whose interpreter dies is replaced once instead of failing every later cell: Ruby and Julia no longer stay closed after a crash, and a Python kernel whose stuck interpreter finally exits recovers instead of rejecting every cell. Cells queued behind the death keep their order and run on the replacement, whose first result says `[<language> kernel was restarted after <reason>; every global is lost]`; the cell that was running fails once and is never re-run, and a replacement that dies before finishing a cell fails the queued cells with `eval_kernel_unavailable` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452))
 ### Changed
 
 ### Fixed
@@ -43,7 +43,6 @@
 
 ### Fixed
 
-- A Python, Ruby, or Julia eval kernel whose interpreter dies is replaced once instead of failing every later cell: Ruby and Julia no longer stay closed after a crash, and a Python kernel whose stuck interpreter finally exits recovers instead of rejecting every cell. Cells queued behind the death keep their order and run on the replacement, whose first result says `[<language> kernel was restarted after <reason>; every global is lost]`; the cell that was running fails once and is never re-run, and a replacement that dies before finishing a cell fails the queued cells with `eval_kernel_unavailable` ([#2452](https://github.com/code-yeongyu/senpi/issues/2452)).
 - Fixed Mistral-hosted GLM 5.3 omitting required `eval` run fields when tool use is forced. ([#2444](https://github.com/code-yeongyu/senpi/pull/2444) by [@urbanbreach](https://github.com/urbanbreach))
 - Anthropic-compatible gateways that reject an `enum` inside a root `anyOf` branch (HTTP 400, code 11133) accept the `eval` schema again. ([#2569](https://github.com/code-yeongyu/senpi/issues/2569), reported and verified by [@DevNewbie1826](https://github.com/DevNewbie1826))
 - Reloading or replacing a session while a detached eval cell is running no longer kills the process from the footer's elapsed-time ticker. The ticker stops when its session's context is retired and starts again with the next session's cells; any other footer error still surfaces ([#2549](https://github.com/code-yeongyu/senpi/issues/2549) by [@rhyme227](https://github.com/rhyme227)).
