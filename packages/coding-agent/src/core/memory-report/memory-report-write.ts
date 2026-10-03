@@ -15,8 +15,12 @@ export type MemoryReportOutcome =
 	| { readonly ok: false; readonly error: string };
 
 /** `<session>.jsonl` keeps its reports in `<session>-artifacts/memory/`, beside the eval artifacts. */
-export function memoryReportDir(sessionFile: string | undefined): string {
-	if (sessionFile === undefined) return join(tmpdir(), `senpi-memory-report-${process.pid}`);
+export function memoryReportDir(sessionFile: string | undefined, sessionId?: string): string {
+	if (sessionFile === undefined) {
+		// Unsaved sessions share the pid fallback, so key it per session or same-stamp reports overwrite.
+		const suffix = sessionId === undefined ? "" : `-${sessionId}`;
+		return join(tmpdir(), `senpi-memory-report-${process.pid}${suffix}`);
+	}
 	const base = sessionFile.endsWith(".jsonl") ? sessionFile.slice(0, -".jsonl".length) : sessionFile;
 	return join(`${base}-artifacts`, "memory");
 }
@@ -34,7 +38,7 @@ export async function writeMemoryReports(
 	let snapshot: string | undefined;
 	for (const source of sources) {
 		try {
-			const dir = memoryReportDir(source.sessionFile());
+			const dir = memoryReportDir(source.sessionFile(), source.sessionId());
 			await mkdir(dir, { recursive: true });
 			if (snapshot === undefined && memoryReportSnapshotEnabled()) {
 				snapshot = await writeSnapshot(join(dir, `${stamp}.heapsnapshot`));
