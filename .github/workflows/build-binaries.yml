@@ -71,15 +71,7 @@ jobs:
 
           VERSION="${RELEASE_TAG}"
           VERSION="${VERSION#v}"  # Remove 'v' prefix
-          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" \
-            --changelog packages/coding-agent/CHANGELOG.md \
-            --changelog packages/ai/CHANGELOG.md \
-            --changelog packages/agent/CHANGELOG.md \
-            --changelog packages/pty/CHANGELOG.md \
-            --changelog packages/telemetry/CHANGELOG.md \
-            --changelog packages/senpi-codemode/CHANGELOG.md \
-            --changelog packages/tui/CHANGELOG.md \
-            --out release-assets/RELEASE_NOTES.md
+          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" --published --out release-assets/RELEASE_NOTES.md
           node scripts/generate-coding-agent-install-lock.mjs --check
           cp packages/coding-agent/install-lock/package.json release-assets/pi-coding-agent-install-package.json
           cp packages/coding-agent/install-lock/package-lock.json release-assets/pi-coding-agent-install-package-lock.json

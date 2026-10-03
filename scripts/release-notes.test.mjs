@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
-import { registryPackageNames } from "./registry-packages.mjs";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const script = path.join(scriptsDir, "release-notes.mjs");
@@ -103,20 +101,34 @@ test("several changelogs with no section for the version fall back to the releas
 	}
 });
 
-test("the release workflow builds the notes from every published package changelog", () => {
-	const repoRoot = path.join(scriptsDir, "..");
-	const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "build-binaries.yml"), "utf8");
-	const commandLines = [];
-	for (const line of workflow.slice(workflow.indexOf("node scripts/release-notes.mjs extract")).split("\n")) {
-		commandLines.push(line);
-		if (!line.trimEnd().endsWith("\\")) break;
+test("--published combines every published package's section and leaves unpublished packages out", () => {
+	const root = fixtureMonorepo({
+		...changelogs,
+		server: {
+			name: "@earendil-works/pi-server",
+			changelog: "# Changelog\n\n## [2026.10.2] - 2026-10-02\n\n### Fixed\n\n- Server fix\n",
+		},
+	});
+	try {
+		const notes = extract(root, ["--published"]);
+		assert.equal(
+			notes,
+			[
+				"## @code-yeongyu/senpi",
+				"",
+				"### Fixed",
+				"",
+				"- Agent fix, see [docs](https://github.com/owner/repo/blob/v2026.10.2/packages/coding-agent/docs/rpc.md)",
+				"",
+				"## @code-yeongyu/senpi-ai",
+				"",
+				"### Fixed",
+				"",
+				"- AI fix ([#1](https://github.com/owner/repo/pull/1) by [@someone](https://github.com/someone))",
+				"",
+			].join("\n"),
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
 	}
-	const command = commandLines.join("\n");
-	const passed = [...command.matchAll(/--changelog (\S+)/g)].map((match) => match[1]);
-	const expected = WORKSPACE_PACKAGES.filter((manifest) =>
-		registryPackageNames.has(JSON.parse(readFileSync(path.join(repoRoot, manifest), "utf8")).name),
-	).map((manifest) => manifest.replace(/package\.json$/, "CHANGELOG.md"));
-	assert.equal(expected.length, registryPackageNames.size);
-	assert.equal(passed[0], "packages/coding-agent/CHANGELOG.md");
-	assert.deepEqual([...passed].sort(), [...expected].sort());
 });

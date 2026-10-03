@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `.github/workflows/build-binaries.yml`: the `release-notes.mjs extract` step passes the changelogs of all seven published packages (coding-agent, ai, agent, pty, telemetry, senpi-codemode, tui), coding-agent first, so `RELEASE_NOTES.md` holds each package's section under its published name (`scripts/changes.md` records the extractor change).
+- `.github/workflows/build-binaries.yml`: the `release-notes.mjs extract` step passes `--published`, so `RELEASE_NOTES.md` holds the section of every published package (the workspace packages in `scripts/registry-packages.mjs`), coding-agent first, each under its published name (`scripts/changes.md` records the extractor change). A newly published package is included without editing the workflow.
 
 ### Why
 

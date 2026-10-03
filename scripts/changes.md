@@ -2,8 +2,8 @@
 
 ### What changed
 
-- `scripts/release-notes.mjs`: `extract` accepts `--changelog` more than once. With several changelogs, each package's non-empty section for the version is emitted in the given order under `## <published package name>` (the registry name from `registry-packages.mjs`, else the manifest name), and relative links resolve against that package's directory. A single `--changelog` (or the default) produces the same output as before, and a version with no section in any changelog still yields `Release <version>`.
-- `scripts/release-notes.test.mjs`: fixture-monorepo tests for the single and combined output, and a check that the workflow passes exactly the published packages' changelogs.
+- `scripts/release-notes.mjs`: `extract` accepts `--changelog` more than once. With several changelogs, each package's non-empty section for the version is emitted in the given order under `## <published package name>` (the registry name from `registry-packages.mjs`, else the manifest name), and relative links resolve against that package's directory. A single `--changelog` (or the default) produces the same output as before, and a version with no section in any changelog still yields `Release <version>`. `--published` selects the changelog of every workspace package (`release-packages.mjs`) that `registry-packages.mjs` publishes, coding-agent first, so the release list has one source of truth.
+- `scripts/release-notes.test.mjs`: fixture-monorepo tests for the single and combined output, and for `--published` including every published package's section while leaving an unpublished package out.
 
 ### Why
 

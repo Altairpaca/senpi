@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { registryPackageNames } from "./registry-packages.mjs";
+import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
 
 const DEFAULT_REPO = "earendil-works/pi";
 const DEFAULT_BASE_PATH = "packages/coding-agent";
@@ -27,6 +28,7 @@ extract options:
   --changelog <path>   Changelog path (default: ${DEFAULT_CHANGELOG}). Repeat it to combine
                        packages: each non-empty section is emitted, in the given order, under
                        a heading naming the package, with links resolved against its directory
+  --published          Use the changelog of every published workspace package (coding-agent first)
   --out <path>         Output file (default: stdout)
   --repo <owner/repo>  GitHub repository for generated links (default: ${DEFAULT_REPO})
   --base-path <path>   Base path for relative changelog links (default: ${DEFAULT_BASE_PATH})
@@ -65,6 +67,7 @@ function parseOptions(args) {
 		basePath: DEFAULT_BASE_PATH,
 		changelogs: [],
 		dryRun: false,
+		published: false,
 		out: undefined,
 		repo: DEFAULT_REPO,
 		sinceTag: DEFAULT_FIX_SINCE_TAG,
@@ -80,6 +83,10 @@ function parseOptions(args) {
 		}
 		if (arg === "--dry-run") {
 			options.dryRun = true;
+			continue;
+		}
+		if (arg === "--published") {
+			options.published = true;
 			continue;
 		}
 
@@ -256,7 +263,11 @@ function extractReleaseNotes(options) {
 		throw new Error("extract requires --version or --tag");
 	}
 
-	const changelogs = options.changelogs.length > 0 ? options.changelogs : [DEFAULT_CHANGELOG];
+	const changelogs = options.published
+		? publishedChangelogs()
+		: options.changelogs.length > 0
+			? options.changelogs
+			: [DEFAULT_CHANGELOG];
 	for (const changelog of changelogs) {
 		if (!existsSync(changelog)) {
 			throw new Error(`Changelog does not exist: ${changelog}`);
@@ -283,6 +294,17 @@ function extractReleaseNotes(options) {
 		packageNotes.push(`## ${releasePackageName(packageDir)}\n\n${markdown}`);
 	}
 	writeOutput(packageNotes.length > 0 ? packageNotes.join("\n") : `Release ${version}\n`, options.out);
+}
+
+// Every workspace package published to the registry, read from the release package list so a newly
+// published package is included without editing the workflow. coding-agent leads the release body.
+function publishedChangelogs() {
+	const changelogs = WORKSPACE_PACKAGES.filter((manifest) => {
+		if (!existsSync(manifest)) return false;
+		const { name } = JSON.parse(readFileSync(manifest, "utf8"));
+		return registryPackageNames.has(name);
+	}).map((manifest) => manifest.replace(/package\.json$/, "CHANGELOG.md"));
+	return [...changelogs.filter((changelog) => changelog === DEFAULT_CHANGELOG), ...changelogs.filter((changelog) => changelog !== DEFAULT_CHANGELOG)];
 }
 
 function releasePackageName(packageDir) {
