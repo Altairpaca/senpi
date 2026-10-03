@@ -23,6 +23,25 @@
 
 - LOW: the two `streamWithCredentialRotation` calls in `model-runtime.ts`; the rest is fork-only (`credential-pool/`, `credential-accounts.ts`, `retry-fallback/`).
 
+
+## 2026-10-03 - A stale resume compaction requirement no longer blocks prompts that fit (#2589, #2488)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: while a resume compaction requirement is recorded, the pre-provider check first re-projects the CURRENT context against the CURRENT model. If it now fits, the requirement is retired and the normal threshold path decides; only a requirement that still blocks runs the pre-prompt compaction and refuses with `RequiredCompactionError` when that does not land. A committed compaction, manual `/compact` (`compact()`) or `applyCompaction()`, also retires a requirement the context now satisfies.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` ran the pre-prompt compaction before it re-checked the context, and cleared the requirement only after that compaction landed. On a provider lane that owns compaction (the resident `anthropic-subscription` SDK lane refuses it as `external-owner`, #1174) the compaction never lands, so a requirement projected at resume, on a fallback model (#2488) or before a committed manual `/compact` (#2589), refused every prompt until the process restarted, even with the context at a few percent of the window.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the requirement and the pre-provider admission; an extension can neither see nor retire `_resumeCompactionRequirement`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the resume-requirement branch of `_enforceCompactionBeforeProvider`, the success return of `compact()` and `applyCompaction()`, and two private helpers beside `admitResumeCompactionRequired()`. The sticky delegated-compaction key (`_delegatedCompactionKey`) is not changed.
+
 ## 2026-10-02 - Durable RPC input metadata (desktop#1325, senpi#1971)
 
 ### What changed

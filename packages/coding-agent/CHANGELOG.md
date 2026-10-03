@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed sessions on a provider lane that owns compaction (Anthropic subscription) refusing every prompt with "Context remains above the compaction threshold" after a resume, until restart: a resume compaction requirement is now re-checked against the current context and model, and a committed manual `/compact` clears it ([#2589](https://github.com/code-yeongyu/senpi/issues/2589), [#2488](https://github.com/code-yeongyu/senpi/issues/2488)).
+
 ### Removed
 
 ## [2026.10.2] - 2026-10-02
