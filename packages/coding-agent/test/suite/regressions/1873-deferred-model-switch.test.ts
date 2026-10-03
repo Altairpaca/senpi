@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { pendingSwitchKeepRecentTokens } from "../../../src/core/extensions/builtin/compaction/switch-admission.ts";
+import { buildRpcSessionState } from "../../../src/modes/rpc/rpc-session-state.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 function seedLiveContext(harness: Harness, tokens: number): void {
@@ -88,12 +89,17 @@ describe("#1873 deferred model switch", () => {
 		seedLiveContext(harness, 321_000);
 		const target = harness.getModel("372k");
 		if (!target) throw new Error("missing deferred switch target fixture");
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toBeNull();
 
 		// when
 		await harness.session.setModel(target);
 
 		// then the switch is recorded as pending rather than thrown away
 		expect(harness.session.pendingModelSwitch?.model.id).toBe("372k");
+		expect(buildRpcSessionState(harness.session).pendingModelSwitch).toEqual({
+			provider: target.provider,
+			id: target.id,
+		});
 		expect(harness.eventsOfType("model_change_pending")).toHaveLength(1);
 	});
 
