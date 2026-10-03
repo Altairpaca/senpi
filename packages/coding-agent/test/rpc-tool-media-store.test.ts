@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -281,5 +282,55 @@ describe("tool image persistence", () => {
 		} finally {
 			rmSync(outside, { recursive: true, force: true });
 		}
+	});
+
+	describe("removing a session's images never touches what a symlink points at", () => {
+		let outside: string;
+		beforeEach(() => {
+			outside = mkdtempSync(join(tmpdir(), "senpi-outside-target-"));
+			chmodSync(outside, 0o755);
+			writeFileSync(join(outside, "keep.txt"), "keep");
+			chmodSync(join(outside, "keep.txt"), 0o644);
+		});
+		afterEach(() => {
+			rmSync(outside, { recursive: true, force: true });
+		});
+
+		const modeOf = (path: string) => statSync(path).mode & 0o777;
+
+		it("removes a link to an outside folder found inside the media folder and leaves that folder as it was", () => {
+			persistToolImage(scope, { toolCallId: "call_a", contentIndex: 0 }, png(1).block);
+			symlinkSync(outside, join(sessionDir, "media", SESSION_ID, "link-to-folder"));
+
+			removeToolMedia(scope);
+
+			expect(existsSync(join(sessionDir, "media", SESSION_ID))).toBe(false);
+			expect(modeOf(outside)).toBe(0o755);
+			expect(modeOf(join(outside, "keep.txt"))).toBe(0o644);
+			expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
+		});
+
+		it("removes a link to an outside file and leaves that file's mode alone", () => {
+			persistToolImage(scope, { toolCallId: "call_b", contentIndex: 0 }, png(2).block);
+			symlinkSync(join(outside, "keep.txt"), join(sessionDir, "media", SESSION_ID, "link-to-file"));
+
+			removeToolMedia(scope);
+
+			expect(existsSync(join(sessionDir, "media", SESSION_ID))).toBe(false);
+			expect(modeOf(join(outside, "keep.txt"))).toBe(0o644);
+			expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
+		});
+
+		it("removes the media folder itself when it is a link, without touching the folder it names", () => {
+			mkdirSync(join(sessionDir, "media"));
+			symlinkSync(outside, join(sessionDir, "media", SESSION_ID));
+
+			removeToolMedia(scope);
+
+			expect(existsSync(join(sessionDir, "media", SESSION_ID))).toBe(false);
+			expect(modeOf(outside)).toBe(0o755);
+			expect(modeOf(join(outside, "keep.txt"))).toBe(0o644);
+			expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
+		});
 	});
 });

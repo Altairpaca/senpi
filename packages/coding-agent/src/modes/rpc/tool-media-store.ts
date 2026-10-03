@@ -203,6 +203,7 @@ export function removeToolMedia(scope: ToolMediaScope): void {
 function makeTreeWritable(path: string): void {
 	let entries: import("node:fs").Dirent[];
 	try {
+		if (!lstatSync(path).isDirectory()) return;
 		chmodSync(path, 0o700);
 		entries = readdirSync(path, { withFileTypes: true });
 	} catch {
@@ -211,7 +212,7 @@ function makeTreeWritable(path: string): void {
 	for (const entry of entries) {
 		const child = join(path, entry.name);
 		if (entry.isDirectory()) makeTreeWritable(child);
-		else
+		else if (entry.isFile())
 			try {
 				chmodSync(child, 0o600);
 			} catch {}
