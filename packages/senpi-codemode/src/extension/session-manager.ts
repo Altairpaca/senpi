@@ -17,11 +17,10 @@ import type { EvalKernel, EvalKernelManager, EvalLanguage, ExecuteTool } from ".
 import {
 	javaScriptKernelMemory,
 	registerKernel,
-	type RegisteredKernelSource,
 	type StartedKernel,
 	startSubprocessKernel,
 } from "./kernel-registration.ts";
-import { kernelRegistry } from "./kernel-registry.ts";
+import { kernelRegistry, type RegisteredKernelSource } from "./kernel-registry.ts";
 import { ReplaceableKernel } from "./kernel-replacement.ts";
 import { assertSessionCwdAvailable } from "./session-cwd.ts";
 import type {
@@ -222,7 +221,11 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		this.#kernels.set(language, resolvedKernel);
 		this.#registrations.set(
 			language,
-			registerKernel(this.#options.ownerSessionId ?? this.#options.sessionId, language, memory as RegisteredKernelSource),
+			registerKernel(
+				this.#options.ownerSessionId ?? this.#options.sessionId,
+				language,
+				memory as RegisteredKernelSource,
+			),
 		);
 		// The directory can vanish while the interpreter starts; every caller sharing this creation
 		// must see that, not only the next one. The kernel stays stored and dispose still closes it.
