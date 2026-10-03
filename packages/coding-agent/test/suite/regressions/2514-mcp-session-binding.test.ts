@@ -413,6 +413,44 @@ describe("senpi#2514: the shared service keeps sessions apart under concurrency 
 		expect(bravoPi.registeredTools).toContain("mcp_fx_late");
 	});
 
+	it("lands a late catalog in the first session when a second session attaches while it is still listing", async () => {
+		// Given: an http server whose first tool listing is held, so the first session's connect outlives its startup window.
+		vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, "0");
+		const fixture = await httpServer();
+		const listing = fixture.holdLists();
+		const alphaPi = capturingPi();
+		await attachFake(alphaPi);
+		await listing;
+
+		// When: a second session attaches while that listing is in flight, then the listing completes.
+		const bravoPi = capturingPi();
+		await attachFake(bravoPi);
+		const alphaRegistered = untilFakeRegistered(alphaPi, "mcp_fx_echo");
+		fixture.releaseLists();
+
+		// Then: the first session still gets the server's tools, not only the session that attached last.
+		await alphaRegistered;
+		expect(alphaPi.registeredTools).toContain("mcp_fx_echo");
+	});
+
+	it("disposes the service when the only session quits before its own attach finishes", async () => {
+		// Given: a session whose attach is still in progress.
+		configureServer();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const attach = attachFake(alphaPi);
+
+		// When: it quits before the attach settles (a short-lived child that finishes immediately).
+		await service.releaseSession(alphaPi, "quit");
+		await attach.catch(() => undefined);
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// Then: no session is left, so the service and its server process are released, not leaked.
+		const pid = service.getConnection("fx")?.getRootPid();
+		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0 });
+		if (pid !== null && pid !== undefined) await assertProcessDead(pid);
+	});
+
 	it("still delivers a refreshed tool list to the other sessions when one session's registration throws", async () => {
 		// Given: two sessions on an http server, the first of which can no longer register tools.
 		const fixture = await httpServer();

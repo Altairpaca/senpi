@@ -83,7 +83,6 @@ export class McpService {
 	#sessionContext: McpSessionContext | null = null;
 	#sessionStartCount = 0;
 	#lastSessionStartReason: SessionStartEvent["reason"] | null = null;
-	#toolRefreshGeneration = 0;
 	#config: ResolvedMcpConfig | null = null;
 	#authAgentDir: string | undefined;
 	#authEnv: Record<string, string | undefined> | undefined;
@@ -98,6 +97,9 @@ export class McpService {
 	#refreshActiveSetWhenNoTools = false;
 	readonly #bindings = new Map<object, McpSessionBinding>();
 	#pendingAttaches = 0;
+	// Sessions that quit while their own attach was still queued: the attach must not bind them (#2524 review).
+	readonly #releasedSessions = new WeakSet<object>();
+	#deferredDisposeReason: McpDisposeReason | undefined;
 	#sessionOptions: McpSessionOptions = {};
 	readonly #skillServerWarnings = new Set<string>();
 	#attachQueue: Promise<void> = Promise.resolve();
@@ -150,13 +152,11 @@ export class McpService {
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
 			this.#config = config;
-			const binding = _pi === undefined ? undefined : this.#bind(_pi, ctx);
+			const binding = _pi === undefined || this.#releasedSessions.has(_pi) ? undefined : this.#bind(_pi, ctx);
 			this.#authAgentDir = sessionOptions.agentDir;
 			this.#authEnv = sessionOptions.env;
 			this.#sessionOptions = sessionOptions;
-			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
-			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, sessionOptions, event.reason !== "reload", binding, toolRefreshGeneration);
+			await this.#syncFromConfig(config, sessionOptions, event.reason !== "reload", binding);
 			if (binding !== undefined) await this.#registerDirectTools(binding);
 			// Replay promotion markers from the (possibly resumed) session history
 			// BEFORE the first turn: the request tool snapshot is taken before the
@@ -174,7 +174,16 @@ export class McpService {
 			await attach;
 		} finally {
 			this.#pendingAttaches -= 1;
+			await this.#disposeIfDeferredAndIdle();
 		}
+	}
+
+	/** A release that found attaches still pending leaves the dispose to the last of them, once no session is bound. */
+	async #disposeIfDeferredAndIdle(): Promise<void> {
+		const reason = this.#deferredDisposeReason;
+		if (reason === undefined || this.#pendingAttaches > 0 || this.#liveBindings().length > 0) return;
+		this.#deferredDisposeReason = undefined;
+		await this.dispose(reason);
 	}
 
 	#bind(pi: McpToolRegistrar, ctx: McpSessionContext): McpSessionBinding {
@@ -242,6 +251,7 @@ export class McpService {
 	async releaseSession(pi: object, disposeReason?: McpDisposeReason): Promise<void> {
 		const released = this.#bindings.get(pi);
 		this.#bindings.delete(pi);
+		if (disposeReason !== undefined) this.#releasedSessions.add(pi);
 		const live = this.#liveBindings();
 		const latest = live.at(-1);
 		if (latest !== undefined) {
@@ -249,7 +259,9 @@ export class McpService {
 			return;
 		}
 		// A session whose attach is still queued has not bound yet but will use this service.
-		if (disposeReason !== undefined && this.#pendingAttaches === 0) await this.dispose(disposeReason);
+		if (disposeReason === undefined) return;
+		if (this.#pendingAttaches === 0) await this.dispose(disposeReason);
+		else this.#deferredDisposeReason = disposeReason;
 	}
 
 	/**
@@ -290,9 +302,7 @@ export class McpService {
 			added += 1;
 		}
 		if (added > 0) {
-			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
-			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, this.#sessionOptions, false, binding, toolRefreshGeneration);
+			await this.#syncFromConfig(config, this.#sessionOptions, false, binding);
 			await this.#registerDirectTools(binding);
 			if (this.#sessionContext !== null && shouldCaptureWireStatus(this.#sessionContext)) {
 				await this.refreshWireStatusSnapshot(this.#sessionContext.sessionManager?.getSessionId?.());
@@ -466,7 +476,6 @@ export class McpService {
 		options: McpSessionOptions,
 		useCache: boolean,
 		binding: McpSessionBinding | undefined,
-		toolRefreshGeneration: number,
 	): Promise<void> {
 		const cache = await readMcpCatalogCache(options.agentDir);
 		const hadConnectionsBeforeSync = this.#connections.size > 0;
@@ -549,7 +558,9 @@ export class McpService {
 							}
 						},
 						serverConfig: server.config,
-						shouldRefreshTools: () => !this.#disposed && this.#toolRefreshGeneration === toolRefreshGeneration,
+						// A later attach does not supersede this catalog: it registers in every live session. Skip it only
+						// once the service is gone or this connection was replaced (#2524 review).
+						shouldRefreshTools: () => !this.#disposed && this.#entryForName(name) === entry,
 						deadlineMs: resolveMcpStartupTimeoutMs(server.config.startupTimeoutMs),
 						onDeferred: (settled) => this.#deferredAttach.track(settled),
 					}),
