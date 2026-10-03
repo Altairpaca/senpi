@@ -1,5 +1,9 @@
 # changes
 
+## 2026-10-03 - Pin pi-apply-patch 0.1.4
+
+Upstream 0.1.4 carries three changes. The indented-header fix (pi-apply-patch#46) is ported by #2637, and the line-ending fix (pi-apply-patch#48) is ported here (#2638). The `constrainedSampling` grammar declaration (pi-apply-patch#43) needs no port: senpi already sends the Lark grammar natively (`tool.ts` `freeform`). Only `external-versions.json` changes for the pin.
+
 ## 2026-10-03 - Preserve line endings on update (#2638)
 
 ### What changed
